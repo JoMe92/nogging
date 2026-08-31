@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Claude Code PreToolUse hook: block Edit/Write into openspec/ unless a planning
+# session holds .specforge/locks/planning.lock. The tool call arguments arrive as
+# JSON on stdin; the target path is at .tool_input.file_path (verified against
+# Claude Code 2.1.237 in SPEC-1cu). Exit 2 blocks the tool call and shows stderr
+# to the model.
+
+root="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+
+file_path=$(jq -r '.tool_input.file_path // empty')
+[[ -z "$file_path" ]] && exit 0
+
+case "$file_path" in
+  /*) abs="$file_path" ;;
+  *)  abs="$root/$file_path" ;;
+esac
+
+openspec_dir="$root/openspec"
+
+case "$abs" in
+  "$openspec_dir" | "$openspec_dir"/*)
+    if [[ ! -e "$root/.specforge/locks/planning.lock" ]]; then
+      {
+        echo "SpecForge: openspec/ is writable only during a planning session."
+        echo "The planning lock .specforge/locks/planning.lock is absent, so this Edit/Write is blocked."
+        echo "Execution agents record changes in Beads and code; agreed intent changes go through a planning session."
+      } >&2
+      exit 2
+    fi
+    ;;
+esac
+
+exit 0
