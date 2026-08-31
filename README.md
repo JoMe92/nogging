@@ -53,3 +53,15 @@ See [docs/operating-model.md](docs/operating-model.md) and
 
 `open → done → archived` is the entire change lifecycle. Product acceptance is
 an explicit `accepted: true` record, not another workflow state.
+
+## Tests
+
+```bash
+scripts/test   # runs every scripts/**/*.test.sh; also `npm test`
+```
+
+The runner is language-neutral and offline: bash and coreutils only, no Node,
+no network, and no running Beads/Dolt server (tests that need `bd` stub it). CI
+runs it on every push and pull request. It covers the `commit-msg` boundary
+hook — Beads ID accepted, missing ID rejected, and the `planning`/`sync`
+`SPECFORGE_WRITER` exemptions.

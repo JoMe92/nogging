@@ -1,6 +1,11 @@
 name: SpecForge validation
 on: [push, pull_request]
 jobs:
+  script-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/test
   validate:
     runs-on: ubuntu-latest
     steps:
