@@ -104,10 +104,7 @@ function recordVersion(ctx) {
   } catch (_) {
     return;
   }
-  if (data.specforge_version === ctx.version) {
-    ctx.log.add('unchanged', rel);
-    return;
-  }
+  if (data.specforge_version === ctx.version) return;
   data.specforge_version = ctx.version;
   fsops.writeFile(rel, JSON.stringify(data, null, 2) + '\n', ctx);
 }
