@@ -37,6 +37,39 @@ def beads():
     decoded = json.loads(out or "[]")
     return decoded.get("issues", decoded) if isinstance(decoded, dict) else decoded
 def labels(issue): return issue.get("labels") or []
+DISCOVERY_LABEL = "discovery"
+def pending_discoveries():
+    """Open Beads carrying the native `discovery` label, blocked ones first.
+
+    The label alone marks a discovery; the note is human-readable prose and is
+    never parsed here. `bd list` omits closed issues by default, so this only
+    returns discoveries still awaiting a planning session.
+    """
+    out = run(CFG["beads_command"], "list", "--label", DISCOVERY_LABEL, "--json").stdout.strip()
+    decoded = json.loads(out or "[]")
+    issues = decoded.get("issues", decoded) if isinstance(decoded, dict) else decoded
+    issues = [i for i in issues if DISCOVERY_LABEL in labels(i)]
+    return sorted(issues, key=lambda i: (i.get("status") != "blocked", str(issue_id(i) or "")))
+def issue_note(identifier):
+    out = run(CFG["beads_command"], "show", identifier, "--json").stdout.strip()
+    decoded = json.loads(out or "[]")
+    records = decoded.get("issues", decoded) if isinstance(decoded, dict) else decoded
+    if isinstance(records, dict): records = [records]
+    return (records[0].get("notes") or "").strip() if records else ""
+def discoveries():
+    issues = pending_discoveries()
+    if not issues:
+        print("no pending discoveries")
+        return
+    blocking = sum(1 for i in issues if i.get("status") == "blocked")
+    noun = "discovery" if len(issues) == 1 else "discoveries"
+    print(f"{len(issues)} pending {noun} ({blocking} blocking)")
+    for issue in issues:
+        print()
+        print(f"[{issue.get('status') or 'unknown'}] {issue_id(issue)}  {(issue.get('title') or '').strip()}".rstrip())
+        note = issue_note(issue_id(issue))
+        for line in (note.splitlines() if note else ["(no human-readable note recorded)"]):
+            print(f"    {line}")
 def mapping(issue):
     ls = labels(issue)
     change = next((x.split(":", 2)[2] for x in ls if x.startswith("openspec:change:")), None)
@@ -124,6 +157,7 @@ def doctor(audit=False):
 def main():
     p = argparse.ArgumentParser(); sub = p.add_subparsers(dest="command", required=True)
     sub.add_parser("validate"); sub.add_parser("sync"); sub.add_parser("doctor"); sub.add_parser("audit")
+    sub.add_parser("discoveries")
     b = sub.add_parser("plan-begin"); b.add_argument("--force", action="store_true")
     e = sub.add_parser("plan-end"); e.add_argument("--force", action="store_true")
     m = sub.add_parser("materialize"); m.add_argument("change")
@@ -135,6 +169,7 @@ def main():
         path.unlink(); print("planning session lock released")
     elif args.command == "materialize": materialize(args.change)
     elif args.command == "sync": sync()
+    elif args.command == "discoveries": discoveries()
     else: doctor(args.command == "audit")
 if __name__ == "__main__":
     try: main()
