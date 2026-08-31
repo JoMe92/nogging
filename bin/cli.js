@@ -2,6 +2,7 @@
 'use strict';
 
 const install = require('./lib/install');
+const { applyMerges } = require('./lib/merge');
 
 const USAGE = `specforge — install the SpecForge operating structure into a repo
 
@@ -53,6 +54,7 @@ function cmdInit(args) {
   install.copyVerbatim(ctx);
   install.copyDocs(ctx);
   install.writeScaffold(ctx);
+  applyMerges(ctx);
   install.recordVersion(ctx);
   report(ctx);
   if (ctx.dryRun) process.stdout.write('\n(dry run — nothing written)\n');
@@ -67,6 +69,7 @@ function cmdUpdate(args) {
   }
   install.copyVerbatim(ctx);
   install.copyDocs(ctx);
+  applyMerges(ctx);
   install.recordVersion(ctx);
   report(ctx);
   if (ctx.dryRun) process.stdout.write('\n(dry run — nothing written)\n');

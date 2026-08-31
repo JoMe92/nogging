@@ -48,6 +48,51 @@ check "config name is repo basename" [ "$name" = "fresh" ]
 ver=$(node -e "process.stdout.write(String(require('$repo/.specforge/config.json').specforge_version||''))")
 check "config records a version" [ -n "$ver" ]
 
+# --- idempotent merges ----------------------------------------------------
+merged="$work/merged"
+mkdir -p "$merged/.claude"
+git -C "$merged" init -q
+cat > "$merged/.claude/settings.json" <<'JSON'
+{
+  "model": "sonnet",
+  "hooks": {
+    "SessionStart": [
+      { "matcher": "", "hooks": [ { "type": "command", "command": "bd prime --hook-json" } ] }
+    ]
+  }
+}
+JSON
+printf 'node_modules/\n' > "$merged/.gitignore"
+printf '# My project\n\nExisting notes.\n' > "$merged/CLAUDE.md"
+
+( cd "$merged" && node "$cli" init >/dev/null )
+( cd "$merged" && node "$cli" init >/dev/null )
+
+guard_count=$(node -e "
+  const s = require('$merged/.claude/settings.json');
+  const pre = (s.hooks && s.hooks.PreToolUse) || [];
+  let n = 0;
+  for (const e of pre) for (const h of (e.hooks||[])) if ((h.command||'').includes('pre-tool-use-openspec-guard')) n++;
+  process.stdout.write(String(n));
+")
+check "guard hook added exactly once" [ "$guard_count" = "1" ]
+
+sess_kept=$(node -e "
+  const s = require('$merged/.claude/settings.json');
+  const ss = (s.hooks && s.hooks.SessionStart) || [];
+  process.stdout.write(String(ss.length));
+")
+check "existing SessionStart hook preserved" [ "$sess_kept" = "1" ]
+check "unrelated setting preserved" node -e "process.exit(require('$merged/.claude/settings.json').model === 'sonnet' ? 0 : 1)"
+
+check "gitignore keeps original line" grep -qx 'node_modules/' "$merged/.gitignore"
+check "gitignore adds locks line once" [ "$(grep -cx '.specforge/locks/' "$merged/.gitignore")" = "1" ]
+
+check "CLAUDE.md keeps existing content" grep -q "Existing notes." "$merged/CLAUDE.md"
+check "CLAUDE.md has one begin marker" [ "$(grep -c 'specforge:begin' "$merged/CLAUDE.md")" = "1" ]
+check "CLAUDE.md has one end marker" [ "$(grep -c 'specforge:end' "$merged/CLAUDE.md")" = "1" ]
+check "AGENTS.md created with block" grep -q "specforge:begin" "$merged/AGENTS.md"
+
 # --- scaffold files are preserved -----------------------------------------
 repo2="$work/existing"
 mkdir -p "$repo2/openspec"
