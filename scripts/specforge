@@ -1,0 +1,137 @@
+#!/usr/bin/env python3
+"""Small deterministic bridge between OpenSpec and Beads.
+
+It intentionally contains no LLM call and makes no semantic product decision.
+"""
+from __future__ import annotations
+
+import argparse, datetime as dt, json, os, re, socket, subprocess, sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+CFG = json.loads((ROOT / ".specforge/config.json").read_text())
+LOCKS, STATE, REPORTS = (ROOT / ".specforge/locks", ROOT / ".specforge/state", ROOT / ".specforge/reports")
+TASK_RE = re.compile(r"^- \[[ x]\] (TASK-[A-Z0-9-]+)\s+(.+)$", re.M)
+
+def now(): return dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat()
+def run(*args, check=True):
+    result = subprocess.run(args, cwd=ROOT, text=True, capture_output=True)
+    if check and result.returncode:
+        raise RuntimeError(f"{' '.join(args)}: {result.stderr.strip() or result.stdout.strip()}")
+    return result
+def data_dir(path): path.mkdir(parents=True, exist_ok=True); return path
+def changes():
+    base = ROOT / "openspec/changes"
+    return [p for p in base.iterdir() if p.is_dir() and p.name != "archive"] if base.exists() else []
+def task_map():
+    found, duplicates = {}, []
+    for change in changes():
+        file = change / "tasks.md"
+        if not file.exists(): continue
+        for task, title in TASK_RE.findall(file.read_text()):
+            if task in found: duplicates.append(task)
+            found[task] = {"change": change.name, "file": file, "title": title}
+    return found, duplicates
+def beads():
+    out = run(CFG["beads_command"], "list", "--json").stdout.strip()
+    decoded = json.loads(out or "[]")
+    return decoded.get("issues", decoded) if isinstance(decoded, dict) else decoded
+def labels(issue): return issue.get("labels") or []
+def mapping(issue):
+    ls = labels(issue)
+    change = next((x.split(":", 2)[2] for x in ls if x.startswith("openspec:change:")), None)
+    task = next((x.split(":", 2)[2] for x in ls if x.startswith("openspec:task:")), None)
+    return change, task
+def issue_id(issue): return issue.get("id") or issue.get("identifier") or issue.get("issue_id")
+def lock(name, ttl, force=False):
+    path = data_dir(LOCKS) / f"{name}.lock"
+    if path.exists() and not force:
+        info = json.loads(path.read_text())
+        then = dt.datetime.fromisoformat(info["created_at"])
+        if (dt.datetime.now(dt.timezone.utc) - then).total_seconds() < ttl:
+            raise RuntimeError(f"{name} lock held by {info['host']} pid {info['pid']}; use --force only after verifying it is stale")
+    path.write_text(json.dumps({"pid": os.getpid(), "host": socket.gethostname(), "created_at": now()}, indent=2) + "\n")
+    return path
+def validate():
+    tasks, duplicates = task_map(); issues = beads(); problems = []
+    if duplicates: problems.append("duplicate task IDs: " + ", ".join(sorted(set(duplicates))))
+    seen = {}
+    for issue in issues:
+        change, task = mapping(issue)
+        if bool(change) != bool(task): problems.append(f"{issue_id(issue)} has incomplete OpenSpec labels")
+        if task:
+            if task not in tasks: problems.append(f"{issue_id(issue)} maps missing task {task}")
+            elif tasks[task]["change"] != change: problems.append(f"{issue_id(issue)} change label disagrees with {task}")
+            if task in seen: problems.append(f"multiple Beads map {task}: {seen[task]}, {issue_id(issue)}")
+            seen[task] = issue_id(issue)
+    for task, info in tasks.items():
+        if re.search(rf"^- \[x\] {re.escape(task)}\b", info["file"].read_text(), re.M):
+            issue = next((i for i in issues if mapping(i)[1] == task), None)
+            if not issue or issue.get("status") != "closed": problems.append(f"checked task {task} has no closed Bead")
+    return tasks, issues, problems
+def materialize(change):
+    tasks, _, problems = validate()
+    if problems: raise RuntimeError("validation failed:\n- " + "\n- ".join(problems))
+    selected = [(task, info) for task, info in tasks.items() if info["change"] == change]
+    if not selected: raise RuntimeError(f"no tasks found for change {change}")
+    for task, info in selected:
+        run(CFG["beads_command"], "create", "--title", f"{task}: {info['title']}", "--type", "task", "--label", f"openspec:change:{change}", "--label", f"openspec:task:{task}")
+        print(f"materialized {task}")
+def sync():
+    path = lock("sync", CFG["sync_lock_ttl_seconds"])
+    try:
+        tasks, issues, problems = validate()
+        if problems: raise RuntimeError("audit failed:\n- " + "\n- ".join(problems))
+        changed = []
+        for issue in issues:
+            change, task = mapping(issue)
+            if not task or issue.get("status") != "closed": continue
+            log = ROOT / "openspec/changes" / change / "execution-log.md"
+            log.parent.mkdir(parents=True, exist_ok=True)
+            key = f"<!-- specforge:{issue_id(issue)}:{issue.get('updated_at', issue.get('closed_at', 'closed'))} -->"
+            current = log.read_text() if log.exists() else "# Execution log\n"
+            if key not in current:
+                log.write_text(current + f"\n{key}\n- {now()} — `{issue_id(issue)}` closed for `{task}`.\n")
+                changed.append(log)
+            f = tasks[task]["file"]; text = f.read_text(); updated = re.sub(rf"^- \[ \] ({re.escape(task)}\b)", r"- [x] \1", text, flags=re.M)
+            if updated != text: f.write_text(updated); changed.append(f)
+        if changed:
+            run("git", "add", *sorted({str(p.relative_to(ROOT)) for p in changed}))
+            run("git", "commit", "-m", "chore(sync): mirror Beads execution evidence")
+            print(f"synced {len(set(changed))} file(s)")
+        else: print("sync: no changes")
+        data_dir(STATE).joinpath("last-success.json").write_text(json.dumps({"at": now()}, indent=2) + "\n")
+    except Exception as exc:
+        data_dir(STATE).joinpath("last-error.json").write_text(json.dumps({"at": now(), "error": str(exc)}, indent=2) + "\n")
+        raise
+    finally: path.unlink(missing_ok=True)
+def doctor(audit=False):
+    checks = []
+    for cmd in ("git", CFG["beads_command"], "dolt"):
+        checks.append((cmd, subprocess.run(["sh", "-lc", f"command -v {cmd}"], capture_output=True).returncode == 0))
+    try: _, _, problems = validate()
+    except Exception as exc: problems = [str(exc)]
+    checks.extend((p, False) for p in problems)
+    for name, ok in checks: print(f"{'OK' if ok else 'FAIL'}  {name}")
+    if audit:
+        report = data_dir(REPORTS) / f"audit-{dt.datetime.now():%Y%m%dT%H%M%S}.txt"; report.write_text("\n".join(f"{'OK' if ok else 'FAIL'}  {name}" for name, ok in checks) + "\n")
+        print(f"report: {report.relative_to(ROOT)}")
+    if any(not ok for _, ok in checks): sys.exit(1)
+def main():
+    p = argparse.ArgumentParser(); sub = p.add_subparsers(dest="command", required=True)
+    sub.add_parser("validate"); sub.add_parser("sync"); sub.add_parser("doctor"); sub.add_parser("audit")
+    b = sub.add_parser("plan-begin"); b.add_argument("--force", action="store_true")
+    e = sub.add_parser("plan-end"); e.add_argument("--force", action="store_true")
+    m = sub.add_parser("materialize"); m.add_argument("change")
+    args = p.parse_args()
+    if args.command == "plan-begin": lock("planning", CFG["planning_lock_ttl_seconds"], args.force); print("planning session lock acquired")
+    elif args.command == "plan-end":
+        path = LOCKS / "planning.lock"
+        if not path.exists(): raise RuntimeError("no planning lock")
+        path.unlink(); print("planning session lock released")
+    elif args.command == "materialize": materialize(args.change)
+    elif args.command == "sync": sync()
+    else: doctor(args.command == "audit")
+if __name__ == "__main__":
+    try: main()
+    except Exception as exc: print(f"specforge: {exc}", file=sys.stderr); sys.exit(1)
