@@ -1,0 +1,84 @@
+'use strict';
+
+// The install manifest. Source paths are relative to the package root
+// (the checkout of this repo that `npx` runs); destination paths are relative
+// to the target git repository root.
+//
+// File classes:
+//   verbatim  - copied and overwritten on every `init` and `update`
+//   docs      - reference docs, copied verbatim into docs/specforge/
+//   scaffold  - written only when absent, never overwritten
+//   merge     - foreign files edited idempotently (see lib/merge.js)
+//   rendered  - generated from templates/ with target-specific values
+
+module.exports = {
+  // Individual files copied verbatim.
+  verbatim: [
+    'scripts/specforge',
+    'scripts/install-hooks',
+    'scripts/test',
+    'scripts/specforge.test.sh',
+    'scripts/hooks/commit-msg',
+    'scripts/hooks/pre-commit',
+    'scripts/hooks/pre-tool-use-openspec-guard',
+    'scripts/hooks/commit-msg.test.sh',
+  ],
+
+  // Directories copied verbatim (recursive).
+  verbatimDirs: [
+    { from: '.agents/skills', to: '.agents/skills' },
+  ],
+
+  // Reference docs: package docs/<name> -> target docs/specforge/<name>.
+  docs: [
+    { from: 'docs/operating-model.md', to: 'docs/specforge/operating-model.md' },
+    { from: 'docs/architecture.md', to: 'docs/specforge/architecture.md' },
+    { from: 'docs/failure-recovery.md', to: 'docs/specforge/failure-recovery.md' },
+  ],
+
+  // Written only when the destination does not already exist.
+  scaffold: [
+    { from: 'openspec/config.yaml', to: 'openspec/config.yaml' },
+    { from: 'templates/openspec-project.md', to: 'openspec/project.md' },
+    {
+      from: 'templates/specforge-config.json',
+      to: '.specforge/config.json',
+      transform: 'specforgeConfig',
+    },
+  ],
+
+  // chmod 0755 after copying (destination-relative).
+  executable: [
+    'scripts/specforge',
+    'scripts/install-hooks',
+    'scripts/test',
+    'scripts/hooks/commit-msg',
+    'scripts/hooks/pre-commit',
+    'scripts/hooks/pre-tool-use-openspec-guard',
+  ],
+
+  // Lines ensured present in the target .gitignore (under a SpecForge comment).
+  gitignore: [
+    '.specforge/locks/',
+    '.specforge/state/',
+    '.specforge/reports/',
+    '__pycache__/',
+    '*.py[cod]',
+  ],
+
+  // Marker block maintained inside CLAUDE.md and AGENTS.md.
+  markerBegin: '<!-- specforge:begin -->',
+  markerEnd: '<!-- specforge:end -->',
+
+  // Rendered systemd units: template -> target basename pattern ({slug} filled in).
+  systemd: [
+    {
+      from: 'templates/systemd/specforge-sync.service.tmpl',
+      to: 'systemd/specforge-sync-{slug}.service',
+    },
+    {
+      from: 'templates/systemd/specforge-sync.timer.tmpl',
+      to: 'systemd/specforge-sync-{slug}.timer',
+    },
+  ],
+};

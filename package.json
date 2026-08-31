@@ -1,8 +1,23 @@
 {
   "name": "specforge",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Lean local-first operating model for agentic software delivery — installable into any repo",
+  "main": "bin/cli.js",
+  "bin": {
+    "specforge": "bin/cli.js"
+  },
+  "files": [
+    "bin",
+    "templates",
+    "scripts",
+    ".agents",
+    "docs",
+    "openspec/config.yaml",
+    "AGENTS.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "test": "scripts/test"
   },

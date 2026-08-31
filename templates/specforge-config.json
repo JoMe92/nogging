@@ -1,0 +1,9 @@
+{
+  "name": "SpecForge",
+  "sync_interval_seconds": 30,
+  "beads_command": "bd",
+  "planning_lock_ttl_seconds": 7200,
+  "sync_lock_ttl_seconds": 120,
+  "change_states": ["open", "done", "archived"],
+  "specforge_version": "0.0.0"
+}
