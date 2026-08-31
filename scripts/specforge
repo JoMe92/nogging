@@ -14,8 +14,8 @@ LOCKS, STATE, REPORTS = (ROOT / ".specforge/locks", ROOT / ".specforge/state", R
 TASK_RE = re.compile(r"^- \[[ x]\] (TASK-[A-Z0-9-]+)\s+(.+)$", re.M)
 
 def now(): return dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat()
-def run(*args, check=True):
-    result = subprocess.run(args, cwd=ROOT, text=True, capture_output=True)
+def run(*args, check=True, env=None):
+    result = subprocess.run(args, cwd=ROOT, text=True, capture_output=True, env=env)
     if check and result.returncode:
         raise RuntimeError(f"{' '.join(args)}: {result.stderr.strip() or result.stdout.strip()}")
     return result
@@ -101,7 +101,7 @@ def sync():
             if updated != text: f.write_text(updated); changed.append(f)
         if changed:
             run("git", "add", *sorted({str(p.relative_to(ROOT)) for p in changed}))
-            run("git", "commit", "-m", "chore(sync): mirror Beads execution evidence")
+            run("git", "commit", "-m", "chore(sync): mirror Beads execution evidence", env={**os.environ, "SPECFORGE_WRITER": "sync"})
             print(f"synced {len(set(changed))} file(s)")
         else: print("sync: no changes")
         data_dir(STATE).joinpath("last-success.json").write_text(json.dumps({"at": now()}, indent=2) + "\n")

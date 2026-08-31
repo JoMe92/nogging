@@ -36,6 +36,9 @@ can be inspected and removed deliberately with `plan-end --force` after a
 crash. A sync failure is recorded in `.specforge/state/last-error.json` and is
 safe to retry: execution-log entries have stable event keys.
 
+The sync process sets its own narrowly scoped `SPECFORGE_WRITER=sync` commit
+environment, allowing the repository hook to accept only its execution mirror.
+
 If a planner removes a task whose Bead is active, audit fails closed. The Bead
 is retained and reported as orphaned; nothing is deleted or silently closed.
 
