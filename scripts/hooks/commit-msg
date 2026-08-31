@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+message=$(head -n1 "$1")
+pattern='^(build|chore|ci|docs|feat|fix|perf|refactor|revert|test)(\([a-z0-9._/-]+\))?(!)?: .+'
+if ! [[ "$message" =~ $pattern ]]; then
+  echo "SpecForge: commit message must use Conventional Commits." >&2
+  exit 1
+fi

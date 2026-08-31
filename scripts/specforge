@@ -75,7 +75,7 @@ def materialize(change):
     selected = [(task, info) for task, info in tasks.items() if info["change"] == change]
     if not selected: raise RuntimeError(f"no tasks found for change {change}")
     for task, info in selected:
-        run(CFG["beads_command"], "create", "--title", f"{task}: {info['title']}", "--type", "task", "--label", f"openspec:change:{change}", "--label", f"openspec:task:{task}")
+        run(CFG["beads_command"], "create", "--title", f"{task}: {info['title']}", "--type", "task", "--labels", f"openspec:change:{change},openspec:task:{task}")
         print(f"materialized {task}")
 def sync():
     path = lock("sync", CFG["sync_lock_ttl_seconds"])

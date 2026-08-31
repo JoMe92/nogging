@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+changed=$(git diff --cached --name-only)
+if [[ "${SPECFORGE_WRITER:-}" != "planning" && "${SPECFORGE_WRITER:-}" != "sync" ]] && grep -q '^openspec/' <<<"$changed"; then
+  echo "SpecForge: only planning or sync commits may modify openspec/." >&2
+  echo "Set SPECFORGE_WRITER=planning only inside an approved planning session." >&2
+  exit 1
+fi

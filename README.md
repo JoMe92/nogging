@@ -28,6 +28,7 @@ Sync timer ──mechanically mirrors status and evidence──> execution-log.m
 ```bash
 cd /path/to/specforge
 git switch develop
+./scripts/install-hooks
 ./scripts/specforge doctor
 ./scripts/specforge plan-begin
 # Plan with OpenSpec, then add stable TASK-... IDs to tasks.md.

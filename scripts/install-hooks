@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+root=$(git rev-parse --show-toplevel)
+hooks="$root/.git/hooks"
+
+install -m 0755 "$root/scripts/hooks/commit-msg" "$hooks/commit-msg"
+install -m 0755 "$root/scripts/hooks/pre-commit" "$hooks/pre-commit"
+echo "SpecForge hooks installed."
