@@ -42,6 +42,19 @@ The timer is installed with `systemctl --user enable --now specforge-sync.timer`
 See [docs/operating-model.md](docs/operating-model.md) and
 [docs/walkthrough-photo-import.md](docs/walkthrough-photo-import.md).
 
+## Install into another repo
+
+```bash
+cd /path/to/your-repo
+npx github:JoMe92/specforge init      # then: update, doctor
+```
+
+`init` copies the tool files verbatim, writes an OpenSpec scaffold only where one
+is missing, merges the `PreToolUse` guard / `.gitignore` / `CLAUDE.md` /
+`AGENTS.md` idempotently, and renders a per-repo systemd sync unit. It never
+touches `openspec/changes/`, `.beads/`, or your `package.json`. Full details in
+[docs/installation.md](docs/installation.md).
+
 ## Non-negotiable boundaries
 
 | Authority | System | May write |
