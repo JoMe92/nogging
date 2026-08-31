@@ -123,6 +123,45 @@ git -C "$hp" config core.hooksPath .beads/hooks
 out=$( cd "$hp" && node "$cli" init 2>&1 )
 check "warns when core.hooksPath diverts git" bash -c "grep -q 'core.hooksPath' <<< \"\$0\"" "$out"
 
+# --- update preserves target-owned state -------------------------------
+upd="$work/update"
+mkdir -p "$upd"; git -C "$upd" init -q
+( cd "$upd" && node "$cli" init --no-systemd >/dev/null )
+mkdir -p "$upd/openspec/changes/my-change"
+printf '# Tasks\n\n- [ ] TASK-X-001 do a thing\n' > "$upd/openspec/changes/my-change/tasks.md"
+printf '# My project\n\nCustom purpose.\n' > "$upd/openspec/project.md"
+node -e "
+  const f='$upd/.specforge/config.json'; const d=require(f);
+  d.specforge_version='0.0.1'; d.name='my-custom-name';
+  require('fs').writeFileSync(f, JSON.stringify(d,null,2)+'\n');
+"
+changes_before=$(cd "$upd" && git -C "$upd" hash-object openspec/changes/my-change/tasks.md 2>/dev/null || md5sum "$upd/openspec/changes/my-change/tasks.md")
+
+rc=0
+( cd "$upd" && node "$cli" update --no-systemd >/dev/null ) || rc=$?
+check "update exits 0" [ "$rc" -eq 0 ]
+
+changes_after=$(cd "$upd" && git -C "$upd" hash-object openspec/changes/my-change/tasks.md 2>/dev/null || md5sum "$upd/openspec/changes/my-change/tasks.md")
+check "update leaves openspec/changes untouched" [ "$changes_before" = "$changes_after" ]
+check "update leaves openspec/project.md untouched" grep -q "Custom purpose." "$upd/openspec/project.md"
+
+new_name=$(node -e "process.stdout.write(require('$upd/.specforge/config.json').name)")
+check "update keeps config name" [ "$new_name" = "my-custom-name" ]
+new_ver=$(node -e "process.stdout.write(require('$upd/.specforge/config.json').specforge_version)")
+check "update bumps recorded version" [ "$new_ver" != "0.0.1" ]
+
+# update before init is refused
+bare="$work/bare"; mkdir -p "$bare"; git -C "$bare" init -q
+rc=0
+( cd "$bare" && node "$cli" update >/dev/null 2>&1 ) || rc=$?
+check "update before init is refused" [ "$rc" -ne 0 ]
+
+# re-running init over an install is idempotent, not an error
+rc=0
+( cd "$upd" && node "$cli" init --no-systemd >/dev/null 2>&1 ) || rc=$?
+check "init over an existing install succeeds (idempotent)" [ "$rc" -eq 0 ]
+check "re-init keeps custom config name" [ "$(node -e "process.stdout.write(require('$upd/.specforge/config.json').name)")" = "my-custom-name" ]
+
 # --- not a git repo ------------------------------------------------------
 plain="$work/plain"
 mkdir -p "$plain"

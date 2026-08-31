@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
+
 const install = require('./lib/install');
 const { applyMerges } = require('./lib/merge');
 const { renderSystemd } = require('./lib/systemd');
@@ -18,20 +21,20 @@ Commands:
 
 Options:
   --dry-run      Show what would change, write nothing
-  --force        Allow init over an existing install
   --no-hooks     Skip installing the git hooks
   --no-systemd   Skip rendering the systemd sync unit
   -h, --help     Show this help
+
+init is idempotent and safe to re-run; use update for routine refreshes.
 `;
 
 function parseArgs(argv) {
-  const args = { command: null, dryRun: false, force: false, noHooks: false, noSystemd: false, help: false };
+  const args = { command: null, dryRun: false, noHooks: false, noSystemd: false, help: false };
   for (const a of argv) {
     switch (a) {
       case '-h':
       case '--help': args.help = true; break;
       case '--dry-run': args.dryRun = true; break;
-      case '--force': args.force = true; break;
       case '--no-hooks': args.noHooks = true; break;
       case '--no-systemd': args.noSystemd = true; break;
       default:
@@ -61,6 +64,13 @@ function report(ctx) {
 
 function cmdInit(args) {
   const ctx = install.makeContext(args);
+  const reinstall = fs.existsSync(path.join(ctx.targetRoot, '.specforge/config.json'));
+  if (reinstall && !ctx.dryRun) {
+    process.stdout.write(
+      'SpecForge is already installed here; re-running init idempotently ' +
+        '(use `update` for routine refreshes).\n',
+    );
+  }
   install.copyVerbatim(ctx);
   install.copyDocs(ctx);
   install.writeScaffold(ctx);
@@ -74,8 +84,6 @@ function cmdInit(args) {
 
 function cmdUpdate(args) {
   const ctx = install.makeContext(args);
-  const fs = require('fs');
-  const path = require('path');
   if (!fs.existsSync(path.join(ctx.targetRoot, '.specforge/config.json'))) {
     throw Object.assign(new Error('no .specforge/config.json — run `init` first'), { userFacing: true });
   }
@@ -90,7 +98,6 @@ function cmdUpdate(args) {
 
 function cmdDoctor() {
   const { spawnSync } = require('child_process');
-  const fs = require('fs');
   if (!fs.existsSync('scripts/specforge')) {
     throw Object.assign(new Error('scripts/specforge not found — run `init` first'), { userFacing: true });
   }
