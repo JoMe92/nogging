@@ -70,11 +70,15 @@ def validate():
             if not issue or issue.get("status") != "closed": problems.append(f"checked task {task} has no closed Bead")
     return tasks, issues, problems
 def materialize(change):
-    tasks, _, problems = validate()
+    tasks, issues, problems = validate()
     if problems: raise RuntimeError("validation failed:\n- " + "\n- ".join(problems))
     selected = [(task, info) for task, info in tasks.items() if info["change"] == change]
     if not selected: raise RuntimeError(f"no tasks found for change {change}")
+    existing = {mapping(issue)[1] for issue in issues if mapping(issue)[0] == change}
     for task, info in selected:
+        if task in existing:
+            print(f"already materialized {task}")
+            continue
         run(CFG["beads_command"], "create", "--title", f"{task}: {info['title']}", "--type", "task", "--labels", f"openspec:change:{change},openspec:task:{task}")
         print(f"materialized {task}")
 def sync():

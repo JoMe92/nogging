@@ -6,7 +6,8 @@ This example shows the intended flow, not an implementation mandate.
    select images from the PC filesystem and show successful imports in the
    image strip.
 2. The Planning Agent creates `photo-import-filesystem` with requirements and
-   four independently executable tasks. Product choices—such as copy versus
+   four executable tasks. The planner adds explicit Beads dependencies so the
+   strip refresh and end-to-end tests wait for the import work. Product choices—such as copy versus
    reference, allowed formats and multi-selection—are made here or marked
    explicitly as open decisions. It validates and materializes one Bead per
    task.

@@ -18,6 +18,11 @@ fields. An execution agent adds a note before closing a Bead containing a Git
 commit SHA and validation evidence. Discoveries use a fenced `specforge-discovery`
 JSON block in a Bead note.
 
+Materialization is idempotent: rerunning it creates only missing mapped Beads
+and never duplicates work. The planner creates dependencies deliberately with
+`bd dep add <child> <blocking-parent>` after materialization; this keeps their
+meaning explicit rather than guessing from Markdown order.
+
 ## State and safety
 
 Changes are `open`, `done`, or `archived`. `done` requires every mapped Bead to
