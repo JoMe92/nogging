@@ -21,6 +21,7 @@ Commands:
 
 Options:
   --dry-run      Show what would change, write nothing
+  --no-beads     Skip initializing the Beads issue tracker
   --no-hooks     Skip installing the git hooks
   --no-systemd   Skip rendering the systemd sync unit
   -h, --help     Show this help
@@ -29,12 +30,13 @@ init is idempotent and safe to re-run; use update for routine refreshes.
 `;
 
 function parseArgs(argv) {
-  const args = { command: null, dryRun: false, noHooks: false, noSystemd: false, help: false };
+  const args = { command: null, dryRun: false, noBeads: false, noHooks: false, noSystemd: false, help: false };
   for (const a of argv) {
     switch (a) {
       case '-h':
       case '--help': args.help = true; break;
       case '--dry-run': args.dryRun = true; break;
+      case '--no-beads': args.noBeads = true; break;
       case '--no-hooks': args.noHooks = true; break;
       case '--no-systemd': args.noSystemd = true; break;
       default:
@@ -71,6 +73,7 @@ function cmdInit(args) {
         '(use `update` for routine refreshes).\n',
     );
   }
+  install.initBeads(ctx);
   install.copyVerbatim(ctx);
   install.copyDocs(ctx);
   install.writeScaffold(ctx);

@@ -29,10 +29,10 @@ repo="$work/fresh"
 mkdir -p "$repo"
 git -C "$repo" init -q
 
-( cd "$repo" && node "$cli" init --dry-run >/dev/null )
+( cd "$repo" && node "$cli" init --no-beads --dry-run >/dev/null )
 check "dry-run writes nothing" [ -z "$(find "$repo" -type f -not -path '*/.git/*')" ]
 
-( cd "$repo" && node "$cli" init >/dev/null )
+( cd "$repo" && node "$cli" init --no-beads >/dev/null )
 check "tool bridge installed"      test -f "$repo/scripts/specforge"
 check "install-hooks installed"    test -f "$repo/scripts/install-hooks"
 check "boundary hook installed"    test -f "$repo/scripts/hooks/pre-tool-use-openspec-guard"
@@ -47,6 +47,26 @@ name=$(node -e "process.stdout.write(require('$repo/.specforge/config.json').nam
 check "config name is repo basename" [ "$name" = "fresh" ]
 ver=$(node -e "process.stdout.write(String(require('$repo/.specforge/config.json').specforge_version||''))")
 check "config records a version" [ -n "$ver" ]
+
+# --- bd init bootstrap (only where bd is installed) ----------------------
+if command -v bd >/dev/null 2>&1; then
+  bdrepo="$work/bdinit"
+  mkdir -p "$bdrepo"
+  git -C "$bdrepo" init -q
+  ( cd "$bdrepo" && node "$cli" init --no-systemd >/dev/null 2>&1 ) || true
+  check "init creates the beads tracker" test -d "$bdrepo/.beads"
+  before=$(find "$bdrepo/.beads" -type f | sort | md5sum)
+  ( cd "$bdrepo" && node "$cli" init --no-systemd >/dev/null 2>&1 ) || true
+  after=$(find "$bdrepo/.beads" -type f | sort | md5sum)
+  check "second init leaves .beads file set unchanged" [ "$before" = "$after" ]
+
+  nobd="$work/nobd"
+  mkdir -p "$nobd"; git -C "$nobd" init -q
+  ( cd "$nobd" && node "$cli" init --no-beads --no-systemd >/dev/null 2>&1 ) || true
+  check "--no-beads skips the tracker" [ ! -d "$nobd/.beads" ]
+else
+  echo "ok   - bd init bootstrap skipped (bd not installed)"
+fi
 
 # --- idempotent merges ----------------------------------------------------
 merged="$work/merged"
@@ -65,8 +85,8 @@ JSON
 printf 'node_modules/\n' > "$merged/.gitignore"
 printf '# My project\n\nExisting notes.\n' > "$merged/CLAUDE.md"
 
-( cd "$merged" && node "$cli" init >/dev/null )
-( cd "$merged" && node "$cli" init >/dev/null )
+( cd "$merged" && node "$cli" init --no-beads >/dev/null )
+( cd "$merged" && node "$cli" init --no-beads >/dev/null )
 
 guard_count=$(node -e "
   const s = require('$merged/.claude/settings.json');
@@ -99,10 +119,10 @@ mkdir -p "$idem"
 git -C "$idem" init -q
 git -C "$idem" config user.email t@example.com
 git -C "$idem" config user.name test
-( cd "$idem" && node "$cli" init >/dev/null )
+( cd "$idem" && node "$cli" init --no-beads >/dev/null )
 git -C "$idem" add -A
 git -C "$idem" -c core.hooksPath=/dev/null commit -q -m "install specforge"
-( cd "$idem" && node "$cli" init >/dev/null )
+( cd "$idem" && node "$cli" init --no-beads >/dev/null )
 ( cd "$idem" && node "$cli" update >/dev/null )
 check "re-init + update produce no tracked diff" git -C "$idem" diff --quiet
 
@@ -111,7 +131,7 @@ repo2="$work/existing"
 mkdir -p "$repo2/openspec"
 git -C "$repo2" init -q
 printf '# Kept project doc\n' > "$repo2/openspec/project.md"
-( cd "$repo2" && node "$cli" init >/dev/null )
+( cd "$repo2" && node "$cli" init --no-beads >/dev/null )
 check "existing project.md untouched" grep -q "Kept project doc" "$repo2/openspec/project.md"
 
 # --- rendered systemd unit ---------------------------------------------
@@ -126,20 +146,20 @@ check "timer binds the slugged service" grep -qx "Unit=specforge-sync-fresh.serv
 # --- --no-systemd -----------------------------------------------------
 nos="$work/nosystemd"
 mkdir -p "$nos"; git -C "$nos" init -q
-( cd "$nos" && node "$cli" init --no-systemd >/dev/null )
+( cd "$nos" && node "$cli" init --no-beads --no-systemd >/dev/null )
 check "--no-systemd skips the unit" [ ! -d "$nos/systemd" ]
 
 # --- core.hooksPath warning ------------------------------------------
 hp="$work/hookspath"
 mkdir -p "$hp/.beads/hooks"; git -C "$hp" init -q
 git -C "$hp" config core.hooksPath .beads/hooks
-out=$( cd "$hp" && node "$cli" init 2>&1 )
+out=$( cd "$hp" && node "$cli" init --no-beads 2>&1 )
 check "warns when core.hooksPath diverts git" bash -c "grep -q 'core.hooksPath' <<< \"\$0\"" "$out"
 
 # --- update preserves target-owned state -------------------------------
 upd="$work/update"
 mkdir -p "$upd"; git -C "$upd" init -q
-( cd "$upd" && node "$cli" init --no-systemd >/dev/null )
+( cd "$upd" && node "$cli" init --no-beads --no-systemd >/dev/null )
 mkdir -p "$upd/openspec/changes/my-change"
 printf '# Tasks\n\n- [ ] TASK-X-001 do a thing\n' > "$upd/openspec/changes/my-change/tasks.md"
 printf '# My project\n\nCustom purpose.\n' > "$upd/openspec/project.md"
@@ -171,7 +191,7 @@ check "update before init is refused" [ "$rc" -ne 0 ]
 
 # re-running init over an install is idempotent, not an error
 rc=0
-( cd "$upd" && node "$cli" init --no-systemd >/dev/null 2>&1 ) || rc=$?
+( cd "$upd" && node "$cli" init --no-beads --no-systemd >/dev/null 2>&1 ) || rc=$?
 check "init over an existing install succeeds (idempotent)" [ "$rc" -eq 0 ]
 check "re-init keeps custom config name" [ "$(node -e "process.stdout.write(require('$upd/.specforge/config.json').name)")" = "my-custom-name" ]
 
@@ -179,7 +199,7 @@ check "re-init keeps custom config name" [ "$(node -e "process.stdout.write(requ
 plain="$work/plain"
 mkdir -p "$plain"
 rc=0
-( cd "$plain" && node "$cli" init >/dev/null 2>&1 ) || rc=$?
+( cd "$plain" && node "$cli" init --no-beads >/dev/null 2>&1 ) || rc=$?
 check "refuses outside a git repo" [ "$rc" -ne 0 ]
 
 if [[ $fail -ne 0 ]]; then

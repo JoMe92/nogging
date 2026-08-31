@@ -43,6 +43,7 @@ function makeContext(opts) {
     slug: slugify(repoName),
     version: packageVersion(),
     dryRun: !!opts.dryRun,
+    noBeads: !!opts.noBeads,
     noHooks: !!opts.noHooks,
     noSystemd: !!opts.noSystemd,
     log: new fsops.ChangeLog(),
@@ -149,6 +150,40 @@ function beadsHint(ctx) {
   }
 }
 
+// Initialize the Beads tracker in the target repo as the first install step.
+// Idempotent, and never fatal: a missing `bd` or an unreachable backend is a
+// warning that the readiness verdict will also surface.
+function initBeads(ctx) {
+  const rel = '.beads';
+  if (ctx.noBeads) {
+    ctx.log.add('skip', rel, '--no-beads');
+    return;
+  }
+  if (fs.existsSync(path.join(ctx.targetRoot, rel))) {
+    ctx.log.add('keep', rel, 'exists');
+    return;
+  }
+  if (ctx.dryRun) {
+    ctx.log.add('run', 'bd init', 'dry-run');
+    return;
+  }
+  const { spawnSync } = require('child_process');
+  const r = spawnSync('bd', ['init', '--init-if-missing', '--non-interactive'], {
+    cwd: ctx.targetRoot,
+    encoding: 'utf8',
+  });
+  if (r.error && r.error.code === 'ENOENT') {
+    ctx.warnings.push('bd (Beads) is not installed — install it, then run `bd init` in this repo.');
+    return;
+  }
+  if (r.status !== 0) {
+    const first = ((r.stderr || r.stdout || '').trim().split('\n')[0]) || 'unknown error';
+    ctx.warnings.push(`bd init failed (${first}) — run \`bd init\` once the backend is reachable.`);
+    return;
+  }
+  ctx.log.add('run', 'bd init');
+}
+
 module.exports = {
   PKG_ROOT,
   packageVersion,
@@ -161,4 +196,5 @@ module.exports = {
   recordVersion,
   installGitHooks,
   beadsHint,
+  initBeads,
 };
