@@ -21,12 +21,19 @@ there is a tracked execution-log update; it never pushes.
 
 ## Discoveries
 
-Agents record every material discovery in their active Bead. There are only two
-kinds:
+Agents record every material discovery on their active Bead using the native
+Beads `discovery` label plus a required human-readable note:
 
-- `automatic`: a narrow, backwards-compatible implementation detail.
-- `review`: anything user-visible, architectural, ambiguous, security or performance relevant.
+```bash
+bd update <id> --add-label discovery --append-notes "<prose summary>"
+```
 
-`review` discoveries go to the next planning session. They do not alter an
-approved OpenSpec change automatically. Add `"blocking": true` only when safe
-execution cannot continue.
+Execution agents never edit `openspec/`, so every discovery waits for the next
+planning session (`bd list --label discovery`) and does not alter an approved
+OpenSpec change automatically.
+
+A discovery is **non-blocking** when the claimed task still finishes as
+specified; the agent keeps working. It is **blocking** when the task cannot be
+finished sensibly as specified; the agent also runs `--status blocked` and
+moves to the next independent Bead. `/discovery-review` lists blocked
+discoveries first so they do not get lost.

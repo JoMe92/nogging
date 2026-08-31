@@ -6,7 +6,7 @@ reconciliation. It is not a general-purpose ALM system.
 ## Data contracts
 
 Every OpenSpec task has one immutable identifier (`TASK-<AREA>-<NNN>`). Every
-materialized Bead has exactly two labels:
+materialized Bead is created with exactly two labels:
 
 ```text
 openspec:change:<change-id>
@@ -15,8 +15,12 @@ openspec:task:<task-id>
 
 Labels are used because Beads does not provide arbitrary per-issue custom
 fields. An execution agent adds a note before closing a Bead containing a Git
-commit SHA and validation evidence. Discoveries use a fenced `specforge-discovery`
-JSON block in a Bead note.
+commit SHA and validation evidence. A material discovery is recorded on the
+active Bead with the native `discovery` label plus a required human-readable
+note (`bd update <id> --add-label discovery --append-notes "..."`); a blocking
+discovery additionally sets the Bead status to `blocked`. The mechanical sync
+finds pending discoveries by the `discovery` label alone
+(`bd list --label discovery`) and never parses the note.
 
 Materialization is idempotent: rerunning it creates only missing mapped Beads
 and never duplicates work. The planner creates dependencies deliberately with

@@ -19,8 +19,9 @@ This example shows the intended flow, not an implementation mandate.
    task and appends an idempotent line to `execution-log.md`. It does not change
    requirements.
 5. Suppose the agent discovers that multi-select was unspecified. It records a
-   non-blocking `review` discovery in the Bead and implements the approved
-   single-file scope. The next planning session asks the Product Owner whether
+   non-blocking discovery on the Bead (the `discovery` label plus a
+   human-readable note) and implements the approved single-file scope. The next
+   planning session asks the Product Owner whether
    multi-select belongs in a new task. Only then is another Bead created.
 6. After all mapped Beads are closed, the change becomes eligible for `done`.
    The Product Owner accepts it and explicitly archives it after checking the

@@ -8,14 +8,28 @@ Read `README.md`, `docs/operating-model.md`, and the active Bead before work.
 2. Work only on a Bead that has been claimed by the Main Worker.
 3. Before closing, run relevant validation, commit with a Conventional Commit
    containing the Bead ID, and add a Bead note with the commit SHA and evidence.
-4. Record material discoveries in the active Bead as a fenced JSON block:
+4. Record every material discovery on the active Bead with the native Beads
+   `discovery` label plus a required human-readable note. Never encode the
+   discovery as serialized data (no JSON, no key/value block). An execution
+   agent can never change `openspec/` itself, so the discovery waits for the
+   next planning session, which lists it with `bd list --label discovery`.
 
-```specforge-discovery
-{"type":"review","blocking":false,"summary":"...","evidence":"...","suggested_action":"..."}
-```
+   - **Non-blocking** — the claimed task still finishes as specified. Record the
+     discovery and keep working the task normally:
 
-Use `automatic` only for narrow, backward-compatible details. Everything else
-is `review` and remains for the next Product Owner planning session.
+     ```bash
+     bd update <id> --add-label discovery \
+       --append-notes "Prose summary: what was found, the evidence, and the suggested follow-up."
+     ```
+
+   - **Blocking** — the task cannot be finished sensibly as specified. Record the
+     discovery, mark the Bead blocked, then switch to the next independent
+     ready Bead:
+
+     ```bash
+     bd update <id> --status blocked --add-label discovery \
+       --append-notes "Prose summary: what was found, the evidence, and why it blocks this task."
+     ```
 
 ## Planning only
 
