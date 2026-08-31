@@ -101,6 +101,28 @@ printf '# Kept project doc\n' > "$repo2/openspec/project.md"
 ( cd "$repo2" && node "$cli" init >/dev/null )
 check "existing project.md untouched" grep -q "Kept project doc" "$repo2/openspec/project.md"
 
+# --- rendered systemd unit ---------------------------------------------
+unit=$(find "$repo/systemd" -name 'specforge-sync-*.service')
+check "systemd service rendered" test -n "$unit"
+check "service targets the repo" grep -qx "WorkingDirectory=$repo" "$unit"
+check "service ExecStart is absolute" grep -qx "ExecStart=$repo/scripts/specforge sync" "$unit"
+check "unit filename carries the slug" bash -c "[[ '$(basename "$unit")' == specforge-sync-fresh.service ]]"
+tunit=$(find "$repo/systemd" -name 'specforge-sync-*.timer')
+check "timer binds the slugged service" grep -qx "Unit=specforge-sync-fresh.service" "$tunit"
+
+# --- --no-systemd -----------------------------------------------------
+nos="$work/nosystemd"
+mkdir -p "$nos"; git -C "$nos" init -q
+( cd "$nos" && node "$cli" init --no-systemd >/dev/null )
+check "--no-systemd skips the unit" [ ! -d "$nos/systemd" ]
+
+# --- core.hooksPath warning ------------------------------------------
+hp="$work/hookspath"
+mkdir -p "$hp/.beads/hooks"; git -C "$hp" init -q
+git -C "$hp" config core.hooksPath .beads/hooks
+out=$( cd "$hp" && node "$cli" init 2>&1 )
+check "warns when core.hooksPath diverts git" bash -c "grep -q 'core.hooksPath' <<< \"\$0\"" "$out"
+
 # --- not a git repo ------------------------------------------------------
 plain="$work/plain"
 mkdir -p "$plain"

@@ -3,6 +3,7 @@
 
 const install = require('./lib/install');
 const { applyMerges } = require('./lib/merge');
+const { renderSystemd } = require('./lib/systemd');
 
 const USAGE = `specforge — install the SpecForge operating structure into a repo
 
@@ -47,6 +48,15 @@ function parseArgs(argv) {
 function report(ctx) {
   const verb = ctx.dryRun ? 'Would change' : 'Changed';
   process.stdout.write(`\n${verb}:\n${ctx.log.render()}\n`);
+  if (ctx.warnings.length) {
+    process.stdout.write('\nWarnings:\n');
+    for (const w of ctx.warnings) process.stdout.write(`  - ${w}\n`);
+  }
+  if (ctx.notes.length && !ctx.dryRun) {
+    process.stdout.write('\nNext steps:\n');
+    for (const n of ctx.notes) process.stdout.write(`  - ${n}\n`);
+  }
+  if (ctx.dryRun) process.stdout.write('\n(dry run — nothing written)\n');
 }
 
 function cmdInit(args) {
@@ -55,9 +65,11 @@ function cmdInit(args) {
   install.copyDocs(ctx);
   install.writeScaffold(ctx);
   applyMerges(ctx);
+  renderSystemd(ctx);
   install.recordVersion(ctx);
+  install.installGitHooks(ctx);
+  install.beadsHint(ctx);
   report(ctx);
-  if (ctx.dryRun) process.stdout.write('\n(dry run — nothing written)\n');
 }
 
 function cmdUpdate(args) {
@@ -70,9 +82,10 @@ function cmdUpdate(args) {
   install.copyVerbatim(ctx);
   install.copyDocs(ctx);
   applyMerges(ctx);
+  renderSystemd(ctx);
   install.recordVersion(ctx);
+  install.installGitHooks(ctx);
   report(ctx);
-  if (ctx.dryRun) process.stdout.write('\n(dry run — nothing written)\n');
 }
 
 function cmdDoctor() {

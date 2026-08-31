@@ -46,6 +46,8 @@ function makeContext(opts) {
     noHooks: !!opts.noHooks,
     noSystemd: !!opts.noSystemd,
     log: new fsops.ChangeLog(),
+    notes: [],
+    warnings: [],
   };
 }
 
@@ -109,6 +111,44 @@ function recordVersion(ctx) {
   fsops.writeFile(rel, JSON.stringify(data, null, 2) + '\n', ctx);
 }
 
+// Install the two git hooks, unless core.hooksPath diverts Git away from
+// .git/hooks (the known Beads collision) — in that case warn instead.
+function installGitHooks(ctx) {
+  if (ctx.noHooks) {
+    ctx.log.add('skip', '.git/hooks', '--no-hooks');
+    return;
+  }
+  const { spawnSync } = require('child_process');
+  const hp = spawnSync('git', ['config', '--get', 'core.hooksPath'], {
+    cwd: ctx.targetRoot,
+    encoding: 'utf8',
+  });
+  const configured = (hp.stdout || '').trim();
+  if (configured && path.resolve(ctx.targetRoot, configured) !== path.join(ctx.targetRoot, '.git', 'hooks')) {
+    ctx.warnings.push(
+      `core.hooksPath is set to "${configured}", so Git will not run the SpecForge\n` +
+        '  pre-commit and commit-msg boundary hooks from .git/hooks. Install them into\n' +
+        `  that directory yourself, or clear core.hooksPath. (scripts/hooks/ hold the sources.)`,
+    );
+    return;
+  }
+  if (ctx.dryRun) {
+    ctx.log.add('run', 'scripts/install-hooks', 'dry-run');
+    return;
+  }
+  const r = spawnSync('scripts/install-hooks', [], { cwd: ctx.targetRoot, stdio: 'ignore' });
+  ctx.log.add(r.status === 0 ? 'run' : 'warn', 'scripts/install-hooks', r.status === 0 ? undefined : 'failed');
+  if (r.status !== 0) {
+    ctx.warnings.push('scripts/install-hooks failed — install the git hooks manually.');
+  }
+}
+
+function beadsHint(ctx) {
+  if (!fs.existsSync(path.join(ctx.targetRoot, '.beads'))) {
+    ctx.notes.push('Initialize the issue tracker:\n    bd init');
+  }
+}
+
 module.exports = {
   PKG_ROOT,
   packageVersion,
@@ -119,4 +159,6 @@ module.exports = {
   copyDocs,
   writeScaffold,
   recordVersion,
+  installGitHooks,
+  beadsHint,
 };
