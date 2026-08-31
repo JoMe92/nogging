@@ -108,6 +108,44 @@ SHALL record the installed SpecForge version in `.specforge/config.json`.
 - **AND** `openspec/project.md` is unchanged
 - **AND** `.specforge/config.json` records the new installed version
 
+### Requirement: init leaves the repository ready to start
+
+`init` SHALL bring the target repository to a state where a planning session can
+begin immediately. It SHALL initialize the Beads issue tracker in the repository
+unless `--no-beads` is given, and this step SHALL be idempotent — an already
+initialized tracker is left untouched. A failure to initialize Beads (for
+example an unreachable storage backend) SHALL be reported as a warning and
+SHALL NOT abort the install.
+
+After writing every file, `init` and `update` SHALL run the readiness check and
+end with an explicit verdict: either a single line stating that SpecForge is
+ready, or a list of the missing prerequisites (for example `python3`, `bd`, the
+storage backend, or an uninitialized tracker).
+
+#### Scenario: Fresh repository is initialized and reported ready
+
+- **WHEN** `init` runs in a repository with no Beads tracker and all prerequisites present
+- **THEN** a Beads tracker is initialized in the repository
+- **AND** the final output states that SpecForge is ready to use
+
+#### Scenario: Existing tracker is preserved
+
+- **WHEN** `init` runs in a repository that already has an initialized Beads tracker
+- **THEN** the existing tracker is left unchanged
+- **AND** the install still completes
+
+#### Scenario: Beads opt-out
+
+- **WHEN** `init` runs with `--no-beads`
+- **THEN** no Beads tracker is initialized
+- **AND** the readiness verdict lists the uninitialized tracker as outstanding
+
+#### Scenario: Missing prerequisite is named
+
+- **WHEN** `init` runs on a host where a required tool is not installed
+- **THEN** the install completes
+- **AND** the final verdict names the missing tool rather than claiming readiness
+
 ### Requirement: Installer reports an unusable hook path
 
 When the target repository has `core.hooksPath` set so that Git will not read

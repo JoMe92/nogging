@@ -16,6 +16,9 @@ structure and no way to pull later fixes.
   files (`.claude/settings.json`, `.gitignore`, `CLAUDE.md`, `AGENTS.md`)
   merged idempotently, and the systemd unit rendered with the target's absolute
   path and a per-repository slug.
+- `init` initializes the Beads tracker (`bd init`, opt out with `--no-beads`)
+  and both `init` and `update` end with a readiness verdict — "ready" or the
+  list of missing prerequisites — so one command leaves the repo ready to plan.
 - `update` refreshes the tool files and re-applies the idempotent merges without
   touching `openspec/changes/**`, `openspec/project.md` or the local
   `.specforge/config.json` name, and records the installed version.

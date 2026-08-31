@@ -106,6 +106,25 @@ step entirely, and sets `.specforge/config.json.specforge_version` to
 Flags: `--force` (allow `init` over an existing install), `--dry-run` (print the
 change log, write nothing), `--no-hooks`, `--no-systemd`.
 
+### Ready-to-start: `bd init` and a readiness verdict
+
+`init` runs `bd init --init-if-missing --non-interactive` as its **first** phase
+(before the verbatim/scaffold/merge steps), unless `--no-beads` is passed.
+Running it first matters: `bd init` writes its own `AGENTS.md`, so SpecForge's
+marker-block merge must land afterwards to sit on top of Beads' pointer. A
+non-zero exit (unreachable Dolt, etc.) is captured as a warning and does not
+abort the install — the readiness verdict will surface it.
+
+`init` and `update` finish by running the same checks as
+`scripts/specforge doctor` (tool availability plus a tracker check) and printing
+one of:
+
+- `SpecForge is ready — run ./scripts/specforge plan-begin to start.`
+- `SpecForge is installed but not ready: <missing tool / uninitialized tracker>`
+
+The installer does not install system tools; it only places files and reports
+what the host still needs.
+
 ### `doctor` passthrough and `python3` check
 
 `bin/cli.js doctor` execs `scripts/specforge doctor` in the cwd if present, else
