@@ -20,11 +20,19 @@ TASK_RE = re.compile(r"^- \[[ x]\] (TASK-[A-Z0-9-]+)\s+(.+)$", re.M)
 # so every read that feeds reconciliation asks for the full status set.
 BEAD_STATUSES = "open,in_progress,blocked,deferred,closed"
 
+class AuditError(RuntimeError):
+    """An invariant / mapping / task-parse disagreement. Permanent: a human
+    must resolve it before sync can make progress."""
+class LockBusyError(RuntimeError):
+    """Another sync holds the lock and it is not yet stale. Transient."""
+class ToolError(RuntimeError):
+    """A `git` / `bd` invocation exited non-zero. Treated as transient."""
+
 def now(): return dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat()
 def run(*args, check=True, env=None):
     result = subprocess.run(args, cwd=ROOT, text=True, capture_output=True, env=env)
     if check and result.returncode:
-        raise RuntimeError(f"{' '.join(args)}: {result.stderr.strip() or result.stdout.strip()}")
+        raise ToolError(f"{' '.join(args)}: {result.stderr.strip() or result.stdout.strip()}")
     return result
 def data_dir(path): path.mkdir(parents=True, exist_ok=True); return path
 def changes():
@@ -118,7 +126,7 @@ def lock(name, ttl, force=False):
         info = json.loads(path.read_text())
         then = dt.datetime.fromisoformat(info["created_at"])
         if (dt.datetime.now(dt.timezone.utc) - then).total_seconds() < ttl:
-            raise RuntimeError(f"{name} lock held by {info['host']} pid {info['pid']}; use --force only after verifying it is stale")
+            raise LockBusyError(f"{name} lock held by {info['host']} pid {info['pid']}; use --force only after verifying it is stale")
     path.write_text(json.dumps({"pid": os.getpid(), "host": socket.gethostname(), "created_at": now()}, indent=2) + "\n")
     return path
 def validate():
@@ -140,7 +148,7 @@ def validate():
     return tasks, issues, problems
 def materialize(change):
     tasks, issues, problems = validate()
-    if problems: raise RuntimeError("validation failed:\n- " + "\n- ".join(problems))
+    if problems: raise AuditError("validation failed:\n- " + "\n- ".join(problems))
     selected = [(task, info) for task, info in tasks.items() if info["change"] == change]
     if not selected: raise RuntimeError(f"no tasks found for change {change}")
     existing = {mapping(issue)[1] for issue in issues if mapping(issue)[0] == change}
@@ -208,10 +216,19 @@ def execution_log_entry(issue, task):
     return "\n".join(lines) + "\n"
 FAILURE_RECORD = STATE / "sync-failure.json"
 def classify_failure(exc):
-    """Transient failures are safe to retry; permanent ones need an operator.
-    Refined to exception-type dispatch in TASK-SYNC-008."""
-    msg = str(exc).lower()
-    if "audit failed" in msg or "validation failed" in msg:
+    """Mechanical classification by exception type/source.
+
+    Permanent (an operator must resolve the disagreement, no automatic retry):
+    an `AuditError` — a failed invariant audit, a mapping conflict, a missing
+    task, a malformed `tasks.md`.
+
+    Transient (safe to retry until `max_attempts`): `LockBusyError` (the sync
+    lock is held but not yet stale), `ToolError` (a `git`/`bd` invocation
+    failed), a JSON decode of a partial `bd` response, and anything else.
+    """
+    if isinstance(exc, AuditError): return "permanent"
+    if isinstance(exc, (LockBusyError, ToolError, json.JSONDecodeError)): return "transient"
+    if "audit failed" in str(exc).lower() or "validation failed" in str(exc).lower():
         return "permanent"
     return "transient"
 def record_failure(exc):
@@ -229,7 +246,8 @@ def record_failure(exc):
     retryable = classification == "transient" and attempts < max_attempts
     if retryable:
         base = int(CFG.get("sync_retry_base_seconds", CFG.get("sync_interval_seconds", 30)))
-        delay = base * (2 ** (attempts - 1))
+        cap = int(CFG.get("sync_retry_cap_seconds", 1800))
+        delay = min(cap, base * (2 ** (attempts - 1)))
         next_retry = (dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
                       + dt.timedelta(seconds=delay)).isoformat()
     else:
@@ -248,7 +266,7 @@ def sync():
     try:
         path = lock("sync", CFG["sync_lock_ttl_seconds"])
         tasks, issues, problems = validate()
-        if problems: raise RuntimeError("audit failed:\n- " + "\n- ".join(problems))
+        if problems: raise AuditError("audit failed:\n- " + "\n- ".join(problems))
         changed = []
         for issue in issues:
             change, task = mapping(issue)

@@ -277,6 +277,11 @@ grep -qE '"next_retry_after": "[0-9]' "$rec" \
 grep -qF '"attempts": 2' "$rec" \
   && echo "ok   - fail-trans: consecutive failure increments attempts" \
   || { echo "FAIL - fail-trans: attempts did not increment"; cat "$rec"; fail=1; }
+# retries stop at the attempt cap (sync_max_attempts = 5)
+for _ in 1 2 3 4 5; do "$specforge" sync >"$out" 2>&1 || true; done
+grep -qF '"next_retry_after": null' "$rec" \
+  && echo "ok   - fail-trans: no retry scheduled once the attempt cap is reached" \
+  || { echo "FAIL - fail-trans: retry still scheduled past the cap"; cat "$rec"; fail=1; }
 
 # --- Scenario: a successful sync clears the failure record -----------------
 rm -f "$root/.specforge/locks/sync.lock"
