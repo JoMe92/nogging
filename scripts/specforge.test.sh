@@ -166,6 +166,12 @@ tasks="$root/openspec/changes/demo/tasks.md"
 grep -qF -- '- [x] TASK-DEMO-001' "$tasks" \
   && echo "ok   - sync-once: task checkbox flipped" \
   || { echo "FAIL - sync-once: checkbox not flipped"; cat "$tasks"; fail=1; }
+grep -qF -- 'Bead closed at 2026-09-01T10:00:00Z' "$log" \
+  && echo "ok   - sync-once: entry records the closure timestamp" \
+  || { echo "FAIL - sync-once: closure timestamp missing"; cat "$log"; fail=1; }
+grep -qF -- 'implemented the first demo thing' "$log" \
+  && echo "ok   - sync-once: Bead note preserved verbatim in the entry" \
+  || { echo "FAIL - sync-once: Bead note not in entry"; cat "$log"; fail=1; }
 
 # second run: no diff
 "$specforge" sync >"$out" 2>&1 || { echo "FAIL - sync-once: second sync errored"; cat "$out"; fail=1; }

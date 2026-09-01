@@ -121,6 +121,41 @@ def materialize(change):
             continue
         run(CFG["beads_command"], "create", "--title", f"{task}: {info['title']}", "--type", "task", "--labels", f"openspec:change:{change},openspec:task:{task}")
         print(f"materialized {task}")
+def commit_refs(issue):
+    """Implementation commit references for a closed Bead (best effort).
+
+    Extended in TASK-SYNC-004 to also scan `git log` subjects for the Bead ID
+    token; here it returns the hex SHAs the execution agent wrote into the note.
+    """
+    note = (issue.get("notes") or "").lower()
+    return [s for s in dict.fromkeys(re.findall(r"\b[0-9a-f]{7,40}\b", note))
+            if any(c.isdigit() for c in s)]
+def closure_event_key(issue):
+    """Stable per-closure marker: `closed_at`, falling back to `updated_at`."""
+    stamp = issue.get("closed_at") or issue.get("updated_at") or "closed"
+    return f"<!-- specforge:{issue_id(issue)}:{stamp} -->"
+def execution_log_entry(issue, task):
+    """Render one enriched execution-log entry for a closed mapped Bead.
+
+    Carries the Bead ID, the closure timestamp (`closed_at`, falling back to
+    `updated_at`), determinable implementation commit references, and the Bead's
+    human-readable note preserved verbatim as an indented block. The entry is
+    written even when no commit reference is found; absence is stated.
+    """
+    bid = issue_id(issue)
+    closed_at = issue.get("closed_at") or issue.get("updated_at") or "unknown"
+    lines = [closure_event_key(issue),
+             f"- {now()} — {bid} closed for {task} (Bead closed at {closed_at})."]
+    refs = commit_refs(issue)
+    lines.append(f"  - implementation commits: {', '.join(refs)}" if refs
+                 else "  - implementation commits: none found")
+    note = (issue.get("notes") or "").strip()
+    if note:
+        lines.append("  - Bead note:")
+        lines.extend("    " + ln for ln in note.splitlines())
+    else:
+        lines.append("  - Bead note: (none recorded)")
+    return "\n".join(lines) + "\n"
 def sync():
     path = lock("sync", CFG["sync_lock_ttl_seconds"])
     try:
@@ -132,10 +167,10 @@ def sync():
             if not task or issue.get("status") != "closed": continue
             log = ROOT / "openspec/changes" / change / "execution-log.md"
             log.parent.mkdir(parents=True, exist_ok=True)
-            key = f"<!-- specforge:{issue_id(issue)}:{issue.get('updated_at', issue.get('closed_at', 'closed'))} -->"
+            key = closure_event_key(issue)
             current = log.read_text() if log.exists() else "# Execution log\n"
             if key not in current:
-                log.write_text(current + f"\n{key}\n- {now()} — `{issue_id(issue)}` closed for `{task}`.\n")
+                log.write_text(current + "\n" + execution_log_entry(issue, task))
                 changed.append(log)
             f = tasks[task]["file"]; text = f.read_text(); updated = re.sub(rf"^- \[ \] ({re.escape(task)}\b)", r"- [x] \1", text, flags=re.M)
             if updated != text: f.write_text(updated); changed.append(f)
