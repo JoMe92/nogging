@@ -12,6 +12,10 @@ ROOT = Path(__file__).resolve().parents[1]
 CFG = json.loads((ROOT / ".specforge/config.json").read_text())
 LOCKS, STATE, REPORTS = (ROOT / ".specforge/locks", ROOT / ".specforge/state", ROOT / ".specforge/reports")
 TASK_RE = re.compile(r"^- \[[ x]\] (TASK-[A-Z0-9-]+)\s+(.+)$", re.M)
+# Beads scopes `bd list` to non-closed issues by default. The mechanical sync
+# must see closed mapped Beads too (a closed Bead is exactly what gets mirrored),
+# so every read that feeds reconciliation asks for the full status set.
+BEAD_STATUSES = "open,in_progress,blocked,deferred,closed"
 
 def now(): return dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat()
 def run(*args, check=True, env=None):
@@ -33,7 +37,7 @@ def task_map():
             found[task] = {"change": change.name, "file": file, "title": title}
     return found, duplicates
 def beads():
-    out = run(CFG["beads_command"], "list", "--json").stdout.strip()
+    out = run(CFG["beads_command"], "list", "--status", BEAD_STATUSES, "--limit", "0", "--json").stdout.strip()
     decoded = json.loads(out or "[]")
     return decoded.get("issues", decoded) if isinstance(decoded, dict) else decoded
 def labels(issue): return issue.get("labels") or []
