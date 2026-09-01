@@ -230,5 +230,61 @@ grep -qF "sync: no changes" "$out" \
   || { echo "FAIL - sync-once: checkbox changed on re-run"; fail=1; }
 unset SPECFORGE_ROOT
 
+# --- Scenario: a permanent (audit) failure is recorded, not retried --------
+root="$work/fail-perm"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export BD_FIXTURE="$work/fail-perm-beads.json"
+cat >"$BD_FIXTURE" <<'JSON'
+[
+  {"id": "SPEC-x01", "status": "open",
+   "labels": ["openspec:change:demo", "openspec:task:TASK-DEMO-404"]}
+]
+JSON
+rec="$root/.specforge/state/sync-failure.json"
+"$specforge" sync >"$out" 2>&1 && { echo "FAIL - fail-perm: sync should have failed"; fail=1; }
+[[ -f "$rec" ]] \
+  && echo "ok   - fail-perm: active failure record written" \
+  || { echo "FAIL - fail-perm: no failure record"; fail=1; }
+grep -qF '"classification": "permanent"' "$rec" \
+  && echo "ok   - fail-perm: classified permanent" \
+  || { echo "FAIL - fail-perm: wrong classification"; cat "$rec"; fail=1; }
+grep -qF '"next_retry_after": null' "$rec" \
+  && echo "ok   - fail-perm: no automatic retry scheduled" \
+  || { echo "FAIL - fail-perm: retry was scheduled"; cat "$rec"; fail=1; }
+unset SPECFORGE_ROOT
+
+# --- Scenario: a transient (lock) failure records retry metadata -----------
+root="$work/fail-trans"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export BD_FIXTURE="$work/fail-trans-beads.json"
+printf '[]\n' >"$BD_FIXTURE"
+held="$(date -u +%Y-%m-%dT%H:%M:%S+00:00)"
+printf '{"pid": 999999, "host": "ghost", "created_at": "%s"}\n' "$held" \
+  >"$root/.specforge/locks/sync.lock"
+rec="$root/.specforge/state/sync-failure.json"
+"$specforge" sync >"$out" 2>&1 && { echo "FAIL - fail-trans: sync should have failed on lock"; fail=1; }
+grep -qF '"classification": "transient"' "$rec" \
+  && echo "ok   - fail-trans: classified transient" \
+  || { echo "FAIL - fail-trans: wrong classification"; cat "$rec"; fail=1; }
+grep -qE '"attempts": 1' "$rec" && grep -qE '"max_attempts": [0-9]' "$rec" \
+  && echo "ok   - fail-trans: attempt count and cap recorded" \
+  || { echo "FAIL - fail-trans: missing attempt metadata"; cat "$rec"; fail=1; }
+grep -qE '"next_retry_after": "[0-9]' "$rec" \
+  && echo "ok   - fail-trans: next retry time scheduled" \
+  || { echo "FAIL - fail-trans: no next retry time"; cat "$rec"; fail=1; }
+# a second failure increments attempts
+"$specforge" sync >"$out" 2>&1 || true
+grep -qF '"attempts": 2' "$rec" \
+  && echo "ok   - fail-trans: consecutive failure increments attempts" \
+  || { echo "FAIL - fail-trans: attempts did not increment"; cat "$rec"; fail=1; }
+
+# --- Scenario: a successful sync clears the failure record -----------------
+rm -f "$root/.specforge/locks/sync.lock"
+"$specforge" sync >"$out" 2>&1 || { echo "FAIL - clear: recovery sync errored"; cat "$out"; fail=1; }
+[[ ! -f "$rec" ]] \
+  && echo "ok   - clear: successful sync removed the active failure record" \
+  || { echo "FAIL - clear: failure record not cleared"; cat "$rec"; fail=1; }
+unset SPECFORGE_ROOT
+
 if [[ $fail -ne 0 ]]; then echo "specforge checks failed" >&2; exit 1; fi
 echo "all specforge checks passed"
