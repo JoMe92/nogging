@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Launch wrapper for a SpecForge-supervised Claude Code session. It is the
+# process `specforge session launch` starts inside tmux.
+#
+# Least authority, no credential leakage:
+#   - no shell trace (`set -x`): no command line carrying a secret is ever
+#     echoed into the pane, and therefore never into the pipe-pane log;
+#   - no token is accepted as an argument (arguments are visible in `ps` and
+#     are recorded in the session metadata `command`); any credential the
+#     child needs is read by Claude itself from the environment or from a
+#     file it opens;
+#   - Claude starts with the restricted permission profile (no `git push`, no
+#     remote Dolt sync, no destructive shell) and is scoped to the working
+#     directory;
+#   - the no-autonomous-claim system prompt is appended so the session does
+#     not select or claim a Bead as a consequence of being started.
+#
+# Usage:
+#   session-launch --settings <profile.json> --prompt <prompt.md> \
+#                  --cwd <dir> --bead <id> [--read-only]
+set -eu
+
+settings=""
+prompt=""
+cwd=""
+bead=""
+read_only=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --settings)  settings=$2; shift 2 ;;
+    --prompt)    prompt=$2; shift 2 ;;
+    --cwd)       cwd=$2; shift 2 ;;
+    --bead)      bead=$2; shift 2 ;;
+    --read-only) read_only=1; shift ;;
+    --)          shift; break ;;
+    *) echo "session-launch: unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+
+[ -n "$cwd" ] && cd "$cwd"
+
+set --
+[ -n "$settings" ] && set -- "$@" --settings "$settings"
+if [ -n "$prompt" ] && [ -f "$prompt" ]; then
+  set -- "$@" --append-system-prompt "$(cat "$prompt")"
+fi
+[ "$read_only" -eq 1 ] && set -- "$@" --permission-mode plan
+
+echo "specforge: starting Claude for ${bead:-<no bead>} in $(pwd) (read-only=${read_only})"
+exec claude "$@"

@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "defaultMode": "default",
+    "deny": [
+      "Bash(git push)",
+      "Bash(git push:*)",
+      "Bash(git remote:*)",
+      "Bash(bd sync:*)",
+      "Bash(bd dolt push:*)",
+      "Bash(bd dolt pull:*)",
+      "Bash(bd dolt clone:*)",
+      "Bash(dolt push:*)",
+      "Bash(dolt pull:*)",
+      "Bash(dolt remote:*)",
+      "Bash(git config:*)",
+      "Bash(sudo:*)",
+      "Bash(rm -rf:*)",
+      "Bash(rm -fr:*)",
+      "Bash(dd:*)",
+      "Bash(mkfs:*)",
+      "Bash(shutdown:*)",
+      "Bash(reboot:*)",
+      "Bash(systemctl:*)",
+      "Bash(chown:*)",
+      "Bash(chmod -R:*)",
+      "Bash(curl:*)",
+      "Bash(wget:*)",
+      "WebFetch"
+    ],
+    "additionalDirectories": []
+  }
+}
