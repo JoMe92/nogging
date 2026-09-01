@@ -31,7 +31,9 @@ recorded a concrete defect in that mechanical part during its verification work:
 - **Closed Bead enumeration:** the sync pass enumerates every mapped Bead whose
   status is `closed`, in addition to the open and in-progress mapped Beads it
   already reads, and mirrors each closed Bead idempotently to its task checkbox
-  and the change execution log.
+  and the change execution log. `materialize()` uses the same closed-inclusive
+  read for its "already mapped" check, so re-running it for a partly-done change
+  no longer duplicates the Beads of finished tasks (discovery SPEC-dvu).
 - **Enriched execution-log entries:** each mirrored entry records the Bead ID,
   the closure timestamp, the Bead's human-readable note, and any implementation
   commit references that can be determined; entries stay idempotent across

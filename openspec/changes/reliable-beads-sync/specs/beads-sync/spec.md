@@ -28,6 +28,26 @@ SHALL NOT modify an already-checked task.
 - **WHEN** a mapped Bead was open at the previous sync and is closed before the next sync
 - **THEN** the next sync mirrors its closure to the task checkbox and the execution log
 
+### Requirement: Materialization is idempotent across closed Beads
+
+`scripts/specforge materialize` SHALL NOT create a second Bead for a task that
+already has a mapped Bead, regardless of that Bead's status. The check for an
+existing mapped Bead SHALL enumerate closed Beads, not only non-closed ones, so
+that re-running materialization for a change whose tasks are partly done does
+not duplicate the Beads of the finished tasks.
+
+#### Scenario: Re-materializing a partly-done change creates no duplicates
+
+- **WHEN** every task of a change is already mapped to a Bead and some of those Beads are closed
+- **AND** `scripts/specforge materialize <change>` runs again
+- **THEN** no new Bead is created
+
+#### Scenario: Only a newly added task is materialized
+
+- **WHEN** a change gains one new task and its other tasks are mapped to Beads that are now closed
+- **AND** `scripts/specforge materialize <change>` runs
+- **THEN** exactly one Bead is created, for the new task
+
 ### Requirement: Execution-log entries record closure evidence
 
 Each execution-log entry written for a Bead closure SHALL record the Bead ID,

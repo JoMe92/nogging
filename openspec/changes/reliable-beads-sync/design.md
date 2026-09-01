@@ -49,6 +49,14 @@ comma-separated `--status open,in_progress,blocked,deferred,closed` request.
 The sync pass keeps its existing `status == "closed"` filter for the mirror
 step; the fix is purely that closed Beads now reach that filter.
 
+The same closed-status omission bites `materialize()` independently: it builds
+its "already mapped" set from `beads()` and skips any task already in it, so once
+a task's Bead is closed the guard no longer sees it and a re-run of
+`./scripts/specforge materialize <change>` creates a duplicate Bead for that
+task (discovery SPEC-dvu — seven duplicates observed during `specforge-installer`).
+Feeding `materialize()`'s existing-set check from the same closed-inclusive read
+fixes both call sites at once.
+
 Idempotency is unchanged in mechanism: the mirror step is gated by the
 `<!-- specforge:<id>:<updated_at|closed_at> -->` event key already present in
 `execution-log.md`, and the checkbox rewrite only flips `- [ ]` to `- [x]`.
