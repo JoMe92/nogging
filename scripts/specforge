@@ -465,6 +465,39 @@ def session_list():
               f"{rec.get('role',''):<24}  {rec.get('started_at',''):<20}  "
               f"{reconciled_state(rec, live):<8}  {str(rec.get('owner','')):<20}  "
               f"{rec.get('working_dir','')}")
+def _archive_log(rec):
+    lp = Path(rec.get("log_path") or "")
+    if lp and lp.exists():
+        stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S")
+        archived = lp.with_name(lp.name + f".archived-{stamp}")
+        lp.rename(archived)
+        rec["archived_log_path"] = str(archived)
+def session_cleanup(name):
+    """Remove a lingering tmux session, archive-rotate its log, and retire the
+    metadata record. Refuses any record still `starting`, `running` or `idle`
+    - stop it first. With no name, acts only on already-terminal records."""
+    if name:
+        path, rec = load_session(name)
+        if rec.get("state") in SESSION_ACTIVE_STATES:
+            raise RuntimeError(f"{name} is {rec.get('state')}; run `session stop {name}` first")
+        targets = [(path, rec)]
+    else:
+        targets = [(p, r) for p, r in session_records()
+                   if r.get("state") in ("stopped", "failed")]
+        if not targets:
+            print("no terminal sessions to clean up"); return
+    live = tmux_sessions()
+    for path, rec in targets:
+        nm = rec.get("name")
+        if nm in live:
+            tmux("kill-session", "-t", nm, check=False)
+        _archive_log(rec)
+        transition(path, rec, "retired", retired_at=now())
+        print(f"retired {nm}")
+    if not [r for _, r in session_records() if r.get("state") != "retired"]:
+        if tmux_sessions():
+            tmux("kill-server", check=False)
+            print("no active sessions remain; SpecForge tmux server stopped")
 def session_stop(name, reason):
     """Interrupt the Claude process, terminate the pane/session after a grace
     period, and record a terminal state. Idempotent: a second stop on an
@@ -538,6 +571,7 @@ def main():
     sa = ssub.add_parser("attach"); sa.add_argument("name"); sa.add_argument("--read-only", action="store_true")
     slg = ssub.add_parser("log"); slg.add_argument("name"); slg.add_argument("--follow", action="store_true")
     sst = ssub.add_parser("stop"); sst.add_argument("name"); sst.add_argument("--reason")
+    scl = ssub.add_parser("cleanup"); scl.add_argument("name", nargs="?")
     args = p.parse_args()
     if args.command == "plan-begin": lock("planning", CFG["planning_lock_ttl_seconds"], args.force); print("planning session lock acquired")
     elif args.command == "plan-end":
@@ -560,6 +594,8 @@ def session_cmd(args):
         session_log(args.name, args.follow)
     elif args.session_command == "stop":
         session_stop(args.name, args.reason)
+    elif args.session_command == "cleanup":
+        session_cleanup(args.name)
 if __name__ == "__main__":
     try: main()
     except Exception as exc: print(f"specforge: {exc}", file=sys.stderr); sys.exit(1)
