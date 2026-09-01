@@ -18,10 +18,13 @@ module.exports = {
     'scripts/install-hooks',
     'scripts/test',
     'scripts/specforge.test.sh',
+    'scripts/check-branch-name',
     'scripts/hooks/commit-msg',
     'scripts/hooks/pre-commit',
+    'scripts/hooks/pre-push',
     'scripts/hooks/pre-tool-use-openspec-guard',
     'scripts/hooks/commit-msg.test.sh',
+    'scripts/hooks/branch-name.test.sh',
   ],
 
   // Directories copied verbatim (recursive).
@@ -52,8 +55,10 @@ module.exports = {
     'scripts/specforge',
     'scripts/install-hooks',
     'scripts/test',
+    'scripts/check-branch-name',
     'scripts/hooks/commit-msg',
     'scripts/hooks/pre-commit',
+    'scripts/hooks/pre-push',
     'scripts/hooks/pre-tool-use-openspec-guard',
   ],
 

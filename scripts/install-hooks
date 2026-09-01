@@ -5,4 +5,5 @@ hooks="$root/.git/hooks"
 
 install -m 0755 "$root/scripts/hooks/commit-msg" "$hooks/commit-msg"
 install -m 0755 "$root/scripts/hooks/pre-commit" "$hooks/pre-commit"
+install -m 0755 "$root/scripts/hooks/pre-push" "$hooks/pre-push"
 echo "SpecForge hooks installed."

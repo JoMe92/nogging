@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Advisory pre-push check: reject a push from a branch whose name does not
+# satisfy the SpecForge branch-naming convention. It calls the one shared
+# implementation, scripts/check-branch-name, and adds no rule of its own. It
+# does not re-check commit messages — that is commit-msg's job, per commit.
+#
+# Where core.hooksPath diverts Git away from .git/hooks this hook does not run;
+# the CI `invariants` job remains authoritative.
+set -euo pipefail
+
+root=$(git rev-parse --show-toplevel 2>/dev/null || true)
+checker="${root:+$root/scripts/check-branch-name}"
+
+branch=$(git symbolic-ref --short -q HEAD || true)
+
+if [[ -z "$checker" || ! -x "$checker" ]]; then
+  echo "SpecForge pre-push: scripts/check-branch-name not found; skipping branch-name check." >&2
+  exit 0
+fi
+
+if ! "$checker" "$branch"; then
+  echo "SpecForge pre-push: refusing to push a branch that violates the naming convention." >&2
+  exit 1
+fi
