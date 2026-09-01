@@ -11,8 +11,28 @@
 ## Branches and commits
 
 `main` is the stable integration branch. `develop` is the active integration
-branch. Use Conventional Branches: `feat/<change-id>`, `fix/<change-id>`,
-`chore/<topic>`. Use Conventional Commits, for example
+branch. `main` and `develop` are protected and exempt from the branch-naming
+convention below.
+
+Every other working branch is named `<type>/<slug>`:
+
+- `<type>` is one of `feat`, `fix`, `chore`, `docs`, `refactor`, `perf`,
+  `test`, or `plan`. All but `plan` are Conventional Commit types; `plan` is
+  reserved for a planning-session branch.
+- A **change branch** — one that advances an OpenSpec change — MUST use that
+  change's `openspec/changes/<slug>/` directory name as its `<slug>` (never
+  `archive`). This is what makes the branch traceable to agreed intent. Any of
+  the `<type>` values may front a change branch, e.g.
+  `feat/photo-import-filesystem`.
+- `chore/<topic>` and `plan/<topic>` cover work not scoped to a single change —
+  tooling, multi-change planning. `<topic>` is a free kebab slug and needs no
+  `openspec/changes/` match.
+
+`scripts/check-branch-name <ref>` is the one implementation of this rule; the
+`pre-push` hook and the CI `invariants` job both call it and neither re-encodes
+it. A branch that does not match fails CI.
+
+Use Conventional Commits, for example
 `feat(import): add filesystem picker [SPEC-abc123]`.
 
 Planning changes are committed on their change branch and merged into `develop`
