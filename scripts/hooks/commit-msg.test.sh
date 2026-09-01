@@ -37,6 +37,31 @@ run pass "sync exemption accepted"             SPECFORGE_WRITER=sync     "chore(
 run fail "non-conventional subject rejected"   -                        "harden commit-msg hook [SPEC-gjw]"
 run fail "planning writer still needs Conventional Commit" SPECFORGE_WRITER=planning "revise openspec change"
 
+# run_msg <expect: pass|fail> <description> <full-message>
+# For multi-line messages that carry a SpecForge-Writer trailer in the body.
+run_msg() {
+  local expect="$1" desc="$2" msg="$3"
+  printf '%s\n' "$msg" >"$tmp"
+  local rc=0
+  "$hook" "$tmp" >/dev/null 2>&1 || rc=$?
+  local got="pass"; [[ $rc -ne 0 ]] && got="fail"
+  if [[ "$got" == "$expect" ]]; then
+    echo "ok   - $desc"
+  else
+    echo "FAIL - $desc (expected $expect, got $got, rc=$rc)"
+    fail=1
+  fi
+}
+
+run_msg pass "SpecForge-Writer: planning trailer exempts a no-ID subject" \
+  $'docs(openspec): revise the change\n\nSpecForge-Writer: planning'
+run_msg fail "trailer still requires a Conventional subject" \
+  $'revise the change\n\nSpecForge-Writer: planning'
+run_msg fail "SpecForge-Writer: bogus does not exempt" \
+  $'docs(openspec): revise the change\n\nSpecForge-Writer: bogus'
+run_msg pass "SpecForge-Writer: sync trailer exempts the mirror commit" \
+  $'chore(sync): mirror Beads execution evidence\n\nSpecForge-Writer: sync'
+
 if [[ $fail -ne 0 ]]; then
   echo "commit-msg checks failed" >&2
   exit 1
