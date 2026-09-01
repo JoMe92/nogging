@@ -8,7 +8,10 @@ from __future__ import annotations
 import argparse, datetime as dt, json, os, re, socket, subprocess, sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+# ROOT is the repository the bridge operates on. It defaults to the checkout the
+# script lives in; SPECFORGE_ROOT overrides it so the test suite can point the
+# bridge at a scratch repository.
+ROOT = Path(os.environ.get("SPECFORGE_ROOT") or Path(__file__).resolve().parents[1]).resolve()
 CFG = json.loads((ROOT / ".specforge/config.json").read_text())
 LOCKS, STATE, REPORTS = (ROOT / ".specforge/locks", ROOT / ".specforge/state", ROOT / ".specforge/reports")
 TASK_RE = re.compile(r"^- \[[ x]\] (TASK-[A-Z0-9-]+)\s+(.+)$", re.M)
