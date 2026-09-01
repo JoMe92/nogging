@@ -7,5 +7,13 @@
   "sync_max_attempts": 5,
   "sync_retry_base_seconds": 30,
   "sync_retry_cap_seconds": 1800,
-  "change_states": ["open", "done", "archived"]
+  "change_states": ["open", "done", "archived"],
+  "session_tmux_command": "tmux",
+  "session_tmux_socket": "specforge",
+  "session_state_dir": ".specforge/state/sessions",
+  "session_log_max_bytes": 1048576,
+  "session_log_rotation_depth": 3,
+  "session_stop_grace_seconds": 10,
+  "session_launch_profile": ".specforge/session-launch-profile.json",
+  "session_launch_prompt": ".specforge/session-launch-prompt.md"
 }
