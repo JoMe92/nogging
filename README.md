@@ -39,8 +39,10 @@ git switch develop
 ```
 
 The timer is installed with `systemctl --user enable --now specforge-sync.timer`.
-See [docs/operating-model.md](docs/operating-model.md) and
-[docs/walkthrough-photo-import.md](docs/walkthrough-photo-import.md).
+See [docs/vision-and-architecture.md](docs/vision-and-architecture.md) for the
+goal and the design, [docs/operating-model.md](docs/operating-model.md) for the
+process, and [docs/walkthrough-photo-import.md](docs/walkthrough-photo-import.md)
+for a worked example.
 
 ## Install into another repo
 
