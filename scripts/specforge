@@ -465,6 +465,25 @@ def session_list():
               f"{rec.get('role',''):<24}  {rec.get('started_at',''):<20}  "
               f"{reconciled_state(rec, live):<8}  {str(rec.get('owner','')):<20}  "
               f"{rec.get('working_dir','')}")
+def session_stop(name, reason):
+    """Interrupt the Claude process, terminate the pane/session after a grace
+    period, and record a terminal state. Idempotent: a second stop on an
+    already-terminal record is a reported no-op."""
+    path, rec = load_session(name)
+    if rec.get("state") in SESSION_TERMINAL_STATES:
+        print(f"{name} already {rec.get('state')} "
+              f"(ended {rec.get('ended_at')}, reason: {rec.get('exit_reason')}); nothing to do")
+        return
+    grace = float(scfg("session_stop_grace_seconds", 10))
+    if tmux_has_session(name):
+        tmux("send-keys", "-t", name, "C-c", check=False)      # interrupt Claude
+        deadline = time.monotonic() + grace
+        while time.monotonic() < deadline and tmux_has_session(name):
+            time.sleep(0.2)
+        if tmux_has_session(name):
+            tmux("kill-session", "-t", name, check=False)      # hard terminate
+    transition(path, rec, "stopped", exit_reason=(reason or "stopped by operator"))
+    print(f"stopped {name} (reason: {rec['exit_reason']})")
 def session_attach(name, read_only):
     """Attach the operator's terminal to a managed tmux session. This is the
     only subcommand that attaches; it is never invoked as a side effect."""
@@ -518,6 +537,7 @@ def main():
     ssub.add_parser("list")
     sa = ssub.add_parser("attach"); sa.add_argument("name"); sa.add_argument("--read-only", action="store_true")
     slg = ssub.add_parser("log"); slg.add_argument("name"); slg.add_argument("--follow", action="store_true")
+    sst = ssub.add_parser("stop"); sst.add_argument("name"); sst.add_argument("--reason")
     args = p.parse_args()
     if args.command == "plan-begin": lock("planning", CFG["planning_lock_ttl_seconds"], args.force); print("planning session lock acquired")
     elif args.command == "plan-end":
@@ -538,6 +558,8 @@ def session_cmd(args):
         session_attach(args.name, args.read_only)
     elif args.session_command == "log":
         session_log(args.name, args.follow)
+    elif args.session_command == "stop":
+        session_stop(args.name, args.reason)
 if __name__ == "__main__":
     try: main()
     except Exception as exc: print(f"specforge: {exc}", file=sys.stderr); sys.exit(1)
