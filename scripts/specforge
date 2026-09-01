@@ -151,6 +151,10 @@ def materialize(change):
     if problems: raise AuditError("validation failed:\n- " + "\n- ".join(problems))
     selected = [(task, info) for task, info in tasks.items() if info["change"] == change]
     if not selected: raise RuntimeError(f"no tasks found for change {change}")
+    # `issues` comes from beads(), which reads the full status set, so a task
+    # whose mapped Bead is already closed counts as materialized and is not
+    # recreated (discovery SPEC-dvu: a partly-done change was duplicating the
+    # Beads of its finished tasks on a re-run).
     existing = {mapping(issue)[1] for issue in issues if mapping(issue)[0] == change}
     for task, info in selected:
         if task in existing:

@@ -254,6 +254,30 @@ grep -qF -- '- [x] TASK-DEMO-002' "$root/openspec/changes/demo/tasks.md" \
   || { echo "FAIL - sync-bare: checkbox not flipped"; fail=1; }
 unset SPECFORGE_ROOT
 
+# --- Scenario: re-running materialize over closed Beads creates nothing ----
+root="$work/mat-idem"; make_root "$root"
+sed -i 's/- \[ \] TASK-DEMO-001/- [x] TASK-DEMO-001/' "$root/openspec/changes/demo/tasks.md"
+git -C "$root" commit -qam "chore: pre-check demo-001 [SPEC-000]"
+export SPECFORGE_ROOT="$root"
+export BD_FIXTURE="$work/mat-idem-beads.json"
+export BD_CREATE_LOG="$work/mat-idem-create.log"; : >"$BD_CREATE_LOG"
+cat >"$BD_FIXTURE" <<'JSON'
+[
+  {"id": "SPEC-d01", "status": "closed", "closed_at": "2026-09-01T10:00:00Z",
+   "labels": ["openspec:change:demo", "openspec:task:TASK-DEMO-001"]},
+  {"id": "SPEC-d02", "status": "open",
+   "labels": ["openspec:change:demo", "openspec:task:TASK-DEMO-002"]}
+]
+JSON
+"$specforge" materialize demo >"$out" 2>&1 || { echo "FAIL - mat-idem: materialize errored"; cat "$out"; fail=1; }
+[[ -s "$BD_CREATE_LOG" ]] \
+  && { echo "FAIL - mat-idem: materialize created a Bead"; cat "$BD_CREATE_LOG"; fail=1; } \
+  || echo "ok   - mat-idem: re-materialize over a closed mapped Bead creates nothing"
+grep -qF 'already materialized TASK-DEMO-001' "$out" \
+  && echo "ok   - mat-idem: the closed Bead's task counts as materialized" \
+  || { echo "FAIL - mat-idem: closed task not recognised"; cat "$out"; fail=1; }
+unset SPECFORGE_ROOT BD_CREATE_LOG
+
 # --- Scenario: a permanent (audit) failure is recorded, not retried --------
 root="$work/fail-perm"; make_root "$root"
 export SPECFORGE_ROOT="$root"
