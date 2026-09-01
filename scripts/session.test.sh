@@ -1,0 +1,304 @@
+#!/usr/bin/env bash
+# Regression checks for `scripts/specforge session ...` (TASK-SESSION-013).
+#
+# tmux is STUBBED (PATH-injected, same technique as the `bd` stub and the
+# SPECFORGE_ROOT seam in scripts/specforge.test.sh): no real tmux server is
+# ever started. The stub is stateful — `new-session` creates a marker file,
+# `kill-session` / a C-c `send-keys` removes it, `has-session` / `list-sessions`
+# read it — so lifecycle transitions are observable without a tty.
+#
+# Covered:
+#   - launch writes the metadata record AND the log file before it execs tmux;
+#   - a name collision is rejected and nothing existing is overwritten;
+#   - `list` reports a vanished active session as `failed`;
+#   - `stop` records a terminal state and is idempotent;
+#   - `cleanup` refuses a running record and succeeds on a stopped one;
+#   - `launch` performs no `bd` mutation;
+#   - a seeded secret value reaches neither the recorded command nor the log;
+#   - the append-only log writer rotates by size to the configured depth.
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+specforge="$here/specforge"
+repo_root="$(cd "$here/.." && pwd)"
+work=$(mktemp -d)
+out=$(mktemp)
+trap 'rm -f "$out"; rm -rf "$work"' EXIT
+
+# --- stubs -----------------------------------------------------------------
+mkdir -p "$work/bin"
+
+# bd: `show <id> --json` returns a record for any id under $BD_KNOWN (space
+# separated); every other call is logged to $BD_MUTATION_LOG and fails.
+cat >"$work/bin/bd" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "show" ]]; then
+  id="${2:-}"
+  for k in ${BD_KNOWN:-}; do
+    if [[ "$k" == "$id" ]]; then printf '[{"id":"%s","title":"stub bead"}]\n' "$id"; exit 0; fi
+  done
+  echo '[]'; exit 1
+fi
+printf 'bd %s\n' "$*" >>"${BD_MUTATION_LOG:-/dev/null}"
+echo "stub bd: refusing mutation in session tests: $*" >&2
+exit 1
+STUB
+chmod +x "$work/bin/bd"
+
+# tmux: stateful stub over $TMUX_STUB_DIR.
+cat >"$work/bin/tmux" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "${1:-}" == "-L" ]] && shift 2
+cmd="${1:-}"; shift || true
+d="${TMUX_STUB_DIR:?TMUX_STUB_DIR unset}"; mkdir -p "$d"
+printf '%s %s\n' "$cmd" "$*" >>"$d/calls.log"
+arg_after() { local flag="$1"; shift; while [[ $# -gt 0 ]]; do [[ "$1" == "$flag" ]] && { printf '%s' "$2"; return; }; shift; done; }
+case "$cmd" in
+  new-session)
+    name="$(arg_after -s "$@")"
+    # metadata AND log must already exist on disk before the child is exec'd
+    ls "$SPECFORGE_ROOT"/.specforge/state/sessions/*.json >/dev/null 2>&1 \
+      || { echo "tmux stub: no metadata record before exec" >&2; exit 90; }
+    ls "$SPECFORGE_ROOT"/.specforge/state/sessions/*.log  >/dev/null 2>&1 \
+      || { echo "tmux stub: no log file before exec" >&2; exit 91; }
+    touch "$d/sess-$name" ;;
+  has-session)
+    [[ -n "${TMUX_STUB_ALL_COLLIDE:-}" ]] && exit 0
+    name="$(arg_after -t "$@")"; [[ -f "$d/sess-$name" ]] ;;
+  list-sessions)
+    for f in "$d"/sess-*; do [[ -e "$f" ]] || continue; echo "${f##*/sess-}"; done ;;
+  send-keys)
+    name="$(arg_after -t "$@")"
+    [[ -z "${TMUX_STUB_IGNORE_SIGINT:-}" ]] && rm -f "$d/sess-$name" ;;
+  kill-session)
+    name="$(arg_after -t "$@")"; rm -f "$d/sess-$name" ;;
+  kill-server) rm -f "$d"/sess-* ;;
+  pipe-pane|attach) : ;;
+  *) : ;;
+esac
+STUB
+chmod +x "$work/bin/tmux"
+
+export PATH="$work/bin:$PATH"
+
+fail=0
+check() { if grep -qF -- "$2" "$out"; then echo "ok   - $1"; else echo "FAIL - $1 (missing: $2)"; cat "$out"; fail=1; fi; }
+refute() { if grep -qF -- "$2" "$out"; then echo "FAIL - $1 (present: $2)"; cat "$out"; fail=1; else echo "ok   - $1"; fi; }
+
+# make_root <dir> [grace] — minimal SpecForge checkout for the session layer.
+make_root() {
+  local r="$1" grace="${2:-10}"
+  mkdir -p "$r/.specforge/state"
+  python3 - "$repo_root/.specforge/config.json" "$r/.specforge/config.json" "$grace" <<'PY'
+import json, sys
+cfg = json.load(open(sys.argv[1]))
+cfg["session_stop_grace_seconds"] = float(sys.argv[3])
+json.dump(cfg, open(sys.argv[2], "w"), indent=2)
+PY
+}
+record() { python3 -c "import json,sys;print(json.load(open(sys.argv[1]))[sys.argv[2]])" "$1" "$2"; }
+
+# ===========================================================================
+# Scenario: launch writes metadata + log before exec, and no bd mutation
+# ===========================================================================
+root="$work/launch"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export TMUX_STUB_DIR="$work/launch-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-aaa"
+export BD_MUTATION_LOG="$work/launch-bd-mutations.log"; : >"$BD_MUTATION_LOG"
+
+"$specforge" session launch --role lead --bead SPEC-aaa >"$out" 2>&1 \
+  || { echo "FAIL - launch: errored"; cat "$out"; fail=1; }
+check "launch: reports the created session" "launched sf-lead-spec-aaa-"
+name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | sed 's/\.json$//')"
+[[ -f "$root/.specforge/state/sessions/$name.json" ]] \
+  && echo "ok   - launch: metadata record written" \
+  || { echo "FAIL - launch: no metadata record"; fail=1; }
+[[ -f "$root/.specforge/state/sessions/$name.log" ]] \
+  && echo "ok   - launch: append-only log written" \
+  || { echo "FAIL - launch: no log file"; fail=1; }
+# the tmux stub's new-session aborts (exit 90/91) if either is missing at exec
+grep -qF "new-session " "$TMUX_STUB_DIR/calls.log" \
+  && echo "ok   - launch: tmux new-session reached with metadata+log already on disk" \
+  || { echo "FAIL - launch: new-session not called"; cat "$TMUX_STUB_DIR/calls.log"; fail=1; }
+grep -qF "pipe-pane " "$TMUX_STUB_DIR/calls.log" \
+  && echo "ok   - launch: pipe-pane log stream started" \
+  || { echo "FAIL - launch: pipe-pane not called"; fail=1; }
+[[ "$(record "$root/.specforge/state/sessions/$name.json" state)" == "running" ]] \
+  && echo "ok   - launch: record ends in running state" \
+  || { echo "FAIL - launch: state not running"; fail=1; }
+[[ -s "$BD_MUTATION_LOG" ]] \
+  && { echo "FAIL - launch: a bd mutation was attempted"; cat "$BD_MUTATION_LOG"; fail=1; } \
+  || echo "ok   - launch: no bd mutation (only the read-only bd show)"
+unset SPECFORGE_ROOT
+
+# ===========================================================================
+# Scenario: a name collision is rejected without overwriting anything
+# ===========================================================================
+root="$work/collide"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export TMUX_STUB_DIR="$work/collide-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-bbb"
+mkdir -p "$root/.specforge/state/sessions"
+printf '{"name":"pre-existing","state":"running","bead_id":"SPEC-bbb"}\n' \
+  >"$root/.specforge/state/sessions/keeper.json"
+sum_before="$(cksum <"$root/.specforge/state/sessions/keeper.json")"
+TMUX_STUB_ALL_COLLIDE=1 "$specforge" session launch --role lead --bead SPEC-bbb >"$out" 2>&1 \
+  && { echo "FAIL - collide: launch should have failed"; fail=1; } \
+  || echo "ok   - collide: launch refused when every candidate name collides"
+check "collide: message says nothing was reused or overwritten" "reused or overwritten"
+[[ "$(cksum <"$root/.specforge/state/sessions/keeper.json")" == "$sum_before" ]] \
+  && echo "ok   - collide: the pre-existing record was not overwritten" \
+  || { echo "FAIL - collide: pre-existing record changed"; fail=1; }
+[[ "$(ls "$root/.specforge/state/sessions" | wc -l)" == "1" ]] \
+  && echo "ok   - collide: no new record was created" \
+  || { echo "FAIL - collide: extra records created"; ls "$root/.specforge/state/sessions"; fail=1; }
+unset SPECFORGE_ROOT
+
+# ===========================================================================
+# Scenario: list reports a vanished active session as failed
+# ===========================================================================
+root="$work/list"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export TMUX_STUB_DIR="$work/list-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-ccc"
+"$specforge" session launch --role specialist:backend-engineer --bead SPEC-ccc >/dev/null 2>&1
+name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | sed 's/\.json$//')"
+"$specforge" session list >"$out" 2>&1
+check "list: a live session shows its real state" "running"
+check "list: shows the Bead id" "SPEC-ccc"
+check "list: shows the role" "specialist:backend-engineer"
+rm -f "$TMUX_STUB_DIR"/sess-*        # the tmux session vanishes behind specforge's back
+env -u TERM "$specforge" session list >"$out" 2>&1
+check "list: vanished active session reported as failed" "failed"
+refute "list: vanished session no longer reported as running" "running"
+[[ "$(record "$root/.specforge/state/sessions/$name.json" state)" == "running" ]] \
+  && echo "ok   - list: reconciliation did not rewrite the on-disk record" \
+  || { echo "FAIL - list: list mutated the record"; fail=1; }
+unset SPECFORGE_ROOT
+
+# ===========================================================================
+# Scenario: stop records a terminal state and is idempotent
+# ===========================================================================
+root="$work/stop"; make_root "$root" 0.2
+export SPECFORGE_ROOT="$root"
+export TMUX_STUB_DIR="$work/stop-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-ddd"
+"$specforge" session launch --role lead --bead SPEC-ddd >/dev/null 2>&1
+name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | sed 's/\.json$//')"
+rec="$root/.specforge/state/sessions/$name.json"
+
+"$specforge" session stop "$name" --reason "operator asked" >"$out" 2>&1 \
+  || { echo "FAIL - stop: errored"; cat "$out"; fail=1; }
+[[ "$(record "$rec" state)" == "stopped" ]] \
+  && echo "ok   - stop: record is in the stopped terminal state" \
+  || { echo "FAIL - stop: state not stopped"; fail=1; }
+[[ "$(record "$rec" exit_reason)" == "operator asked" ]] \
+  && echo "ok   - stop: exit_reason recorded" || { echo "FAIL - stop: no exit_reason"; fail=1; }
+[[ "$(record "$rec" ended_at)" != "None" ]] \
+  && echo "ok   - stop: ended_at recorded" || { echo "FAIL - stop: no ended_at"; fail=1; }
+ended_first="$(record "$rec" ended_at)"
+"$specforge" session stop "$name" >"$out" 2>&1 \
+  || { echo "FAIL - stop: second stop errored"; cat "$out"; fail=1; }
+check "stop: second stop is a reported no-op" "nothing to do"
+[[ "$(record "$rec" ended_at)" == "$ended_first" ]] \
+  && echo "ok   - stop: idempotent — ended_at unchanged on the second call" \
+  || { echo "FAIL - stop: ended_at moved on re-stop"; fail=1; }
+
+# stop also drives the kill path when the child ignores the interrupt
+root2="$work/stop-kill"; make_root "$root2" 0.2
+export SPECFORGE_ROOT="$root2"
+export TMUX_STUB_DIR="$work/stop-kill-tmux"; mkdir -p "$TMUX_STUB_DIR"
+"$specforge" session launch --role lead --bead SPEC-ddd >/dev/null 2>&1
+name2="$(ls "$root2/.specforge/state/sessions" | grep '\.json$' | sed 's/\.json$//')"
+TMUX_STUB_IGNORE_SIGINT=1 "$specforge" session stop "$name2" >"$out" 2>&1
+grep -qF "kill-session " "$TMUX_STUB_DIR/calls.log" \
+  && echo "ok   - stop: escalates to kill-session after the grace period" \
+  || { echo "FAIL - stop: no kill-session escalation"; cat "$TMUX_STUB_DIR/calls.log"; fail=1; }
+[[ "$(record "$root2/.specforge/state/sessions/$name2.json" state)" == "stopped" ]] \
+  && echo "ok   - stop: terminal state recorded even when the child ignored C-c" \
+  || { echo "FAIL - stop: state not stopped after kill"; fail=1; }
+unset SPECFORGE_ROOT
+
+# ===========================================================================
+# Scenario: cleanup refuses a running record, succeeds on a stopped one
+# ===========================================================================
+root="$work/cleanup"; make_root "$root" 0.2
+export SPECFORGE_ROOT="$root"
+export TMUX_STUB_DIR="$work/cleanup-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-eee"
+"$specforge" session launch --role lead --bead SPEC-eee >/dev/null 2>&1
+name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | sed 's/\.json$//')"
+rec="$root/.specforge/state/sessions/$name.json"
+
+"$specforge" session cleanup "$name" >"$out" 2>&1 \
+  && { echo "FAIL - cleanup: should refuse a running record"; fail=1; } \
+  || echo "ok   - cleanup: refuses a running record"
+check "cleanup: tells the operator to stop it first" "stop"
+[[ "$(record "$rec" state)" == "running" ]] \
+  && echo "ok   - cleanup: running record left untouched" \
+  || { echo "FAIL - cleanup: running record changed"; fail=1; }
+
+"$specforge" session stop "$name" >/dev/null 2>&1
+"$specforge" session cleanup "$name" >"$out" 2>&1 \
+  || { echo "FAIL - cleanup: errored on a stopped record"; cat "$out"; fail=1; }
+check "cleanup: retires the stopped record" "retired $name"
+[[ "$(record "$rec" state)" == "retired" ]] \
+  && echo "ok   - cleanup: record marked retired" || { echo "FAIL - cleanup: not retired"; fail=1; }
+ls "$root/.specforge/state/sessions/$name.log" >/dev/null 2>&1 \
+  && { echo "FAIL - cleanup: active log not archived"; fail=1; } \
+  || echo "ok   - cleanup: active log archive-rotated away"
+ls "$root/.specforge/state/sessions/$name.log".archived-* >/dev/null 2>&1 \
+  && echo "ok   - cleanup: archived log kept under an archived name" \
+  || { echo "FAIL - cleanup: no archived log"; fail=1; }
+unset SPECFORGE_ROOT
+
+# ===========================================================================
+# Scenario: a seeded secret reaches neither the recorded command nor the log
+# ===========================================================================
+root="$work/secret"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export TMUX_STUB_DIR="$work/secret-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-fff"
+export ANTHROPIC_API_KEY="sk-secret-DO-NOT-LEAK-12345"
+export GH_TOKEN="ghp-secret-DO-NOT-LEAK-67890"
+"$specforge" session launch --role lead --bead SPEC-fff >/dev/null 2>&1
+name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | sed 's/\.json$//')"
+cp "$root/.specforge/state/sessions/$name.json" "$out"
+refute "secret: ANTHROPIC_API_KEY value absent from the recorded command" "sk-secret-DO-NOT-LEAK-12345"
+refute "secret: GH_TOKEN value absent from the recorded command" "ghp-secret-DO-NOT-LEAK-67890"
+cp "$root/.specforge/state/sessions/$name.log" "$out"
+refute "secret: ANTHROPIC_API_KEY value absent from the log" "sk-secret-DO-NOT-LEAK-12345"
+refute "secret: GH_TOKEN value absent from the log" "ghp-secret-DO-NOT-LEAK-67890"
+# the redactor genuinely scrubs a secret value that does land in the argv
+out2=$(python3 - "$repo_root/scripts/specforge" <<'PY'
+import os, sys
+from importlib.machinery import SourceFileLoader
+os.environ["EVIL_TOKEN"] = "zzz-super-secret-value"
+m = SourceFileLoader("sf_under_test", sys.argv[1]).load_module()
+print(m.redact("claude --key zzz-super-secret-value --go"))
+PY
+)
+[[ "$out2" == "claude --key ***REDACTED*** --go" ]] \
+  && echo "ok   - secret: redact() replaces a secret-named env value in argv" \
+  || { echo "FAIL - secret: redact() did not scrub ($out2)"; fail=1; }
+unset SPECFORGE_ROOT ANTHROPIC_API_KEY GH_TOKEN
+
+# ===========================================================================
+# Scenario: the append-only log writer rotates by size to the configured depth
+# ===========================================================================
+writer="$here/session-log-writer"
+lg="$work/rot.log"
+printf 'line-aaaaaaaaaa\nline-bbbbbbbbbb\nline-cccccccccc\nline-dddddddddd\n' \
+  | "$writer" "$lg" 20 2
+[[ -f "$lg" && -f "$lg.1" && -f "$lg.2" ]] \
+  && echo "ok   - log-writer: rotates the active log and keeps depth files" \
+  || { echo "FAIL - log-writer: rotation files missing"; ls "$work"; fail=1; }
+[[ ! -f "$lg.3" ]] \
+  && echo "ok   - log-writer: nothing kept past the configured depth" \
+  || { echo "FAIL - log-writer: depth exceeded"; fail=1; }
+
+if [[ $fail -ne 0 ]]; then echo "session checks failed" >&2; exit 1; fi
+echo "all session checks passed"
