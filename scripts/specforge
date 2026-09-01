@@ -356,7 +356,20 @@ def load_session(name):
     if not p.exists(): raise RuntimeError(f"no managed session named {name}")
     return p, json.loads(p.read_text())
 def write_session(path, rec):
+    rec["updated_at"] = now()
     path.write_text(json.dumps(rec, indent=2, sort_keys=True) + "\n")
+def transition(path, rec, state, **extra):
+    """Record a lifecycle-state transition durably. `starting`/`running`/`idle`
+    are active states; `stopped`/`failed`/`retired` are terminal and carry
+    `ended_at` plus an `exit_reason`."""
+    rec["state"] = state
+    if state in SESSION_TERMINAL_STATES and state != "retired":
+        rec.setdefault("ended_at", None)
+        rec["ended_at"] = rec.get("ended_at") or now()
+        rec["exit_reason"] = extra.pop("exit_reason", None) or rec.get("exit_reason") or state
+    for k, v in extra.items(): rec[k] = v
+    write_session(path, rec)
+    return rec
 def bead_exists(bead_id):
     res = run(CFG["beads_command"], "show", bead_id, "--json", check=False)
     if res.returncode != 0: return False
@@ -416,11 +429,9 @@ def session_launch(role, bead, cwd, read_only, owner):
     try:
         tmux("new-session", "-d", "-s", name, "-c", workdir, "--", *inner)
     except ToolError as exc:
-        record.update(state="failed", ended_at=now(), exit_reason=f"launch failed: {redact(str(exc))}")
-        write_session(rec_path, record)
+        transition(rec_path, record, "failed", exit_reason=f"launch failed: {redact(str(exc))}")
         raise
-    record["state"] = "running"
-    write_session(rec_path, record)
+    transition(rec_path, record, "running")
     print(f"launched {name}")
     print(f"  bead={bead} role={role_meta} cwd={workdir}")
     print(f"  log={log_path}")
