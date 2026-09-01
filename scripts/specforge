@@ -257,6 +257,8 @@ def record_failure(exc):
               "first_seen": prev.get("first_seen", stamp), "last_seen": stamp,
               "next_retry_after": next_retry}
     (st / "sync-failure.json").write_text(json.dumps(record, indent=2) + "\n")
+    with (st / "sync-failures.jsonl").open("a") as fh:
+        fh.write(json.dumps({"event_time": stamp, **record}) + "\n")
     (st / "last-error.json").unlink(missing_ok=True)
     return record
 def clear_failure():
@@ -299,6 +301,14 @@ def doctor(audit=False):
     try: _, _, problems = validate()
     except Exception as exc: problems = [str(exc)]
     checks.extend((p, False) for p in problems)
+    if FAILURE_RECORD.exists():
+        try: rec = json.loads(FAILURE_RECORD.read_text())
+        except (ValueError, OSError): rec = {}
+        if rec:
+            retry = rec.get("next_retry_after") or "none (not retried automatically)"
+            checks.append((f"last sync failed ({rec.get('classification')}): "
+                           f"attempt {rec.get('attempts')}/{rec.get('max_attempts')}, "
+                           f"next retry {retry} — {str(rec.get('error', '')).splitlines()[0]}", False))
     for name, ok in checks: print(f"{'OK' if ok else 'FAIL'}  {name}")
     if audit:
         report = data_dir(REPORTS) / f"audit-{dt.datetime.now():%Y%m%dT%H%M%S}.txt"; report.write_text("\n".join(f"{'OK' if ok else 'FAIL'}  {name}" for name, ok in checks) + "\n")

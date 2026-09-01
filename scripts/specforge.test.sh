@@ -277,6 +277,15 @@ grep -qE '"next_retry_after": "[0-9]' "$rec" \
 grep -qF '"attempts": 2' "$rec" \
   && echo "ok   - fail-trans: consecutive failure increments attempts" \
   || { echo "FAIL - fail-trans: attempts did not increment"; cat "$rec"; fail=1; }
+jsonl="$root/.specforge/state/sync-failures.jsonl"
+[[ "$(count "$jsonl" '"event_time"')" == "2" ]] \
+  && echo "ok   - fail-trans: every failure appended to the JSONL log" \
+  || { echo "FAIL - fail-trans: JSONL log line count $(count "$jsonl" '"event_time"')"; cat "$jsonl"; fail=1; }
+"$specforge" doctor >"$out" 2>&1 || true
+grep -qF 'last sync failed (transient)' "$out" \
+  && grep -qE 'attempt 2/[0-9]' "$out" \
+  && echo "ok   - fail-trans: doctor reports classification, attempts, and next retry" \
+  || { echo "FAIL - fail-trans: doctor did not report the failure record"; cat "$out"; fail=1; }
 # retries stop at the attempt cap (sync_max_attempts = 5)
 for _ in 1 2 3 4 5; do "$specforge" sync >"$out" 2>&1 || true; done
 grep -qF '"next_retry_after": null' "$rec" \
