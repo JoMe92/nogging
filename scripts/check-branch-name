@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# The single implementation of the SpecForge branch-naming convention.
+#
+#   scripts/check-branch-name <ref>
+#
+# <ref> is a branch name or ref (a leading refs/heads/ is stripped). Exit 0 when
+# the name satisfies the convention, non-zero with an actionable message when it
+# does not. The pre-push hook and the CI `invariants` job both call this script;
+# neither re-encodes the rule.
+#
+# Convention:
+#   - `main` and `develop` are protected and always valid.
+#   - Every other branch is `<type>/<slug>` with <type> in
+#     {feat, fix, chore, docs, refactor, perf, test, plan}.
+#   - `chore/<topic>` and `plan/<topic>` take a free kebab <topic>.
+#   - Every other <type> is a change branch: <slug> MUST be the directory name
+#     of an existing openspec/changes/<slug>/ (never `archive`).
+#   - An unresolvable ref (detached HEAD, empty head_ref) fails closed.
+set -euo pipefail
+
+types='feat|fix|chore|docs|refactor|perf|test|plan'
+
+ref="${1-}"
+ref="${ref#refs/heads/}"
+
+root=$(git rev-parse --show-toplevel 2>/dev/null) || root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+
+usage() {
+  {
+    echo "SpecForge: branch name must be <type>/<slug>."
+    echo "  <type> is one of: feat, fix, chore, docs, refactor, perf, test, plan"
+    echo "  a change branch's <slug> must equal an openspec/changes/<slug>/ directory name"
+    echo "  chore/<topic> and plan/<topic> take a free kebab <topic>"
+    echo "  main and develop are exempt"
+  } >&2
+}
+
+if [[ -z "$ref" || "$ref" == "HEAD" ]]; then
+  echo "SpecForge: could not resolve a branch name (detached HEAD or empty ref)." >&2
+  usage
+  exit 1
+fi
+
+if [[ "$ref" == "main" || "$ref" == "develop" ]]; then
+  exit 0
+fi
+
+if ! [[ "$ref" =~ ^($types)/([a-z0-9]+(-[a-z0-9]+)*)$ ]]; then
+  echo "SpecForge: branch '$ref' does not match <type>/<slug>." >&2
+  usage
+  exit 1
+fi
+
+type="${BASH_REMATCH[1]}"
+slug="${BASH_REMATCH[2]}"
+
+if [[ "$type" == "chore" || "$type" == "plan" ]]; then
+  exit 0
+fi
+
+if [[ "$slug" == "archive" ]]; then
+  echo "SpecForge: branch '$ref' — 'archive' is not a change slug." >&2
+  usage
+  exit 1
+fi
+
+if [[ ! -d "$root/openspec/changes/$slug" ]]; then
+  echo "SpecForge: branch '$ref' is a change branch but openspec/changes/$slug/ does not exist." >&2
+  echo "  Rename the branch to match its change directory, or use chore/<topic> / plan/<topic>." >&2
+  usage
+  exit 1
+fi
+
+exit 0
