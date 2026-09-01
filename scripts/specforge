@@ -465,6 +465,23 @@ def session_list():
               f"{rec.get('role',''):<24}  {rec.get('started_at',''):<20}  "
               f"{reconciled_state(rec, live):<8}  {str(rec.get('owner','')):<20}  "
               f"{rec.get('working_dir','')}")
+def session_attach(name, read_only):
+    """Attach the operator's terminal to a managed tmux session. This is the
+    only subcommand that attaches; it is never invoked as a side effect."""
+    _, rec = load_session(name)
+    if not tmux_has_session(name):
+        raise RuntimeError(f"{name} has no live tmux session (state: {rec.get('state')})")
+    argv = [tmux_bin(), "-L", tmux_socket(), "attach", "-t", name] + (["-r"] if read_only else [])
+    os.execvp(tmux_bin(), argv)
+def session_log(name, follow):
+    """Print or follow the append-only log. Never attaches to tmux."""
+    _, rec = load_session(name)
+    lp = Path(rec.get("log_path") or (sessions_dir() / f"{name}.log"))
+    if not lp.exists():
+        print(f"(no log recorded yet at {lp})"); return
+    if follow:
+        os.execvp("tail", ["tail", "-n", "+1", "-F", str(lp)])
+    sys.stdout.write(lp.read_text())
 def doctor(audit=False):
     checks = []
     for cmd in ("git", "python3", CFG["beads_command"], "dolt"):
@@ -499,6 +516,8 @@ def main():
     sl.add_argument("--cwd"); sl.add_argument("--read-only", action="store_true")
     sl.add_argument("--owner")
     ssub.add_parser("list")
+    sa = ssub.add_parser("attach"); sa.add_argument("name"); sa.add_argument("--read-only", action="store_true")
+    slg = ssub.add_parser("log"); slg.add_argument("name"); slg.add_argument("--follow", action="store_true")
     args = p.parse_args()
     if args.command == "plan-begin": lock("planning", CFG["planning_lock_ttl_seconds"], args.force); print("planning session lock acquired")
     elif args.command == "plan-end":
@@ -515,6 +534,10 @@ def session_cmd(args):
         session_launch(args.role, args.bead, args.cwd, args.read_only, args.owner)
     elif args.session_command == "list":
         session_list()
+    elif args.session_command == "attach":
+        session_attach(args.name, args.read_only)
+    elif args.session_command == "log":
+        session_log(args.name, args.follow)
 if __name__ == "__main__":
     try: main()
     except Exception as exc: print(f"specforge: {exc}", file=sys.stderr); sys.exit(1)
