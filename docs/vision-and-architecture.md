@@ -187,21 +187,32 @@ The changes are materialised as Beads with cross-change dependencies wired via
 `bd dep add`. Work them one change per branch (`<type>/<change-name>`), in this
 order:
 
-1. **`reliable-beads-sync`** — first. Fixes the `bd list` closed-issue defect, so
-   `sync` and `materialize` stop missing closed mapped Beads; establishes the
-   enriched `execution-log.md`, the acknowledgement ledger, and classified sync
-   failures that later changes build on.
-2. **`enforce-conventional-branching`** — independent; can run in parallel with 1.
-   After it lands, the CI `invariants` job checks every pull request.
-3. **`planning-and-discovery-commands`** — after 1 (`/discovery-review` uses the
+1. **`reliable-beads-sync`** — **done** (merged to `develop`). Fixed the `bd list`
+   closed-issue defect, so `sync` and `materialize` stop missing closed mapped
+   Beads; established the enriched `execution-log.md`, the acknowledgement ledger,
+   and classified sync failures that later changes build on.
+2. **`remote-observable-claude-sessions`** — next. Pulled forward so subsequent
+   changes can be executed in Pi tmux sessions the Product Owner watches over SSH
+   / Remote Control. Larger surface (tmux, systemd, a restricted launch profile);
+   independent of the other pending changes.
+3. **`enforce-conventional-branching`** — independent. After it lands, the CI
+   `invariants` job checks every pull request; also closes discovery `SPEC-7ec`
+   (`core.hooksPath` makes the local Git hooks inert).
+4. **`planning-and-discovery-commands`** — after 1 (`/discovery-review` uses the
    acknowledgement ledger from `TASK-SYNC-006`).
-4. **`specialist-agents-and-skills`** — after 3 (the delegation section in
+5. **`specialist-agents-and-skills`** — after 4 (the delegation section in
    `CLAUDE.md` references `/plan`).
-5. **`remote-observable-claude-sessions`** — independent; slot in once 1–4 free
-   up attention. Larger surface (tmux, systemd, a restricted launch profile).
 6. **`end-to-end-acceptance`** — last. Depends on all of the above; its runbook
    exercises the whole chain and its assertions are written against
    post-`reliable-beads-sync` behaviour.
 
 Within a change, work the tasks in `tasks.md` order. `photo-import-filesystem`
 is a concept walkthrough, not scheduled work — its Beads are deferred.
+
+### Known gaps not yet on the roadmap
+
+- **`SPEC-fc4`** — `openspec archive <change>` breaks `scripts/specforge validate`:
+  the archived change's closed Beads still carry `openspec:task:` labels that
+  `task_map()` no longer resolves. Completed changes therefore stay in
+  `openspec/changes/` (unarchived) until `task_map()`/`validate()` also read
+  `changes/archive/`, or archiving retires the mapped Beads.
