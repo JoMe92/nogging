@@ -365,20 +365,24 @@ def bead_exists(bead_id):
     records = decoded.get("issues", decoded) if isinstance(decoded, dict) else decoded
     if isinstance(records, dict): records = [records]
     return any(str(issue_id(r)) == str(bead_id) for r in records if isinstance(r, dict))
+def session_name_in_use(name):
+    """A name is in use if the metadata store already has a record or log for
+    it, or a tmux session by that name exists on the dedicated server."""
+    sdir = sessions_dir()
+    return ((sdir / f"{name}.json").exists() or (sdir / f"{name}.log").exists()
+            or tmux_has_session(name))
 def gen_session_name(role_slug, bead_id):
     """Deterministic shape `sf-<role>-<bead>-<nonce>`; the nonce (UTC timestamp
     plus a short random suffix) is regenerated on any collision with an
-    existing managed record or a live tmux session. Never returns a name that
-    is already in use."""
-    taken = {p.stem for p, _ in session_records()}
+    existing managed record, a leftover log, or a live tmux session. Never
+    returns a name that is already in use; never reuses or overwrites one."""
     for _ in range(64):
         nonce = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S") + "-" + os.urandom(2).hex()
         name = re.sub(r"[^a-z0-9_.-]", "-", f"sf-{role_slug}-{bead_id}-{nonce}".lower())
-        if name in taken: continue
-        if (sessions_dir() / f"{name}.json").exists(): continue
-        if tmux_has_session(name): continue
-        return name
-    raise RuntimeError("could not generate a collision-free session name")
+        if not session_name_in_use(name):
+            return name
+    raise RuntimeError("could not generate a collision-free session name; "
+                       "no existing session was reused or overwritten")
 def session_launch(role, bead, cwd, read_only, owner):
     role_meta, role_slug = normalize_role(role)
     if not bead_exists(bead):
@@ -393,6 +397,8 @@ def session_launch(role, bead, cwd, read_only, owner):
     workdir = str(Path(cwd or ROOT).resolve())
     sdir = sessions_dir()
     rec_path, log_path = sdir / f"{name}.json", sdir / f"{name}.log"
+    if rec_path.exists() or tmux_has_session(name):    # last-line race guard
+        raise RuntimeError(f"session {name} already exists; refusing to reuse or overwrite it")
     profile = str((ROOT / scfg("session_launch_profile", ".specforge/session-launch-profile.json")).resolve())
     prompt = str((ROOT / scfg("session_launch_prompt", ".specforge/session-launch-prompt.md")).resolve())
     wrapper = str((ROOT / "scripts/session-launch").resolve())
