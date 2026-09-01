@@ -62,11 +62,30 @@ if command -v bd >/dev/null 2>&1; then
 
   nobd="$work/nobd"
   mkdir -p "$nobd"; git -C "$nobd" init -q
-  ( cd "$nobd" && node "$cli" init --no-beads --no-systemd >/dev/null 2>&1 ) || true
+  nobd_out=$( cd "$nobd" && node "$cli" init --no-beads --no-systemd 2>&1 ) || true
   check "--no-beads skips the tracker" [ ! -d "$nobd/.beads" ]
+  check "verdict names the tracker gap after --no-beads" \
+    bash -c "grep -q 'not ready' <<< \"\$0\" && grep -qi 'tracker' <<< \"\$0\"" "$nobd_out"
+
+  # ready verdict only where the full toolchain is present and doctor passes
+  if command -v dolt >/dev/null 2>&1 \
+     && ( cd "$bdrepo" && bd list --json >/dev/null 2>&1 ); then
+    ready_out=$( cd "$bdrepo" && node "$cli" init --no-systemd 2>&1 ) || true
+    check "verdict says ready in a provisioned repo" \
+      bash -c "grep -q 'SpecForge is ready' <<< \"\$0\"" "$ready_out"
+  else
+    echo "ok   - ready-verdict check skipped (toolchain incomplete)"
+  fi
 else
   echo "ok   - bd init bootstrap skipped (bd not installed)"
 fi
+
+# --- readiness verdict without any toolchain --------------------------------
+verd="$work/verdict"
+mkdir -p "$verd"; git -C "$verd" init -q
+verd_out=$( cd "$verd" && node "$cli" init --no-beads --no-systemd 2>&1 ) || true
+check "init always prints a readiness verdict" \
+  bash -c "grep -q 'SpecForge is \(ready\|installed but not ready\)' <<< \"\$0\"" "$verd_out"
 
 # --- idempotent merges ----------------------------------------------------
 merged="$work/merged"

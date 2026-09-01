@@ -83,6 +83,7 @@ function cmdInit(args) {
   install.installGitHooks(ctx);
   install.beadsHint(ctx);
   report(ctx);
+  install.readinessVerdict(ctx);
 }
 
 function cmdUpdate(args) {
@@ -97,6 +98,7 @@ function cmdUpdate(args) {
   install.recordVersion(ctx);
   install.installGitHooks(ctx);
   report(ctx);
+  install.readinessVerdict(ctx);
 }
 
 function cmdDoctor() {
