@@ -230,6 +230,30 @@ grep -qF "sync: no changes" "$out" \
   || { echo "FAIL - sync-once: checkbox changed on re-run"; fail=1; }
 unset SPECFORGE_ROOT
 
+# --- Scenario: closed Bead with no note and no traceable commit ------------
+root="$work/sync-bare"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export BD_FIXTURE="$work/sync-bare-beads.json"
+cat >"$BD_FIXTURE" <<'JSON'
+[
+  {"id": "SPEC-d09", "status": "closed", "closed_at": "2026-09-02T09:00:00Z",
+   "notes": "",
+   "labels": ["openspec:change:demo", "openspec:task:TASK-DEMO-002"]}
+]
+JSON
+"$specforge" sync >"$out" 2>&1 || { echo "FAIL - sync-bare: sync errored"; cat "$out"; fail=1; }
+log="$root/openspec/changes/demo/execution-log.md"
+grep -qF -- 'implementation commits: none found' "$log" \
+  && echo "ok   - sync-bare: entry states no commit reference was found" \
+  || { echo "FAIL - sync-bare: missing 'none found'"; cat "$log"; fail=1; }
+grep -qF -- 'Bead note: (none recorded)' "$log" \
+  && echo "ok   - sync-bare: entry written even with an empty note" \
+  || { echo "FAIL - sync-bare: missing empty-note marker"; cat "$log"; fail=1; }
+grep -qF -- '- [x] TASK-DEMO-002' "$root/openspec/changes/demo/tasks.md" \
+  && echo "ok   - sync-bare: task checkbox still flipped" \
+  || { echo "FAIL - sync-bare: checkbox not flipped"; fail=1; }
+unset SPECFORGE_ROOT
+
 # --- Scenario: a permanent (audit) failure is recorded, not retried --------
 root="$work/fail-perm"; make_root "$root"
 export SPECFORGE_ROOT="$root"
