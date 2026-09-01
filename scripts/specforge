@@ -428,6 +428,12 @@ def session_launch(role, bead, cwd, read_only, owner):
         fh.write(f"# specforge session {name} for {bead} ({role_meta}) started {record['started_at']}\n")
     try:
         tmux("new-session", "-d", "-s", name, "-c", workdir, "--", *inner)
+        writer = str((ROOT / "scripts/session-log-writer").resolve())
+        max_bytes = int(scfg("session_log_max_bytes", 1048576))
+        depth = int(scfg("session_log_rotation_depth", 3))
+        sink = "exec " + " ".join(shlex.quote(a) for a in
+                                  (writer, str(log_path), str(max_bytes), str(depth)))
+        tmux("pipe-pane", "-o", "-t", name, sink)
     except ToolError as exc:
         transition(rec_path, record, "failed", exit_reason=f"launch failed: {redact(str(exc))}")
         raise
