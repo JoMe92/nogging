@@ -121,6 +121,22 @@ cl_ln=$(grep -n "SPEC-cl1  Closed before review" "$out" | head -1 | cut -d: -f1)
 if [[ "$op_ln" -lt "$cl_ln" ]]; then echo "ok   - closed-disc: open listed before closed"; else
   echo "FAIL - closed-disc: closed not sorted after open ($op_ln vs $cl_ln)"; fail=1; fi
 
+# --- Scenario: acknowledging a discovery stops it being surfaced -----------
+ackroot="$work/ackroot"; mkdir -p "$ackroot/.specforge/state"
+cp "$repo_root/.specforge/config.json" "$ackroot/.specforge/config.json"
+export SPECFORGE_ROOT="$ackroot"
+"$specforge" discoveries >"$out" 2>&1
+check "ack: closed discovery listed before acknowledgement" "SPEC-cl1  Closed before review"
+"$specforge" discoveries --ack SPEC-cl1 >"$out" 2>&1
+check "ack: acknowledgement confirmed" "acknowledged 1 discovery Bead(s): SPEC-cl1"
+[[ -f "$ackroot/.specforge/state/acknowledged-discoveries.json" ]] \
+  && echo "ok   - ack: ledger written under .specforge/state/" \
+  || { echo "FAIL - ack: ledger not written"; fail=1; }
+"$specforge" discoveries >"$out" 2>&1
+refute "ack: acknowledged discovery no longer listed" "SPEC-cl1"
+check "ack: unacknowledged discovery still listed" "SPEC-op1  Open finding"
+unset SPECFORGE_ROOT
+
 # ===========================================================================
 # sync / materialize scenarios: scratch repo pointed at by SPECFORGE_ROOT
 # ===========================================================================
