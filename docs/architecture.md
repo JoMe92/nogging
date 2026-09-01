@@ -171,20 +171,33 @@ and `git commit --no-verify` skips it.
 
 **3. `commit-msg` (result invariant, Git).**
 `scripts/hooks/commit-msg` checks the subject line: Conventional Commit shape
-(every commit, planning and sync included), and — unless `SPECFORGE_WRITER` is
-`planning` or `sync` — a real Beads issue-ID token
+(every commit, planning and sync included), and — unless the commit is a writer
+commit — a real Beads issue-ID token
 (`\[[A-Z][A-Z0-9]*-[0-9a-z]+\]`, e.g. `[SPEC-7ec]`; a bare `[]` or `[BEAD-XXX]`
-fails). The rejection names the rule and the exemption. This is proof at the
-result: execution work that touched `openspec/` cannot land without either a
-Beads ID that ties it to claimed work or the `SPECFORGE_WRITER` exemption the
-boundary governs. The token is checked for shape only — the hook does not
-confirm the ID exists or is claimed — and only the subject line counts.
-`scripts/hooks/commit-msg.test.sh` (run by `scripts/test` and CI) covers the ID
-and exemption cases; `pre-commit` and the `PreToolUse` guard have no equivalent
-test.
+fails). A commit is a writer commit when `SPECFORGE_WRITER` is `planning` or
+`sync` **or** its message body carries a `SpecForge-Writer: planning` /
+`SpecForge-Writer: sync` trailer. The two forms are exact parity: the
+environment variable is convenient locally, the trailer travels inside the
+commit object so CI applies the identical rule from the pushed history alone. A
+writer commit still needs a Conventional subject. The rejection names the rule
+and both exemption forms. This is proof at the result: execution work that
+touched `openspec/` cannot land without either a Beads ID that ties it to
+claimed work or the writer exemption the boundary governs. The token is checked
+for shape only — the hook does not confirm the ID exists or is claimed — and
+only the subject line counts. `scripts/hooks/commit-msg.test.sh` (run by
+`scripts/test` and CI) covers the ID, the env exemption and the trailer
+exemption; `pre-commit` and the `PreToolUse` guard have no equivalent test.
 
-Layers 2 and 3 are installed into the active hooks directory by
-`scripts/install-hooks`.
+`scripts/specforge`'s deterministic sync commit sets both: the
+`SPECFORGE_WRITER=sync` environment and a `SpecForge-Writer: sync` trailer.
+Planning commits use a Conventional `docs(openspec):` / `chore(openspec):`
+subject plus a `SpecForge-Writer: planning` trailer; the non-Conventional
+`plan:` subject prefix is retired.
+
+Layers 2 and 3, together with the `pre-push` branch-name check, are installed
+into the active hooks directory by `scripts/install-hooks`. Where
+`core.hooksPath` diverts Git away from that directory the CI `invariants` job
+(below) is the enforced backstop.
 
 ### Interaction
 
@@ -192,21 +205,42 @@ Layers 2 and 3 are installed into the active hooks directory by
 | --- | --- | --- | --- |
 | `PreToolUse` guard | before the edit | `Edit`/`Write` into `openspec/` with no planning lock | Bash writes and non–Claude-Code edits, caught when committed |
 | `pre-commit` | before the commit | staged `openspec/` paths from an execution writer | `--no-verify` or an uninstalled hook: the commit lands Bead-less and visible to review |
-| `commit-msg` | before the commit | an execution commit naming no real Beads ID | `--no-verify`: a reviewer sees a Bead-less `openspec/` commit and rejects it |
+| `commit-msg` | before the commit | an execution commit naming no real Beads ID | `--no-verify`: caught by the CI `invariants` job, then review |
+| CI `invariants` job | on every pull request | a non-conforming head branch, or any introduced non-merge commit that fails the `commit-msg` rule | a branch pushed with no PR yet; a deliberate history rewrite before review |
 
 No single accidental action defeats the boundary. A deliberate bypass
-(`--no-verify` plus a hand-written Bead-less commit) is left to human review —
-the same place requirement-to-code fidelity already lives.
+(`--no-verify` plus a hand-written Bead-less commit) is caught by the CI
+`invariants` job on the pull request, and past that by human review — the same
+place requirement-to-code fidelity already lives.
+
+### CI backstop: the `invariants` job
+
+Because `core.hooksPath` points Git at `.beads/hooks` in this repository (and
+may in a fresh install once Beads diverts it), `.git/hooks/commit-msg` and
+`.git/hooks/pre-push` do not run here. The `invariants` job in
+`.github/workflows/specforge-validate.yml` is the enforced backstop: on every
+`pull_request` it runs `scripts/check-branch-name` against the head branch and
+re-runs `scripts/hooks/commit-msg` over every non-merge commit the PR
+introduces (`git rev-list --no-merges origin/<base>..HEAD`, each
+`git show -s --format=%B` piped to the hook). It reuses the two rule scripts
+rather than re-encoding them, and the `SpecForge-Writer:` trailer is what makes
+the writer exemption reproducible server-side. A violation fails the PR naming
+the branch, or the commit by SHA and subject.
 
 ### Limitations
 
-- **Delivery.** The two Git hooks run only where `scripts/install-hooks` has put
+- **Delivery.** The Git hooks run only where `scripts/install-hooks` has put
   them *and* Git actually reads them. When `core.hooksPath` is set — as the
   Beads integration does, pointing it at `.beads/hooks` — Git ignores
-  `.git/hooks/` and neither SpecForge hook runs (observed 2026-08-31).
-  Reconciling the two hook paths is tracked as a discovery on SPEC-7ec.
-- **Not server-side.** Nothing runs in CI, so a locally bypassed commit can
-  still be pushed; review is the backstop.
+  `.git/hooks/` and no SpecForge hook runs (observed 2026-08-31). The CI
+  `invariants` job is the authoritative backstop for branch and commit
+  discipline in that case. Reconciling the two hook paths is tracked as a
+  discovery on SPEC-7ec.
+- **Server-side, PR-only.** The `invariants` job runs on `pull_request`, so a
+  branch pushed without an open PR is unchecked until one opens, and a commit
+  made locally with only `SPECFORGE_WRITER` set and no trailer passes locally
+  but fails CI. `pre-commit` still runs nowhere in CI; review remains its
+  backstop.
 - **Scope.** The layers govern *who* may write `openspec/` and *that* execution
   work is tracked. They do not judge whether an `openspec/` change is correct or
   agreed; tests, review, and Product Owner acceptance remain that evidence.
