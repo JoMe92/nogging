@@ -443,6 +443,28 @@ def session_launch(role, bead, cwd, read_only, owner):
     print(f"  log={log_path}")
     print(f"  attach: {tmux_bin()} -L {tmux_socket()} attach -t {name}  (or: specforge session attach {name})")
 
+def reconciled_state(rec, live):
+    """The state to report: an active record whose tmux session has vanished is
+    `failed` (a crash), not the stale value on disk."""
+    state = rec.get("state", "unknown")
+    if state in SESSION_ACTIVE_STATES and rec.get("name") not in live:
+        return "failed"
+    return state
+def session_list():
+    """Read every metadata record and print it with live-state reconciliation.
+    Read-only: it never attaches, never starts tmux, and never rewrites a
+    record. Runs in a bare SSH shell (no TERM, no tmux client)."""
+    recs = session_records()
+    if not recs:
+        print("no managed sessions"); return
+    live = tmux_sessions()
+    hdr = f"{'NAME':<40}  {'BEAD':<10}  {'ROLE':<24}  {'STARTED':<20}  {'STATE':<8}  {'OWNER':<20}  WORKING_DIR"
+    print(hdr)
+    for _, rec in recs:
+        print(f"{rec.get('name',''):<40}  {rec.get('bead_id',''):<10}  "
+              f"{rec.get('role',''):<24}  {rec.get('started_at',''):<20}  "
+              f"{reconciled_state(rec, live):<8}  {str(rec.get('owner','')):<20}  "
+              f"{rec.get('working_dir','')}")
 def doctor(audit=False):
     checks = []
     for cmd in ("git", "python3", CFG["beads_command"], "dolt"):
@@ -476,6 +498,7 @@ def main():
     sl.add_argument("--role", required=True); sl.add_argument("--bead", required=True)
     sl.add_argument("--cwd"); sl.add_argument("--read-only", action="store_true")
     sl.add_argument("--owner")
+    ssub.add_parser("list")
     args = p.parse_args()
     if args.command == "plan-begin": lock("planning", CFG["planning_lock_ttl_seconds"], args.force); print("planning session lock acquired")
     elif args.command == "plan-end":
@@ -490,6 +513,8 @@ def main():
 def session_cmd(args):
     if args.session_command == "launch":
         session_launch(args.role, args.bead, args.cwd, args.read_only, args.owner)
+    elif args.session_command == "list":
+        session_list()
 if __name__ == "__main__":
     try: main()
     except Exception as exc: print(f"specforge: {exc}", file=sys.stderr); sys.exit(1)
