@@ -397,6 +397,12 @@ def gen_session_name(role_slug, bead_id):
     raise RuntimeError("could not generate a collision-free session name; "
                        "no existing session was reused or overwritten")
 def session_launch(role, bead, cwd, read_only, owner):
+    """Start a supervised Claude session for a Bead.
+
+    This function performs NO Beads mutation. The only `bd` call it makes is
+    the read-only `bd show` inside bead_exists(); it never claims, starts, or
+    otherwise changes a Bead. Claiming stays a deliberate in-session action
+    the operator directs (see .specforge/session-launch-prompt.md)."""
     role_meta, role_slug = normalize_role(role)
     if not bead_exists(bead):
         raise RuntimeError(f"Bead {bead} does not exist; launch refused")
