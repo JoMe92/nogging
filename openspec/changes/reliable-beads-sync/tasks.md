@@ -1,6 +1,6 @@
 # Tasks
 
-- [ ] TASK-SYNC-001 Enumerate closed mapped Beads in the sync pass by adding an explicit closed-status query (or a comma-separated multi-status query) to the Beads read in `scripts/specforge`, so closed mapped Beads reach the existing `status == "closed"` mirror filter.
+- [x] TASK-SYNC-001 Enumerate closed mapped Beads in the sync pass by adding an explicit closed-status query (or a comma-separated multi-status query) to the Beads read in `scripts/specforge`, so closed mapped Beads reach the existing `status == "closed"` mirror filter.
 - [ ] TASK-SYNC-002 Confirm and lock in idempotent mirroring of closed Beads: the `<!-- specforge:<id>:<timestamp> -->` event key and the `- [ ]` → `- [x]` rewrite must produce no diff on a second run; add a closed fixture to `scripts/specforge.test.sh` that runs sync twice and asserts exactly one execution-log entry and one checkbox flip.
 - [ ] TASK-SYNC-003 Render enriched execution-log entries containing the Bead ID, the closure timestamp (`closed_at`, falling back to `updated_at`), and the Bead's human-readable note preserved verbatim as an indented block.
 - [ ] TASK-SYNC-004 Determine implementation commit references for a closed Bead by scanning `git log` subjects for the Bead ID token and by extracting hex SHAs already present in the Bead note; de-duplicate, render them in the entry, and when none are found state that explicitly.
