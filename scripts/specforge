@@ -45,18 +45,24 @@ def beads():
     return decoded.get("issues", decoded) if isinstance(decoded, dict) else decoded
 def labels(issue): return issue.get("labels") or []
 DISCOVERY_LABEL = "discovery"
+def discovery_is_closed(issue): return issue.get("status") == "closed"
 def pending_discoveries():
-    """Open Beads carrying the native `discovery` label, blocked ones first.
+    """Beads carrying the native `discovery` label, regardless of status.
 
     The label alone marks a discovery; the note is human-readable prose and is
-    never parsed here. `bd list` omits closed issues by default, so this only
-    returns discoveries still awaiting a planning session.
+    never parsed here. A discovery closed before a planning session reviews it
+    (exactly what happened to SPEC-1cu) must still surface, so this reads the
+    full status set rather than the non-closed default. Ordering: blocked
+    first, then open discoveries, then closed-but-unreviewed ones.
     """
-    out = run(CFG["beads_command"], "list", "--label", DISCOVERY_LABEL, "--json").stdout.strip()
+    out = run(CFG["beads_command"], "list", "--label", DISCOVERY_LABEL,
+              "--status", BEAD_STATUSES, "--limit", "0", "--json").stdout.strip()
     decoded = json.loads(out or "[]")
     issues = decoded.get("issues", decoded) if isinstance(decoded, dict) else decoded
     issues = [i for i in issues if DISCOVERY_LABEL in labels(i)]
-    return sorted(issues, key=lambda i: (i.get("status") != "blocked", str(issue_id(i) or "")))
+    return sorted(issues, key=lambda i: (i.get("status") != "blocked",
+                                         discovery_is_closed(i),
+                                         str(issue_id(i) or "")))
 def issue_note(identifier):
     out = run(CFG["beads_command"], "show", identifier, "--json").stdout.strip()
     decoded = json.loads(out or "[]")
@@ -69,11 +75,15 @@ def discoveries():
         print("no pending discoveries")
         return
     blocking = sum(1 for i in issues if i.get("status") == "blocked")
+    closed = sum(1 for i in issues if discovery_is_closed(i))
     noun = "discovery" if len(issues) == 1 else "discoveries"
     print(f"{len(issues)} pending {noun} ({blocking} blocking)")
+    if closed:
+        print(f"  ({closed} already closed, still awaiting planning review)")
     for issue in issues:
         print()
-        print(f"[{issue.get('status') or 'unknown'}] {issue_id(issue)}  {(issue.get('title') or '').strip()}".rstrip())
+        marker = "  (closed — awaiting review)" if discovery_is_closed(issue) else ""
+        print(f"[{issue.get('status') or 'unknown'}] {issue_id(issue)}  {(issue.get('title') or '').strip()}{marker}".rstrip())
         note = issue_note(issue_id(issue))
         for line in (note.splitlines() if note else ["(no human-readable note recorded)"]):
             print(f"    {line}")

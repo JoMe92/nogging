@@ -101,6 +101,26 @@ printf '[{"id":"SPEC-ddd","notes":"prose"}]\n' >"$BD_STUB_DIR/show-SPEC-ddd.json
 check "label-only: labelled issue shown" "SPEC-ddd  Labelled"
 refute "label-only: unlabelled issue skipped" "SPEC-eee"
 
+# --- Scenario: a closed, unreviewed discovery is still surfaced -------------
+export BD_STUB_DIR="$work/closeddisc"; mkdir -p "$BD_STUB_DIR"
+cat >"$BD_STUB_DIR/discoveries.json" <<'JSON'
+[
+  {"id": "SPEC-op1", "status": "open", "title": "Open finding", "labels": ["discovery"]},
+  {"id": "SPEC-cl1", "status": "closed", "title": "Closed before review", "labels": ["discovery"]}
+]
+JSON
+printf '[{"id":"SPEC-op1","notes":"open prose"}]\n' >"$BD_STUB_DIR/show-SPEC-op1.json"
+printf '[{"id":"SPEC-cl1","notes":"closed prose that must not be lost"}]\n' >"$BD_STUB_DIR/show-SPEC-cl1.json"
+"$specforge" discoveries >"$out" 2>&1
+check "closed-disc: closed discovery listed" "[closed] SPEC-cl1  Closed before review"
+check "closed-disc: closed discovery marked awaiting review" "(closed — awaiting review)"
+check "closed-disc: closed discovery note preserved" "closed prose that must not be lost"
+# open sorts before closed
+op_ln=$(grep -n "SPEC-op1  Open finding" "$out" | head -1 | cut -d: -f1)
+cl_ln=$(grep -n "SPEC-cl1  Closed before review" "$out" | head -1 | cut -d: -f1)
+if [[ "$op_ln" -lt "$cl_ln" ]]; then echo "ok   - closed-disc: open listed before closed"; else
+  echo "FAIL - closed-disc: closed not sorted after open ($op_ln vs $cl_ln)"; fail=1; fi
+
 # ===========================================================================
 # sync / materialize scenarios: scratch repo pointed at by SPECFORGE_ROOT
 # ===========================================================================
