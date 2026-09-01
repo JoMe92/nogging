@@ -19,11 +19,20 @@ commit SHA and validation evidence. A material discovery is recorded on the
 active Bead with the native `discovery` label plus a required human-readable
 note (`bd update <id> --add-label discovery --append-notes "..."`); a blocking
 discovery additionally sets the Bead status to `blocked`. The mechanical sync
-finds pending discoveries by the `discovery` label alone
-(`bd list --label discovery`) and never parses the note.
+finds pending discoveries by the `discovery` label alone and never parses the
+note. It reads the full Bead status set, not the non-closed default, so a
+discovery closed before a planning session reviews it still surfaces. A
+planning session records a review with `scripts/specforge discoveries --ack
+<id>...`; the acknowledgement ledger
+(`.specforge/state/acknowledged-discoveries.json`) then hides that Bead, open or
+closed. The ledger is local, additive, and safe to delete — a deleted ledger
+just re-surfaces every discovery once.
 
 Materialization is idempotent: rerunning it creates only missing mapped Beads
-and never duplicates work. The planner creates dependencies deliberately with
+and never duplicates work. Its "already mapped" check reads closed Beads too
+(the same full-status read the sync pass uses), so re-running `materialize` for
+a change whose tasks are partly done does not duplicate the Beads of the
+finished tasks. The planner creates dependencies deliberately with
 `bd dep add <child> <blocking-parent>` after materialization; this keeps their
 meaning explicit rather than guessing from Markdown order.
 
@@ -34,11 +43,43 @@ be closed. `archived` is an explicit Product Owner operation. The sync process
 does not archive, push, close Beads, create requirements, or interpret a
 discovery.
 
+### Closed-Bead reconciliation
+
+The sync pass enumerates every mapped Bead whose status is `closed`, alongside
+the non-closed ones, and mirrors each closed Bead to its task checkbox and the
+change's `execution-log.md`. `bd list` scopes to non-closed issues by default,
+so `scripts/specforge` asks for the full status set explicitly; without this a
+closed mapped Bead — the exact thing that should be mirrored — was never seen.
+
+Each execution-log entry carries closure evidence, since an execution agent can
+never write the spec itself: the Bead ID and mapped task, the closure timestamp
+(`closed_at`, falling back to `updated_at`), the implementation commits found by
+scanning `git log` subjects for the enforced `[<bead-id>]` token and by reading
+SHAs out of the Bead note (or an explicit "none found"), and the Bead's
+human-readable note preserved verbatim as an indented block. Entries stay
+idempotent across re-runs through a stable `<!-- specforge:<id>:<closed_at> -->`
+event key; a later note amendment moves the timestamp and appends a fresh entry
+rather than rewriting history.
+
+### Sync failure handling
+
 `scripts/specforge` takes a short exclusive file lock for each sync. Planning
 takes a separate lock. A stale lock has a PID, host, timestamp and TTL, so it
 can be inspected and removed deliberately with `plan-end --force` after a
-crash. A sync failure is recorded in `.specforge/state/last-error.json` and is
-safe to retry: execution-log entries have stable event keys.
+crash.
+
+A failed sync writes `.specforge/state/sync-failure.json`: a `classification`
+(`transient` or `permanent`), the error, the consecutive-failure `attempts`
+count, `max_attempts`, `first_seen` / `last_seen`, and `next_retry_after`.
+Classification is mechanical, by exception type — a failed invariant audit,
+mapping conflict or missing task is `permanent` and is not retried
+automatically; lock contention and `git` / `bd` / JSON errors are `transient`
+and retry with capped exponential backoff until `max_attempts`. Every failure
+is also appended to `.specforge/state/sync-failures.jsonl`. A successful sync
+deletes the active record (the JSONL history is kept). The caller (the timer)
+consults `classification` and `next_retry_after` before re-invoking; `sync`
+itself stays single-shot and never sleeps or loops. Retry is safe because
+execution-log entries have stable event keys.
 
 The sync process sets its own narrowly scoped `SPECFORGE_WRITER=sync` commit
 environment, allowing the repository hook to accept only its execution mirror.
