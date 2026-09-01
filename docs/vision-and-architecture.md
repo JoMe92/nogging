@@ -180,3 +180,28 @@ Beads (`reliable-beads-sync` carries the fix).
 roadmap changes above are planned in `openspec/changes/` and materialised as
 Beads; they harden the sync, add the operator commands, and bring the specialist
 execution model online.
+
+### Roadmap execution order
+
+The changes are materialised as Beads with cross-change dependencies wired via
+`bd dep add`. Work them one change per branch (`<type>/<change-name>`), in this
+order:
+
+1. **`reliable-beads-sync`** — first. Fixes the `bd list` closed-issue defect, so
+   `sync` and `materialize` stop missing closed mapped Beads; establishes the
+   enriched `execution-log.md`, the acknowledgement ledger, and classified sync
+   failures that later changes build on.
+2. **`enforce-conventional-branching`** — independent; can run in parallel with 1.
+   After it lands, the CI `invariants` job checks every pull request.
+3. **`planning-and-discovery-commands`** — after 1 (`/discovery-review` uses the
+   acknowledgement ledger from `TASK-SYNC-006`).
+4. **`specialist-agents-and-skills`** — after 3 (the delegation section in
+   `CLAUDE.md` references `/plan`).
+5. **`remote-observable-claude-sessions`** — independent; slot in once 1–4 free
+   up attention. Larger surface (tmux, systemd, a restricted launch profile).
+6. **`end-to-end-acceptance`** — last. Depends on all of the above; its runbook
+   exercises the whole chain and its assertions are written against
+   post-`reliable-beads-sync` behaviour.
+
+Within a change, work the tasks in `tasks.md` order. `photo-import-filesystem`
+is a concept walkthrough, not scheduled work — its Beads are deferred.
