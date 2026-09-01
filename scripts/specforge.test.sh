@@ -145,6 +145,8 @@ count() { grep -cF -- "$2" "$1" || true; }
 
 # --- Scenario: a closed mapped Bead is mirrored exactly once ----------------
 root="$work/sync-once"; make_root "$root"
+git -C "$root" commit -q --allow-empty -m "feat(demo): first demo thing [SPEC-d01]"
+sha_d01="$(git -C "$root" rev-parse --short=12 HEAD)"
 export SPECFORGE_ROOT="$root"
 export BD_FIXTURE="$work/sync-once-beads.json"
 export BD_STUB_DIR="$work/sync-once"; mkdir -p "$BD_STUB_DIR"
@@ -172,6 +174,12 @@ grep -qF -- 'Bead closed at 2026-09-01T10:00:00Z' "$log" \
 grep -qF -- 'implemented the first demo thing' "$log" \
   && echo "ok   - sync-once: Bead note preserved verbatim in the entry" \
   || { echo "FAIL - sync-once: Bead note not in entry"; cat "$log"; fail=1; }
+grep -qF -- "$sha_d01" "$log" \
+  && echo "ok   - sync-once: entry lists the commit found by git-log token scan" \
+  || { echo "FAIL - sync-once: git-log commit ref missing ($sha_d01)"; cat "$log"; fail=1; }
+grep -qF -- 'abc1234' "$log" \
+  && echo "ok   - sync-once: entry lists the SHA extracted from the Bead note" \
+  || { echo "FAIL - sync-once: note SHA missing"; cat "$log"; fail=1; }
 
 # second run: no diff
 "$specforge" sync >"$out" 2>&1 || { echo "FAIL - sync-once: second sync errored"; cat "$out"; fail=1; }

@@ -122,14 +122,35 @@ def materialize(change):
         run(CFG["beads_command"], "create", "--title", f"{task}: {info['title']}", "--type", "task", "--labels", f"openspec:change:{change},openspec:task:{task}")
         print(f"materialized {task}")
 def commit_refs(issue):
-    """Implementation commit references for a closed Bead (best effort).
+    """Implementation commit references for a closed Bead, determined without a
+    native Beads field:
 
-    Extended in TASK-SYNC-004 to also scan `git log` subjects for the Bead ID
-    token; here it returns the hex SHAs the execution agent wrote into the note.
+    - every `git log` subject carrying the Bead ID token `[<id>]` (the token the
+      `commit-msg` hook enforces on execution commits);
+    - any 7-40 hex SHA the execution agent already wrote into the Bead note.
+
+    Results are de-duplicated (a short note SHA that prefixes a full log hash is
+    treated as the same commit). The caller states explicitly when the list is
+    empty.
     """
+    bid = str(issue_id(issue) or "")
+    full = []
+    if bid:
+        token = f"[{bid}]"
+        res = run("git", "log", "--format=%H %s", check=False)
+        for line in res.stdout.splitlines():
+            h, _, subject = line.partition(" ")
+            if token in subject and h not in full:
+                full.append(h)
+    refs = [h[:12] for h in full]
     note = (issue.get("notes") or "").lower()
-    return [s for s in dict.fromkeys(re.findall(r"\b[0-9a-f]{7,40}\b", note))
-            if any(c.isdigit() for c in s)]
+    for sha in dict.fromkeys(re.findall(r"\b[0-9a-f]{7,40}\b", note)):
+        if not any(c.isdigit() for c in sha):
+            continue
+        if any(h.startswith(sha) for h in full) or sha in refs:
+            continue
+        refs.append(sha)
+    return refs
 def closure_event_key(issue):
     """Stable per-closure marker: `closed_at`, falling back to `updated_at`."""
     stamp = issue.get("closed_at") or issue.get("updated_at") or "closed"
