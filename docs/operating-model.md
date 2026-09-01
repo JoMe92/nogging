@@ -36,8 +36,19 @@ Use Conventional Commits, for example
 `feat(import): add filesystem picker [SPEC-abc123]`.
 
 Planning changes are committed on their change branch and merged into `develop`
-after `./scripts/specforge validate`. The timer makes local commits only when
-there is a tracked execution-log update; it never pushes.
+after `./scripts/specforge validate`. A planning commit uses a Conventional
+subject — `docs(openspec): …` or `chore(openspec): …` — plus a
+`SpecForge-Writer: planning` trailer in the message body; the retired `plan:`
+subject prefix is not a Conventional Commit type and must not be used. The
+trailer is the durable, portable form of the `SPECFORGE_WRITER=planning`
+exemption: the local `commit-msg` hook and CI honour it identically, so a
+planning commit needs no Beads ID token but still needs the Conventional
+subject.
+
+The timer makes local commits only when there is a tracked execution-log
+update; it never pushes. Its mirror commit is
+`chore(sync): mirror Beads execution evidence` with a `SpecForge-Writer: sync`
+trailer.
 
 ## Session supervision
 
