@@ -40,6 +40,31 @@ acts on one, record it with `./scripts/specforge discoveries --ack <id>...` so
 it stops resurfacing. The ledger
 (`.specforge/state/acknowledged-discoveries.json`) is local and safe to delete.
 
+## A crashed or stuck supervised session
+
+`scripts/specforge session list` shows every SpecForge-managed Claude session
+and reconciles each record against live tmux.
+
+- **Reported `failed`** — the metadata record is still active but the tmux
+  session is gone (the Claude process crashed or was killed outside SpecForge).
+  Read `session log <name>` for the last output, then `session cleanup <name>`
+  to archive the log and retire the record.
+- **Stuck / hung** — `session log <name> --follow` to see what it is doing,
+  `session attach <name>` to intervene, or `session stop <name> --reason
+  "<why>"` to interrupt Claude and terminate the tmux session. `stop` is
+  idempotent and records `ended_at`/`exit_reason`.
+- **`cleanup` refuses** — the record is still `starting`, `running` or `idle`.
+  Run `session stop <name>` first; cleanup never acts on a live session.
+- **Lingering tmux server** — the dedicated `-L specforge` server persists
+  after its last session. `session cleanup` kills it once no non-retired
+  record remains; otherwise `tmux -L specforge kill-server` by hand is safe
+  when `session list` shows nothing active.
+- **Lost metadata** — the records under `.specforge/state/sessions/` are local
+  and safe to delete; deleting one only drops history for an already-finished
+  session. A live tmux session with no record can be inspected directly with
+  `tmux -L specforge attach -t <name>` and killed with `tmux -L specforge
+  kill-session -t <name>`.
+
 ## Orphaned Beads and bad mirrors
 
 If an active Bead is orphaned, the planner must either restore/relink its task

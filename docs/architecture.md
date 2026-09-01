@@ -87,6 +87,62 @@ environment, allowing the repository hook to accept only its execution mirror.
 If a planner removes a task whose Bead is active, audit fails closed. The Bead
 is retained and reported as orphaned; nothing is deleted or silently closed.
 
+## Session supervision
+
+Claude Code sessions that SpecForge starts for Lead Agent or specialist work
+are supervised, not ephemeral foreground processes. `scripts/specforge session`
+is a mechanical layer over tmux: it starts and tracks processes and makes no
+product decision.
+
+- **Substrate.** A dedicated tmux server socket (`tmux -L specforge`,
+  `session_tmux_socket`) isolates managed sessions from the operator's own
+  tmux and makes them enumerable. The server and the Claude process run as the
+  same non-privileged user; no `sudo`.
+- **Naming.** `sf-<role>-<bead>-<nonce>`. Before creating a session SpecForge
+  checks the metadata store, any leftover log, and `tmux has-session`; on a
+  collision it regenerates the nonce and then fails rather than reusing or
+  overwriting an existing session.
+- **Durable metadata.** One JSON record per session under
+  `.specforge/state/sessions/<name>.json`: `name`, `bead_id`, `role`, `host`,
+  `started_at`, `working_dir`, redacted `command`, `owner`, `state` (one of
+  `starting`, `running`, `idle`, `stopped`, `failed`, `retired`), `log_path`,
+  and `ended_at`/`exit_reason` on a terminal state. Written before the Claude
+  process is exec'd and updated on every transition. The store is local state
+  (gitignored, like the rest of `.specforge/state/`) and safe to delete — a
+  deleted record only drops history for an already-finished session.
+- **Liveness.** `session list` cross-checks each record against `tmux
+  list-sessions`; a record still in an active state whose tmux session is gone
+  is reported as `failed`, never trusted as `running`. `list` is read-only and
+  runs in a bare SSH shell.
+- **Append-only log.** `tmux pipe-pane -o` streams pane output through
+  `scripts/session-log-writer` to `<name>.log`, size-rotated to
+  `session_log_rotation_depth` at `session_log_max_bytes` (size-based only,
+  matching the sync failure log). Readable with `cat`/`tail`/`less` — no attach.
+- **Least authority.** Claude starts via `scripts/session-launch` with
+  `.specforge/session-launch-profile.json`: no `git push`, no remote Dolt
+  sync, no destructive shell, no extra directories. The wrapper sets no shell
+  trace and takes no token as an argument; the recorded `command` and the log
+  are run through a redactor that removes the values of secret-bearing
+  environment variables.
+- **No autonomous claiming.** `session launch` issues no `bd` mutation (its
+  only `bd` call is a read-only `bd show` to confirm the Bead exists). The
+  appended system prompt (`.specforge/session-launch-prompt.md`) states that
+  claiming or starting a Bead is a deliberate operator-directed action.
+- **Deliberate lifecycle.** `attach`, `stop`, `cleanup` are explicit
+  subcommands; none happens as a side effect of another. `cleanup` refuses a
+  record in `starting`/`running`/`idle`.
+
+### Session supervision vs. Task-tool specialists
+
+The Lead Agent's own session runs supervised (`sf-lead-<bead>-<nonce>`). When
+it delegates to a specialist through the Task tool, that call runs **in
+process** inside the Lead Agent's session — no separate tmux session or record,
+visible in the Lead session's log, under the Lead session's profile. A
+specialist is given **its own** supervised tmux session
+(`sf-specialist:<type>...`) only when the work needs to run as a separate
+long-lived Claude Code process the operator wants to observe or stop
+independently; it still obeys every specialist boundary rule.
+
 ## The OpenSpec write boundary
 
 Invariant 5 — execution agents do not alter `openspec/` — is enforced in depth

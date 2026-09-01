@@ -31,6 +31,29 @@ Read `README.md`, `docs/operating-model.md`, and the active Bead before work.
        --append-notes "Prose summary: what was found, the evidence, and why it blocks this task."
      ```
 
+## Supervised sessions
+
+Lead Agent and specialist sessions that SpecForge starts run inside a named
+tmux session on the delivery host, tracked by a durable record under
+`.specforge/state/sessions/` and an append-only log. Operators use
+`scripts/specforge session list | attach | log | stop | cleanup` from a plain
+SSH shell; see `docs/operating-model.md`.
+
+If you are running inside such a session:
+
+- Being launched is not permission to start a Bead. Do not run `bd ready` and
+  self-assign work; claim only the Bead the operator names, only when they
+  direct it in this session.
+- You have a restricted permission profile (no `git push`, no remote Dolt
+  sync, no destructive shell). Do not work around it.
+- Never echo a credential or token value and never pass one on a command line.
+
+A specialist delegated **in process** through the Task tool runs inside the
+Lead Agent's session and shares these constraints. A specialist gets its own
+supervised session only when the operator launches one explicitly for isolated
+long-running work; it still works exactly one already-claimed Bead and never
+claims, closes, or commits.
+
 ## Planning only
 
 The Planning Agent first runs `./scripts/specforge plan-begin`, writes or
