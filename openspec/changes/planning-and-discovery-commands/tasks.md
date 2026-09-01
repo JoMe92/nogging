@@ -1,0 +1,12 @@
+# Tasks
+
+- [ ] TASK-CMD-001 Create `.claude/commands/plan.md` that injects the Planning Agent persona and prescribes the fixed sequence: `scripts/specforge plan-begin` → discovery review → design dialogue → author/revise the change folder → `scripts/specforge validate` → `scripts/specforge materialize <change>` → commit with `SPECFORGE_WRITER=planning` → `scripts/specforge plan-end`.
+- [ ] TASK-CMD-002 In `plan.md`, state the hard rules from `AGENTS.md`: stop on an orphaned Bead for explicit resolution, no execution work in the planning session, and the `architect` specialist may be consulted for architecture questions.
+- [ ] TASK-CMD-003 Make `/plan` handle a lock already held by another session: report the holder from `.specforge/locks/planning.lock` and stop rather than forcing the lock.
+- [ ] TASK-CMD-004 Create `.claude/commands/discovery-review.md` that runs `scripts/specforge discoveries`, renders the output unchanged (blocking first), and does not acquire the planning lock or write `openspec/`.
+- [ ] TASK-CMD-005 In `discovery-review.md`, define the per-discovery operator prompt with three outcomes — carry into a `/plan` session, acknowledge (record so it stops resurfacing), or leave pending — and call the acknowledgement mechanism from `reliable-beads-sync` (TASK-SYNC-006); until that lands, degrade "acknowledge" to leaving the discovery pending with a dialogue note.
+- [ ] TASK-CMD-006 Create `.claude/commands/sync-now.md`: if `.specforge/state/sync.pid` names a live process, send `SIGUSR1` and report it; otherwise run `scripts/specforge sync` directly.
+- [ ] TASK-CMD-007 In `sync-now.md`, handle sync-lock contention: when `scripts/specforge sync` reports the lock is held by the timer, surface the message and exit without retrying.
+- [ ] TASK-CMD-008 Optionally add a `scripts/specforge sync --now` alias that encapsulates the PID-signal / direct-run / lock-contention handling so `sync-now.md` stays a one-liner; if added, cover it in `scripts/specforge.test.sh`.
+- [ ] TASK-CMD-009 Add a "Commands" section to `docs/operating-model.md` describing `/plan`, `/discovery-review`, and `/sync-now`, and what each may and may not do; add a one-line pointer in `AGENTS.md` to the command files and the equivalent manual `scripts/specforge` sequence.
+- [ ] TASK-CMD-010 Add a check (in `scripts/specforge.test.sh` or a sibling) that every `.claude/commands/*.md` file referenced by the docs exists and that `/discovery-review` and `/sync-now` contain no `plan-begin` / `openspec/` write step.
