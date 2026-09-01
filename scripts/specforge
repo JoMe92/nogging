@@ -5,7 +5,7 @@ It intentionally contains no LLM call and makes no semantic product decision.
 """
 from __future__ import annotations
 
-import argparse, datetime as dt, json, os, re, socket, subprocess, sys
+import argparse, datetime as dt, getpass, json, os, re, shlex, socket, subprocess, sys, time
 from pathlib import Path
 
 # ROOT is the repository the bridge operates on. It defaults to the checkout the
@@ -298,6 +298,128 @@ def sync():
         raise
     finally:
         if path is not None: path.unlink(missing_ok=True)
+# --- session supervision ---------------------------------------------------
+# A thin, mechanical layer that runs each SpecForge-launched Claude Code
+# session inside a named tmux session on a dedicated server socket, tracks it
+# with a durable JSON record, and exposes list / attach / log / stop / cleanup
+# from a plain SSH shell. It starts and tracks processes; it makes no product
+# decision and never mutates a Bead.
+
+SESSION_ACTIVE_STATES = {"starting", "running", "idle"}
+SESSION_TERMINAL_STATES = {"stopped", "failed", "retired"}
+# Environment variable names whose values must never reach the metadata record,
+# the tmux scrollback, or the log. Matched case-insensitively as substrings.
+SECRET_NAME_RE = re.compile(r"TOKEN|SECRET|PASSWORD|PASSWD|APIKEY|API_KEY|_KEY|CREDENTIAL|AUTH", re.I)
+
+def scfg(key, default): return CFG.get(key, default)
+def tmux_bin(): return scfg("session_tmux_command", "tmux")
+def tmux_socket(): return scfg("session_tmux_socket", "specforge")
+def sessions_dir(): return data_dir(ROOT / scfg("session_state_dir", ".specforge/state/sessions"))
+def tmux(*args, check=True):
+    """Invoke the dedicated SpecForge tmux server (never the operator's own)."""
+    return run(tmux_bin(), "-L", tmux_socket(), *args, check=check)
+def tmux_has_session(name):
+    return tmux("has-session", "-t", name, check=False).returncode == 0
+def tmux_sessions():
+    res = tmux("list-sessions", "-F", "#{session_name}", check=False)
+    if res.returncode != 0: return set()
+    return {ln.strip() for ln in res.stdout.splitlines() if ln.strip()}
+def secret_values():
+    return [v for k, v in os.environ.items()
+            if v and len(v) >= 4 and SECRET_NAME_RE.search(k)]
+def redact(text):
+    for v in secret_values(): text = text.replace(v, "***REDACTED***")
+    return text
+def redact_argv(argv): return [redact(a) for a in argv]
+def owner_identity(explicit=None):
+    user = explicit or os.environ.get("SUDO_USER") or getpass.getuser()
+    conn = os.environ.get("SSH_CONNECTION", "").split()
+    return f"{user} (ssh {conn[0]})" if conn else user
+def normalize_role(role):
+    """Return (metadata_role, name_slug). Accepts `lead`, `specialist:<type>`
+    or `spec-<type>`."""
+    if role == "lead": return "lead", "lead"
+    if role.startswith("specialist:"):
+        t = role.split(":", 1)[1]
+        if t: return f"specialist:{t}", f"spec-{t}"
+    if role.startswith("spec-") and role[5:]:
+        return f"specialist:{role[5:]}", role
+    raise RuntimeError(f"--role must be 'lead' or 'specialist:<type>', got {role!r}")
+def session_records():
+    out = []
+    for p in sorted(sessions_dir().glob("*.json")):
+        try: out.append((p, json.loads(p.read_text())))
+        except (ValueError, OSError): continue
+    return out
+def load_session(name):
+    p = sessions_dir() / f"{name}.json"
+    if not p.exists(): raise RuntimeError(f"no managed session named {name}")
+    return p, json.loads(p.read_text())
+def write_session(path, rec):
+    path.write_text(json.dumps(rec, indent=2, sort_keys=True) + "\n")
+def bead_exists(bead_id):
+    res = run(CFG["beads_command"], "show", bead_id, "--json", check=False)
+    if res.returncode != 0: return False
+    try: decoded = json.loads(res.stdout.strip() or "[]")
+    except ValueError: return False
+    records = decoded.get("issues", decoded) if isinstance(decoded, dict) else decoded
+    if isinstance(records, dict): records = [records]
+    return any(str(issue_id(r)) == str(bead_id) for r in records if isinstance(r, dict))
+def gen_session_name(role_slug, bead_id):
+    """Deterministic shape `sf-<role>-<bead>-<nonce>`; the nonce (UTC timestamp
+    plus a short random suffix) is regenerated on any collision with an
+    existing managed record or a live tmux session. Never returns a name that
+    is already in use."""
+    taken = {p.stem for p, _ in session_records()}
+    for _ in range(64):
+        nonce = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S") + "-" + os.urandom(2).hex()
+        name = re.sub(r"[^a-z0-9_.-]", "-", f"sf-{role_slug}-{bead_id}-{nonce}".lower())
+        if name in taken: continue
+        if (sessions_dir() / f"{name}.json").exists(): continue
+        if tmux_has_session(name): continue
+        return name
+    raise RuntimeError("could not generate a collision-free session name")
+def session_launch(role, bead, cwd, read_only, owner):
+    role_meta, role_slug = normalize_role(role)
+    if not bead_exists(bead):
+        raise RuntimeError(f"Bead {bead} does not exist; launch refused")
+    live = tmux_sessions()
+    for _, rec in session_records():
+        if (rec.get("bead_id") == bead and rec.get("role") == role_meta
+                and rec.get("state") in SESSION_ACTIVE_STATES and rec.get("name") in live):
+            raise RuntimeError(
+                f"a live {role_meta} session already covers {bead}: {rec['name']}")
+    name = gen_session_name(role_slug, bead)
+    workdir = str(Path(cwd or ROOT).resolve())
+    sdir = sessions_dir()
+    rec_path, log_path = sdir / f"{name}.json", sdir / f"{name}.log"
+    profile = str((ROOT / scfg("session_launch_profile", ".specforge/session-launch-profile.json")).resolve())
+    prompt = str((ROOT / scfg("session_launch_prompt", ".specforge/session-launch-prompt.md")).resolve())
+    wrapper = str((ROOT / "scripts/session-launch").resolve())
+    inner = [wrapper, "--settings", profile, "--prompt", prompt, "--cwd", workdir, "--bead", bead]
+    if read_only: inner.append("--read-only")
+    record = {
+        "name": name, "bead_id": bead, "role": role_meta, "host": socket.gethostname(),
+        "started_at": now(), "working_dir": workdir, "command": redact_argv(inner),
+        "owner": owner_identity(owner), "state": "starting", "log_path": str(log_path),
+        "read_only": bool(read_only), "ended_at": None, "exit_reason": None,
+    }
+    write_session(rec_path, record)                       # metadata before exec
+    with log_path.open("a") as fh:                        # append-only log before exec
+        fh.write(f"# specforge session {name} for {bead} ({role_meta}) started {record['started_at']}\n")
+    try:
+        tmux("new-session", "-d", "-s", name, "-c", workdir, "--", *inner)
+    except ToolError as exc:
+        record.update(state="failed", ended_at=now(), exit_reason=f"launch failed: {redact(str(exc))}")
+        write_session(rec_path, record)
+        raise
+    record["state"] = "running"
+    write_session(rec_path, record)
+    print(f"launched {name}")
+    print(f"  bead={bead} role={role_meta} cwd={workdir}")
+    print(f"  log={log_path}")
+    print(f"  attach: {tmux_bin()} -L {tmux_socket()} attach -t {name}  (or: specforge session attach {name})")
+
 def doctor(audit=False):
     checks = []
     for cmd in ("git", "python3", CFG["beads_command"], "dolt"):
@@ -326,6 +448,11 @@ def main():
     b = sub.add_parser("plan-begin"); b.add_argument("--force", action="store_true")
     e = sub.add_parser("plan-end"); e.add_argument("--force", action="store_true")
     m = sub.add_parser("materialize"); m.add_argument("change")
+    s = sub.add_parser("session"); ssub = s.add_subparsers(dest="session_command", required=True)
+    sl = ssub.add_parser("launch")
+    sl.add_argument("--role", required=True); sl.add_argument("--bead", required=True)
+    sl.add_argument("--cwd"); sl.add_argument("--read-only", action="store_true")
+    sl.add_argument("--owner")
     args = p.parse_args()
     if args.command == "plan-begin": lock("planning", CFG["planning_lock_ttl_seconds"], args.force); print("planning session lock acquired")
     elif args.command == "plan-end":
@@ -335,7 +462,11 @@ def main():
     elif args.command == "materialize": materialize(args.change)
     elif args.command == "sync": sync()
     elif args.command == "discoveries": ack_discoveries(args.ack) if args.ack else discoveries()
+    elif args.command == "session": session_cmd(args)
     else: doctor(args.command == "audit")
+def session_cmd(args):
+    if args.session_command == "launch":
+        session_launch(args.role, args.bead, args.cwd, args.read_only, args.owner)
 if __name__ == "__main__":
     try: main()
     except Exception as exc: print(f"specforge: {exc}", file=sys.stderr); sys.exit(1)
