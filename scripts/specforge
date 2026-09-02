@@ -519,6 +519,7 @@ def session_launch(role, bead, cwd, read_only, owner,
         "started_at": now(), "working_dir": workdir, "command": redact_argv(inner),
         "owner": owner_identity(owner), "state": "starting", "log_path": str(log_path),
         "read_only": bool(read_only), "ended_at": None, "exit_reason": None,
+        "profile": profile_label, "effective_settings_path": str(effective_path),
     }
     write_session(rec_path, record)                       # metadata before exec
     with log_path.open("a") as fh:                        # append-only log before exec
@@ -569,6 +570,14 @@ def _archive_log(rec):
         archived = lp.with_name(lp.name + f".archived-{stamp}")
         lp.rename(archived)
         rec["archived_log_path"] = str(archived)
+def _remove_effective_settings(rec):
+    """Delete the per-session effective-settings file when the record retires.
+    The source profile is never touched — only the merged copy this launch
+    wrote under the session state directory."""
+    esp = rec.get("effective_settings_path")
+    if esp and Path(esp).exists():
+        Path(esp).unlink()
+        rec["effective_settings_removed_at"] = now()
 def session_cleanup(name):
     """Remove a lingering tmux session, archive-rotate its log, and retire the
     metadata record. Refuses any record still `starting`, `running` or `idle`
@@ -589,6 +598,7 @@ def session_cleanup(name):
         if nm in live:
             tmux("kill-session", "-t", nm, check=False)
         _archive_log(rec)
+        _remove_effective_settings(rec)
         transition(path, rec, "retired", retired_at=now())
         print(f"retired {nm}")
     if not [r for _, r in session_records() if r.get("state") != "retired"]:
