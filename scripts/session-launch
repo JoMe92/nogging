@@ -1,37 +1,57 @@
 #!/usr/bin/env bash
-# Launch wrapper for a SpecForge-supervised Claude Code session. It is the
-# process `specforge session launch` starts inside tmux.
+# Launch wrapper for a SpecForge-supervised agent session. It is the process
+# `specforge session launch` starts inside tmux. It dispatches on `--agent`
+# (default `claude`, so an old caller is unchanged) to either Claude Code or
+# OpenAI Codex; everything around it — the tmux server, the record, the
+# pipe-pane log, the lifecycle — is agent-neutral and lives in the caller.
 #
-# Least authority, no credential leakage:
+# Least authority, no credential leakage (both agents):
 #   - no shell trace (`set -x`): no command line carrying a secret is ever
 #     echoed into the pane, and therefore never into the pipe-pane log;
 #   - no token is accepted as an argument (arguments are visible in `ps` and
 #     are recorded in the session metadata `command`); any credential the
-#     child needs is read by Claude itself from the environment or from a
-#     file it opens;
-#   - Claude starts with the restricted permission profile (no `git push`, no
-#     remote Dolt sync, no destructive shell) and is scoped to the working
-#     directory;
-#   - the no-autonomous-claim system prompt is appended so the session does
-#     not select or claim a Bead as a consequence of being started.
+#     child needs is read by the agent itself from the environment or from a
+#     file it opens (Claude: the environment; Codex: `CODEX_HOME/auth.json`);
+#   - the agent is scoped to the working directory and starts under the
+#     resolved authority level — Claude via the restricted/floored settings
+#     file, Codex via `--sandbox` / `--ask-for-approval`;
+#   - the tool-neutral launch prompt is passed as the leading instruction so
+#     the session does not select or claim a Bead as a consequence of being
+#     started (Claude: `--append-system-prompt`; Codex: the leading prompt).
+#
+# The Codex branch NEVER passes `--ignore-rules` (which would drop the
+# project execpolicy `.rules` floor) or `--dangerously-bypass-approvals-and-
+# sandbox`. The SpecForge command floor for Codex is the repo's `.codex/rules/`
+# directory, which Codex loads from the working tree by default.
 #
 # Usage:
-#   session-launch --settings <profile.json> --prompt <prompt.md> \
+#   session-launch [--agent claude] --settings <profile.json> --prompt <prompt.md> \
 #                  --cwd <dir> --bead <id> [--read-only]
+#   session-launch --agent codex --sandbox <mode> --approval <policy> \
+#                  --network <on|off> --prompt <prompt.md> --cwd <dir> --bead <id> \
+#                  [--read-only]
 set -eu
 
+agent="claude"
 settings=""
 prompt=""
 cwd=""
 bead=""
 read_only=0
+sandbox=""
+approval=""
+network="on"
 
 while [ $# -gt 0 ]; do
   case "$1" in
+    --agent)     agent=$2; shift 2 ;;
     --settings)  settings=$2; shift 2 ;;
     --prompt)    prompt=$2; shift 2 ;;
     --cwd)       cwd=$2; shift 2 ;;
     --bead)      bead=$2; shift 2 ;;
+    --sandbox)   sandbox=$2; shift 2 ;;
+    --approval)  approval=$2; shift 2 ;;
+    --network)   network=$2; shift 2 ;;
     --read-only) read_only=1; shift ;;
     --)          shift; break ;;
     *) echo "session-launch: unknown argument: $1" >&2; exit 2 ;;
@@ -40,12 +60,31 @@ done
 
 [ -n "$cwd" ] && cd "$cwd"
 
-set --
-[ -n "$settings" ] && set -- "$@" --settings "$settings"
-if [ -n "$prompt" ] && [ -f "$prompt" ]; then
-  set -- "$@" --append-system-prompt "$(cat "$prompt")"
-fi
-[ "$read_only" -eq 1 ] && set -- "$@" --permission-mode plan
-
-echo "specforge: starting Claude for ${bead:-<no bead>} in $(pwd) (read-only=${read_only})"
-exec claude "$@"
+case "$agent" in
+  claude)
+    set --
+    [ -n "$settings" ] && set -- "$@" --settings "$settings"
+    if [ -n "$prompt" ] && [ -f "$prompt" ]; then
+      set -- "$@" --append-system-prompt "$(cat "$prompt")"
+    fi
+    [ "$read_only" -eq 1 ] && set -- "$@" --permission-mode plan
+    echo "specforge: starting Claude for ${bead:-<no bead>} in $(pwd) (read-only=${read_only})"
+    exec claude "$@"
+    ;;
+  codex)
+    [ "$read_only" -eq 1 ] && sandbox="read-only"
+    : "${sandbox:=workspace-write}"
+    : "${approval:=on-request}"
+    set -- --cd "$(pwd)" --sandbox "$sandbox" --ask-for-approval "$approval"
+    [ "$network" = off ] && set -- "$@" -c 'sandbox_workspace_write.network_access=false'
+    echo "specforge: starting Codex for ${bead:-<no bead>} in $(pwd) (sandbox=${sandbox} approval=${approval} network=${network})"
+    if [ -n "$prompt" ] && [ -f "$prompt" ]; then
+      exec codex "$@" "$(cat "$prompt")"
+    fi
+    exec codex "$@"
+    ;;
+  *)
+    echo "session-launch: unknown agent: $agent" >&2
+    exit 2
+    ;;
+esac
