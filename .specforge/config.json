@@ -13,5 +13,6 @@
   "session_state_dir": ".specforge/state/sessions",
   "session_log_max_bytes": 1048576,
   "session_log_rotation_depth": 3,
-  "session_stop_grace_seconds": 10
+  "session_stop_grace_seconds": 10,
+  "session_agent": "claude"
 }
