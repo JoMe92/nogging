@@ -537,7 +537,23 @@ def gen_session_name(role_slug, bead_id):
             return name
     raise RuntimeError("could not generate a collision-free session name; "
                        "no existing session was reused or overwritten")
-def resolved_launch_pair(profile, prompt, full_access):
+def resolve_codex_profile(profile, full_access):
+    """Resolve a Codex launch level to a `.codex.toml` spec.
+
+    Same name-or-path rules as the Claude resolver, but the directory suffix
+    is `.codex.toml` and the default level is `restricted`. A `--profile`
+    that points at a `.json` file is a Claude settings file and is rejected
+    here, before any session exists — a Codex launch has no `permissions`
+    file. A supplied `.toml` path is used directly. The `session_launch_profile`
+    config key names a Claude `.json` and does not apply to a Codex launch."""
+    value = profile or ("trusted" if full_access else "restricted")
+    if Path(value).suffix == ".json":
+        raise RuntimeError(
+            f"--profile {value!r} is a Claude settings file; --agent codex takes a "
+            f"Codex launch spec (a level name or a .codex.toml path), not a permissions JSON")
+    return resolve_launch_file(
+        value, "session_launch_profile_dir", ".specforge/launch-profiles", ".codex.toml")
+def resolved_launch_pair(profile, prompt, full_access, agent="claude"):
     """Resolve the launch selection to concrete files.
 
     Returns `(profile_path, profile_label, prompt_path)`. `--full-access`
@@ -545,11 +561,15 @@ def resolved_launch_pair(profile, prompt, full_access):
     With no selection the restricted profile and the no-autonomous-claim
     prompt are used; an explicitly configured `session_launch_profile` /
     `session_launch_prompt` key still wins over the directory default.
-    Any resolution failure raises before a session is created."""
+    The prompt is tool-neutral prose and resolves the same for every agent;
+    the profile resolves per agent (`.json` for claude, `.codex.toml` for
+    codex). Any resolution failure raises before a session is created."""
     if full_access:
         profile = profile or "trusted"
         prompt = prompt or "autonomous"
-    if profile is not None:
+    if agent == "codex":
+        profile_path, profile_label = resolve_codex_profile(profile, full_access)
+    elif profile is not None:
         profile_path, profile_label = resolve_launch_file(
             profile, "session_launch_profile_dir", ".specforge/launch-profiles", ".json")
     elif "session_launch_profile" in CFG:
