@@ -1,6 +1,6 @@
 {
   "name": "specforge",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Lean local-first operating model for agentic software delivery — installable into any repo",
   "main": "bin/cli.js",
   "bin": {
