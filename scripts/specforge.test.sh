@@ -534,5 +534,49 @@ grep -qF '"by": "install-hooks"' "$root/.specforge/locks/openspec.readonly" \
   && echo "ok   - twb-install: sentinel attributes the closure to install-hooks" \
   || { echo "FAIL - twb-install: wrong sentinel body"; fail=1; }
 
+# ===========================================================================
+# Scenario: the sentinel does not gate the sync writer or git branch ops
+# (TASK-TWB-005). sync() writes openspec/ directly as the `sync` writer; the
+# sentinel is advisory to the guards, not a file-mode change.
+# ===========================================================================
+root="$work/twb-sync"; make_root "$root"
+git -C "$root" commit -q --allow-empty -m "feat(demo): the thing [SPEC-s55]"
+mkdir -p "$root/.specforge/locks"
+printf '{"closed_at":"x","by":"plan-end"}\n' >"$root/.specforge/locks/openspec.readonly"
+export SPECFORGE_ROOT="$root"
+export BD_FIXTURE="$work/twb-sync-beads.json"
+export BD_STUB_DIR="$root"
+cat >"$BD_FIXTURE" <<'JSON'
+[
+  {"id": "SPEC-s55", "status": "closed",
+   "closed_at": "2026-09-02T12:00:00Z", "updated_at": "2026-09-02T12:00:00Z",
+   "notes": "did the thing",
+   "labels": ["openspec:change:demo", "openspec:task:TASK-DEMO-001"]}
+]
+JSON
+"$specforge" sync >"$out" 2>&1 || { echo "FAIL - twb-sync: sync errored with the sentinel present"; cat "$out"; fail=1; }
+log="$root/openspec/changes/demo/execution-log.md"
+grep -qF -- '<!-- specforge:SPEC-s55:' "$log" \
+  && echo "ok   - twb-sync: sync mirrored the closed Bead while the sentinel was present" \
+  || { echo "FAIL - twb-sync: no execution-log entry"; cat "$log"; fail=1; }
+grep -qF -- '- [x] TASK-DEMO-001' "$root/openspec/changes/demo/tasks.md" \
+  && echo "ok   - twb-sync: task checkbox flipped despite the sentinel" \
+  || { echo "FAIL - twb-sync: checkbox not flipped"; fail=1; }
+git -C "$root" log -1 --format='%s' | grep -qF 'chore(sync)' \
+  && echo "ok   - twb-sync: the sync writer committed as normal" \
+  || { echo "FAIL - twb-sync: no sync commit"; git -C "$root" log -1 --format='%s'; fail=1; }
+[[ -f "$root/.specforge/locks/openspec.readonly" ]] \
+  && echo "ok   - twb-sync: sync left the sentinel in place (it never touches it)" \
+  || { echo "FAIL - twb-sync: sync removed the sentinel"; fail=1; }
+# git branch operations are unaffected: a branch that differs under openspec/
+git -C "$root" checkout -q -b other
+printf 'divergent\n' >>"$root/openspec/changes/demo/tasks.md"
+git -C "$root" commit -q -am "chore: diverge openspec [SPEC-000]"
+git -C "$root" checkout -q master 2>/dev/null || git -C "$root" checkout -q main
+git -C "$root" merge -q --no-edit other >"$out" 2>&1 \
+  && echo "ok   - twb-sync: git merge across an openspec/ diff succeeds with the sentinel present" \
+  || { echo "FAIL - twb-sync: git merge blocked"; cat "$out"; fail=1; }
+unset SPECFORGE_ROOT BD_FIXTURE BD_STUB_DIR
+
 if [[ $fail -ne 0 ]]; then echo "specforge checks failed" >&2; exit 1; fi
 echo "all specforge checks passed"
