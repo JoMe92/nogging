@@ -556,13 +556,20 @@ def session_list():
     if not recs:
         print("no managed sessions"); return
     live = tmux_sessions()
-    hdr = f"{'NAME':<40}  {'BEAD':<10}  {'ROLE':<24}  {'STARTED':<20}  {'STATE':<8}  {'OWNER':<20}  WORKING_DIR"
+    hdr = (f"{'NAME':<40}  {'BEAD':<10}  {'ROLE':<24}  {'STARTED':<20}  "
+           f"{'STATE':<8}  {'OWNER':<16}  {'PROFILE':<12}  WORKING_DIR")
     print(hdr)
     for _, rec in recs:
         print(f"{rec.get('name',''):<40}  {rec.get('bead_id',''):<10}  "
               f"{rec.get('role',''):<24}  {rec.get('started_at',''):<20}  "
-              f"{reconciled_state(rec, live):<8}  {str(rec.get('owner','')):<20}  "
-              f"{rec.get('working_dir','')}")
+              f"{reconciled_state(rec, live):<8}  {str(rec.get('owner','')):<16}  "
+              f"{_profile_display(rec):<12}  {rec.get('working_dir','')}")
+def _profile_display(rec):
+    """`session list` PROFILE cell: the restricted default (or an unset record
+    from before this column existed) shows as `-`; anything else shows its
+    name or the basename of the supplied path."""
+    p = rec.get("profile")
+    return p if (p and p != "restricted") else "-"
 def _archive_log(rec):
     lp = Path(rec.get("log_path") or "")
     if lp and lp.exists():
