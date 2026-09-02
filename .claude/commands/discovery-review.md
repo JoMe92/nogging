@@ -42,11 +42,9 @@ time (blocking ones first). For each, offer exactly three outcomes:
 
 ## Boundaries
 
-- **Do not acquire the planning lock.** Never run `scripts/specforge
-  plan-begin`. This command holds no lock.
-- **Do not write `openspec/`.** Never create or modify any file under
-  `openspec/`. Carrying a discovery into a spec change is a `/plan` session's
-  job, not this one's.
+- Do not acquire the planning lock — never run `scripts/specforge plan-begin`.
+- Do not write `openspec/` — never create or modify any file under `openspec/`.
+- Carrying a discovery into a spec change is a `/plan` session's job, not this
+  one's.
 - The only state this command may write is the acknowledgement ledger, via
-  `scripts/specforge discoveries --ack <bead-id>...` (see the per-discovery
-  prompt).
+  `scripts/specforge discoveries --ack` (see the per-discovery prompt).
