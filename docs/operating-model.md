@@ -105,6 +105,25 @@ update; it never pushes. Its mirror commit is
 `chore(sync): mirror Beads execution evidence` with a `SpecForge-Writer: sync`
 trailer.
 
+## Acceptance
+
+A change is not **accepted** just because its Beads are closed and CI is green.
+Acceptance is an explicit, human act recorded in a signed report.
+
+`docs/acceptance.md` is the reproducible end-to-end procedure — from an empty
+git repository through install, planning, materialize, a simulated execution,
+mechanical sync and discovery review. Every step is tagged `[M]` mechanical
+(reproduced by `scripts/acceptance.sh`, also run as the `acceptance` CI job) or
+`[A]` agent-driven. Each run is written up from
+`docs/acceptance-report-template.md` into a dated report under
+`docs/acceptance/<YYYY-MM-DD>-<hostname>.md`, recording a pass / fail / skipped
+result for every step, any deviations, and every discovery filed during the run.
+
+The report is committed with its `Signed-off-by:` line blank; the Product Owner
+completes that line in a separate commit. **A change is not accepted until a
+signed report exists.** A green `acceptance` CI job is necessary but not
+sufficient — the `[A]` steps and the sign-off are the rest.
+
 ## Archived changes
 
 When the Product Owner archives a completed change, `openspec archive <name>`

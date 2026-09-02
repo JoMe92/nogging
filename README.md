@@ -42,9 +42,10 @@ The timer is installed with `systemctl --user enable --now specforge-sync.timer`
 See [docs/vision-and-architecture.md](docs/vision-and-architecture.md) for the
 goal and the design, [docs/operating-model.md](docs/operating-model.md) for the
 process, [docs/running-work-in-sessions.md](docs/running-work-in-sessions.md) for
-running work in supervised host sessions, and
+running work in supervised host sessions,
 [docs/walkthrough-photo-import.md](docs/walkthrough-photo-import.md) for a worked
-example.
+example, and [docs/acceptance.md](docs/acceptance.md) for the end-to-end
+acceptance runbook.
 
 ## Install into another repo
 
@@ -69,7 +70,12 @@ touches `openspec/changes/`, `.beads/`, or your `package.json`. Full details in
 | Execution mirror | OpenSpec execution log | SpecForge sync process only |
 
 `open → done → archived` is the entire change lifecycle. Product acceptance is
-an explicit `accepted: true` record, not another workflow state.
+an explicit `accepted: true` record, not another workflow state: a change is not
+accepted until a signed acceptance report exists under
+[docs/acceptance/](docs/acceptance/), produced by running
+[docs/acceptance.md](docs/acceptance.md) and filled in from
+[docs/acceptance-report-template.md](docs/acceptance-report-template.md). The
+mechanical subset of that runbook runs unattended as the `acceptance` CI job.
 
 ## Tests
 
