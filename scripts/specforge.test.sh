@@ -349,6 +349,65 @@ rm -f "$root/.specforge/locks/sync.lock"
 unset SPECFORGE_ROOT
 
 # ===========================================================================
+# Scenario: a completed change is archived without breaking validate / sync
+# (TASK-HY-003). The fixture is built entirely inside the SPECFORGE_ROOT
+# scratch repo — never the real openspec/.
+# ===========================================================================
+root="$work/archived"; make_root "$root"
+arc="$root/openspec/changes/archive/2026-01-01-archived-demo"
+mkdir -p "$arc"
+cat >"$arc/tasks.md" <<'MD'
+# Tasks
+
+- [x] TASK-ARC-001 Do the archived thing
+- [x] TASK-ARC-002 Do the other archived thing
+- [x] TASK-DEMO-001 An archived task deliberately re-using a live task ID
+MD
+printf '# Execution log\n\n- SPEC-a01 closed for TASK-ARC-001.\n' >"$arc/execution-log.md"
+# demo/tasks.md already carries a live TASK-DEMO-001; the archived tasks.md above
+# re-uses that ID. That live/archived pair must not read as a duplicate.
+git -C "$root" add -A && git -C "$root" commit -q -m "chore: archived fixture [SPEC-000]"
+export SPECFORGE_ROOT="$root"
+export BD_FIXTURE="$work/archived-beads.json"
+export BD_STUB_DIR="$root"
+cat >"$BD_FIXTURE" <<'JSON'
+[
+  {"id": "SPEC-a01", "status": "closed", "closed_at": "2026-01-01T10:00:00Z",
+   "notes": "commit deadbee; archived work",
+   "labels": ["openspec:change:archived-demo", "openspec:task:TASK-ARC-001"]},
+  {"id": "SPEC-a02", "status": "closed", "closed_at": "2026-01-01T11:00:00Z",
+   "notes": "",
+   "labels": ["openspec:change:archived-demo", "openspec:task:TASK-ARC-002"]}
+]
+JSON
+
+rc=0; "$specforge" validate >"$out" 2>&1 || rc=$?
+[[ $rc -eq 0 ]] \
+  && echo "ok   - archived: validate exits 0 with archived-change Beads present" \
+  || { echo "FAIL - archived: validate exit $rc"; cat "$out"; fail=1; }
+refute "archived: validate reports no failures" "FAIL "
+refute "archived: no 'maps missing task' for the archived Bead" "maps missing task"
+refute "archived: no 'change label disagrees' for the archived Bead" "change label disagrees"
+refute "archived: a live/archived shared task ID is not a duplicate" "duplicate task IDs"
+
+"$specforge" sync >"$out" 2>&1 || { echo "FAIL - archived: sync errored"; cat "$out"; fail=1; }
+check "archived: sync reports no changes" "sync: no changes"
+[[ ! -d "$root/openspec/changes/archived-demo" ]] \
+  && echo "ok   - archived: sync did not resurrect a live change directory" \
+  || { echo "FAIL - archived: sync created openspec/changes/archived-demo"; fail=1; }
+[[ "$(count "$arc/tasks.md" '- [x] TASK-ARC-001')" == "1" && "$(count "$arc/tasks.md" '- [ ]')" == "0" ]] \
+  && echo "ok   - archived: the frozen archived tasks.md was not rewritten" \
+  || { echo "FAIL - archived: archived tasks.md changed"; cat "$arc/tasks.md"; fail=1; }
+git -C "$root" diff --quiet \
+  && echo "ok   - archived: sync made no commit and left the tree clean" \
+  || { echo "FAIL - archived: sync dirtied the tree"; git -C "$root" status --porcelain; fail=1; }
+
+"$specforge" materialize archived-demo >"$out" 2>&1 \
+  && { echo "FAIL - archived: materialize acted on an archived change"; cat "$out"; fail=1; } \
+  || echo "ok   - archived: materialize refuses an archived change (no live tasks)"
+unset SPECFORGE_ROOT BD_STUB_DIR
+
+# ===========================================================================
 # sync --now (TASK-CMD-008): the on-demand alias behind /sync-now
 # ===========================================================================
 
