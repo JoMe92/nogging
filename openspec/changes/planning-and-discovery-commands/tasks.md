@@ -1,6 +1,6 @@
 # Tasks
 
-- [ ] TASK-CMD-001 Create `.claude/commands/plan.md` that injects the Planning Agent persona and prescribes the fixed sequence: `scripts/specforge plan-begin` → discovery review → design dialogue → author/revise the change folder → `scripts/specforge validate` → `scripts/specforge materialize <change>` → commit with `SPECFORGE_WRITER=planning` → `scripts/specforge plan-end`.
+- [x] TASK-CMD-001 Create `.claude/commands/plan.md` that injects the Planning Agent persona and prescribes the fixed sequence: `scripts/specforge plan-begin` → discovery review → design dialogue → author/revise the change folder → `scripts/specforge validate` → `scripts/specforge materialize <change>` → commit with `SPECFORGE_WRITER=planning` → `scripts/specforge plan-end`.
 - [ ] TASK-CMD-002 In `plan.md`, state the hard rules from `AGENTS.md`: stop on an orphaned Bead for explicit resolution, no execution work in the planning session, and the `architect` specialist may be consulted for architecture questions.
 - [ ] TASK-CMD-003 Make `/plan` handle a lock already held by another session: report the holder from `.specforge/locks/planning.lock` and stop rather than forcing the lock.
 - [ ] TASK-CMD-004 Create `.claude/commands/discovery-review.md` that runs `scripts/specforge discoveries`, renders the output unchanged (blocking first), and does not acquire the planning lock or write `openspec/`.
