@@ -31,6 +31,20 @@ Read `README.md`, `docs/operating-model.md`, and the active Bead before work.
        --append-notes "Prose summary: what was found, the evidence, and why it blocks this task."
      ```
 
+## Specialist delegation (Claude Code)
+
+Claude Code sessions have a specialist roster in `.claude/agents/` — `architect`,
+`ui-ux-designer`, `backend-engineer`, `frontend-engineer`, `code-reviewer`,
+`test-runner` — invoked through the Task tool. The Lead Agent delegation model is
+described in the *Lead Agent delegation* section of `CLAUDE.md`; the definitions
+themselves live in `.claude/agents/` and are not duplicated here.
+
+The tool-neutral rule any agent runtime follows: isolated implementation or
+review work may be delegated to a specialist, but claiming a Bead, closing it,
+and committing stay with the Main Worker, and no delegated context may write
+`openspec/`. A non-Claude tool without a subagent mechanism simply does this work
+inline under the same constraints.
+
 ## Supervised sessions
 
 Lead Agent and specialist sessions that SpecForge starts run inside a named
