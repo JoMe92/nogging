@@ -70,3 +70,12 @@ and reconciles each record against live tmux.
 If an active Bead is orphaned, the planner must either restore/relink its task
 or cancel the Bead with a recorded reason. Never delete a closed Bead. Roll back
 an incorrect execution-log update with a normal Git revert and then rerun sync.
+
+A closed Bead whose change has been **archived** is not orphaned. `openspec
+archive <name>` moves the change to `openspec/changes/archive/YYYY-MM-DD-<name>/`,
+and `./scripts/specforge validate` reads archived `tasks.md` files (date prefix
+stripped back to the change name) so those closed Beads keep resolving.
+Archiving a completed change is supported and keeps the audit clean; `sync` and
+`materialize` continue to ignore the archive directory. If `validate` ever
+reports "maps missing task" for a Bead whose change directory now lives under
+`archive/`, check that the archived `tasks.md` still contains the task line.

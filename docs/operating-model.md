@@ -103,6 +103,25 @@ update; it never pushes. Its mirror commit is
 `chore(sync): mirror Beads execution evidence` with a `SpecForge-Writer: sync`
 trailer.
 
+## Archived changes
+
+When the Product Owner archives a completed change, `openspec archive <name>`
+moves it to `openspec/changes/archive/YYYY-MM-DD-<name>/`. Its Beads stay closed
+in the tracker, still carrying their `openspec:change:` / `openspec:task:`
+labels. This is supported and does not break the mechanical layer:
+
+- `./scripts/specforge validate` (and `doctor` / `audit`) read the archived
+  `tasks.md` too — an archived-inclusive `task_map` mode strips the date prefix
+  back to the original change name — so a closed Bead mapping to an archived
+  task still resolves instead of reporting a missing task or a disagreeing
+  change label. Archived `tasks.md` files are frozen, so the "checked task has a
+  closed Bead" reverse check is skipped for them.
+- `materialize` and `sync` keep acting only on live changes. They never create
+  Beads for, or write files into, an archived directory.
+
+So a completed change can be archived at any time; its history stays auditable
+and the audit stays clean.
+
 ## Session supervision
 
 Every Claude Code session SpecForge starts for Lead Agent or specialist work
