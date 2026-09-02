@@ -48,6 +48,14 @@ If you are running inside such a session:
   sync, no destructive shell). Do not work around it.
 - Never echo a credential or token value and never pass one on a command line.
 
+A session the operator launches with `--full-access` (the `trusted` profile +
+the `autonomous` prompt) *is* authorised to commit, push its branch, and
+fast-forward-merge to `develop` — but only for the single named change it was
+started for. Every other hard rule still holds: no `openspec/` edits, no
+touching another change's Beads, discoveries recorded, commit-and-note before
+closing a Bead. A short command floor (`rm -rf`, `sudo`, `dd`, `mkfs`,
+`shutdown`, `reboot`, fork bomb) is denied under every profile.
+
 A specialist delegated **in process** through the Task tool runs inside the
 Lead Agent's session and shares these constraints. A specialist gets its own
 supervised session only when the operator launches one explicitly for isolated

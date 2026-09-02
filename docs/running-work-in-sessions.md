@@ -20,9 +20,12 @@ specforge`). Compared with running `claude` in your terminal:
 - **It is on the record.** A JSON file under `.specforge/state/sessions/`
   records the Bead, role, start time, working directory and lifecycle state,
   and survives a crash or a restart of whatever launched it.
-- **It is fenced in.** The launch profile denies `git push`, remote Dolt sync,
-  destructive shell commands and outbound network. It can edit files, run
-  tests and commit locally; it cannot push or reach the network.
+- **It is fenced in.** By default the launch profile (`restricted`) denies
+  `git push`, remote Dolt sync, destructive shell commands and outbound
+  network. It can edit files, run tests and commit locally; it cannot push or
+  reach the network. A broader profile is a deliberate flag on the command
+  line (see *Running with broader authority*), and a small command floor holds
+  no matter which profile is chosen.
 
 Use one to run a whole OpenSpec change end to end while you watch from another
 shell or from your phone, or to hand a long isolated job to a specialist you
@@ -39,6 +42,8 @@ want to be able to stop independently.
 check it and **makes no other Beads change** — being launched is not permission
 to start work. `--role` is `lead` or `specialist:<type>`. `--cwd <path>`
 defaults to the repo root. `--read-only` starts the session in plan mode.
+`--profile` / `--prompt` / `--full-access` choose the authority the session
+runs under — see *Running with broader authority*.
 
 `launch` prints the session name, the log path and the attach command. It does
 not attach you — the session comes up idle at a prompt, waiting for direction.
@@ -82,6 +87,44 @@ prompts before actions. Attach and press `Shift-Tab` to cycle to
 `acceptEdits` (edits apply, commands still prompt) or a fuller autonomy mode if
 you want it to run unattended. Drop back to the default mode the same way when
 you want to supervise a risky stretch.
+
+## Running with broader authority
+
+By default a session runs under the `restricted` profile. To let a session work
+a whole change unattended — commit per Bead, push its branch, merge to
+`develop` when green — launch it with broader authority:
+
+```bash
+./scripts/specforge session launch --role lead --bead SPEC-xxx --full-access
+```
+
+`--full-access` is shorthand for `--profile trusted --prompt autonomous`:
+
+- **`trusted`** starts in `acceptEdits` and allows `git push`, `git merge`,
+  `git switch`, `git rebase`, `bd`, `openspec` (read commands), `npx` and
+  `scripts/*`. It still denies `sudo`, `systemctl`, `curl`/`wget` and
+  `WebFetch`.
+- **`autonomous`** is the system prompt that authorises the session to execute
+  one named change end to end and fast-forward-merge it to `develop` (no PR),
+  while keeping every hard rule: never edit `openspec/`, work only that
+  change's Beads, record discoveries, commit-and-note before closing a Bead.
+
+You can also pass the two flags separately, or point either at a file of your
+own: `--profile ./my-profile.json`, `--prompt ./my-prompt.md`. A bare name
+resolves under `.specforge/launch-profiles/` / `.specforge/launch-prompts/`;
+anything else is a path.
+
+**The command floor always holds.** `rm -rf`/`rm -fr`, `sudo`, `dd`,
+`mkfs`/`mkfs.*`, `shutdown`, `reboot` and a fork bomb are denied in *every*
+session regardless of profile — including a profile file you supply yourself.
+It is a guard rail against an accident or a prompt-injected `rm -rf ~`, not an
+OS sandbox: a `trusted` session genuinely can push and merge.
+
+**It is on the record.** `session list` shows the profile each session runs
+under (`restricted` renders as `-`). The merged, floored settings are written
+to `.specforge/state/sessions/<name>.settings.json`; the source profile is
+never modified, and `session cleanup` removes the per-session file when it
+retires the record.
 
 ## From your phone
 
@@ -128,8 +171,8 @@ Otherwise: **one session at a time against the repo root.**
 
 | Command | Effect |
 | --- | --- |
-| `session launch --role <r> --bead <id> [--cwd <p>] [--read-only] [--owner <o>]` | start a supervised session; no Beads change |
-| `session list` | list every session with live-reconciled state |
+| `session launch --role <r> --bead <id> [--cwd <p>] [--read-only] [--owner <o>] [--profile <n>] [--prompt <n>] [--full-access]` | start a supervised session; no Beads change |
+| `session list` | list every session with live-reconciled state and its launch profile |
 | `session log <name> [--follow]` | print / tail the log; never attaches |
 | `session attach <name> [--read-only]` | attach the terminal; `Ctrl-b d` to detach |
 | `session stop <name> [--reason <text>]` | interrupt, terminate, record a terminal state; idempotent |
@@ -137,4 +180,8 @@ Otherwise: **one session at a time against the repo root.**
 
 Config keys (`.specforge/config.json`): `session_tmux_socket`,
 `session_state_dir`, `session_log_max_bytes`, `session_log_rotation_depth`,
-`session_stop_grace_seconds`, `session_launch_profile`, `session_launch_prompt`.
+`session_stop_grace_seconds`. The launch profile / prompt directories default
+to `.specforge/launch-profiles/` and `.specforge/launch-prompts/` and are
+overridable with `session_launch_profile_dir` / `session_launch_prompt_dir`; a
+`session_launch_profile` / `session_launch_prompt` key still pins a single file
+and wins over the directory default.

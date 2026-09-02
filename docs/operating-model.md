@@ -56,7 +56,8 @@ Every Claude Code session SpecForge starts for Lead Agent or specialist work
 runs inside a **named tmux session on the Pi**, under a dedicated tmux server
 socket (`tmux -L specforge`) that is isolated from the operator's own tmux. The
 session is started with `scripts/specforge session launch --role <lead |
-specialist:<type>> --bead <id> [--cwd <path>] [--read-only]`, which:
+specialist:<type>> --bead <id> [--cwd <path>] [--read-only]
+[--profile <name-or-path>] [--prompt <name-or-path>] [--full-access]`, which:
 
 - generates a collision-free name `sf-<role>-<bead>-<nonce>`;
 - writes a durable JSON record to `.specforge/state/sessions/<name>.json`
@@ -65,20 +66,49 @@ specialist:<type>> --bead <id> [--cwd <path>] [--read-only]`, which:
   starts, so the association survives an SSH drop or a restart of the launcher;
 - streams all console output to an append-only `<name>.log` beside the record
   (`tmux pipe-pane` → `scripts/session-log-writer`, size-rotated);
-- starts Claude through `scripts/session-launch` with the restricted profile
-  `.specforge/session-launch-profile.json` (no `git push`, no remote Dolt
-  sync, no destructive shell, scoped to the working directory) and the
+- starts Claude through `scripts/session-launch` under a **selectable launch
+  profile**, defaulting to `restricted` (no `git push`, no remote Dolt sync,
+  no destructive shell, scoped to the working directory) paired with the
   no-autonomous-claim system prompt.
 
 `session launch` performs **no `bd` mutation**. Being launched is not
 permission to start a Bead — claiming stays a deliberate in-session action the
 operator directs.
 
+### Launch profiles
+
+`--profile <name-or-path>` and `--prompt <name-or-path>` choose the authority a
+session runs under. A bare name resolves under `.specforge/launch-profiles/` /
+`.specforge/launch-prompts/`; anything else is a filesystem path. With neither
+flag the behaviour is exactly as before this existed: `restricted` +
+no-autonomous-claim. Two profiles ship: `restricted` (the default) and
+`trusted` (`acceptEdits`; allows `git push`/`merge`/`switch`/`rebase`, `bd`,
+`openspec`, `npx`, `scripts/*`; still denies `sudo`, `systemctl`, `curl`/
+`wget`, `WebFetch`). `--full-access` is shorthand for `--profile trusted
+--prompt autonomous`, the pairing that authorises a session to execute one
+named change end to end and fast-forward-merge it to `develop`.
+
+A short **command floor** — `rm -rf`/`rm -fr`, `sudo`, `dd`, `mkfs`/`mkfs.*`,
+`shutdown`, `reboot`, a fork bomb — is unioned into `permissions.deny` of
+*every* profile (named, default, or a supplied path) before launch. No profile
+can lift it. It is a guard rail against an accident or a prompt-injected
+`rm -rf ~`, not an OS-level sandbox: a `trusted` session really can push and
+merge, so the floor and the visibility are the safeguards, not a boundary
+against a hostile agent.
+
+The merged, floored settings are written per session to
+`.specforge/state/sessions/<name>.settings.json` and that file — never the
+source profile — is passed to Claude. The metadata record stores the profile
+name and that path; `session list` shows the profile; `session cleanup`
+removes the effective-settings file when it retires the record. A set
+`session_launch_profile` / `session_launch_prompt` config key still wins over
+the directory default.
+
 From any plain SSH shell (no `TERM`, no tmux client needed):
 
 | Command | What it does |
 | --- | --- |
-| `session list` | every managed session with Bead, role, age, working dir, owner, state; reconciles each record against live tmux and reports a vanished `running` session as `failed`. Read-only, never attaches. |
+| `session list` | every managed session with Bead, role, age, working dir, owner, state, and the launch profile it runs under (`restricted` renders as `-`); reconciles each record against live tmux and reports a vanished `running` session as `failed`. Read-only, never attaches. |
 | `session attach <name> [--read-only]` | attach the terminal to a session (`-r` blocks input). The only command that attaches. |
 | `session log <name> [--follow]` | print or tail the append-only log without attaching. |
 | `session stop <name> [--reason <text>]` | interrupt Claude, terminate the pane after the grace period, record `stopped` with `ended_at`/`exit_reason`. Idempotent. |
@@ -91,7 +121,7 @@ specialists as **Task-tool subagents of the Lead Agent's session**. That is
 still the default: when the Lead Agent delegates an isolated implementation or
 review pass, it does so **in process** with the Task tool. Those calls do not
 get their own tmux session or metadata record — they run inside the Lead
-Agent's supervised session, share its restricted profile, and are visible in
+Agent's supervised session, share its launch profile, and are visible in
 that session's own log.
 
 A specialist run gets **its own observable tmux session** only when it must run
