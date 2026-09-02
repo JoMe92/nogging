@@ -1,7 +1,7 @@
 # Tasks
 
 - [x] TASK-ANL-001 Add `--agent {claude,codex}` to the `session launch` argparser and a `session_agent` key to `.specforge/config.json` (default `claude`); `session_launch()` resolves the agent from the flag then the config then the `claude` default, and stores `"agent"` in the metadata record.
-- [ ] TASK-ANL-002 Add a `_agent_display(rec)` helper and an `AGENT` column to `session_list()` between `OWNER` and `PROFILE`; a record with no `agent` key shows `claude`.
+- [x] TASK-ANL-002 Add a `_agent_display(rec)` helper and an `AGENT` column to `session_list()` between `OWNER` and `PROFILE`; a record with no `agent` key shows `claude`.
 - [ ] TASK-ANL-003 In `resolved_launch_pair()` / a Codex-aware sibling: for `--agent codex`, resolve the level to `.specforge/launch-profiles/<level>.codex.toml` (name-or-path, `.codex.toml` suffix); a `--profile` pointing at a `.json` file with `--agent codex` is a hard error before any session exists; a supplied `.toml` path is used directly.
 - [ ] TASK-ANL-004 Create `.specforge/launch-profiles/restricted.codex.toml` (`sandbox = "workspace-write"`, `ask_for_approval = "on-request"`, `network_access = false`) and `.specforge/launch-profiles/trusted.codex.toml` (`ask_for_approval = "never"`, otherwise the same); document the key set in a comment.
 - [ ] TASK-ANL-005 In `session_launch()` for a Codex session: skip the effective-settings JSON write (leave `effective_settings_path` null), read the `.codex.toml` keys, and pass `--agent codex --sandbox <mode> --approval <policy> --network <on|off>` to `scripts/session-launch` alongside `--cwd` / `--bead` / `--prompt`. `--read-only` forces `--sandbox read-only`.
