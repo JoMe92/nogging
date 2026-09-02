@@ -400,6 +400,13 @@ SESSION_TERMINAL_STATES = {"stopped", "failed", "retired"}
 # Environment variable names whose values must never reach the metadata record,
 # the tmux scrollback, or the log. Matched case-insensitively as substrings.
 SECRET_NAME_RE = re.compile(r"TOKEN|SECRET|PASSWORD|PASSWD|APIKEY|API_KEY|_KEY|CREDENTIAL|AUTH", re.I)
+# A dotted-key `= value` assignment whose key is secret-named, as it would
+# appear inside a `-c key=value` agent config override on the recorded
+# command line. The value (quoted or bare) is scrubbed even when it is a
+# literal that never passed through the environment.
+_SECRET_ASSIGN_RE = re.compile(
+    r"([\w.-]*(?:TOKEN|SECRET|PASSWORD|PASSWD|APIKEY|API_KEY|_KEY|CREDENTIAL|AUTH)[\w.-]*\s*=\s*)"
+    r"(\"[^\"]*\"|'[^']*'|\S+)", re.I)
 
 def scfg(key, default): return CFG.get(key, default)
 # A short, fixed deny-list unioned into `permissions.deny` of every launch
@@ -458,7 +465,7 @@ def secret_values():
             if v and len(v) >= 4 and SECRET_NAME_RE.search(k)]
 def redact(text):
     for v in secret_values(): text = text.replace(v, "***REDACTED***")
-    return text
+    return _SECRET_ASSIGN_RE.sub(lambda m: m.group(1) + "***REDACTED***", text)
 def redact_argv(argv): return [redact(a) for a in argv]
 def owner_identity(explicit=None):
     user = explicit or os.environ.get("SUDO_USER") or getpass.getuser()
