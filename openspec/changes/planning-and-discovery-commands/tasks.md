@@ -9,4 +9,4 @@
 - [x] TASK-CMD-007 In `sync-now.md`, handle sync-lock contention: when `scripts/specforge sync` reports the lock is held by the timer, surface the message and exit without retrying.
 - [x] TASK-CMD-008 Optionally add a `scripts/specforge sync --now` alias that encapsulates the PID-signal / direct-run / lock-contention handling so `sync-now.md` stays a one-liner; if added, cover it in `scripts/specforge.test.sh`.
 - [x] TASK-CMD-009 Add a "Commands" section to `docs/operating-model.md` describing `/plan`, `/discovery-review`, and `/sync-now`, and what each may and may not do; add a one-line pointer in `AGENTS.md` to the command files and the equivalent manual `scripts/specforge` sequence.
-- [ ] TASK-CMD-010 Add a check (in `scripts/specforge.test.sh` or a sibling) that every `.claude/commands/*.md` file referenced by the docs exists and that `/discovery-review` and `/sync-now` contain no `plan-begin` / `openspec/` write step.
+- [x] TASK-CMD-010 Add a check (in `scripts/specforge.test.sh` or a sibling) that every `.claude/commands/*.md` file referenced by the docs exists and that `/discovery-review` and `/sync-now` contain no `plan-begin` / `openspec/` write step.
