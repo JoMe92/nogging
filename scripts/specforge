@@ -148,7 +148,11 @@ def lock(name, ttl, force=False):
     path.write_text(json.dumps({"pid": os.getpid(), "host": socket.gethostname(), "created_at": now()}, indent=2) + "\n")
     return path
 def validate():
-    tasks, duplicates = task_map(); issues = beads(); problems = []
+    # include_archived=True so a closed Bead still labelled for a change that
+    # has since been archived resolves cleanly instead of tripping "maps missing
+    # task" / "change label disagrees". materialize() and sync() keep using the
+    # live-only map.
+    tasks, duplicates = task_map(include_archived=True); issues = beads(); problems = []
     if duplicates: problems.append("duplicate task IDs: " + ", ".join(sorted(set(duplicates))))
     seen = {}
     for issue in issues:
@@ -160,6 +164,10 @@ def validate():
             if task in seen: problems.append(f"multiple Beads map {task}: {seen[task]}, {issue_id(issue)}")
             seen[task] = issue_id(issue)
     for task, info in tasks.items():
+        # An archived tasks.md is frozen — its checked lines were already
+        # backed by a closed Bead when the change was archived and nothing can
+        # change them now, so skip the reverse check for archived files.
+        if info.get("archived"): continue
         if re.search(rf"^- \[x\] {re.escape(task)}\b", info["file"].read_text(), re.M):
             issue = next((i for i in issues if mapping(i)[1] == task), None)
             if not issue or issue.get("status") != "closed": problems.append(f"checked task {task} has no closed Bead")
@@ -167,7 +175,8 @@ def validate():
 def materialize(change):
     tasks, issues, problems = validate()
     if problems: raise AuditError("validation failed:\n- " + "\n- ".join(problems))
-    selected = [(task, info) for task, info in tasks.items() if info["change"] == change]
+    selected = [(task, info) for task, info in tasks.items()
+                if info["change"] == change and not info.get("archived")]
     if not selected: raise RuntimeError(f"no tasks found for change {change}")
     # `issues` comes from beads(), which reads the full status set, so a task
     # whose mapped Bead is already closed counts as materialized and is not
@@ -295,6 +304,10 @@ def sync():
         for issue in issues:
             change, task = mapping(issue)
             if not task or issue.get("status") != "closed": continue
+            # A closed Bead whose task now lives only in an archived change is
+            # already mirrored in that change's (archived) execution log. Never
+            # recreate a live directory or rewrite the frozen archived tasks.md.
+            if tasks.get(task, {}).get("archived"): continue
             log = ROOT / "openspec/changes" / change / "execution-log.md"
             log.parent.mkdir(parents=True, exist_ok=True)
             key = closure_event_key(issue)
