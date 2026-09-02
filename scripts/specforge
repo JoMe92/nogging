@@ -138,6 +138,17 @@ def mapping(issue):
     task = next((x.split(":", 2)[2] for x in ls if x.startswith("openspec:task:")), None)
     return change, task
 def issue_id(issue): return issue.get("id") or issue.get("identifier") or issue.get("issue_id")
+# The OpenSpec write boundary sentinel. Its presence tells the tool-agnostic
+# guards that `openspec/` is closed to execution-agent writes. `plan-begin`
+# removes it, `plan-end` writes it, a fresh install starts with it present.
+# It is advisory to the guards, not a file-mode change, so `git switch` /
+# `merge` / `checkout` and the `sync` writer are unaffected by it.
+SENTINEL = LOCKS / "openspec.readonly"
+def write_sentinel(by="plan-end"):
+    data_dir(LOCKS)
+    SENTINEL.write_text(json.dumps({"closed_at": now(), "by": by}, indent=2) + "\n")
+def remove_sentinel():
+    SENTINEL.unlink(missing_ok=True)
 def lock(name, ttl, force=False):
     path = data_dir(LOCKS) / f"{name}.lock"
     if path.exists() and not force:
@@ -913,11 +924,21 @@ def main():
     sst = ssub.add_parser("stop"); sst.add_argument("name"); sst.add_argument("--reason")
     scl = ssub.add_parser("cleanup"); scl.add_argument("name", nargs="?")
     args = p.parse_args()
-    if args.command == "plan-begin": lock("planning", CFG["planning_lock_ttl_seconds"], args.force); print("planning session lock acquired")
+    if args.command == "plan-begin":
+        lock("planning", CFG["planning_lock_ttl_seconds"], args.force)
+        remove_sentinel()
+        print("planning session lock acquired")
+        print("openspec write boundary open")
     elif args.command == "plan-end":
         path = LOCKS / "planning.lock"
-        if not path.exists(): raise RuntimeError("no planning lock")
-        path.unlink(); print("planning session lock released")
+        if path.exists():
+            path.unlink(); print("planning session lock released")
+        elif not args.force:
+            raise RuntimeError("no planning lock (use --force to close the boundary anyway)")
+        else:
+            print("no planning lock (--force): closing the boundary anyway")
+        write_sentinel()
+        print("openspec write boundary closed")
     elif args.command == "materialize": materialize(args.change)
     elif args.command == "sync": sync_now() if args.now else sync()
     elif args.command == "discoveries": ack_discoveries(args.ack) if args.ack else discoveries()
