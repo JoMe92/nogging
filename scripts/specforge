@@ -315,6 +315,24 @@ SESSION_TERMINAL_STATES = {"stopped", "failed", "retired"}
 SECRET_NAME_RE = re.compile(r"TOKEN|SECRET|PASSWORD|PASSWD|APIKEY|API_KEY|_KEY|CREDENTIAL|AUTH", re.I)
 
 def scfg(key, default): return CFG.get(key, default)
+def resolve_launch_file(value, dir_key, default_dir, suffix):
+    """Resolve a `--profile` / `--prompt` value to a concrete file.
+
+    A bare name resolves under the configured directory
+    (`<dir>/<value><suffix>`); anything else is treated as a filesystem path,
+    absolute or relative to the repo root. Returns `(resolved_path, label)`
+    where `label` is the bare name for a directory hit or the basename for a
+    supplied path. Raises before any tmux session is created when nothing
+    resolves."""
+    named = (ROOT / scfg(dir_key, default_dir) / f"{value}{suffix}")
+    if named.is_file():
+        return named.resolve(), value
+    candidate = Path(value) if Path(value).is_absolute() else (ROOT / value)
+    if candidate.is_file():
+        return candidate.resolve(), candidate.name
+    raise RuntimeError(
+        f"launch file {value!r} did not resolve: neither {named} nor "
+        f"{candidate} exists")
 def tmux_bin(): return scfg("session_tmux_command", "tmux")
 def tmux_socket(): return scfg("session_tmux_socket", "specforge")
 def sessions_dir(): return data_dir(ROOT / scfg("session_state_dir", ".specforge/state/sessions"))
@@ -399,7 +417,8 @@ def gen_session_name(role_slug, bead_id):
             return name
     raise RuntimeError("could not generate a collision-free session name; "
                        "no existing session was reused or overwritten")
-def session_launch(role, bead, cwd, read_only, owner):
+def session_launch(role, bead, cwd, read_only, owner,
+                   profile=None, prompt=None, full_access=False):
     """Start a supervised Claude session for a Bead.
 
     This function performs NO Beads mutation. The only `bd` call it makes is
@@ -576,6 +595,10 @@ def main():
     sl.add_argument("--role", required=True); sl.add_argument("--bead", required=True)
     sl.add_argument("--cwd"); sl.add_argument("--read-only", action="store_true")
     sl.add_argument("--owner")
+    sl.add_argument("--profile", help="named launch profile or a path to a settings JSON file")
+    sl.add_argument("--prompt", help="named launch prompt or a path to a system-prompt file")
+    sl.add_argument("--full-access", action="store_true",
+                    help="shorthand for --profile trusted --prompt autonomous")
     ssub.add_parser("list")
     sa = ssub.add_parser("attach"); sa.add_argument("name"); sa.add_argument("--read-only", action="store_true")
     slg = ssub.add_parser("log"); slg.add_argument("name"); slg.add_argument("--follow", action="store_true")
@@ -594,7 +617,8 @@ def main():
     else: doctor(args.command == "audit")
 def session_cmd(args):
     if args.session_command == "launch":
-        session_launch(args.role, args.bead, args.cwd, args.read_only, args.owner)
+        session_launch(args.role, args.bead, args.cwd, args.read_only, args.owner,
+                       args.profile, args.prompt, args.full_access)
     elif args.session_command == "list":
         session_list()
     elif args.session_command == "attach":
