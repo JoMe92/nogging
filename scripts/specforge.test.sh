@@ -381,14 +381,16 @@ cat >"$BD_FIXTURE" <<'JSON'
 ]
 JSON
 
-rc=0; "$specforge" validate >"$out" 2>&1 || rc=$?
-[[ $rc -eq 0 ]] \
-  && echo "ok   - archived: validate exits 0 with archived-change Beads present" \
-  || { echo "FAIL - archived: validate exit $rc"; cat "$out"; fail=1; }
-refute "archived: validate reports no failures" "FAIL "
+# `validate` routes through doctor(), which also checks tool availability — a
+# missing `dolt` (as on a CI runner) makes it print `FAIL  dolt` and exit 1.
+# That is unrelated to what this test proves, so assert on the audit/mapping
+# problem strings only, never the exit code or the bare "FAIL " prefix.
+"$specforge" validate >"$out" 2>&1 || true
 refute "archived: no 'maps missing task' for the archived Bead" "maps missing task"
+refute "archived: no 'incomplete OpenSpec labels' for the archived Bead" "incomplete OpenSpec labels"
 refute "archived: no 'change label disagrees' for the archived Bead" "change label disagrees"
-refute "archived: a live/archived shared task ID is not a duplicate" "duplicate task IDs"
+refute "archived: no 'has no closed Bead' for the archived task"      "has no closed Bead"
+refute "archived: a live/archived shared task ID is not a duplicate"  "duplicate task IDs"
 
 "$specforge" sync >"$out" 2>&1 || { echo "FAIL - archived: sync errored"; cat "$out"; fail=1; }
 check "archived: sync reports no changes" "sync: no changes"
