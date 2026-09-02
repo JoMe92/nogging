@@ -480,5 +480,59 @@ check "now-daemon: reports signalling the live daemon PID" "signalled sync daemo
 kill "$daemon_pid" 2>/dev/null || true
 unset SPECFORGE_ROOT
 
+# ===========================================================================
+# Scenario: a fresh install starts with the OpenSpec write boundary closed
+# (TASK-TWB-002). doctor bootstraps the sentinel once, only when nothing has
+# toggled the boundary yet; plan-begin / plan-end toggle it thereafter.
+# ===========================================================================
+root="$work/twb-bootstrap"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export BD_FIXTURE="$work/twb-bootstrap-beads.json"; printf '[]\n' >"$BD_FIXTURE"
+sentinel="$root/.specforge/locks/openspec.readonly"
+[[ ! -e "$sentinel" ]] || { echo "FAIL - twb-bootstrap: sentinel present before doctor"; fail=1; }
+"$specforge" doctor >"$out" 2>&1 || true
+[[ -f "$sentinel" ]] \
+  && echo "ok   - twb-bootstrap: first doctor run creates the sentinel" \
+  || { echo "FAIL - twb-bootstrap: doctor did not create the sentinel"; cat "$out"; fail=1; }
+grep -qF '"by": "doctor"' "$sentinel" \
+  && echo "ok   - twb-bootstrap: sentinel records who closed the boundary" \
+  || { echo "FAIL - twb-bootstrap: sentinel body wrong"; cat "$sentinel"; fail=1; }
+before="$(cat "$sentinel")"
+"$specforge" doctor >/dev/null 2>&1 || true
+[[ "$(cat "$sentinel")" == "$before" ]] \
+  && echo "ok   - twb-bootstrap: a second doctor run does not rewrite the sentinel" \
+  || { echo "FAIL - twb-bootstrap: doctor rewrote an existing sentinel"; fail=1; }
+"$specforge" plan-begin >/dev/null 2>&1
+[[ ! -e "$sentinel" ]] \
+  && echo "ok   - twb-bootstrap: plan-begin opens the boundary (sentinel removed)" \
+  || { echo "FAIL - twb-bootstrap: plan-begin left the sentinel"; fail=1; }
+"$specforge" doctor >/dev/null 2>&1 || true
+[[ ! -e "$sentinel" ]] \
+  && echo "ok   - twb-bootstrap: doctor does not re-close the boundary while planning is active" \
+  || { echo "FAIL - twb-bootstrap: doctor recreated the sentinel during a planning session"; fail=1; }
+"$specforge" plan-end >/dev/null 2>&1
+[[ -f "$sentinel" ]] \
+  && echo "ok   - twb-bootstrap: plan-end closes the boundary again" \
+  || { echo "FAIL - twb-bootstrap: plan-end did not write the sentinel"; fail=1; }
+unset SPECFORGE_ROOT BD_FIXTURE
+
+# ===========================================================================
+# Scenario: scripts/install-hooks closes the boundary on a fresh checkout
+# (TASK-TWB-002). Runs in a scratch repo so the real .git/hooks is untouched.
+# ===========================================================================
+root="$work/twb-install"; make_root "$root"
+mkdir -p "$root/scripts"
+cp -r "$repo_root/scripts/hooks" "$root/scripts/hooks"
+cp "$repo_root/scripts/install-hooks" "$root/scripts/install-hooks"
+chmod +x "$root/scripts/install-hooks"
+git -C "$root" add -A && git -C "$root" commit -q -m "chore: hook sources [SPEC-000]"
+( cd "$root" && ./scripts/install-hooks ) >"$out" 2>&1 || { echo "FAIL - twb-install: install-hooks errored"; cat "$out"; fail=1; }
+[[ -f "$root/.specforge/locks/openspec.readonly" ]] \
+  && echo "ok   - twb-install: install-hooks creates the boundary sentinel" \
+  || { echo "FAIL - twb-install: no sentinel after install-hooks"; cat "$out"; fail=1; }
+grep -qF '"by": "install-hooks"' "$root/.specforge/locks/openspec.readonly" \
+  && echo "ok   - twb-install: sentinel attributes the closure to install-hooks" \
+  || { echo "FAIL - twb-install: wrong sentinel body"; fail=1; }
+
 if [[ $fail -ne 0 ]]; then echo "specforge checks failed" >&2; exit 1; fi
 echo "all specforge checks passed"

@@ -867,6 +867,13 @@ def session_log(name, follow):
         os.execvp("tail", ["tail", "-n", "+1", "-F", str(lp)])
     sys.stdout.write(lp.read_text())
 def doctor(audit=False):
+    # A fresh install starts with the OpenSpec write boundary closed. Bootstrap
+    # the sentinel once, only when nothing has toggled the boundary yet (no
+    # sentinel and no planning lock). An install whose repo has core.hooksPath
+    # set skips scripts/install-hooks, so doctor is the other creation point the
+    # spec names. Idempotent; never disturbs a live planning session.
+    if not SENTINEL.exists() and not (LOCKS / "planning.lock").exists():
+        write_sentinel(by="doctor")
     checks = []
     for cmd in ("git", "python3", CFG["beads_command"], "dolt"):
         checks.append((cmd, subprocess.run(["sh", "-lc", f"command -v {cmd}"], capture_output=True).returncode == 0))
