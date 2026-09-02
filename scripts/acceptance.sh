@@ -103,7 +103,18 @@ fi
 sf="$target/scripts/specforge"
 [[ -x "$sf" ]]                              || die "step 2: scripts/specforge not installed executable"
 [[ -f "$target/.specforge/config.json" ]]  || die "step 2: .specforge/config.json missing"
-[[ -f "$target/.git/hooks/commit-msg" ]]   || die "step 2: git hooks not installed"
+# The boundary hooks are installed into .git/hooks only when core.hooksPath is
+# not diverted. A full run's `bd init` points core.hooksPath at .beads/hooks
+# (the known Beads collision), and the installer then warns instead of writing
+# inert hooks — assert that warning fired rather than the file.
+hooks_path=$(git -C "$target" config --get core.hooksPath || true)
+if [[ -z "$hooks_path" || "$(cd "$target" && cd "$hooks_path" 2>/dev/null && pwd)" == "$target/.git/hooks" ]]; then
+  [[ -f "$target/.git/hooks/commit-msg" ]] || die "step 2: boundary hooks not installed into .git/hooks"
+else
+  grep -q 'core.hooksPath is set to' "$install_out" \
+    || die "step 2: core.hooksPath is diverted ($hooks_path) but the installer did not warn"
+  note "core.hooksPath diverted to $hooks_path; installer warned (boundary hooks not auto-bound)"
+fi
 
 # ===========================================================================
 # 3 [M] — assert the readiness verdict
@@ -238,7 +249,11 @@ git -C "$target" log -1 --format=%s | grep -q '^chore(sync): mirror Beads execut
 step "[M] step 12: assert sync idempotency"
 if ( cd "$target" && "$sf" sync ) >"$work/sync2.out" 2>&1; then
   grep -q 'sync: no changes' "$work/sync2.out" || die "step 12: second sync was not a no-op"
-  git -C "$target" diff --quiet || die "step 12: second sync left a tracked git diff"
+  # Scope the diff check to the example change: a real bd backend churns its
+  # own .beads/*.jsonl export, which is not what "the example change files have
+  # no further modification" is about.
+  git -C "$target" diff --quiet -- openspec/changes/acceptance-example \
+    || die "step 12: second sync modified the example change files"
   [[ "$(grep -c '^<!-- specforge:' "$log_md" || true)" == "1" ]] \
     || die "step 12: execution-log entry count changed on the second sync"
   [[ "$(grep -c '^- \[x\] ' "$tasks_md" || true)" == "1" ]] \
