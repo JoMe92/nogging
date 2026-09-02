@@ -458,5 +458,42 @@ eff="$(record "$rec" effective_settings_path)"
   || { echo "FAIL - lp-cleanup: effective-settings file survived cleanup"; fail=1; }
 unset SPECFORGE_ROOT
 
+# ===========================================================================
+# Scenario: the per-session <name>.settings.json is not mistaken for a record
+# (TASK-HY-005). It is valid JSON, so a bare *.json glob used to load it as a
+# bogus session — a spurious `unknown` row in `list` and a fooled no-name
+# `cleanup` server-kill guard.
+# ===========================================================================
+root="$work/set-file"; make_root "$root" 0.2
+export SPECFORGE_ROOT="$root"
+export TMUX_STUB_DIR="$work/set-file-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-sf1"
+"$specforge" session launch --role lead --bead SPEC-sf1 >/dev/null 2>&1
+name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
+[[ -f "$root/.specforge/state/sessions/$name.settings.json" ]] \
+  && echo "ok   - set-file: launch left a <name>.settings.json beside the record" \
+  || { echo "FAIL - set-file: no settings file to test against"; fail=1; }
+
+env -u TERM "$specforge" session list >"$out" 2>&1
+check "set-file: list shows the real session" "$name"
+check "set-file: list shows the real Bead" "SPEC-sf1"
+refute "set-file: no spurious unknown-state row" "unknown"
+[[ "$(grep -c "SPEC-sf1" "$out")" == "1" ]] \
+  && echo "ok   - set-file: exactly one session row is listed" \
+  || { echo "FAIL - set-file: unexpected row count"; cat "$out"; fail=1; }
+
+# No real record left active, but a tmux session lingers on the dedicated server.
+"$specforge" session stop "$name" >/dev/null 2>&1
+touch "$TMUX_STUB_DIR/sess-lingering"
+"$specforge" session cleanup >"$out" 2>&1 \
+  || { echo "FAIL - set-file: cleanup errored"; cat "$out"; fail=1; }
+check "set-file: the stopped record is retired" "retired $name"
+check "set-file: no-name cleanup stops the tmux server once nothing real is active" \
+  "SpecForge tmux server stopped"
+[[ -z "$(ls "$TMUX_STUB_DIR"/sess-* 2>/dev/null)" ]] \
+  && echo "ok   - set-file: the lingering tmux session was torn down" \
+  || { echo "FAIL - set-file: tmux session survived the server stop"; fail=1; }
+unset SPECFORGE_ROOT
+
 if [[ $fail -ne 0 ]]; then echo "session checks failed" >&2; exit 1; fi
 echo "all session checks passed"
