@@ -475,10 +475,22 @@ def normalize_role(role):
         return f"specialist:{role[5:]}", role
     raise RuntimeError(f"--role must be 'lead' or 'specialist:<type>', got {role!r}")
 def session_records():
+    """Enumerate true session-record files only.
+
+    The per-session effective-settings file is `<name>.settings.json` and is
+    itself valid JSON, so a bare `*.json` glob would load it as a bogus record
+    (a spurious `unknown` row in `session list`, and it would fool the no-name
+    `cleanup` server-kill guard). Skip anything ending in `.settings.json`, and
+    belt-and-braces skip any `.json` that does not carry the record shape
+    (a `name` and a `bead_id`). `session list`, both `session cleanup`
+    variants, and the `session_launch` collision guard all read through here."""
     out = []
     for p in sorted(sessions_dir().glob("*.json")):
-        try: out.append((p, json.loads(p.read_text())))
+        if p.name.endswith(".settings.json"): continue
+        try: rec = json.loads(p.read_text())
         except (ValueError, OSError): continue
+        if not (isinstance(rec, dict) and rec.get("name") and rec.get("bead_id")): continue
+        out.append((p, rec))
     return out
 def load_session(name):
     p = sessions_dir() / f"{name}.json"
