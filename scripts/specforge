@@ -38,7 +38,12 @@ def data_dir(path): path.mkdir(parents=True, exist_ok=True); return path
 def changes():
     base = ROOT / "openspec/changes"
     return [p for p in base.iterdir() if p.is_dir() and p.name != "archive"] if base.exists() else []
-def task_map():
+# `openspec archive <name>` moves a completed change to
+# `openspec/changes/archive/YYYY-MM-DD-<name>/`. This strips that date prefix
+# back to the original change name so an archived task still matches the
+# `openspec:change:` label on its (closed) Beads.
+ARCHIVE_DATE_PREFIX_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-")
+def task_map(include_archived=False):
     found, duplicates = {}, []
     for change in changes():
         file = change / "tasks.md"
@@ -46,6 +51,19 @@ def task_map():
         for task, title in TASK_RE.findall(file.read_text()):
             if task in found: duplicates.append(task)
             found[task] = {"change": change.name, "file": file, "title": title}
+    if include_archived:
+        archive_base = ROOT / "openspec/changes/archive"
+        if archive_base.is_dir():
+            for change in sorted(p for p in archive_base.iterdir() if p.is_dir()):
+                file = change / "tasks.md"
+                if not file.exists(): continue
+                name = ARCHIVE_DATE_PREFIX_RE.sub("", change.name)
+                for task, title in TASK_RE.findall(file.read_text()):
+                    # A live task with the same ID always wins; an archived
+                    # same-ID pair is normal after archiving and is not a
+                    # duplicate, so it never touches `duplicates`.
+                    if task in found: continue
+                    found[task] = {"change": name, "file": file, "title": title, "archived": True}
     return found, duplicates
 def beads():
     out = run(CFG["beads_command"], "list", "--status", BEAD_STATUSES, "--limit", "0", "--json").stdout.strip()
