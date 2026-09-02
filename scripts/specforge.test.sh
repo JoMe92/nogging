@@ -578,5 +578,30 @@ git -C "$root" merge -q --no-edit other >"$out" 2>&1 \
   || { echo "FAIL - twb-sync: git merge blocked"; cat "$out"; fail=1; }
 unset SPECFORGE_ROOT BD_FIXTURE BD_STUB_DIR
 
+# ===========================================================================
+# Scenario: doctor reports the OpenSpec write boundary state (TASK-TWB-006)
+# ===========================================================================
+root="$work/twb-doctor"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export BD_FIXTURE="$work/twb-doctor-beads.json"; printf '[]\n' >"$BD_FIXTURE"
+mkdir -p "$root/.specforge/locks"
+"$specforge" doctor >"$out" 2>&1 || true
+check "twb-doctor: closed boundary reported as LOCKED" "openspec write boundary: LOCKED"
+"$specforge" plan-begin >/dev/null 2>&1
+"$specforge" doctor >"$out" 2>&1 || true
+check "twb-doctor: active planning session reported as OPEN" "openspec write boundary: OPEN (planning session active"
+"$specforge" plan-end >/dev/null 2>&1
+printf '{"pid":1,"host":"h","created_at":"2000-01-01T00:00:00+00:00"}\n' \
+  >"$root/.specforge/locks/planning.lock"
+rm -f "$root/.specforge/locks/openspec.readonly"
+"$specforge" doctor >"$out" 2>&1 || true
+check "twb-doctor: stale planning lock named as the reason" \
+  "LOCKED (stale planning lock present — run plan-end --force)"
+"$specforge" doctor >/dev/null 2>&1; rc_doctor=$?
+# a stale lock + closed boundary is a NOTE, not a checked failure: exit code is
+# whatever the tool-availability checks produce, never reddened by the boundary.
+rm -f "$root/.specforge/locks/planning.lock"
+unset SPECFORGE_ROOT BD_FIXTURE
+
 if [[ $fail -ne 0 ]]; then echo "specforge checks failed" >&2; exit 1; fi
 echo "all specforge checks passed"

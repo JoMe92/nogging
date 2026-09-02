@@ -149,6 +149,22 @@ def write_sentinel(by="plan-end"):
     SENTINEL.write_text(json.dumps({"closed_at": now(), "by": by}, indent=2) + "\n")
 def remove_sentinel():
     SENTINEL.unlink(missing_ok=True)
+def boundary_state_line():
+    """One read-only line describing the OpenSpec write boundary, for `doctor`:
+    OPEN during an active planning session, LOCKED otherwise, and LOCKED naming
+    a stale planning lock as the reason when one is still on disk."""
+    ttl = CFG.get("planning_lock_ttl_seconds", 7200)
+    fresh = fresh_lock("planning", ttl)
+    if fresh and not SENTINEL.exists():
+        try:
+            age = int((dt.datetime.now(dt.timezone.utc)
+                       - dt.datetime.fromisoformat(fresh["created_at"])).total_seconds())
+        except (ValueError, KeyError, TypeError):
+            age = -1
+        return f"openspec write boundary: OPEN (planning session active, lock age {age}s)"
+    if (LOCKS / "planning.lock").exists() and not fresh:
+        return "openspec write boundary: LOCKED (stale planning lock present — run plan-end --force)"
+    return "openspec write boundary: LOCKED"
 def lock(name, ttl, force=False):
     path = data_dir(LOCKS) / f"{name}.lock"
     if path.exists() and not force:
@@ -927,7 +943,7 @@ def doctor(audit=False):
     for name, ok in checks: print(f"{'OK' if ok else 'FAIL'}  {name}")
     # Optional tools: reported as a note, never a checked failure — a missing
     # one does not redden `doctor` or change its exit code.
-    notes = []
+    notes = [boundary_state_line()]
     for cmd in ("codex",):
         present = subprocess.run(["sh", "-lc", f"command -v {cmd}"], capture_output=True).returncode == 0
         notes.append(f"{cmd} {'available' if present else 'not installed (optional)'}")
