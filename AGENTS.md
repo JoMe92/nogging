@@ -62,6 +62,15 @@ supervised session only when the operator launches one explicitly for isolated
 long-running work; it still works exactly one already-claimed Bead and never
 claims, closes, or commits.
 
+## Commands
+
+`.claude/commands/{plan,discovery-review,sync-now}.md` are the operator entry
+points (see the *Commands* table in `docs/operating-model.md`); a non-Claude
+tool runs the same steps by hand — `/plan` is `scripts/specforge plan-begin` →
+discovery review → author → `validate` → `materialize <change>` → commit as the
+`planning` writer → `plan-end`; `/discovery-review` is `scripts/specforge
+discoveries` (+ `--ack`); `/sync-now` is `scripts/specforge sync --now`.
+
 ## Planning only
 
 The Planning Agent first runs `./scripts/specforge plan-begin`, writes or

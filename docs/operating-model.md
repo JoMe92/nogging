@@ -8,6 +8,23 @@
 - **Specialists:** work only on a claimed Bead and report results to the Main Worker.
 - **Sync timer:** polls every 30 seconds and mirrors facts only.
 
+## Commands
+
+Three slash commands under `.claude/commands/` are the operator's entry points
+into the workflow. Each is a thin, declarative wrapper over `scripts/specforge`
+plus a persona instruction — they orchestrate existing primitives, they do not
+reimplement the planning lock, discovery sorting, or sync.
+
+| Command | May do | May **not** do |
+| --- | --- | --- |
+| `/plan` (`plan.md`) | Enter the Planning Agent persona and run one planning session in the fixed order: `plan-begin` → discovery review → design dialogue → author/revise the change → `validate` → `materialize <change>` → commit `openspec/` as the `planning` writer → `plan-end`. Consult the `architect` specialist for architecture questions. | Force a planning lock another session holds (report the holder and stop). Do any execution work. Auto-delete an orphaned Bead — stop and ask the Product Owner. |
+| `/discovery-review` (`discovery-review.md`) | Run `scripts/specforge discoveries` and render it unchanged (blocking first). Per discovery, offer: carry into a `/plan` session, acknowledge via `scripts/specforge discoveries --ack <id>`, or leave pending. | Acquire the planning lock. Create or modify any file under `openspec/`. |
+| `/sync-now` (`sync-now.md`) | Run `scripts/specforge sync --now`: signal a resident sync daemon if one exists, else run one reconciliation pass directly. | Retry, loop, or `--force` when the 30-second timer holds the sync lock — report the contention and stop. |
+
+`AGENTS.md` keeps a one-line pointer to these files and the equivalent manual
+`scripts/specforge` sequence, so a non-Claude tool can run the same steps by
+hand.
+
 ## Branches and commits
 
 `main` is the stable integration branch. `develop` is the active integration
