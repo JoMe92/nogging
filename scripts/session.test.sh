@@ -305,5 +305,158 @@ printf 'line-aaaaaaaaaa\nline-bbbbbbbbbb\nline-cccccccccc\nline-dddddddddd\n' \
   && echo "ok   - log-writer: nothing kept past the configured depth" \
   || { echo "FAIL - log-writer: depth exceeded"; fail=1; }
 
+# ===========================================================================
+# Scenario: no-flag launch stays restricted + the no-autonomous-claim prompt
+# ===========================================================================
+root="$work/lp-default"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export TMUX_STUB_DIR="$work/lp-default-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-lp1"
+"$specforge" session launch --role lead --bead SPEC-lp1 >"$out" 2>&1 \
+  || { echo "FAIL - lp-default: launch errored"; cat "$out"; fail=1; }
+name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
+rec="$root/.specforge/state/sessions/$name.json"
+eff="$(record "$rec" effective_settings_path)"
+[[ -f "$eff" ]] \
+  && echo "ok   - lp-default: per-session effective-settings file written" \
+  || { echo "FAIL - lp-default: no effective-settings file"; fail=1; }
+grep -qF -- "--settings $eff" "$TMUX_STUB_DIR/calls.log" \
+  && echo "ok   - lp-default: effective-settings path passed as --settings" \
+  || { echo "FAIL - lp-default: --settings is not the effective file"; cat "$TMUX_STUB_DIR/calls.log"; fail=1; }
+grep -qE -- "--prompt [^ ]*/no-autonomous-claim\.md" "$TMUX_STUB_DIR/calls.log" \
+  && echo "ok   - lp-default: no-autonomous-claim prompt passed" \
+  || { echo "FAIL - lp-default: default prompt not passed"; fail=1; }
+[[ "$(record "$rec" profile)" == "restricted" ]] \
+  && echo "ok   - lp-default: record profile is restricted" \
+  || { echo "FAIL - lp-default: record profile is $(record "$rec" profile)"; fail=1; }
+cp "$eff" "$out"
+check "lp-default: keeps the restricted defaultMode" '"defaultMode": "default"'
+refute "lp-default: grants nothing extra (no allow list)" '"allow"'
+diff -q "$root/.specforge/launch-profiles/restricted.json" \
+        "$repo_root/.specforge/launch-profiles/restricted.json" >/dev/null \
+  && echo "ok   - lp-default: source profile left unmutated" \
+  || { echo "FAIL - lp-default: source profile changed"; fail=1; }
+unset SPECFORGE_ROOT
+
+# ===========================================================================
+# Scenario: a named profile resolves; the floor is unioned in; list shows it
+# ===========================================================================
+root="$work/lp-named"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export TMUX_STUB_DIR="$work/lp-named-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-lp2"
+"$specforge" session launch --role lead --bead SPEC-lp2 --profile trusted --prompt autonomous >"$out" 2>&1 \
+  || { echo "FAIL - lp-named: launch errored"; cat "$out"; fail=1; }
+name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
+rec="$root/.specforge/state/sessions/$name.json"
+eff="$(record "$rec" effective_settings_path)"
+cp "$eff" "$out"
+check "lp-named: trusted defaultMode carried through" '"defaultMode": "acceptEdits"'
+check "lp-named: trusted still allows git push" 'Bash(git push:*)'
+check "lp-named: floor unioned into deny (sudo)" 'Bash(sudo:*)'
+check "lp-named: floor unioned into deny (rm -rf)" 'Bash(rm -rf:*)'
+check "lp-named: floor unioned into deny (fork bomb)" 'Bash(:(){ :|:& };:)'
+grep -qE -- "--prompt [^ ]*/autonomous\.md" "$TMUX_STUB_DIR/calls.log" \
+  && echo "ok   - lp-named: autonomous prompt passed" \
+  || { echo "FAIL - lp-named: autonomous prompt not passed"; fail=1; }
+[[ "$(record "$rec" profile)" == "trusted" ]] \
+  && echo "ok   - lp-named: record profile is trusted" \
+  || { echo "FAIL - lp-named: record profile is $(record "$rec" profile)"; fail=1; }
+"$specforge" session list >"$out" 2>&1
+check "lp-named: session list shows the profile" "trusted"
+diff -q "$root/.specforge/launch-profiles/trusted.json" \
+        "$repo_root/.specforge/launch-profiles/trusted.json" >/dev/null \
+  && echo "ok   - lp-named: source trusted profile left unmutated" \
+  || { echo "FAIL - lp-named: source profile changed"; fail=1; }
+unset SPECFORGE_ROOT
+
+# ===========================================================================
+# Scenario: --full-access == --profile trusted --prompt autonomous
+# ===========================================================================
+root="$work/lp-full"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export TMUX_STUB_DIR="$work/lp-full-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-lp3"
+"$specforge" session launch --role lead --bead SPEC-lp3 --full-access >"$out" 2>&1 \
+  || { echo "FAIL - lp-full: launch errored"; cat "$out"; fail=1; }
+name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
+rec="$root/.specforge/state/sessions/$name.json"
+[[ "$(record "$rec" profile)" == "trusted" ]] \
+  && echo "ok   - lp-full: selects the trusted profile" \
+  || { echo "FAIL - lp-full: profile is $(record "$rec" profile)"; fail=1; }
+grep -qE -- "--prompt [^ ]*/autonomous\.md" "$TMUX_STUB_DIR/calls.log" \
+  && echo "ok   - lp-full: selects the autonomous prompt" \
+  || { echo "FAIL - lp-full: autonomous prompt not passed"; fail=1; }
+cp "$(record "$rec" effective_settings_path)" "$out"
+check "lp-full: floored trusted settings written" '"defaultMode": "acceptEdits"'
+unset SPECFORGE_ROOT
+
+# ===========================================================================
+# Scenario: a supplied path resolves and the floor survives a permissive file
+# ===========================================================================
+root="$work/lp-path"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export TMUX_STUB_DIR="$work/lp-path-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-lp4"
+permissive="$work/permissive-profile.json"
+cat >"$permissive" <<'JSON'
+{ "permissions": { "defaultMode": "bypassPermissions", "allow": ["Bash(sudo:*)"], "deny": [] } }
+JSON
+"$specforge" session launch --role lead --bead SPEC-lp4 --profile "$permissive" >"$out" 2>&1 \
+  || { echo "FAIL - lp-path: launch errored"; cat "$out"; fail=1; }
+name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
+rec="$root/.specforge/state/sessions/$name.json"
+[[ "$(record "$rec" profile)" == "permissive-profile.json" ]] \
+  && echo "ok   - lp-path: record profile is the supplied basename" \
+  || { echo "FAIL - lp-path: profile is $(record "$rec" profile)"; fail=1; }
+cp "$(record "$rec" effective_settings_path)" "$out"
+check "lp-path: floor forced into a permissive supplied profile (sudo)" 'Bash(sudo:*)'
+check "lp-path: floor forced into a permissive supplied profile (rm -rf)" 'Bash(rm -rf:*)'
+check "lp-path: floor forced into a permissive supplied profile (mkfs.*)" 'Bash(mkfs.*:*)'
+[[ "$(cksum <"$permissive")" == "$(cksum <"$permissive")" ]]   # sanity
+grep -qF '"deny": []' "$permissive" \
+  && echo "ok   - lp-path: the supplied source file itself was not mutated" \
+  || { echo "FAIL - lp-path: supplied profile file changed"; fail=1; }
+unset SPECFORGE_ROOT
+
+# ===========================================================================
+# Scenario: an unknown profile fails before any session exists
+# ===========================================================================
+root="$work/lp-unknown"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export TMUX_STUB_DIR="$work/lp-unknown-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-lp5"
+"$specforge" session launch --role lead --bead SPEC-lp5 --profile no-such-profile >"$out" 2>&1 \
+  && { echo "FAIL - lp-unknown: launch should have failed"; fail=1; } \
+  || echo "ok   - lp-unknown: launch refused for an unresolvable profile"
+check "lp-unknown: message explains the resolution failure" "did not resolve"
+[[ -z "$(ls -A "$root/.specforge/state/sessions" 2>/dev/null)" ]] \
+  && echo "ok   - lp-unknown: no session record or settings file was created" \
+  || { echo "FAIL - lp-unknown: session state left behind"; ls -A "$root/.specforge/state/sessions"; fail=1; }
+[[ ! -f "$TMUX_STUB_DIR/calls.log" ]] || ! grep -qF "new-session " "$TMUX_STUB_DIR/calls.log" \
+  && echo "ok   - lp-unknown: no tmux session was created" \
+  || { echo "FAIL - lp-unknown: tmux new-session was called"; cat "$TMUX_STUB_DIR/calls.log"; fail=1; }
+unset SPECFORGE_ROOT
+
+# ===========================================================================
+# Scenario: cleanup removes the per-session effective-settings file
+# ===========================================================================
+root="$work/lp-cleanup"; make_root "$root" 0.2
+export SPECFORGE_ROOT="$root"
+export TMUX_STUB_DIR="$work/lp-cleanup-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-lp6"
+"$specforge" session launch --role lead --bead SPEC-lp6 --profile trusted >/dev/null 2>&1
+name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
+rec="$root/.specforge/state/sessions/$name.json"
+eff="$(record "$rec" effective_settings_path)"
+[[ -f "$eff" ]] || { echo "FAIL - lp-cleanup: no effective-settings file to begin with"; fail=1; }
+"$specforge" session stop "$name" >/dev/null 2>&1
+"$specforge" session cleanup "$name" >"$out" 2>&1 \
+  || { echo "FAIL - lp-cleanup: cleanup errored"; cat "$out"; fail=1; }
+[[ ! -f "$eff" ]] \
+  && echo "ok   - lp-cleanup: effective-settings file removed when the record retired" \
+  || { echo "FAIL - lp-cleanup: effective-settings file survived cleanup"; fail=1; }
+unset SPECFORGE_ROOT
+
 if [[ $fail -ne 0 ]]; then echo "session checks failed" >&2; exit 1; fi
 echo "all session checks passed"
