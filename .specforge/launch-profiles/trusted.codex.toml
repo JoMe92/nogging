@@ -1,0 +1,15 @@
+# SpecForge Codex launch spec — the `trusted` authority level for a
+# `session launch --agent codex` session. The Codex-side sibling of
+# trusted.json: it runs without approval prompts (`never`) so a session can
+# execute one named change end to end, while still keeping the workspace-write
+# sandbox and denying outbound network. `--full-access` selects this level.
+#
+# Keys (all three are required; `session_launch()` reads exactly these):
+#   sandbox           one of read-only | workspace-write | danger-full-access
+#                     -> codex --sandbox <mode>
+#   ask_for_approval  one of untrusted | on-request | never
+#                     -> codex --ask-for-approval <policy>
+#   network_access    bool; false -> codex -c 'sandbox_workspace_write.network_access=false'
+sandbox          = "workspace-write"
+ask_for_approval = "never"
+network_access   = false

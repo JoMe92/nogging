@@ -1,0 +1,14 @@
+# SpecForge Codex launch spec — the `restricted` authority level for a
+# `session launch --agent codex` session. It is the Codex-side sibling of
+# restricted.json: same intent (require approval for non-trivial actions,
+# no outbound network), expressed in Codex's sandbox / approval model.
+#
+# Keys (all three are required; `session_launch()` reads exactly these):
+#   sandbox           one of read-only | workspace-write | danger-full-access
+#                     -> codex --sandbox <mode>
+#   ask_for_approval  one of untrusted | on-request | never
+#                     -> codex --ask-for-approval <policy>
+#   network_access    bool; false -> codex -c 'sandbox_workspace_write.network_access=false'
+sandbox          = "workspace-write"
+ask_for_approval = "on-request"
+network_access   = false
