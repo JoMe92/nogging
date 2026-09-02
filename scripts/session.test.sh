@@ -355,7 +355,7 @@ check "lp-named: trusted defaultMode carried through" '"defaultMode": "acceptEdi
 check "lp-named: trusted still allows git push" 'Bash(git push:*)'
 check "lp-named: floor unioned into deny (sudo)" 'Bash(sudo:*)'
 check "lp-named: floor unioned into deny (rm -rf)" 'Bash(rm -rf:*)'
-check "lp-named: floor unioned into deny (fork bomb)" 'Bash(:(){ :|:& };:)'
+check "lp-named: floor unioned into deny (mkfs.*)" 'Bash(mkfs.*:*)'
 grep -qE -- "--prompt [^ ]*/autonomous\.md" "$TMUX_STUB_DIR/calls.log" \
   && echo "ok   - lp-named: autonomous prompt passed" \
   || { echo "FAIL - lp-named: autonomous prompt not passed"; fail=1; }
@@ -368,6 +368,38 @@ diff -q "$root/.specforge/launch-profiles/trusted.json" \
         "$repo_root/.specforge/launch-profiles/trusted.json" >/dev/null \
   && echo "ok   - lp-named: source trusted profile left unmutated" \
   || { echo "FAIL - lp-named: source profile changed"; fail=1; }
+unset SPECFORGE_ROOT
+
+# ===========================================================================
+# Scenario: every launch-floor rule is a valid permission rule and reaches the
+# launched session verbatim (TASK-HY-007). Catches a future malformed floor
+# entry (empty/nested parens, like the removed fork-bomb rule) before it ships.
+# ===========================================================================
+root="$work/floor"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export TMUX_STUB_DIR="$work/floor-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-fl1"
+"$specforge" session launch --role lead --bead SPEC-fl1 --profile trusted >/dev/null 2>&1
+name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
+eff="$(record "$root/.specforge/state/sessions/$name.json" effective_settings_path)"
+floor_out=$(python3 - "$repo_root/scripts/specforge" "$eff" <<'PY'
+import json, re, sys
+from importlib.machinery import SourceFileLoader
+m = SourceFileLoader("sf_floor", sys.argv[1]).load_module()
+valid = re.compile(r'^(Bash\([^()]*\S[^()]*\)|Bash|WebFetch)$')
+bad = [e for e in m.FLOOR_DENY if not valid.match(e)]
+if bad:
+    print("INVALID:", bad); sys.exit(1)
+deny = json.load(open(sys.argv[2]))["permissions"]["deny"]
+missing = [e for e in m.FLOOR_DENY if e not in deny]
+if missing:
+    print("MISSING:", missing); sys.exit(1)
+print("OK %d floor entries valid and present verbatim" % len(m.FLOOR_DENY))
+PY
+) && floor_rc=0 || floor_rc=$?
+[[ "$floor_rc" -eq 0 ]] \
+  && echo "ok   - floor: every FLOOR_DENY entry is a valid rule and reaches the effective settings verbatim ($floor_out)" \
+  || { echo "FAIL - floor: $floor_out"; fail=1; }
 unset SPECFORGE_ROOT
 
 # ===========================================================================
