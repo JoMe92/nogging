@@ -16,6 +16,30 @@ each one. This is the standalone triage view; it is **not** a planning session.
    re-sort, summarise, truncate, or reformat it — present it as-is.
 3. If it prints `no pending discoveries`, say so and stop.
 
+## Per-discovery prompt
+
+After rendering the list, walk the operator through the discoveries one at a
+time (blocking ones first). For each, offer exactly three outcomes:
+
+1. **Carry into a `/plan` session** — the discovery needs an OpenSpec change.
+   Note which discovery the operator wants carried; it is picked up in step 2
+   of the next `/plan` session. This command does not author anything.
+2. **Acknowledge** — no spec change is needed and it should stop being
+   surfaced. Record it with:
+
+   ```bash
+   scripts/specforge discoveries --ack <bead-id> [<bead-id>...]
+   ```
+
+   This writes the acknowledgement ledger (`.specforge/state/acknowledged-discoveries.json`)
+   that `reliable-beads-sync` added; a later `/discovery-review` no longer
+   lists an acknowledged discovery. If `--ack` is unavailable (an older
+   `scripts/specforge` without the ledger), degrade to *leave pending* and
+   note the operator's acknowledgement decision in this dialogue so it is not
+   lost.
+3. **Leave pending** — no decision yet. Do nothing; it surfaces again next
+   time.
+
 ## Boundaries
 
 - **Do not acquire the planning lock.** Never run `scripts/specforge
