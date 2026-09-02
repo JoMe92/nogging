@@ -187,22 +187,27 @@ The changes are materialised as Beads with cross-change dependencies wired via
 `bd dep add`. Work them one change per branch (`<type>/<change-name>`), in this
 order:
 
-1. **`reliable-beads-sync`** — **done** (merged to `develop`). Fixed the `bd list`
-   closed-issue defect, so `sync` and `materialize` stop missing closed mapped
-   Beads; established the enriched `execution-log.md`, the acknowledgement ledger,
-   and classified sync failures that later changes build on.
-2. **`remote-observable-claude-sessions`** — next. Pulled forward so subsequent
-   changes can be executed in Pi tmux sessions the Product Owner watches over SSH
-   / Remote Control. Larger surface (tmux, systemd, a restricted launch profile);
-   independent of the other pending changes.
-3. **`enforce-conventional-branching`** — independent. After it lands, the CI
-   `invariants` job checks every pull request; also closes discovery `SPEC-7ec`
-   (`core.hooksPath` makes the local Git hooks inert).
-4. **`planning-and-discovery-commands`** — after 1 (`/discovery-review` uses the
+1. **`reliable-beads-sync`** — **done** (merged). Fixed the `bd list` closed-issue
+   defect, so `sync` and `materialize` stop missing closed mapped Beads;
+   established the enriched `execution-log.md`, the acknowledgement ledger, and
+   classified sync failures that later changes build on.
+2. **`remote-observable-claude-sessions`** — **done** (merged). Pi tmux sessions
+   the Product Owner watches over SSH / Remote Control; `session
+   list|launch|attach|log|stop|cleanup`, a durable record and a restricted
+   launch profile.
+3. **`enforce-conventional-branching`** — **done** (merged). `<type>/<slug>`
+   branch check, a `SpecForge-Writer:` commit trailer, an advisory `pre-push`
+   hook, and a CI `invariants` job on `pull_request`.
+4. **`selectable-launch-profile`** — next. Adds `session launch
+   --profile/--prompt` and `--full-access`, a `trusted` profile + `autonomous`
+   prompt, and a non-removable command floor, so a whole change can be executed
+   by a supervised session that commits, pushes and merges itself. Also the seam
+   the Codex work needs.
+5. **`planning-and-discovery-commands`** — after 1 (`/discovery-review` uses the
    acknowledgement ledger from `TASK-SYNC-006`).
-5. **`specialist-agents-and-skills`** — after 4 (the delegation section in
+6. **`specialist-agents-and-skills`** — after 5 (the delegation section in
    `CLAUDE.md` references `/plan`).
-6. **`end-to-end-acceptance`** — last. Depends on all of the above; its runbook
+7. **`end-to-end-acceptance`** — last. Depends on all of the above; its runbook
    exercises the whole chain and its assertions are written against
    post-`reliable-beads-sync` behaviour.
 
