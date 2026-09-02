@@ -694,7 +694,14 @@ def session_launch(role, bead, cwd, read_only, owner,
         effective_settings_path = str(effective_path)
         inner[1:1] = ["--settings", effective_settings_path]
     else:  # codex: no per-session permissions file — the floor is the
-           # `.codex/rules/` execpolicy directory (see TASK-ANL-007).
+           # repo's `.codex/rules/` execpolicy directory, which Codex loads
+           # from the working tree. That floor file ships with `codex-onboarding`;
+           # warn (do not fail) when it is not present yet.
+        floor_file = Path(workdir) / ".codex/rules/specforge.rules"
+        if not floor_file.is_file():
+            print(f"warning: {floor_file} is absent — the SpecForge command floor for "
+                  f"Codex is not in place for this session (it ships with the "
+                  f"codex-onboarding change). Continuing.", file=sys.stderr)
         effective_settings_path = None
         sandbox = "read-only" if read_only else codex_spec["sandbox"]
         inner[1:1] = ["--agent", "codex", "--sandbox", sandbox,
