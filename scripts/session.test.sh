@@ -336,6 +336,36 @@ diff -q "$root/.specforge/launch-profiles/restricted.json" \
         "$repo_root/.specforge/launch-profiles/restricted.json" >/dev/null \
   && echo "ok   - lp-default: source profile left unmutated" \
   || { echo "FAIL - lp-default: source profile changed"; fail=1; }
+# TASK-TWB-004: a non-planning launch with no fresh planning lock gets openspec/
+# as a read-only root in its effective authority.
+check "twb-launch: effective settings deny an Edit under openspec/"  'Edit(openspec/**)'
+check "twb-launch: effective settings deny a Write under openspec/"  'Write(openspec/**)'
+[[ "$(record "$rec" openspec_readonly)" == "True" ]] \
+  && echo "ok   - twb-launch: record marks openspec_readonly true for an execution launch" \
+  || { echo "FAIL - twb-launch: openspec_readonly is $(record "$rec" openspec_readonly)"; fail=1; }
+unset SPECFORGE_ROOT
+
+# ===========================================================================
+# Scenario: a launch during a fresh planning session keeps openspec/ writable
+# (TASK-TWB-004). The read-only root keys off the session's role + the planning
+# lock, not the sentinel.
+# ===========================================================================
+root="$work/twb-planning"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export TMUX_STUB_DIR="$work/twb-planning-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-twp"
+mkdir -p "$root/.specforge/locks"
+printf '{"pid":1,"host":"h","created_at":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%S+00:00)" \
+  >"$root/.specforge/locks/planning.lock"
+"$specforge" session launch --role lead --bead SPEC-twp >"$out" 2>&1 \
+  || { echo "FAIL - twb-planning: launch errored"; cat "$out"; fail=1; }
+name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
+rec="$root/.specforge/state/sessions/$name.json"
+cp "$(record "$rec" effective_settings_path)" "$out"
+refute "twb-planning: no openspec deny while a fresh planning lock is held" 'Edit(openspec/**)'
+[[ "$(record "$rec" openspec_readonly)" == "False" ]] \
+  && echo "ok   - twb-planning: record marks openspec_readonly false during planning" \
+  || { echo "FAIL - twb-planning: openspec_readonly is $(record "$rec" openspec_readonly)"; fail=1; }
 unset SPECFORGE_ROOT
 
 # ===========================================================================
@@ -582,6 +612,10 @@ check "codex-full: wrapper call carries --agent codex"          "--agent codex"
 check "codex-full: trusted maps to workspace-write sandbox"     "--sandbox workspace-write"
 check "codex-full: trusted maps to approval never"              "--approval never"
 check "codex-full: network disabled"                            "--network off"
+check "codex-full: openspec/ requested as a read-only root (TASK-TWB-004)" "--readonly-root"
+grep -qE -- "--readonly-root [^ ]*/openspec" "$out" \
+  && echo "ok   - codex-full: the read-only root is the session's openspec/ dir" \
+  || { echo "FAIL - codex-full: --readonly-root path is not openspec/"; cat "$out"; fail=1; }
 "$specforge" session list >"$out" 2>&1
 check "codex-full: session list has an AGENT column"            "AGENT"
 check "codex-full: session list shows codex for the session"    "codex"

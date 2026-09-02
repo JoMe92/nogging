@@ -41,6 +41,7 @@ read_only=0
 sandbox=""
 approval=""
 network="on"
+readonly_root=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -52,6 +53,7 @@ while [ $# -gt 0 ]; do
     --sandbox)   sandbox=$2; shift 2 ;;
     --approval)  approval=$2; shift 2 ;;
     --network)   network=$2; shift 2 ;;
+    --readonly-root) readonly_root=$2; shift 2 ;;
     --read-only) read_only=1; shift ;;
     --)          shift; break ;;
     *) echo "session-launch: unknown argument: $1" >&2; exit 2 ;;
@@ -77,6 +79,20 @@ case "$agent" in
     : "${approval:=on-request}"
     set -- --cd "$(pwd)" --sandbox "$sandbox" --ask-for-approval "$approval"
     [ "$network" = off ] && set -- "$@" -c 'sandbox_workspace_write.network_access=false'
+    if [ -n "$readonly_root" ]; then
+      # Make $readonly_root (openspec/) a read-only path. codex exposes
+      # --sandbox-state-readable-root only on the `codex sandbox` subcommand in
+      # some builds; use it on the plain launch where this build advertises it,
+      # otherwise fall back to the .codex/rules/ execpolicy deny (ships with the
+      # codex-onboarding change) plus the pre-commit boundary hook.
+      if codex --help 2>/dev/null | grep -q -- '--sandbox-state-readable-root'; then
+        set -- "$@" --sandbox-state-readable-root "$readonly_root"
+      else
+        echo "specforge: this codex build has no plain-launch --sandbox-state-readable-root;" >&2
+        echo "specforge: openspec/ read-only for Codex relies on the .codex/rules/ execpolicy deny" >&2
+        echo "specforge: (codex-onboarding) and the pre-commit boundary hook for this session." >&2
+      fi
+    fi
     echo "specforge: starting Codex for ${bead:-<no bead>} in $(pwd) (sandbox=${sandbox} approval=${approval} network=${network})"
     if [ -n "$prompt" ] && [ -f "$prompt" ]; then
       exec codex "$@" "$(cat "$prompt")"

@@ -441,6 +441,24 @@ def merge_floor(settings):
             deny.append(entry)
     perms["deny"] = deny
     return result
+# Edit-tool deny rules that make openspec/ a read-only root in the effective
+# authority of a launched Claude execution session. The tool-agnostic sibling of
+# the PreToolUse guard: the guard is the fast in-model signal, these are the
+# per-session authority backstop. Unioned in (never replacing) the profile's own
+# deny list, exactly like FLOOR_DENY.
+OPENSPEC_READONLY_DENY = ["Edit(openspec/**)", "Write(openspec/**)", "MultiEdit(openspec/**)"]
+def deny_openspec_writes(settings):
+    """Return a deep copy of `settings` with OPENSPEC_READONLY_DENY unioned into
+    `permissions.deny`. Same contract as merge_floor(): input never mutated,
+    existing entries kept, order stable."""
+    result = json.loads(json.dumps(settings))
+    perms = result.setdefault("permissions", {})
+    deny = list(perms.get("deny") or [])
+    for entry in OPENSPEC_READONLY_DENY:
+        if entry not in deny:
+            deny.append(entry)
+    perms["deny"] = deny
+    return result
 def resolve_launch_file(value, dir_key, default_dir, suffix):
     """Resolve a `--profile` / `--prompt` value to a concrete file.
 
@@ -677,6 +695,14 @@ def session_launch(role, bead, cwd, read_only, owner,
     the operator directs (see .specforge/session-launch-prompt.md)."""
     agent = resolve_agent(agent)
     role_meta, role_slug = normalize_role(role)
+    # An execution session (any non-planning role) launched outside a fresh
+    # planning session gets openspec/ as a read-only root in its effective
+    # authority — tool-agnostically. A planning role, or a launch while a fresh
+    # planning lock is held, keeps openspec/ writable.
+    openspec_readonly = (
+        not role_meta.startswith("planning")
+        and fresh_lock("planning", CFG["planning_lock_ttl_seconds"]) is None
+    )
     # Resolve and validate the launch profile / prompt before anything about a
     # session exists on disk or in tmux.
     profile_path, profile_label, prompt_path = resolved_launch_pair(
@@ -708,7 +734,10 @@ def session_launch(role, bead, cwd, read_only, owner,
         # claude wrapper call is byte-for-byte what it was before agent
         # selection existed (no `--agent` argument).
         effective_path = sdir / f"{name}.settings.json"
-        effective_path.write_text(json.dumps(merge_floor(source_settings), indent=2) + "\n")
+        settings_out = merge_floor(source_settings)
+        if openspec_readonly:
+            settings_out = deny_openspec_writes(settings_out)
+        effective_path.write_text(json.dumps(settings_out, indent=2) + "\n")
         effective_settings_path = str(effective_path)
         inner[1:1] = ["--settings", effective_settings_path]
     else:  # codex: no per-session permissions file — the floor is the
@@ -725,6 +754,13 @@ def session_launch(role, bead, cwd, read_only, owner,
         inner[1:1] = ["--agent", "codex", "--sandbox", sandbox,
                       "--approval", codex_spec["ask_for_approval"],
                       "--network", "on" if codex_spec["network_access"] else "off"]
+        # Codex has no per-session permissions file, so openspec/ read-only is
+        # requested at the wrapper: it maps to codex's readable-root flag where
+        # the installed build exposes it on a plain launch, and otherwise falls
+        # back to the .codex/rules/ execpolicy deny (codex-onboarding) plus the
+        # pre-commit boundary hook. See the wrapper for the runtime check.
+        if openspec_readonly:
+            inner += ["--readonly-root", str(Path(workdir) / "openspec")]
     if read_only: inner.append("--read-only")
     record = {
         "name": name, "bead_id": bead, "role": role_meta, "host": socket.gethostname(),
@@ -732,7 +768,7 @@ def session_launch(role, bead, cwd, read_only, owner,
         "owner": owner_identity(owner), "state": "starting", "log_path": str(log_path),
         "read_only": bool(read_only), "ended_at": None, "exit_reason": None,
         "profile": profile_label, "effective_settings_path": effective_settings_path,
-        "agent": agent,
+        "agent": agent, "openspec_readonly": bool(openspec_readonly),
     }
     write_session(rec_path, record)                       # metadata before exec
     with log_path.open("a") as fh:                        # append-only log before exec
