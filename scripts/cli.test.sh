@@ -224,6 +224,31 @@ rc=0
 ( cd "$plain" && node "$cli" init --no-beads >/dev/null 2>&1 ) || rc=$?
 check "refuses outside a git repo" [ "$rc" -ne 0 ]
 
+# --- install from a files-filtered package (what `npx github:` actually ships) --
+# A local `node bin/cli.js init` copies straight from the checkout, so a manifest
+# path missing from package.json "files" still works locally but breaks the real
+# npx install. Pack the package and install from the extracted copy.
+if command -v npm >/dev/null 2>&1; then
+  pack="$work/pack"; mkdir -p "$pack"
+  if ( cd "$root" && npm pack --pack-destination "$pack" >/dev/null 2>&1 ); then
+    tgz=$(find "$pack" -name '*.tgz' | head -1)
+    tar -xzf "$tgz" -C "$pack"
+    pkg="$pack/package"
+    packrepo="$work/packinstall"; mkdir -p "$packrepo"; git -C "$packrepo" init -q
+    rc=0
+    ( cd "$packrepo" && node "$pkg/bin/cli.js" init --no-beads --no-systemd >/dev/null 2>&1 ) || rc=$?
+    check "packed install succeeds"                 [ "$rc" -eq 0 ]
+    check "packed install ships the tool bridge"    test -f "$packrepo/scripts/specforge"
+    check "packed install ships launch profiles"    test -f "$packrepo/.specforge/launch-profiles/restricted.json"
+    check "packed install ships launch prompts"     test -f "$packrepo/.specforge/launch-prompts/no-autonomous-claim.md"
+    check "packed install ships the skills"         test -f "$packrepo/.agents/skills/openspec-propose/SKILL.md"
+  else
+    echo "ok   - packed-install check skipped (npm pack failed)"
+  fi
+else
+  echo "ok   - packed-install check skipped (npm not installed)"
+fi
+
 if [[ $fail -ne 0 ]]; then
   echo "installer CLI checks failed" >&2
   exit 1
