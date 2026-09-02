@@ -30,6 +30,8 @@ module.exports = {
   // Directories copied verbatim (recursive).
   verbatimDirs: [
     { from: '.agents/skills', to: '.agents/skills' },
+    { from: '.specforge/launch-profiles', to: '.specforge/launch-profiles' },
+    { from: '.specforge/launch-prompts', to: '.specforge/launch-prompts' },
   ],
 
   // Reference docs: package docs/<name> -> target docs/specforge/<name>.
