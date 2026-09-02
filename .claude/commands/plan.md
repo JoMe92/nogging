@@ -51,3 +51,21 @@ reorder.
    subject and the `SpecForge-Writer: planning` trailer (or the env var).
 
 8. **Release the planning lock.** Run `scripts/specforge plan-end`.
+
+## Hard rules
+
+These are the planning-session rules from `AGENTS.md` and
+`docs/operating-model.md`. They hold for the whole `/plan` session.
+
+- **Stop on an orphaned Bead.** If an active Bead is found with no matching
+  task mapping (a lost task mapping), stop the session and ask the Product
+  Owner to resolve the orphan explicitly. Never delete or reassign it
+  automatically.
+- **No execution work.** The Planning Agent writes OpenSpec and
+  creates/reconciles Beads only. It does not implement tasks, edit
+  implementation files, run `scripts/test` as acceptance, or close execution
+  Beads — that is the Main Worker's role in a separate session.
+- **`architect` specialist for architecture questions.** You may consult the
+  `architect` specialist (via the Task tool) for architecture and design
+  trade-off questions during the design dialogue. Specialists advise; they do
+  no execution work and touch no Bead here.
