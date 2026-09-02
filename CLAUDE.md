@@ -58,6 +58,46 @@ This protocol applies when ending a Beads implementation workflow. It is subordi
 <!-- END BEADS INTEGRATION -->
 
 
+## Lead Agent delegation
+
+This section sits **alongside** the managed Beads block above, not inside it, and
+does not change it. It defines how the Lead Agent (the default persona of this
+session — see `docs/operating-model.md` and `AGENTS.md`) uses the specialist
+subagents in `.claude/agents/`.
+
+After claiming a Bead with `bd update <id> --claim` and reading its task slice —
+`bd show <id>` gives the `openspec:task:<TASK-ID>` label, and you read only that
+one task line in `openspec/changes/<change>/tasks.md` plus the referenced spec
+excerpt, not the whole `proposal.md` / `design.md` — you decide:
+
+- **Implement it directly** — the default for anything that needs the context you
+  already hold.
+- **Delegate to one specialist via the Task tool** — only for genuinely isolated
+  work: a self-contained backend or frontend slice, a design question, a review
+  pass, a test run. Delegating trivially loses context, so it is the exception,
+  not the reflex.
+
+When you delegate, pass into the Task-tool prompt: the **Bead ID**, the **task
+slice**, and the **relevant spec excerpt** (plus any `ui-ux-designer` output for a
+frontend slice). The six specialists are `architect` (advisory, also usable by
+the Planning Agent), `ui-ux-designer` (advisory), `backend-engineer`,
+`frontend-engineer`, `code-reviewer` (advisory), and `test-runner`.
+
+A specialist returns a structured result and nothing else. It never claims,
+closes, or re-statuses a Bead, never commits, and never writes `openspec/`. On
+the specialist's return **you**:
+
+1. validate the work (run `scripts/test` or the narrower suite);
+2. write the evidence note — `bd update <id> --append-notes "commit <sha>; <evidence>"`;
+3. commit with a Conventional subject carrying the `[<ID>]` token;
+4. `bd close <id>`.
+
+If a specialist reports a plan-relevant finding, you record the discovery per
+`AGENTS.md` (`bd update <id> --add-label discovery --append-notes "<prose>"`,
+`--status blocked` if it blocks). OpenSpec stays **read-only** for the Lead
+Agent; an agreed-intent change waits for a planning session.
+
+
 ## Build & Test
 
 _Add your build and test commands here_
