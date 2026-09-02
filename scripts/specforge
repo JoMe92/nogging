@@ -379,7 +379,6 @@ def scfg(key, default): return CFG.get(key, default)
 FLOOR_DENY = [
     "Bash(rm -rf:*)", "Bash(rm -fr:*)", "Bash(sudo:*)", "Bash(dd:*)",
     "Bash(mkfs:*)", "Bash(mkfs.*:*)", "Bash(shutdown:*)", "Bash(reboot:*)",
-    "Bash(:(){ :|:& };:)",
 ]
 def merge_floor(settings):
     """Return a deep copy of `settings` with FLOOR_DENY unioned into
