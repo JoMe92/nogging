@@ -57,15 +57,36 @@ run_guard "src/feature.py" || true
   && ok "guard allows a write outside openspec/ (exit 0)" \
   || { bad "guard blocked a non-openspec write (rc=$rc)"; cat "$work/guard.err"; }
 
-# with the planning lock present the guard steps aside (planning session only)
+# with a FRESH planning lock present the guard steps aside (planning session only)
 mkdir -p "$root/.specforge/locks"
-printf '{"pid":1,"host":"h","created_at":"2026-09-02T00:00:00+00:00"}\n' \
+printf '{"pid":1,"host":"h","created_at":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%S+00:00)" \
   >"$root/.specforge/locks/planning.lock"
 run_guard "openspec/changes/demo/spec.md" || true
 [[ "$rc" -eq 0 ]] \
-  && ok "guard allows the openspec/ write while the planning lock is held" \
-  || { bad "guard still blocked with planning lock present (rc=$rc)"; cat "$work/guard.err"; }
+  && ok "guard allows the openspec/ write while a fresh planning lock is held" \
+  || { bad "guard still blocked with a fresh planning lock present (rc=$rc)"; cat "$work/guard.err"; }
+
+# a STALE planning lock (older than planning_lock_ttl_seconds) no longer confers
+# write permission — crash-resilience weakness W6 (SPEC-qjz / TASK-TWB-003)
+cp "$repo_root/.specforge/config.json" "$root/.specforge/config.json" 2>/dev/null || \
+  printf '{"planning_lock_ttl_seconds":7200}\n' >"$root/.specforge/config.json"
+printf '{"pid":1,"host":"h","created_at":"2000-01-01T00:00:00+00:00"}\n' \
+  >"$root/.specforge/locks/planning.lock"
+run_guard "openspec/changes/demo/spec.md" || true
+[[ "$rc" -eq 2 ]] \
+  && ok "guard blocks an openspec/ write when the planning lock is stale (W6)" \
+  || { bad "guard honoured a stale planning lock (rc=$rc)"; cat "$work/guard.err"; }
 rm -f "$root/.specforge/locks/planning.lock"
+
+# the boundary sentinel blocks regardless of the planning lock
+printf '{"pid":1,"host":"h","created_at":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%S+00:00)" \
+  >"$root/.specforge/locks/planning.lock"
+printf '{"closed_at":"x","by":"test"}\n' >"$root/.specforge/locks/openspec.readonly"
+run_guard "openspec/changes/demo/spec.md" || true
+[[ "$rc" -eq 2 ]] \
+  && ok "guard blocks an openspec/ write when the boundary sentinel is present" \
+  || { bad "guard ignored the boundary sentinel (rc=$rc)"; cat "$work/guard.err"; }
+rm -f "$root/.specforge/locks/planning.lock" "$root/.specforge/locks/openspec.readonly"
 
 # ===========================================================================
 # 2. no specialist definition instructs claim / close / commit of a Bead

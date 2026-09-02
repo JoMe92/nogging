@@ -2,10 +2,18 @@
 set -euo pipefail
 
 # Claude Code PreToolUse hook: block Edit/Write into openspec/ unless a planning
-# session holds .specforge/locks/planning.lock. The tool call arguments arrive as
-# JSON on stdin; the target path is at .tool_input.file_path (verified against
-# Claude Code 2.1.237 in SPEC-1cu). Exit 2 blocks the tool call and shows stderr
-# to the model.
+# session has the boundary open. The tool call arguments arrive as JSON on stdin;
+# the target path is at .tool_input.file_path (verified against Claude Code
+# 2.1.237 in SPEC-1cu). Exit 2 blocks the tool call and shows stderr to the model.
+#
+# This is Layer 1 of the OpenSpec write boundary and the fast Claude Code early
+# signal on top of the tool-agnostic filesystem/sandbox guard. It blocks when:
+#   - the boundary sentinel .specforge/locks/openspec.readonly is present
+#     (plan-end wrote it; a fresh install starts with it), OR
+#   - the planning lock .specforge/locks/planning.lock is absent, OR
+#   - that lock's created_at is older than planning_lock_ttl_seconds — the same
+#     staleness rule scripts/specforge lock() applies (closes crash-resilience
+#     weakness W6: a stale lock blocks plan-begin but used to still permit edits).
 
 root="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 
@@ -20,16 +28,40 @@ esac
 openspec_dir="$root/openspec"
 
 case "$abs" in
-  "$openspec_dir" | "$openspec_dir"/*)
-    if [[ ! -e "$root/.specforge/locks/planning.lock" ]]; then
-      {
-        echo "SpecForge: openspec/ is writable only during a planning session."
-        echo "The planning lock .specforge/locks/planning.lock is absent, so this Edit/Write is blocked."
-        echo "Execution agents record changes in Beads and code; agreed intent changes go through a planning session."
-      } >&2
-      exit 2
-    fi
-    ;;
+  "$openspec_dir" | "$openspec_dir"/*) ;;
+  *) exit 0 ;;
 esac
+
+sentinel="$root/.specforge/locks/openspec.readonly"
+planning_lock="$root/.specforge/locks/planning.lock"
+config="$root/.specforge/config.json"
+
+reason=""
+if [[ -e "$sentinel" ]]; then
+  reason="The boundary sentinel .specforge/locks/openspec.readonly is present (plan-end closed it)."
+elif [[ ! -e "$planning_lock" ]]; then
+  reason="The planning lock .specforge/locks/planning.lock is absent."
+else
+  ttl=$(jq -r '.planning_lock_ttl_seconds // 7200' "$config" 2>/dev/null || echo 7200)
+  [[ "$ttl" =~ ^[0-9]+$ ]] || ttl=7200
+  created=$(jq -r '.created_at // empty' "$planning_lock" 2>/dev/null || echo "")
+  created_epoch=$(date -u -d "$created" +%s 2>/dev/null || echo "")
+  now_epoch=$(date -u +%s)
+  if [[ -z "$created_epoch" ]]; then
+    reason="The planning lock .specforge/locks/planning.lock has no readable created_at."
+  elif (( now_epoch - created_epoch >= ttl )); then
+    reason="The planning lock .specforge/locks/planning.lock is stale (created_at older than ${ttl}s) — run plan-end --force."
+  fi
+fi
+
+if [[ -n "$reason" ]]; then
+  {
+    echo "SpecForge: openspec/ is writable only during an active planning session."
+    echo "$reason"
+    echo "This Edit/Write is blocked. Execution agents record changes in Beads and code;"
+    echo "agreed intent changes go through a planning session (plan-begin … plan-end)."
+  } >&2
+  exit 2
+fi
 
 exit 0
