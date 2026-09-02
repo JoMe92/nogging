@@ -8,6 +8,42 @@
 - **Specialists:** work only on a claimed Bead and report results to the Main Worker.
 - **Sync timer:** polls every 30 seconds and mirrors facts only.
 
+## Delegation model and the Lead Agent knowledge path
+
+The Main Worker session runs as the **Lead Agent** persona. It has full
+read/write on Beads but **read-only** access to OpenSpec — only the Planning
+Agent writes there. For each Bead the Lead Agent follows this path (section 7 of
+the concept conversation):
+
+1. `bd ready` — find available work.
+2. `bd update <id> --claim` — claim one Bead.
+3. `bd show <id>` — this returns the Bead's `openspec:task:<TASK-ID>` label (and
+   `openspec:change:<name>`).
+4. **Targeted context** — read only the one task line that
+   `openspec:task:<TASK-ID>` resolves to in
+   `openspec/changes/<name>/tasks.md`, plus the referenced spec excerpt under
+   `specs/`. The Lead Agent does not read the whole `proposal.md` / `design.md`.
+5. Read the code context from the repo itself.
+6. **Decide: implement directly or delegate.** For genuinely isolated work the
+   Lead Agent delegates to exactly one of the six specialists in
+   `.claude/agents/` via the Task tool, passing the Bead ID, the task slice, and
+   the spec excerpt. Delegating trivial work loses context, so it is the
+   exception. `architect` and `code-reviewer` are advisory; `ui-ux-designer`
+   produces a specification; `backend-engineer` / `frontend-engineer` implement;
+   `test-runner` runs and extends tests.
+7. Request tests and a review pass (`test-runner`, `code-reviewer`) as needed.
+8. If a specialist surfaces a plan-relevant finding, the Lead Agent records the
+   discovery (`bd update <id> --add-label discovery --append-notes "<prose>"`;
+   `--status blocked` and move to the next independent Bead if it blocks). A
+   specialist never labels or re-statuses the Bead itself.
+9. Validate, write the evidence note with the commit SHA, commit with the
+   `[<ID>]` token, and `bd close <id>`. The sync timer then mirrors the closure
+   into `execution-log.md`.
+
+A specialist owns none of steps 2, 8, or 9: claiming, closing, status changes,
+the evidence note, and the commit stay with the Lead Agent. See the *Lead Agent
+delegation* section of `CLAUDE.md` and the definitions in `.claude/agents/`.
+
 ## Commands
 
 Three slash commands under `.claude/commands/` are the operator's entry points
