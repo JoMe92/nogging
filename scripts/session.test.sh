@@ -548,5 +548,130 @@ check "set-file: no-name cleanup stops the tmux server once nothing real is acti
   || { echo "FAIL - set-file: tmux session survived the server stop"; fail=1; }
 unset SPECFORGE_ROOT
 
+# ===========================================================================
+# Scenario: --agent codex maps the level onto Codex's sandbox/approval model
+# ===========================================================================
+# codex stub: PATH-injected, logs its argv, never starts a real session.
+cat >"$work/bin/codex" <<'STUB'
+#!/usr/bin/env bash
+{ printf 'codex'; for a in "$@"; do printf ' <%s>' "$a"; done; printf '\n'; } \
+  >>"${CODEX_ARGV_LOG:?CODEX_ARGV_LOG unset}"
+STUB
+chmod +x "$work/bin/codex"
+
+root="$work/codex-full"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export TMUX_STUB_DIR="$work/codex-full-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-cdx"
+"$specforge" session launch --role lead --bead SPEC-cdx --agent codex --full-access >"$out" 2>&1 \
+  || { echo "FAIL - codex-full: launch errored"; cat "$out"; fail=1; }
+check "codex-full: missing-floor warning names the execpolicy file" "specforge.rules"
+name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
+rec="$root/.specforge/state/sessions/$name.json"
+[[ "$(record "$rec" agent)" == "codex" ]] \
+  && echo "ok   - codex-full: record shows agent codex" \
+  || { echo "FAIL - codex-full: agent is $(record "$rec" agent)"; fail=1; }
+[[ "$(record "$rec" effective_settings_path)" == "None" ]] \
+  && echo "ok   - codex-full: no per-session effective-settings file for Codex" \
+  || { echo "FAIL - codex-full: effective_settings_path is $(record "$rec" effective_settings_path)"; fail=1; }
+[[ ! -f "$root/.specforge/state/sessions/$name.settings.json" ]] \
+  && echo "ok   - codex-full: no <name>.settings.json written" \
+  || { echo "FAIL - codex-full: a settings file was written for Codex"; fail=1; }
+cp "$TMUX_STUB_DIR/calls.log" "$out"
+check "codex-full: wrapper call carries --agent codex"          "--agent codex"
+check "codex-full: trusted maps to workspace-write sandbox"     "--sandbox workspace-write"
+check "codex-full: trusted maps to approval never"              "--approval never"
+check "codex-full: network disabled"                            "--network off"
+"$specforge" session list >"$out" 2>&1
+check "codex-full: session list has an AGENT column"            "AGENT"
+check "codex-full: session list shows codex for the session"    "codex"
+unset SPECFORGE_ROOT
+
+# ===========================================================================
+# Scenario: the wrapper execs `codex` with the mapped flags, and never a
+# rule-ignoring or sandbox-bypassing flag
+# ===========================================================================
+export CODEX_ARGV_LOG="$work/codex-argv.log"; : >"$CODEX_ARGV_LOG"
+"$here/session-launch" --agent codex --sandbox read-only --approval on-request \
+  --network off --prompt "$work/codex-full/.specforge/launch-prompts/autonomous.md" \
+  --cwd "$work/codex-full" --bead SPEC-cdx >"$out" 2>&1 \
+  || { echo "FAIL - codex-wrap: wrapper errored"; cat "$out"; fail=1; }
+cp "$CODEX_ARGV_LOG" "$out"
+check "codex-wrap: passes --cd"                         "<--cd>"
+check "codex-wrap: passes the sandbox mode to --sandbox" "<--sandbox> <read-only>"
+check "codex-wrap: maps approval to --ask-for-approval" "<--ask-for-approval> <on-request>"
+check "codex-wrap: disables network via -c override"   "sandbox_workspace_write.network_access=false"
+refute "codex-wrap: never passes --ignore-rules"       "ignore-rules"
+refute "codex-wrap: never bypasses approvals/sandbox"  "dangerously-bypass"
+
+# ===========================================================================
+# Scenario: --read-only forces the Codex sandbox to read-only at launch
+# ===========================================================================
+root="$work/codex-ro"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export TMUX_STUB_DIR="$work/codex-ro-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-cro"
+"$specforge" session launch --role lead --bead SPEC-cro --agent codex --read-only >"$out" 2>&1 \
+  || { echo "FAIL - codex-ro: launch errored"; cat "$out"; fail=1; }
+cp "$TMUX_STUB_DIR/calls.log" "$out"
+check "codex-ro: --read-only forces --sandbox read-only" "--sandbox read-only"
+unset SPECFORGE_ROOT
+
+# ===========================================================================
+# Scenario: a Claude settings file with --agent codex fails before any session
+# ===========================================================================
+root="$work/codex-reject"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export TMUX_STUB_DIR="$work/codex-reject-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-rej"
+"$specforge" session launch --role lead --bead SPEC-rej --agent codex \
+  --profile "$root/.specforge/launch-profiles/restricted.json" >"$out" 2>&1 \
+  && { echo "FAIL - codex-reject: launch should have failed"; fail=1; } \
+  || echo "ok   - codex-reject: a .json profile with --agent codex is refused"
+check "codex-reject: message says it is a Claude settings file" "Claude settings file"
+[[ -z "$(ls -A "$root/.specforge/state/sessions" 2>/dev/null)" ]] \
+  && echo "ok   - codex-reject: no session record was created" \
+  || { echo "FAIL - codex-reject: session state left behind"; ls -A "$root/.specforge/state/sessions"; fail=1; }
+[[ ! -f "$TMUX_STUB_DIR/calls.log" ]] || ! grep -qF "new-session " "$TMUX_STUB_DIR/calls.log" \
+  && echo "ok   - codex-reject: no tmux session was created" \
+  || { echo "FAIL - codex-reject: tmux new-session was called"; fail=1; }
+unset SPECFORGE_ROOT
+
+# ===========================================================================
+# Scenario: the default launch still execs `claude` — no --agent argument
+# ===========================================================================
+root="$work/codex-default"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export TMUX_STUB_DIR="$work/codex-default-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-dfl"
+"$specforge" session launch --role lead --bead SPEC-dfl >"$out" 2>&1 \
+  || { echo "FAIL - codex-default: launch errored"; cat "$out"; fail=1; }
+name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
+[[ "$(record "$root/.specforge/state/sessions/$name.json" agent)" == "claude" ]] \
+  && echo "ok   - codex-default: record agent is claude" \
+  || { echo "FAIL - codex-default: agent is $(record "$root/.specforge/state/sessions/$name.json" agent)"; fail=1; }
+cp "$TMUX_STUB_DIR/calls.log" "$out"
+check   "codex-default: still a claude wrapper call with --settings" "--settings "
+refute  "codex-default: no --agent argument on the default path"     "--agent"
+unset SPECFORGE_ROOT
+
+# ===========================================================================
+# Scenario: redact() scrubs a secret-named value in a `-c key=value` override
+# ===========================================================================
+red_out=$(python3 - "$repo_root/scripts/specforge" <<'PY'
+import sys
+from importlib.machinery import SourceFileLoader
+m = SourceFileLoader("sf_redact", sys.argv[1]).load_module()
+print(m.redact("codex -c 'model_providers.x.auth_token=\"sk-DO-NOT-LEAK-abc\"' --cd ."))
+print(m.redact("codex -c sandbox_workspace_write.network_access=false"))
+PY
+)
+[[ "$red_out" == *'***REDACTED***'* && "$red_out" != *'sk-DO-NOT-LEAK-abc'* ]] \
+  && echo "ok   - redact-c: a secret-named -c override value is scrubbed in the record" \
+  || { echo "FAIL - redact-c: secret survived redact() ($red_out)"; fail=1; }
+[[ "$red_out" == *'network_access=false'* ]] \
+  && echo "ok   - redact-c: a non-secret -c override is left intact" \
+  || { echo "FAIL - redact-c: over-redacted a benign override ($red_out)"; fail=1; }
+
 if [[ $fail -ne 0 ]]; then echo "session checks failed" >&2; exit 1; fi
 echo "all session checks passed"
