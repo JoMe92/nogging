@@ -91,6 +91,11 @@ refute() { if grep -qF -- "$2" "$out"; then echo "FAIL - $1 (present: $2)"; cat 
 make_root() {
   local r="$1" grace="${2:-10}"
   mkdir -p "$r/.specforge/state"
+  # the launch profile / prompt files the bridge resolves and now reads
+  cp "$repo_root/.specforge/session-launch-profile.json" "$r/.specforge/" 2>/dev/null || true
+  cp "$repo_root/.specforge/session-launch-prompt.md" "$r/.specforge/" 2>/dev/null || true
+  cp -r "$repo_root/.specforge/launch-profiles" "$r/.specforge/" 2>/dev/null || true
+  cp -r "$repo_root/.specforge/launch-prompts" "$r/.specforge/" 2>/dev/null || true
   python3 - "$repo_root/.specforge/config.json" "$r/.specforge/config.json" "$grace" <<'PY'
 import json, sys
 cfg = json.load(open(sys.argv[1]))
@@ -112,7 +117,7 @@ export BD_MUTATION_LOG="$work/launch-bd-mutations.log"; : >"$BD_MUTATION_LOG"
 "$specforge" session launch --role lead --bead SPEC-aaa >"$out" 2>&1 \
   || { echo "FAIL - launch: errored"; cat "$out"; fail=1; }
 check "launch: reports the created session" "launched sf-lead-spec-aaa-"
-name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | sed 's/\.json$//')"
+name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
 [[ -f "$root/.specforge/state/sessions/$name.json" ]] \
   && echo "ok   - launch: metadata record written" \
   || { echo "FAIL - launch: no metadata record"; fail=1; }
@@ -165,7 +170,7 @@ export SPECFORGE_ROOT="$root"
 export TMUX_STUB_DIR="$work/list-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-ccc"
 "$specforge" session launch --role specialist:backend-engineer --bead SPEC-ccc >/dev/null 2>&1
-name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | sed 's/\.json$//')"
+name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
 "$specforge" session list >"$out" 2>&1
 check "list: a live session shows its real state" "running"
 check "list: shows the Bead id" "SPEC-ccc"
@@ -187,7 +192,7 @@ export SPECFORGE_ROOT="$root"
 export TMUX_STUB_DIR="$work/stop-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-ddd"
 "$specforge" session launch --role lead --bead SPEC-ddd >/dev/null 2>&1
-name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | sed 's/\.json$//')"
+name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
 rec="$root/.specforge/state/sessions/$name.json"
 
 "$specforge" session stop "$name" --reason "operator asked" >"$out" 2>&1 \
@@ -212,7 +217,7 @@ root2="$work/stop-kill"; make_root "$root2" 0.2
 export SPECFORGE_ROOT="$root2"
 export TMUX_STUB_DIR="$work/stop-kill-tmux"; mkdir -p "$TMUX_STUB_DIR"
 "$specforge" session launch --role lead --bead SPEC-ddd >/dev/null 2>&1
-name2="$(ls "$root2/.specforge/state/sessions" | grep '\.json$' | sed 's/\.json$//')"
+name2="$(ls "$root2/.specforge/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
 TMUX_STUB_IGNORE_SIGINT=1 "$specforge" session stop "$name2" >"$out" 2>&1
 grep -qF "kill-session " "$TMUX_STUB_DIR/calls.log" \
   && echo "ok   - stop: escalates to kill-session after the grace period" \
@@ -230,7 +235,7 @@ export SPECFORGE_ROOT="$root"
 export TMUX_STUB_DIR="$work/cleanup-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-eee"
 "$specforge" session launch --role lead --bead SPEC-eee >/dev/null 2>&1
-name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | sed 's/\.json$//')"
+name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
 rec="$root/.specforge/state/sessions/$name.json"
 
 "$specforge" session cleanup "$name" >"$out" 2>&1 \
@@ -265,7 +270,7 @@ export BD_KNOWN="SPEC-fff"
 export ANTHROPIC_API_KEY="sk-secret-DO-NOT-LEAK-12345"
 export GH_TOKEN="ghp-secret-DO-NOT-LEAK-67890"
 "$specforge" session launch --role lead --bead SPEC-fff >/dev/null 2>&1
-name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | sed 's/\.json$//')"
+name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
 cp "$root/.specforge/state/sessions/$name.json" "$out"
 refute "secret: ANTHROPIC_API_KEY value absent from the recorded command" "sk-secret-DO-NOT-LEAK-12345"
 refute "secret: GH_TOKEN value absent from the recorded command" "ghp-secret-DO-NOT-LEAK-67890"

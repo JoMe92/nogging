@@ -439,6 +439,46 @@ def gen_session_name(role_slug, bead_id):
             return name
     raise RuntimeError("could not generate a collision-free session name; "
                        "no existing session was reused or overwritten")
+def resolved_launch_pair(profile, prompt, full_access):
+    """Resolve the launch selection to concrete files.
+
+    Returns `(profile_path, profile_label, prompt_path)`. `--full-access`
+    fills in `trusted` / `autonomous` for whichever flag was not given.
+    With no selection the restricted profile and the no-autonomous-claim
+    prompt are used; an explicitly configured `session_launch_profile` /
+    `session_launch_prompt` key still wins over the directory default.
+    Any resolution failure raises before a session is created."""
+    if full_access:
+        profile = profile or "trusted"
+        prompt = prompt or "autonomous"
+    if profile is not None:
+        profile_path, profile_label = resolve_launch_file(
+            profile, "session_launch_profile_dir", ".specforge/launch-profiles", ".json")
+    elif "session_launch_profile" in CFG:
+        profile_path, profile_label = (ROOT / CFG["session_launch_profile"]).resolve(), "restricted"
+    else:
+        profile_path, profile_label = resolve_launch_file(
+            "restricted", "session_launch_profile_dir", ".specforge/launch-profiles", ".json")
+    if prompt is not None:
+        prompt_path, _ = resolve_launch_file(
+            prompt, "session_launch_prompt_dir", ".specforge/launch-prompts", ".md")
+    elif "session_launch_prompt" in CFG:
+        prompt_path = (ROOT / CFG["session_launch_prompt"]).resolve()
+    else:
+        prompt_path, _ = resolve_launch_file(
+            "no-autonomous-claim", "session_launch_prompt_dir", ".specforge/launch-prompts", ".md")
+    return profile_path, profile_label, prompt_path
+def load_profile_settings(path):
+    """Read a profile file as JSON and require a `permissions` object. Fails
+    loudly rather than starting Claude unconstrained on a malformed file."""
+    try:
+        data = json.loads(Path(path).read_text())
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"launch profile {path} is not readable JSON: {exc}")
+    if not isinstance(data, dict) or not isinstance(data.get("permissions"), dict):
+        raise RuntimeError(
+            f"launch profile {path} has no 'permissions' object; launch refused")
+    return data
 def session_launch(role, bead, cwd, read_only, owner,
                    profile=None, prompt=None, full_access=False):
     """Start a supervised Claude session for a Bead.
@@ -448,6 +488,10 @@ def session_launch(role, bead, cwd, read_only, owner,
     otherwise changes a Bead. Claiming stays a deliberate in-session action
     the operator directs (see .specforge/session-launch-prompt.md)."""
     role_meta, role_slug = normalize_role(role)
+    # Resolve and validate the launch profile / prompt before anything about a
+    # session exists on disk or in tmux.
+    profile_path, profile_label, prompt_path = resolved_launch_pair(profile, prompt, full_access)
+    source_settings = load_profile_settings(profile_path)
     if not bead_exists(bead):
         raise RuntimeError(f"Bead {bead} does not exist; launch refused")
     live = tmux_sessions()
@@ -462,10 +506,13 @@ def session_launch(role, bead, cwd, read_only, owner,
     rec_path, log_path = sdir / f"{name}.json", sdir / f"{name}.log"
     if rec_path.exists() or tmux_has_session(name):    # last-line race guard
         raise RuntimeError(f"session {name} already exists; refusing to reuse or overwrite it")
-    profile = str((ROOT / scfg("session_launch_profile", ".specforge/session-launch-profile.json")).resolve())
-    prompt = str((ROOT / scfg("session_launch_prompt", ".specforge/session-launch-prompt.md")).resolve())
+    # Write the merged, floored settings for THIS session and pass that file to
+    # Claude — never the source profile, which is left untouched.
+    effective_path = sdir / f"{name}.settings.json"
+    effective_path.write_text(json.dumps(merge_floor(source_settings), indent=2) + "\n")
     wrapper = str((ROOT / "scripts/session-launch").resolve())
-    inner = [wrapper, "--settings", profile, "--prompt", prompt, "--cwd", workdir, "--bead", bead]
+    inner = [wrapper, "--settings", str(effective_path), "--prompt", str(prompt_path),
+             "--cwd", workdir, "--bead", bead]
     if read_only: inner.append("--read-only")
     record = {
         "name": name, "bead_id": bead, "role": role_meta, "host": socket.gethostname(),
