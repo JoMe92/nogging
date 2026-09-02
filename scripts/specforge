@@ -5,7 +5,7 @@ It intentionally contains no LLM call and makes no semantic product decision.
 """
 from __future__ import annotations
 
-import argparse, datetime as dt, getpass, json, os, re, shlex, socket, subprocess, sys, time
+import argparse, datetime as dt, getpass, json, os, re, shlex, signal, socket, subprocess, sys, time
 from pathlib import Path
 
 # ROOT is the repository the bridge operates on. It defaults to the checkout the
@@ -301,6 +301,62 @@ def sync():
         raise
     finally:
         if path is not None: path.unlink(missing_ok=True)
+SYNC_PID = STATE / "sync.pid"
+def pid_alive(pid):
+    """True if `pid` names a process this user can see. A permission error still
+    means the process exists; only 'no such process' counts as dead."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+def fresh_lock(name, ttl):
+    """The lock-file contents if `<name>.lock` exists and is younger than `ttl`
+    seconds, else None. A missing or unparseable file reads as not-held."""
+    path = LOCKS / f"{name}.lock"
+    if not path.exists():
+        return None
+    try:
+        info = json.loads(path.read_text())
+        then = dt.datetime.fromisoformat(info["created_at"])
+    except (ValueError, OSError, KeyError):
+        return None
+    if (dt.datetime.now(dt.timezone.utc) - then).total_seconds() < ttl:
+        return info
+    return None
+def sync_now():
+    """On-demand reconciliation for `/sync-now`.
+
+    Encapsulates the three cases so the command file stays a one-liner:
+    signal a resident sync daemon if one is running (none exists under the
+    current oneshot timer, kept for a future daemon); otherwise run one pass
+    directly; and if the 30-second timer already holds the sync lock, report
+    the contention and exit without retrying rather than racing it.
+    """
+    if SYNC_PID.exists():
+        try:
+            pid = int(SYNC_PID.read_text().split()[0])
+        except (ValueError, OSError):
+            pid = None
+        if pid and pid_alive(pid):
+            os.kill(pid, signal.SIGUSR1)
+            print(f"signalled sync daemon pid {pid} (SIGUSR1) to reconcile now")
+            return
+    held = fresh_lock("sync", CFG["sync_lock_ttl_seconds"])
+    if held:
+        print(f"sync lock held by {held.get('host', '?')} pid {held.get('pid', '?')}; "
+              f"the timer is mid-pass — not retrying")
+        return
+    try:
+        sync()
+    except LockBusyError as exc:
+        # The timer grabbed the lock between the check above and sync()'s own
+        # acquire. Same outcome: report, do not retry.
+        print(f"{exc}; the timer is mid-pass — not retrying")
 # --- session supervision ---------------------------------------------------
 # A thin, mechanical layer that runs each SpecForge-launched Claude Code
 # session inside a named tmux session on a dedicated server socket, tracks it
@@ -670,7 +726,9 @@ def doctor(audit=False):
     if any(not ok for _, ok in checks): sys.exit(1)
 def main():
     p = argparse.ArgumentParser(); sub = p.add_subparsers(dest="command", required=True)
-    sub.add_parser("validate"); sub.add_parser("sync"); sub.add_parser("doctor"); sub.add_parser("audit")
+    sub.add_parser("validate"); sub.add_parser("doctor"); sub.add_parser("audit")
+    sy = sub.add_parser("sync"); sy.add_argument("--now", action="store_true",
+        help="on-demand: signal a running sync daemon, else run one pass; report sync-lock contention without retrying")
     d = sub.add_parser("discoveries"); d.add_argument("--ack", nargs="+", metavar="BEAD_ID",
         help="record a planning-session acknowledgement for the given discovery Beads")
     b = sub.add_parser("plan-begin"); b.add_argument("--force", action="store_true")
@@ -697,7 +755,7 @@ def main():
         if not path.exists(): raise RuntimeError("no planning lock")
         path.unlink(); print("planning session lock released")
     elif args.command == "materialize": materialize(args.change)
-    elif args.command == "sync": sync()
+    elif args.command == "sync": sync_now() if args.now else sync()
     elif args.command == "discoveries": ack_discoveries(args.ack) if args.ack else discoveries()
     elif args.command == "session": session_cmd(args)
     else: doctor(args.command == "audit")

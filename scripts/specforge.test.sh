@@ -348,5 +348,76 @@ rm -f "$root/.specforge/locks/sync.lock"
   || { echo "FAIL - clear: failure record not cleared"; cat "$rec"; fail=1; }
 unset SPECFORGE_ROOT
 
+# ===========================================================================
+# sync --now (TASK-CMD-008): the on-demand alias behind /sync-now
+# ===========================================================================
+
+# --- Scenario: no daemon, no lock — runs one pass directly -----------------
+root="$work/now-direct"; make_root "$root"
+git -C "$root" commit -q --allow-empty -m "feat(demo): now direct [SPEC-n01]"
+export SPECFORGE_ROOT="$root"
+export BD_FIXTURE="$work/now-direct-beads.json"
+export BD_STUB_DIR="$root"
+cat >"$BD_FIXTURE" <<'JSON'
+[
+  {"id": "SPEC-n01", "status": "closed", "closed_at": "2026-09-02T10:00:00Z",
+   "notes": "did the thing",
+   "labels": ["openspec:change:demo", "openspec:task:TASK-DEMO-001"]}
+]
+JSON
+"$specforge" sync --now >"$out" 2>&1 || { echo "FAIL - now-direct: sync --now errored"; cat "$out"; fail=1; }
+grep -qF -- '- [x] TASK-DEMO-001' "$root/openspec/changes/demo/tasks.md" \
+  && echo "ok   - now-direct: sync --now ran a pass and flipped the checkbox" \
+  || { echo "FAIL - now-direct: pass did not run"; cat "$out"; fail=1; }
+unset SPECFORGE_ROOT BD_STUB_DIR
+
+# --- Scenario: sync lock held by the timer — report, do not retry ----------
+root="$work/now-locked"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export BD_FIXTURE="$work/now-locked-beads.json"; printf '[]\n' >"$BD_FIXTURE"
+held="$(date -u +%Y-%m-%dT%H:%M:%S+00:00)"
+printf '{"pid": 999999, "host": "timer-host", "created_at": "%s"}\n' "$held" \
+  >"$root/.specforge/locks/sync.lock"
+"$specforge" sync --now >"$out" 2>&1 || { echo "FAIL - now-locked: sync --now should exit 0 on contention"; cat "$out"; fail=1; }
+check "now-locked: contention reported with the holder" "sync lock held by timer-host pid 999999"
+check "now-locked: does not retry" "not retrying"
+[[ ! -f "$root/.specforge/state/sync-failure.json" ]] \
+  && echo "ok   - now-locked: no failure record written for a held lock" \
+  || { echo "FAIL - now-locked: spurious failure record"; cat "$root/.specforge/state/sync-failure.json"; fail=1; }
+unset SPECFORGE_ROOT
+
+# --- Scenario: a stale PID file falls through to a direct pass -------------
+root="$work/now-stalepid"; make_root "$root"
+git -C "$root" commit -q --allow-empty -m "feat(demo): stale pid [SPEC-n02]"
+export SPECFORGE_ROOT="$root"
+export BD_FIXTURE="$work/now-stalepid-beads.json"
+export BD_STUB_DIR="$root"
+cat >"$BD_FIXTURE" <<'JSON'
+[
+  {"id": "SPEC-n02", "status": "closed", "closed_at": "2026-09-02T11:00:00Z",
+   "notes": "",
+   "labels": ["openspec:change:demo", "openspec:task:TASK-DEMO-002"]}
+]
+JSON
+printf '999999\n' >"$root/.specforge/state/sync.pid"
+"$specforge" sync --now >"$out" 2>&1 || { echo "FAIL - now-stalepid: sync --now errored"; cat "$out"; fail=1; }
+grep -qF -- '- [x] TASK-DEMO-002' "$root/openspec/changes/demo/tasks.md" \
+  && echo "ok   - now-stalepid: dead PID ignored, direct pass ran" \
+  || { echo "FAIL - now-stalepid: pass did not run"; cat "$out"; fail=1; }
+unset SPECFORGE_ROOT BD_STUB_DIR
+
+# --- Scenario: a live PID file is signalled, no pass is run ---------------
+root="$work/now-daemon"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export BD_FIXTURE="$work/now-daemon-beads.json"; printf '[]\n' >"$BD_FIXTURE"
+sleep 30 &
+daemon_pid=$!
+disown "$daemon_pid" 2>/dev/null || true   # silence job-control notice when it is signalled
+printf '%s\n' "$daemon_pid" >"$root/.specforge/state/sync.pid"
+"$specforge" sync --now >"$out" 2>&1 || { echo "FAIL - now-daemon: sync --now errored"; cat "$out"; fail=1; }
+check "now-daemon: reports signalling the live daemon PID" "signalled sync daemon pid $daemon_pid"
+kill "$daemon_pid" 2>/dev/null || true
+unset SPECFORGE_ROOT
+
 if [[ $fail -ne 0 ]]; then echo "specforge checks failed" >&2; exit 1; fi
 echo "all specforge checks passed"
