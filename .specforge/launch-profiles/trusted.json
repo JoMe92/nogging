@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "allow": [
+      "Bash(git push:*)",
+      "Bash(git merge:*)",
+      "Bash(git switch:*)",
+      "Bash(git rebase:*)",
+      "Bash(bd:*)",
+      "Bash(openspec:*)",
+      "Bash(npx:*)",
+      "Bash(scripts/*)"
+    ],
+    "deny": [
+      "Bash(rm -rf:*)",
+      "Bash(rm -fr:*)",
+      "Bash(sudo:*)",
+      "Bash(dd:*)",
+      "Bash(mkfs:*)",
+      "Bash(mkfs.*:*)",
+      "Bash(shutdown:*)",
+      "Bash(reboot:*)",
+      "Bash(:(){ :|:& };:)",
+      "Bash(systemctl:*)",
+      "Bash(curl:*)",
+      "Bash(wget:*)",
+      "WebFetch"
+    ],
+    "additionalDirectories": []
+  }
+}
