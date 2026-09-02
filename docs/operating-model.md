@@ -145,12 +145,13 @@ and the audit stays clean.
 
 ## Session supervision
 
-Every Claude Code session SpecForge starts for Lead Agent or specialist work
-runs inside a **named tmux session on the Pi**, under a dedicated tmux server
-socket (`tmux -L specforge`) that is isolated from the operator's own tmux. The
-session is started with `scripts/specforge session launch --role <lead |
+Every agent session SpecForge starts for Lead Agent or specialist work runs
+inside a **named tmux session on the Pi**, under a dedicated tmux server socket
+(`tmux -L specforge`) that is isolated from the operator's own tmux. The session
+is started with `scripts/specforge session launch --role <lead |
 specialist:<type>> --bead <id> [--cwd <path>] [--read-only]
-[--profile <name-or-path>] [--prompt <name-or-path>] [--full-access]`, which:
+[--agent <claude|codex>] [--profile <name-or-path>] [--prompt <name-or-path>]
+[--full-access]`, which:
 
 - generates a collision-free name `sf-<role>-<bead>-<nonce>`;
 - writes a durable JSON record to `.specforge/state/sessions/<name>.json`
@@ -159,14 +160,33 @@ specialist:<type>> --bead <id> [--cwd <path>] [--read-only]
   starts, so the association survives an SSH drop or a restart of the launcher;
 - streams all console output to an append-only `<name>.log` beside the record
   (`tmux pipe-pane` → `scripts/session-log-writer`, size-rotated);
-- starts Claude through `scripts/session-launch` under a **selectable launch
-  profile**, defaulting to `restricted` (no `git push`, no remote Dolt sync,
-  no destructive shell, scoped to the working directory) paired with the
-  no-autonomous-claim system prompt.
+- starts the selected agent through `scripts/session-launch` under a
+  **selectable authority level**, defaulting to `restricted` (no `git push`, no
+  remote Dolt sync, no destructive shell, scoped to the working directory)
+  paired with the no-autonomous-claim system prompt.
 
 `session launch` performs **no `bd` mutation**. Being launched is not
 permission to start a Bead — claiming stays a deliberate in-session action the
 operator directs.
+
+### The agent is selectable
+
+`--agent {claude,codex}` chooses the binary; with no flag it reads the
+`session_agent` key from `.specforge/config.json`, default `claude`, so no
+existing install changes behaviour. The record stores the agent and
+`session list` shows it in an `AGENT` column. `--agent claude` and the default
+are byte-for-byte the previous launch — the same settings file, prompt and
+effective-settings write.
+
+The `restricted` / `trusted` authority levels are **tool-neutral** and resolve
+per agent: for `claude` to the existing `.specforge/launch-profiles/<level>.json`
+settings file; for `codex` to `.specforge/launch-profiles/<level>.codex.toml`,
+mapped onto Codex's model — `--sandbox workspace-write`, `--ask-for-approval`
+`on-request` (`restricted`) or `never` (`trusted`), and network access off.
+A Codex session has no per-session `permissions` file; its command floor is the
+repo's `.codex/rules/` execpolicy directory (shipped by `codex-onboarding`),
+and `session launch` warns when that floor file is missing but still starts.
+`--full-access` maps to `trusted` + `autonomous` for whichever agent is in use.
 
 ### Launch profiles
 
@@ -177,9 +197,10 @@ flag the behaviour is exactly as before this existed: `restricted` +
 no-autonomous-claim. Two profiles ship: `restricted` (the default) and
 `trusted` (`acceptEdits`; allows `git push`/`merge`/`switch`/`rebase`, `bd`,
 `openspec`, `npx`, `scripts/*`; still denies `sudo`, `systemctl`, `curl`/
-`wget`, `WebFetch`). `--full-access` is shorthand for `--profile trusted
---prompt autonomous`, the pairing that authorises a session to execute one
-named change end to end and fast-forward-merge it to `develop`.
+`wget`, `WebFetch`). Each has a `<level>.codex.toml` sibling for a Codex launch
+(see *The agent is selectable*). `--full-access` is shorthand for `--profile
+trusted --prompt autonomous`, the pairing that authorises a session to execute
+one named change end to end and fast-forward-merge it to `develop`.
 
 A short **command floor** — `rm -rf`/`rm -fr`, `sudo`, `dd`, `mkfs`/`mkfs.*`,
 `shutdown`, `reboot`, a fork bomb — is unioned into `permissions.deny` of
@@ -189,11 +210,13 @@ can lift it. It is a guard rail against an accident or a prompt-injected
 merge, so the floor and the visibility are the safeguards, not a boundary
 against a hostile agent.
 
-The merged, floored settings are written per session to
+For a Claude session the merged, floored settings are written per session to
 `.specforge/state/sessions/<name>.settings.json` and that file — never the
 source profile — is passed to Claude. The metadata record stores the profile
 name and that path; `session list` shows the profile; `session cleanup`
-removes the effective-settings file when it retires the record. A set
+removes the effective-settings file when it retires the record. A Codex session
+writes no such file (its `effective_settings_path` is null) — the floor is the
+`.codex/rules/` directory. A set
 `session_launch_profile` / `session_launch_prompt` config key still wins over
 the directory default.
 

@@ -9,9 +9,10 @@ see `failure-recovery.md`.
 
 ## What a supervised session is
 
-`scripts/specforge session launch` starts a **separate `claude` process inside a
-tmux session** on the host, on a dedicated tmux server socket (`tmux -L
-specforge`). Compared with running `claude` in your terminal:
+`scripts/specforge session launch` starts a **separate agent process inside a
+tmux session** on the host — Claude Code by default, or Codex with `--agent
+codex` (see *Choosing the agent*) — on a dedicated tmux server socket (`tmux -L
+specforge`). Compared with running the agent in your terminal:
 
 - **It keeps running when you leave.** Close the SSH connection, shut the
   laptop — the session keeps working on the host.
@@ -50,6 +51,43 @@ not attach you — the session comes up idle at a prompt, waiting for direction.
 
 Then give it its task: attach (below) and tell it what to do, or point it at a
 briefing file.
+
+## Choosing the agent
+
+A session runs **Claude Code** by default. To run **OpenAI Codex** instead:
+
+```bash
+./scripts/specforge session launch --role lead --bead SPEC-xxx --agent codex
+```
+
+With no `--agent` flag the agent is the `session_agent` key in
+`.specforge/config.json` (default `claude`), so an install only runs Codex when
+it opts in — per launch, or by setting that key. `session list` shows which
+agent each session runs in an `AGENT` column.
+
+The `restricted` and `trusted` authority levels mean the same *intent* for both
+agents, resolved differently:
+
+| Level | Claude | Codex |
+| --- | --- | --- |
+| `restricted` (default) | `restricted.json` settings — deny `git push`, Dolt sync, destructive shell, network | `--sandbox workspace-write --ask-for-approval on-request`, network access off |
+| `trusted` | `trusted.json` — `acceptEdits`, allows `git push`/`merge`/… | `--sandbox workspace-write --ask-for-approval never`, network access off |
+
+So a Codex session is governed by Codex's own **sandbox mode** and **approval
+policy** rather than a Claude `permissions` file — there is no per-session
+settings file for a Codex launch. `--read-only` forces `--sandbox read-only`.
+`--full-access` still means `trusted` + the `autonomous` prompt, mapped to
+whichever agent is in use.
+
+The SpecForge command floor (`rm -rf`, `sudo`, …) is, for Codex, the repo's
+`.codex/rules/` execpolicy directory — `session launch` never passes
+`--ignore-rules` or `--dangerously-bypass-approvals-and-sandbox`. That floor
+file ships with the `codex-onboarding` change; until it is present `session
+launch --agent codex` prints a warning naming the missing file and still
+starts.
+
+Codex reads any credential it needs from its own `~/.codex/auth.json` — no
+token is ever passed on the command line, exactly as for Claude.
 
 ## Watch without touching
 
@@ -171,15 +209,16 @@ Otherwise: **one session at a time against the repo root.**
 
 | Command | Effect |
 | --- | --- |
-| `session launch --role <r> --bead <id> [--cwd <p>] [--read-only] [--owner <o>] [--profile <n>] [--prompt <n>] [--full-access]` | start a supervised session; no Beads change |
+| `session launch --role <r> --bead <id> [--cwd <p>] [--read-only] [--owner <o>] [--agent <claude\|codex>] [--profile <n>] [--prompt <n>] [--full-access]` | start a supervised session; no Beads change |
 | `session list` | list every session with live-reconciled state and its launch profile |
 | `session log <name> [--follow]` | print / tail the log; never attaches |
 | `session attach <name> [--read-only]` | attach the terminal; `Ctrl-b d` to detach |
 | `session stop <name> [--reason <text>]` | interrupt, terminate, record a terminal state; idempotent |
 | `session cleanup [<name>]` | retire terminal records; refuses a live one |
 
-Config keys (`.specforge/config.json`): `session_tmux_socket`,
-`session_state_dir`, `session_log_max_bytes`, `session_log_rotation_depth`,
+Config keys (`.specforge/config.json`): `session_agent` (`claude` |  `codex`,
+default `claude`), `session_tmux_socket`, `session_state_dir`,
+`session_log_max_bytes`, `session_log_rotation_depth`,
 `session_stop_grace_seconds`. The launch profile / prompt directories default
 to `.specforge/launch-profiles/` and `.specforge/launch-prompts/` and are
 overridable with `session_launch_profile_dir` / `session_launch_prompt_dir`; a
