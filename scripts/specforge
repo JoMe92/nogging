@@ -315,6 +315,28 @@ SESSION_TERMINAL_STATES = {"stopped", "failed", "retired"}
 SECRET_NAME_RE = re.compile(r"TOKEN|SECRET|PASSWORD|PASSWD|APIKEY|API_KEY|_KEY|CREDENTIAL|AUTH", re.I)
 
 def scfg(key, default): return CFG.get(key, default)
+# A short, fixed deny-list unioned into `permissions.deny` of every launch
+# profile — named, default, or a path the operator supplied — before the
+# effective settings file is written. No profile can grant these. It is a
+# guard rail against an accident or a prompt-injected `rm -rf ~`, not an
+# OS-level boundary; keep it short so a settings-schema change is a small edit.
+FLOOR_DENY = [
+    "Bash(rm -rf:*)", "Bash(rm -fr:*)", "Bash(sudo:*)", "Bash(dd:*)",
+    "Bash(mkfs:*)", "Bash(mkfs.*:*)", "Bash(shutdown:*)", "Bash(reboot:*)",
+    "Bash(:(){ :|:& };:)",
+]
+def merge_floor(settings):
+    """Return a deep copy of `settings` with FLOOR_DENY unioned into
+    `permissions.deny`. Existing deny entries are kept and order is stable;
+    the input dict is never mutated."""
+    result = json.loads(json.dumps(settings))
+    perms = result.setdefault("permissions", {})
+    deny = list(perms.get("deny") or [])
+    for entry in FLOOR_DENY:
+        if entry not in deny:
+            deny.append(entry)
+    perms["deny"] = deny
+    return result
 def resolve_launch_file(value, dir_key, default_dir, suffix):
     """Resolve a `--profile` / `--prompt` value to a concrete file.
 
