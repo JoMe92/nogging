@@ -30,6 +30,9 @@ module.exports = {
   // Directories copied verbatim (recursive).
   verbatimDirs: [
     { from: '.agents/skills', to: '.agents/skills' },
+    // launch-profiles ships both the Claude settings files (<level>.json) and
+    // the Codex launch specs (<level>.codex.toml); the whole directory rides
+    // along, and package.json "files" lists it.
     { from: '.specforge/launch-profiles', to: '.specforge/launch-profiles' },
     { from: '.specforge/launch-prompts', to: '.specforge/launch-prompts' },
   ],

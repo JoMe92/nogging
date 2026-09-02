@@ -40,6 +40,8 @@ check "bridge is executable"       test -x "$repo/scripts/specforge"
 check "skills copied"              test -f "$repo/.agents/skills/openspec-propose/SKILL.md"
 check "launch profiles shipped"    test -f "$repo/.specforge/launch-profiles/restricted.json"
 check "launch profiles ship trusted" test -f "$repo/.specforge/launch-profiles/trusted.json"
+check "launch profiles ship codex fragments" test -f "$repo/.specforge/launch-profiles/restricted.codex.toml"
+check "launch profiles ship trusted codex fragment" test -f "$repo/.specforge/launch-profiles/trusted.codex.toml"
 check "launch prompts shipped"     test -f "$repo/.specforge/launch-prompts/autonomous.md"
 check "reference docs under docs/specforge" test -f "$repo/docs/specforge/architecture.md"
 check "openspec scaffold written"  test -f "$repo/openspec/config.yaml"
@@ -240,6 +242,8 @@ if command -v npm >/dev/null 2>&1; then
     check "packed install succeeds"                 [ "$rc" -eq 0 ]
     check "packed install ships the tool bridge"    test -f "$packrepo/scripts/specforge"
     check "packed install ships launch profiles"    test -f "$packrepo/.specforge/launch-profiles/restricted.json"
+    check "packed install ships codex fragments"    test -f "$packrepo/.specforge/launch-profiles/restricted.codex.toml"
+    check "packed install ships trusted codex fragment" test -f "$packrepo/.specforge/launch-profiles/trusted.codex.toml"
     check "packed install ships launch prompts"     test -f "$packrepo/.specforge/launch-prompts/no-autonomous-claim.md"
     check "packed install ships the skills"         test -f "$packrepo/.agents/skills/openspec-propose/SKILL.md"
   else
