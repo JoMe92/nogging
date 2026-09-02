@@ -603,5 +603,57 @@ check "twb-doctor: stale planning lock named as the reason" \
 rm -f "$root/.specforge/locks/planning.lock"
 unset SPECFORGE_ROOT BD_FIXTURE
 
+# ===========================================================================
+# Scenario: the PreToolUse guard tracks the boundary as plan-begin / plan-end
+# toggle it (TASK-TWB-008). End-to-end: real plan-begin/plan-end drive the
+# sentinel, and the guard binary is invoked exactly as Claude Code invokes it.
+# ===========================================================================
+guard="$repo_root/scripts/hooks/pre-tool-use-openspec-guard"
+root="$work/twb-guard"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export BD_FIXTURE="$work/twb-guard-beads.json"; printf '[]\n' >"$BD_FIXTURE"
+mkdir -p "$root/.specforge/locks"
+run_guard() { # run_guard <file_path> ; sets $grc
+  printf '{"tool_input":{"file_path":"%s"}}' "$1" \
+    | CLAUDE_PROJECT_DIR="$root" "$guard" >"$work/twb-guard.err" 2>&1
+  grc=$?
+}
+
+"$specforge" plan-end --force >/dev/null 2>&1   # boundary closed (sentinel present)
+run_guard "openspec/changes/demo/spec.md" || true; [[ "$grc" -eq 2 ]] \
+  && echo "ok   - twb-guard: guard blocks an openspec/ write while the sentinel is present" \
+  || { echo "FAIL - twb-guard: guard allowed a write with the sentinel present (rc=$grc)"; cat "$work/twb-guard.err"; fail=1; }
+grep -qF 'sentinel' "$work/twb-guard.err" \
+  && echo "ok   - twb-guard: the block names the sentinel" \
+  || { echo "FAIL - twb-guard: block reason did not mention the sentinel"; cat "$work/twb-guard.err"; fail=1; }
+
+run_guard "scripts/whatever.sh" || true; [[ "$grc" -eq 0 ]] \
+  && echo "ok   - twb-guard: a write outside openspec/ is never touched" \
+  || { echo "FAIL - twb-guard: guard blocked a non-openspec write (rc=$grc)"; fail=1; }
+
+"$specforge" plan-begin >/dev/null 2>&1            # boundary open (fresh planning lock, no sentinel)
+run_guard "openspec/changes/demo/spec.md" || true; [[ "$grc" -eq 0 ]] \
+  && echo "ok   - twb-guard: guard allows an openspec/ write during a fresh planning session" \
+  || { echo "FAIL - twb-guard: guard blocked during planning (rc=$grc)"; cat "$work/twb-guard.err"; fail=1; }
+
+"$specforge" plan-end >/dev/null 2>&1              # boundary closed again
+run_guard "openspec/changes/demo/spec.md" || true; [[ "$grc" -eq 2 ]] \
+  && echo "ok   - twb-guard: plan-end re-closes the boundary for the guard" \
+  || { echo "FAIL - twb-guard: guard still allowed after plan-end (rc=$grc)"; fail=1; }
+
+# a stale planning lock does not confer write permission (W6), even without a
+# sentinel on disk
+rm -f "$root/.specforge/locks/openspec.readonly"
+printf '{"pid":1,"host":"h","created_at":"2000-01-01T00:00:00+00:00"}\n' \
+  >"$root/.specforge/locks/planning.lock"
+run_guard "openspec/changes/demo/spec.md" || true; [[ "$grc" -eq 2 ]] \
+  && echo "ok   - twb-guard: guard blocks when the planning lock is stale (W6)" \
+  || { echo "FAIL - twb-guard: guard honoured a stale planning lock (rc=$grc)"; cat "$work/twb-guard.err"; fail=1; }
+grep -qF 'stale' "$work/twb-guard.err" \
+  && echo "ok   - twb-guard: the block names the stale lock" \
+  || { echo "FAIL - twb-guard: block reason did not mention staleness"; cat "$work/twb-guard.err"; fail=1; }
+rm -f "$root/.specforge/locks/planning.lock"
+unset SPECFORGE_ROOT BD_FIXTURE
+
 if [[ $fail -ne 0 ]]; then echo "specforge checks failed" >&2; exit 1; fi
 echo "all specforge checks passed"
