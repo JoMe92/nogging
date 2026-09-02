@@ -114,9 +114,15 @@ note "verdict: ${verdict:-<none>}"
 if [[ -z "$verdict" ]]; then
   die "step 3: installer printed no readiness verdict"
 elif [[ $mechanical -eq 1 ]]; then
+  # No backend: the verdict must not claim ready, and the uninitialized tracker
+  # must be the ONLY gap named.
   case "$verdict" in
     *"SpecForge is ready"*) die "step 3: verdict claims ready with no backend" ;;
   esac
+  gap=${verdict#*"installed but not ready: "}
+  expected='uninitialized tracker (run `bd init`)'
+  [[ "$gap" == "$expected" ]] \
+    || die "step 3: expected the tracker as the only gap ('$expected'), got '$gap'"
 else
   case "$verdict" in
     *"SpecForge is ready"*) : ;;
@@ -170,6 +176,14 @@ if ( cd "$target" && "$sf" materialize acceptance-example ) >"$work/materialize.
 else
   die "step 9: materialize exited non-zero"
   cat "$work/materialize.out"
+fi
+if [[ $mechanical -eq 1 ]]; then
+  # Exactly one `bd create` per task in the example's tasks.md, and the right
+  # ones — the fixture has TASK-ACCEPTX-001 and TASK-ACCEPTX-002.
+  creates=$(grep -c '^create ' "$BD_CREATE_LOG" || true)
+  [[ "$creates" == "2" ]] || die "step 9: expected 2 materialize-create calls, got $creates"
+  grep -q 'openspec:task:TASK-ACCEPTX-001' "$BD_CREATE_LOG" || die "step 9: no create for TASK-ACCEPTX-001"
+  grep -q 'openspec:task:TASK-ACCEPTX-002' "$BD_CREATE_LOG" || die "step 9: no create for TASK-ACCEPTX-002"
 fi
 
 # ===========================================================================
