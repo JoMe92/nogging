@@ -402,6 +402,27 @@ PY
   || { echo "FAIL - floor: $floor_out"; fail=1; }
 unset SPECFORGE_ROOT
 
+# Every deny entry in every shipped launch-profile is a syntactically valid rule
+# (SPEC-3m8 / SPEC-js9: trusted.json shipped an invalid fork-bomb string that
+# Claude Code rejected and that tripped a settings-warning dialog at launch).
+prof_out=$(python3 - "$repo_root/.specforge/launch-profiles" <<'PY'
+import json, re, sys, pathlib
+valid = re.compile(r'^(Bash\([^()]*\S[^()]*\)|Bash|WebFetch)$')
+bad = {}
+for p in sorted(pathlib.Path(sys.argv[1]).glob("*.json")):
+    deny = json.load(open(p)).get("permissions", {}).get("deny", [])
+    offenders = [e for e in deny if not valid.match(e)]
+    if offenders:
+        bad[p.name] = offenders
+if bad:
+    print("INVALID:", bad); sys.exit(1)
+print("OK all shipped launch-profile deny entries valid")
+PY
+) && prof_rc=0 || prof_rc=$?
+[[ "$prof_rc" -eq 0 ]] \
+  && echo "ok   - profiles: every deny entry in every shipped launch-profile is a valid rule ($prof_out)" \
+  || { echo "FAIL - profiles: $prof_out"; fail=1; }
+
 # ===========================================================================
 # Scenario: --full-access == --profile trusted --prompt autonomous
 # ===========================================================================

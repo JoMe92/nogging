@@ -20,7 +20,6 @@
       "Bash(mkfs.*:*)",
       "Bash(shutdown:*)",
       "Bash(reboot:*)",
-      "Bash(:(){ :|:& };:)",
       "Bash(systemctl:*)",
       "Bash(curl:*)",
       "Bash(wget:*)",
