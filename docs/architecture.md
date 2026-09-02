@@ -146,21 +146,46 @@ independently; it still obeys every specialist boundary rule.
 ## The OpenSpec write boundary
 
 Invariant 5 — execution agents do not alter `openspec/` — is enforced in depth
-by three layers. Each is independent, and each covers a way past the others.
+by three layers plus a CI backstop. Each is independent, and each covers a way
+past the others. Layer 1 is tool-agnostic; layers 2–3 are Git hooks.
 
-**1. `PreToolUse` guard (tool level, Claude Code only).**
-`scripts/hooks/pre-tool-use-openspec-guard`, wired into `.claude/settings.json`
-with matcher `Edit|Write`. Claude Code sends the tool call as JSON on stdin; the
-guard reads `.tool_input.file_path` (mechanism verified against Claude Code
-2.1.237), resolves it under `CLAUDE_PROJECT_DIR`, and if it lands in `openspec/`
-while `.specforge/locks/planning.lock` is absent, writes an explanation to
-stderr and exits `2` to block the call. Lock present, or path outside
-`openspec/`: the call proceeds. The lock is held only for the duration of a
-planning session (`scripts/specforge plan-begin` … `plan-end`). This layer
-stops prompt drift and accidental edits inside a Claude Code session. It does
-nothing for other editors or agents, for `Bash` writes (`sed -i`, redirection,
-`git apply`), or when `jq` is missing, and it only tests whether the lock file
-exists, not its owner or freshness.
+**1. The pre-edit boundary (filesystem + per-session sandbox).**
+Outside a planning session, `openspec/changes/` and `openspec/specs/` are closed
+to an execution agent of any tool. Three parts:
+
+- **The sentinel.** `scripts/specforge plan-end` writes
+  `.specforge/locks/openspec.readonly` (`{closed_at, by}`); `plan-begin` removes
+  it. A fresh install starts with it present (`scripts/install-hooks`, or the
+  first `doctor` run where `core.hooksPath` made the installer skip that step).
+  It is local state under `.specforge/locks/` (gitignored) and advisory to the
+  guards below — not a file-mode change, so `git switch` / `merge` / `checkout`
+  and the `sync` writer are unaffected by it.
+- **The per-session read-only root.** `scripts/specforge session launch` for a
+  non-planning role, when no fresh planning lock is held, adds `openspec/` to
+  the session's effective authority as read-only. A Claude session gets
+  `Edit`/`Write`/`MultiEdit` `deny` rules for `openspec/**` in its per-session
+  effective-settings file (unioned in before the file is written, like the
+  command floor). A Codex session gets `openspec/` as a read-only sandbox root
+  (`--sandbox-state-readable-root` where the installed `codex` exposes it on a
+  plain launch, otherwise the `.codex/rules/` execpolicy deny that
+  `codex-onboarding` ships). A planning-role session, or one launched while a
+  fresh planning lock is held, keeps `openspec/` writable.
+- **The `PreToolUse` guard (Claude Code fast path).**
+  `scripts/hooks/pre-tool-use-openspec-guard`, wired into `.claude/settings.json`
+  with matcher `Edit|Write`. It reads `.tool_input.file_path` (mechanism
+  verified against Claude Code 2.1.237), resolves it under `CLAUDE_PROJECT_DIR`,
+  and exits `2` to block the call when the path is under `openspec/` and the
+  sentinel is present, or `.specforge/locks/planning.lock` is absent, or that
+  lock's `created_at` is older than `planning_lock_ttl_seconds` — the same
+  staleness rule `lock()` applies (closes crash-resilience weakness W6, an
+  asymmetric hole where a stale lock blocked `plan-begin` yet still permitted
+  edits). It is the fast in-model signal a Claude session sees before the
+  sandbox would surface an `EACCES`; it does nothing for other tools, for `Bash`
+  writes (`sed -i`, redirection, `git apply`), or when `jq` is missing.
+
+`scripts/specforge doctor` reports the boundary: `openspec write boundary: OPEN
+(planning session active, lock age Ns)` / `LOCKED` / `LOCKED (stale planning
+lock present — run plan-end --force)`.
 
 **2. `pre-commit` (result invariant, Git).**
 `scripts/hooks/pre-commit` rejects a commit (exit `1`) whose staged paths match
@@ -186,7 +211,9 @@ claimed work or the writer exemption the boundary governs. The token is checked
 for shape only — the hook does not confirm the ID exists or is claimed — and
 only the subject line counts. `scripts/hooks/commit-msg.test.sh` (run by
 `scripts/test` and CI) covers the ID, the env exemption and the trailer
-exemption; `pre-commit` and the `PreToolUse` guard have no equivalent test.
+exemption; `scripts/agents-boundary.test.sh` covers the `PreToolUse` guard
+(openspec/ block, the sentinel, a stale planning lock, a path outside
+`openspec/`); `pre-commit` has no equivalent test.
 
 `scripts/specforge`'s deterministic sync commit sets both: the
 `SPECFORGE_WRITER=sync` environment and a `SpecForge-Writer: sync` trailer.
@@ -203,7 +230,8 @@ into the active hooks directory by `scripts/install-hooks`. Where
 
 | Layer | Runs | Blocks | Left for the next layer or review |
 | --- | --- | --- | --- |
-| `PreToolUse` guard | before the edit | `Edit`/`Write` into `openspec/` with no planning lock | Bash writes and non–Claude-Code edits, caught when committed |
+| Pre-edit boundary — sentinel + per-session read-only root | before the edit, tool-agnostically (Claude *and* Codex) | a launched execution session of any tool persisting a change under `openspec/changes/` or `openspec/specs/` outside a planning session | an edit by a process outside a launched session (a plain editor, `sed -i` in a bare shell), caught when committed |
+| `PreToolUse` guard | before the edit, Claude Code only | the same as a fast in-model signal, and a stale planning lock (W6) | Bash writes, non–Claude-Code edits, a missing `jq` |
 | `pre-commit` | before the commit | staged `openspec/` paths from an execution writer | `--no-verify` or an uninstalled hook: the commit lands Bead-less and visible to review |
 | `commit-msg` | before the commit | an execution commit naming no real Beads ID | `--no-verify`: caught by the CI `invariants` job, then review |
 | CI `invariants` job | on every pull request | a non-conforming head branch, or any introduced non-merge commit that fails the `commit-msg` rule | a branch pushed with no PR yet; a deliberate history rewrite before review |
@@ -244,8 +272,12 @@ the branch, or the commit by SHA and subject.
 - **Scope.** The layers govern *who* may write `openspec/` and *that* execution
   work is tracked. They do not judge whether an `openspec/` change is correct or
   agreed; tests, review, and Product Owner acceptance remain that evidence.
-- **Tool coverage.** The `PreToolUse` guard is Claude Code-specific and
-  `Edit`/`Write` only; the two Git hooks are the portable floor.
+- **Tool coverage.** The pre-edit boundary is tool-agnostic: the sentinel and
+  the per-session read-only root apply to Claude and Codex alike. The
+  `PreToolUse` guard on top is Claude Code-specific and `Edit`/`Write` only; the
+  two Git hooks are the portable floor. A Codex read-only sandbox root depends
+  on the installed `codex` build — where it is unavailable the `.codex/rules/`
+  execpolicy deny (`codex-onboarding`) plus `pre-commit` carry it.
 
 ## Invariants
 

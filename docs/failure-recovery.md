@@ -65,6 +65,28 @@ and reconciles each record against live tmux.
   `tmux -L specforge attach -t <name>` and killed with `tmux -L specforge
   kill-session -t <name>`.
 
+## `openspec/` stuck read-only or stuck writable
+
+The OpenSpec write boundary is a sentinel file,
+`.specforge/locks/openspec.readonly`, plus a per-session read-only `openspec/`
+root for launched execution sessions. `./scripts/specforge doctor` prints its
+state (`openspec write boundary: OPEN` / `LOCKED` / `LOCKED (stale planning lock
+present …)`).
+
+- **Stuck read-only** — a planning session cannot edit `openspec/` because a
+  sentinel was left behind or `plan-begin` crashed. Run
+  `./scripts/specforge plan-begin` (add `--force` if a stale planning lock
+  lingers); it removes the sentinel and opens the boundary. Deleting
+  `.specforge/locks/openspec.readonly` by hand has the same effect on the
+  `PreToolUse` fast path — the sentinel is local, additive state and safe to
+  delete.
+- **Stuck writable** — a forgotten `plan-end` left `openspec/` open. Run
+  `./scripts/specforge plan-end` (add `--force` if the planning lock is already
+  gone) to re-close it. `doctor` surfaces the open boundary meanwhile; a
+  launched execution session is unaffected because it keys its read-only root
+  off its own role, and the stale-lock TTL eventually re-closes the `PreToolUse`
+  path on its own.
+
 ## Orphaned Beads and bad mirrors
 
 If an active Bead is orphaned, the planner must either restore/relink its task
