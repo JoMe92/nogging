@@ -13,8 +13,9 @@
 #   - Every other branch is `<type>/<slug>` with <type> in
 #     {feat, fix, chore, docs, refactor, perf, test, plan}.
 #   - `chore/<topic>` and `plan/<topic>` take a free kebab <topic>.
-#   - Every other <type> is a change branch: <slug> MUST be the directory name
-#     of an existing openspec/changes/<slug>/ (never `archive`).
+#   - Every other <type> is a change branch: <slug> MUST match a live
+#     openspec/changes/<slug>/ or an archived openspec/changes/archive/*-<slug>/
+#     directory (never `archive` itself).
 #   - An unresolvable ref (detached HEAD, empty head_ref) fails closed.
 set -euo pipefail
 
@@ -64,11 +65,17 @@ if [[ "$slug" == "archive" ]]; then
   exit 1
 fi
 
-if [[ ! -d "$root/openspec/changes/$slug" ]]; then
-  echo "SpecForge: branch '$ref' is a change branch but openspec/changes/$slug/ does not exist." >&2
-  echo "  Rename the branch to match its change directory, or use chore/<topic> / plan/<topic>." >&2
-  usage
-  exit 1
+if [[ -d "$root/openspec/changes/$slug" ]]; then
+  exit 0
 fi
 
-exit 0
+# An archived change keeps its slug: openspec/changes/archive/YYYY-MM-DD-<slug>/.
+# A branch opened before the change was archived must not start failing.
+for d in "$root"/openspec/changes/archive/*-"$slug"; do
+  [[ -d "$d" ]] && exit 0
+done
+
+echo "SpecForge: branch '$ref' is a change branch but no openspec/changes/$slug/ (live or archived) exists." >&2
+echo "  Rename the branch to match its change directory, or use chore/<topic> / plan/<topic>." >&2
+usage
+exit 1

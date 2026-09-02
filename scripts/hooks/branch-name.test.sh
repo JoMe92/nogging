@@ -23,8 +23,9 @@ run() {
   fi
 }
 
-run pass "existing change branch accepted"          "feat/enforce-conventional-branching"
-run pass "refs/heads/ prefix stripped"              "refs/heads/feat/enforce-conventional-branching"
+run pass "live change branch accepted"               "feat/end-to-end-acceptance"
+run pass "refs/heads/ prefix stripped"              "refs/heads/feat/end-to-end-acceptance"
+run pass "archived change branch accepted"           "feat/enforce-conventional-branching"
 run pass "plan/<topic> accepted"                    "plan/multi-change-cleanup"
 run pass "chore/<topic> accepted"                   "chore/upgrade-ci"
 run fail "unknown type wip/x rejected"              "wip/enforce-conventional-branching"
