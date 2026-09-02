@@ -17,7 +17,8 @@ reorder.
 1. **Acquire the planning lock.** Run `scripts/specforge plan-begin`. The
    `.specforge/locks/planning.lock` this creates is the Planning Agent's write
    authority: the `PreToolUse` guard blocks every Edit/Write under `openspec/`
-   unless it exists.
+   unless it exists. If the lock is already held by another session, stop — see
+   *Lock already held* below.
 
 2. **Review pending discoveries.** Run `scripts/specforge discoveries` and work
    through the output exactly as `/discovery-review` does (blocking discoveries
@@ -51,6 +52,21 @@ reorder.
    subject and the `SpecForge-Writer: planning` trailer (or the env var).
 
 8. **Release the planning lock.** Run `scripts/specforge plan-end`.
+
+## Lock already held
+
+`scripts/specforge plan-begin` refuses when another session's planning lock is
+still fresh, exiting non-zero with a message naming the holder. When that
+happens — or when `.specforge/locks/planning.lock` already exists before you
+start:
+
+1. Read `.specforge/locks/planning.lock` (JSON: `host`, `pid`, `created_at`).
+2. Report the holder to the operator — host, pid, and when the lock was taken.
+3. Stop. Do not author any `openspec/` file and do not run further steps.
+
+Never pass `--force` to `plan-begin` and never delete or overwrite the lock
+file yourself. `--force` is an operator decision, taken only after they have
+verified the holding session is actually dead.
 
 ## Hard rules
 
