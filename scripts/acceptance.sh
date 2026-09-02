@@ -215,6 +215,22 @@ else
   die "step 11: first sync exited non-zero"
   cat "$work/sync1.out"
 fi
+# The first sync flips exactly one "- [ ]" -> "- [x]" ...
+checked=$(grep -c '^- \[x\] ' "$tasks_md" || true)
+[[ "$checked" == "1" ]] || die "step 11: expected exactly one checked task after sync, got $checked"
+grep -q '^- \[x\] TASK-ACCEPTX-001 ' "$tasks_md" || die "step 11: TASK-ACCEPTX-001 was not checked"
+grep -q '^- \[ \] TASK-ACCEPTX-002 ' "$tasks_md" || die "step 11: TASK-ACCEPTX-002 must stay unchecked"
+# ... and appends exactly one execution-log.md entry for the closed Bead.
+[[ -f "$log_md" ]] || die "step 11: execution-log.md was not written"
+entries=$(grep -c '^<!-- specforge:' "$log_md" || true)
+[[ "$entries" == "1" ]] || die "step 11: expected exactly one execution-log entry, got $entries"
+if [[ $mechanical -eq 1 ]]; then
+  grep -q '<!-- specforge:SPEC-ax1:' "$log_md" || die "step 11: log entry is not keyed to the closed Bead SPEC-ax1"
+fi
+grep -q 'closed for TASK-ACCEPTX-001' "$log_md" || die "step 11: log entry does not name TASK-ACCEPTX-001"
+# The mirror is a single commit.
+git -C "$target" log -1 --format=%s | grep -q '^chore(sync): mirror Beads execution evidence' \
+  || die "step 11: sync did not land the mirror commit"
 
 # ===========================================================================
 # 12 [M] — assert sync idempotency
@@ -223,6 +239,10 @@ step "[M] step 12: assert sync idempotency"
 if ( cd "$target" && "$sf" sync ) >"$work/sync2.out" 2>&1; then
   grep -q 'sync: no changes' "$work/sync2.out" || die "step 12: second sync was not a no-op"
   git -C "$target" diff --quiet || die "step 12: second sync left a tracked git diff"
+  [[ "$(grep -c '^<!-- specforge:' "$log_md" || true)" == "1" ]] \
+    || die "step 12: execution-log entry count changed on the second sync"
+  [[ "$(grep -c '^- \[x\] ' "$tasks_md" || true)" == "1" ]] \
+    || die "step 12: checked-task count changed on the second sync"
 else
   die "step 12: second sync exited non-zero"
   cat "$work/sync2.out"
