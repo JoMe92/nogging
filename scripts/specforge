@@ -597,6 +597,49 @@ def load_profile_settings(path):
         raise RuntimeError(
             f"launch profile {path} has no 'permissions' object; launch refused")
     return data
+CODEX_SANDBOX_MODES = ("read-only", "workspace-write", "danger-full-access")
+CODEX_APPROVAL_POLICIES = ("untrusted", "on-request", "never")
+def load_codex_spec(path):
+    """Read a `.codex.toml` launch fragment: the three flat keys `sandbox`,
+    `ask_for_approval`, `network_access`. Deliberately a tiny tolerant reader
+    (no `tomllib` dependency, so the bridge still runs on Python < 3.11): one
+    `key = value` per line, `#` comments and blanks ignored, values are a
+    double-quoted string or a bare `true`/`false`. Fails loudly rather than
+    starting Codex on a malformed or under-specified spec."""
+    try:
+        text = Path(path).read_text()
+    except OSError as exc:
+        raise RuntimeError(f"Codex launch spec {path} is not readable: {exc}")
+    spec = {}
+    for raw in text.splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        if "=" not in line:
+            raise RuntimeError(f"Codex launch spec {path}: cannot parse line {raw!r}")
+        key = line.partition("=")[0].strip()
+        value = line.partition("=")[2].strip()
+        if len(value) >= 2 and value[0] == value[-1] == '"':
+            spec[key] = value[1:-1]
+        elif value in ("true", "false"):
+            spec[key] = (value == "true")
+        else:
+            raise RuntimeError(
+                f"Codex launch spec {path}: value for {key!r} must be a quoted "
+                f"string or true/false, got {value!r}")
+    missing = [k for k in ("sandbox", "ask_for_approval", "network_access") if k not in spec]
+    if missing:
+        raise RuntimeError(f"Codex launch spec {path} is missing key(s): {', '.join(missing)}")
+    if spec["sandbox"] not in CODEX_SANDBOX_MODES:
+        raise RuntimeError(
+            f"Codex launch spec {path}: sandbox {spec['sandbox']!r} not one of {CODEX_SANDBOX_MODES}")
+    if spec["ask_for_approval"] not in CODEX_APPROVAL_POLICIES:
+        raise RuntimeError(
+            f"Codex launch spec {path}: ask_for_approval {spec['ask_for_approval']!r} "
+            f"not one of {CODEX_APPROVAL_POLICIES}")
+    if not isinstance(spec["network_access"], bool):
+        raise RuntimeError(f"Codex launch spec {path}: network_access must be true or false")
+    return spec
 def resolve_agent(agent):
     """The agent binary a launch runs: the explicit `--agent` flag wins, then
     the `session_agent` config key, then the historical `claude` default. No
@@ -618,8 +661,13 @@ def session_launch(role, bead, cwd, read_only, owner,
     role_meta, role_slug = normalize_role(role)
     # Resolve and validate the launch profile / prompt before anything about a
     # session exists on disk or in tmux.
-    profile_path, profile_label, prompt_path = resolved_launch_pair(profile, prompt, full_access)
-    source_settings = load_profile_settings(profile_path)
+    profile_path, profile_label, prompt_path = resolved_launch_pair(
+        profile, prompt, full_access, agent)
+    # A Claude launch reads a `permissions` JSON; a Codex launch reads a
+    # `.codex.toml` sandbox/approval spec. Both are validated here, before a
+    # session exists.
+    source_settings = load_profile_settings(profile_path) if agent == "claude" else None
+    codex_spec = load_codex_spec(profile_path) if agent == "codex" else None
     if not bead_exists(bead):
         raise RuntimeError(f"Bead {bead} does not exist; launch refused")
     live = tmux_sessions()
@@ -634,20 +682,31 @@ def session_launch(role, bead, cwd, read_only, owner,
     rec_path, log_path = sdir / f"{name}.json", sdir / f"{name}.log"
     if rec_path.exists() or tmux_has_session(name):    # last-line race guard
         raise RuntimeError(f"session {name} already exists; refusing to reuse or overwrite it")
-    # Write the merged, floored settings for THIS session and pass that file to
-    # Claude — never the source profile, which is left untouched.
-    effective_path = sdir / f"{name}.settings.json"
-    effective_path.write_text(json.dumps(merge_floor(source_settings), indent=2) + "\n")
     wrapper = str((ROOT / "scripts/session-launch").resolve())
-    inner = [wrapper, "--settings", str(effective_path), "--prompt", str(prompt_path),
-             "--cwd", workdir, "--bead", bead]
+    inner = [wrapper, "--prompt", str(prompt_path), "--cwd", workdir, "--bead", bead]
+    if agent == "claude":
+        # Write the merged, floored settings for THIS session and pass that file
+        # to Claude — never the source profile, which is left untouched. The
+        # claude wrapper call is byte-for-byte what it was before agent
+        # selection existed (no `--agent` argument).
+        effective_path = sdir / f"{name}.settings.json"
+        effective_path.write_text(json.dumps(merge_floor(source_settings), indent=2) + "\n")
+        effective_settings_path = str(effective_path)
+        inner[1:1] = ["--settings", effective_settings_path]
+    else:  # codex: no per-session permissions file — the floor is the
+           # `.codex/rules/` execpolicy directory (see TASK-ANL-007).
+        effective_settings_path = None
+        sandbox = "read-only" if read_only else codex_spec["sandbox"]
+        inner[1:1] = ["--agent", "codex", "--sandbox", sandbox,
+                      "--approval", codex_spec["ask_for_approval"],
+                      "--network", "on" if codex_spec["network_access"] else "off"]
     if read_only: inner.append("--read-only")
     record = {
         "name": name, "bead_id": bead, "role": role_meta, "host": socket.gethostname(),
         "started_at": now(), "working_dir": workdir, "command": redact_argv(inner),
         "owner": owner_identity(owner), "state": "starting", "log_path": str(log_path),
         "read_only": bool(read_only), "ended_at": None, "exit_reason": None,
-        "profile": profile_label, "effective_settings_path": str(effective_path),
+        "profile": profile_label, "effective_settings_path": effective_settings_path,
         "agent": agent,
     }
     write_session(rec_path, record)                       # metadata before exec
