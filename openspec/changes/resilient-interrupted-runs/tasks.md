@@ -19,7 +19,7 @@
 
 - [x] TASK-RIR-010 Add `.specforge/config.json` `claim_stale_seconds` (default 14400) and have `recover` label an `in_progress` Bead older than that, with no `[id]` commit, as `stale`.
 - [x] TASK-RIR-011 Add `scripts/specforge session reap` (and `session cleanup --reap`): move every `starting`/`running`/`idle` record whose tmux session is gone to `failed` (`exit_reason="tmux session vanished during a reap"`) so `session cleanup` retires it; update `docs/failure-recovery.md` "A crashed or stuck supervised session" to lead with `session reap`.
-- [ ] TASK-RIR-012 Verify the Dolt commit cadence (`bd dolt status` / `--dolt-auto-commit` after several `bd` writes); if bead state can sit uncommitted for long stretches, add a `bd dolt commit` (or the documented equivalent) at the end of `sync()` and `materialize()`; otherwise record the finding in `docs/failure-recovery.md` and ship no code. Record what was found on the Bead before any code.
+- [x] TASK-RIR-012 Verify the Dolt commit cadence (`bd dolt status` / `--dolt-auto-commit` after several `bd` writes); if bead state can sit uncommitted for long stretches, add a `bd dolt commit` (or the documented equivalent) at the end of `sync()` and `materialize()`; otherwise record the finding in `docs/failure-recovery.md` and ship no code. Record what was found on the Bead before any code.
 
 ## Tests
 
