@@ -12,7 +12,7 @@
 
 ## Phase 2 — reduce the ways a run goes wrong (P1)
 
-- [ ] TASK-RIR-008 Add the intent-breadcrumb rule to `AGENTS.md` hard rules (and the marker-block templates): before an expensive or hard-to-reverse step, and before ending a turn with a Bead still `in_progress`, append a one-line `progress: <next step>` to the Bead note.
+- [x] TASK-RIR-008 Add the intent-breadcrumb rule to `AGENTS.md` hard rules (and the marker-block templates): before an expensive or hard-to-reverse step, and before ending a turn with a Bead still `in_progress`, append a one-line `progress: <next step>` to the Bead note.
 - [ ] TASK-RIR-009 Update `docs/operating-model.md` with the reordered flow and a one-paragraph pointer to `recover`; make sure `docs/using-with-codex.md` and `docs/running-work-in-sessions.md` reference the resumption protocol where relevant.
 
 ## Phase 3 — polish (P2)
