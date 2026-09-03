@@ -77,6 +77,21 @@ names why the most recent tick skipped. The reasons and their fixes:
 `last-skip.json` is cleared automatically by the next real or no-op sync; it is
 local and safe to delete.
 
+## Bead durability across a crash
+
+Bead state is durable the moment a `bd` command returns. `bd` auto-commits every
+mutating command (`create`, `update`, `claim`, `close`, …) to Dolt *history* —
+each is its own Dolt commit (`bd: close SPEC-x`), not a change left sitting in
+the working set. Verified against this repo's shared Dolt server: the `issues`
+table working set stays clean while `dolt_log` grows one commit per write.
+
+So the in-scope interruptions — a process crash, token exhaustion, an SSH drop —
+never lose a recorded Bead change: whatever `bd` reported is already committed.
+SpecForge adds no `bd dolt commit` checkpoint of its own in `sync` or
+`materialize`; there is nothing uncommitted for it to flush. (Cross-machine
+propagation is a separate concern — that is `bd dolt push` to a remote, which
+the mechanical layer never does.)
+
 ## Discoveries closed before review
 
 `./scripts/specforge discoveries` lists every `discovery`-labelled Bead
