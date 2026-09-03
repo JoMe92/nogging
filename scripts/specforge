@@ -431,6 +431,52 @@ def fresh_lock(name, ttl):
     if (dt.datetime.now(dt.timezone.utc) - then).total_seconds() < ttl:
         return info
     return None
+# Git-dir marker -> the reason string a sync tick prints when it finds it. `.git`
+# is resolved with `git rev-parse --git-dir` (never a literal `.git/`) so the
+# checks also fire when `sync` runs inside a linked worktree.
+MIDOP_MARKERS = (
+    ("MERGE_HEAD", "merge in progress"),
+    ("rebase-merge", "rebase in progress"),
+    ("rebase-apply", "rebase in progress"),
+    ("CHERRY_PICK_HEAD", "cherry-pick in progress"),
+    ("BISECT_LOG", "bisect in progress"),
+)
+def git_dir():
+    """The absolute path to the repository's git directory, or None when the
+    working tree is not a git repository."""
+    res = run("git", "rev-parse", "--git-dir", check=False)
+    if res.returncode:
+        return None
+    p = Path(res.stdout.strip())
+    return p if p.is_absolute() else (ROOT / p)
+def repo_sync_state(on_request=False):
+    """Classify the repository for a mechanical sync pass.
+
+    Returns `("ok", branch)` when a mirror commit is safe, or `("skip", reason)`
+    when the tick must be a no-op:
+
+    - a fresh `planning.lock` is held (planning and sync must not interleave);
+    - a merge, rebase, cherry-pick, or bisect is in progress;
+    - `HEAD` is detached;
+    - `HEAD` is on a branch in `sync_protected_branches` and `on_request` is
+      False (an operator-invoked `sync --now` passes `on_request=True` and is
+      allowed on a protected branch, but the first three still skip).
+    """
+    if fresh_lock("planning", CFG["planning_lock_ttl_seconds"]) is not None:
+        return ("skip", "planning session active")
+    gd = git_dir()
+    if gd is not None:
+        for marker, reason in MIDOP_MARKERS:
+            if (gd / marker).exists():
+                return ("skip", reason)
+    res = run("git", "symbolic-ref", "-q", "--short", "HEAD", check=False)
+    if res.returncode != 0:
+        return ("skip", "detached HEAD")
+    branch = res.stdout.strip()
+    protected = CFG.get("sync_protected_branches", ["main", "develop"])
+    if not on_request and branch in protected:
+        return ("skip", f"on protected branch {branch}")
+    return ("ok", branch)
 def sync_now():
     """On-demand reconciliation for `/sync-now`.
 
