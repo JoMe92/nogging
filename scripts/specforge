@@ -210,6 +210,78 @@ def stale_codex_rule_lines():
                     lines.append(f"stale external Codex rule: {raw.strip()} ({f})")
                     break
     return lines
+def codex_home():
+    """`$CODEX_HOME` if set, else `~/.codex` — the dir Codex 0.148 loads custom
+    prompts from (`<CODEX_HOME>/prompts/`)."""
+    return Path(os.environ.get("CODEX_HOME") or (Path.home() / ".codex"))
+def _codex_repo_prompts():
+    """The repo's version-controlled Codex prompt files, `.codex/prompts/*.md`."""
+    d = ROOT / ".codex/prompts"
+    return sorted(p for p in d.glob("*.md") if p.is_file()) if d.is_dir() else []
+def codex_prompt_link_plan():
+    """For each `.codex/prompts/*.md` in the repo, a `(src, target, state)` row
+    where `target` is `<CODEX_HOME>/prompts/specforge-<basename>.md` and `state`
+    is one of:
+      linked     — `target` is our symlink, pointing at `src`
+      wrong      — `target` is a symlink, but to something else
+      collision  — `target` exists and is not a symlink (a real file/dir)
+      missing    — nothing at `target`
+    Read-only; used by `codex-prompts-link` and by the `doctor` NOTE."""
+    dest_dir = codex_home() / "prompts"
+    plan = []
+    for src in _codex_repo_prompts():
+        target = dest_dir / f"specforge-{src.name}"
+        if target.is_symlink():
+            try:
+                resolved = target.resolve()
+            except (OSError, RuntimeError):
+                resolved = None
+            state = "linked" if resolved == src.resolve() else "wrong"
+        elif target.exists():
+            state = "collision"
+        else:
+            state = "missing"
+        plan.append((src, target, state))
+    return plan
+def codex_prompts_link(unlink=False):
+    """Symlink every repo `.codex/prompts/*.md` into `<CODEX_HOME>/prompts/` as
+    `specforge-<basename>.md` (Codex 0.148 only reads user-scoped prompts).
+    Idempotent: a correct link is left, a wrong target is repointed, a real file
+    that is not our symlink is reported and left. `--unlink` removes only the
+    `specforge-*` symlinks."""
+    dest_dir = codex_home() / "prompts"
+    if unlink:
+        removed = []
+        if dest_dir.is_dir():
+            for p in sorted(dest_dir.glob("specforge-*")):
+                if p.is_symlink():
+                    p.unlink()
+                    removed.append(p)
+        for p in removed:
+            print(f"unlinked   {p}")
+        if not removed:
+            print(f"nothing to unlink under {dest_dir}")
+        return
+    plan = codex_prompt_link_plan()
+    if not plan:
+        print(f"no .codex/prompts/*.md under {ROOT} — nothing to link")
+        return
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    unresolved = 0
+    for src, target, state in plan:
+        if state == "linked":
+            print(f"ok         {target} -> {src}")
+        elif state == "collision":
+            unresolved += 1
+            print(f"SKIP       {target} exists and is not a specforge symlink — "
+                  f"resolve it by hand, then re-run")
+        else:  # missing or wrong: (re)point at src
+            if target.is_symlink():
+                target.unlink()
+            target.symlink_to(src)
+            print(f"{'relinked' if state == 'wrong' else 'linked  '}   {target} -> {src}")
+    if unresolved:
+        print(f"{unresolved} file(s) need operator action (see SKIP above)")
 def lock(name, ttl, force=False):
     path = data_dir(LOCKS) / f"{name}.lock"
     if path.exists() and not force:
@@ -1480,6 +1552,10 @@ def main():
     b = sub.add_parser("plan-begin"); b.add_argument("--force", action="store_true")
     e = sub.add_parser("plan-end"); e.add_argument("--force", action="store_true")
     m = sub.add_parser("materialize"); m.add_argument("change")
+    cpl = sub.add_parser("codex-prompts-link",
+        help="symlink .codex/prompts/*.md into <CODEX_HOME>/prompts/ as specforge-<name>.md")
+    cpl.add_argument("--unlink", action="store_true",
+        help="remove only the specforge-* prompt symlinks this command created")
     s = sub.add_parser("session"); ssub = s.add_subparsers(dest="session_command", required=True)
     sl = ssub.add_parser("launch")
     sl.add_argument("--role", required=True); sl.add_argument("--bead", required=True)
@@ -1517,6 +1593,7 @@ def main():
         write_sentinel()
         print("openspec write boundary closed")
     elif args.command == "materialize": materialize(args.change)
+    elif args.command == "codex-prompts-link": codex_prompts_link(args.unlink)
     elif args.command == "recover": recover()
     elif args.command == "sync": sync_now() if args.now else sync()
     elif args.command == "discoveries": ack_discoveries(args.ack) if args.ack else discoveries()
