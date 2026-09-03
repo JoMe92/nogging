@@ -36,11 +36,11 @@ Every row needs a note; a `fail` or `skipped` note must say why.
 | 8 | [M] | Validate the change | | |
 | 9 | [M] | Materialize the example's Beads | | |
 | 10 | [A] | Execute a task with specialist delegation | | |
-| 11 | [M] | Simulate the closure and run the mechanical sync | | |
-| 12 | [M] | Assert sync idempotency | | |
-| 13 | [A] | Review discoveries | | |
-| 14 | [M] | `doctor` and `audit` are clean | | |
-| 15 | [M] | Close the planning session | | |
+| 11 | [M] | Close the planning session | | |
+| 12 | [M] | Simulate the closure and run the mechanical sync | | |
+| 13 | [M] | Assert sync idempotency | | |
+| 14 | [A] | Review discoveries | | |
+| 15 | [M] | `doctor` and `audit` are clean | | |
 | 16 | [M] | Tear down | | |
 | 17 | [A] | Write the acceptance report | | |
 | 18 | [A] | Product Owner sign-off | | |

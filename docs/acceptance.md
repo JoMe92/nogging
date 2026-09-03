@@ -135,9 +135,21 @@ no network. That subset also runs from `scripts/test` (via
 - **Expected:** a commit on the convention branch whose subject matches the
   commit-message rule and names the Bead; the Bead has an evidence note.
 
-### 11. Simulate the closure and run the mechanical sync — [M]
+### 11. Close the planning session — [M]
 
-- **Prerequisite:** step 9.
+- **Prerequisite:** step 9 (step 10 when it is run).
+- **Do:** `( cd "$target" && ./scripts/specforge plan-end )`.
+- **Expected:** `planning session lock released`; the lock file is gone.
+- **Why here:** the mechanical sync refuses to mirror while a planning session
+  is open or while `HEAD` is on a protected branch (`sync-safety` / W5), so the
+  runbook ends planning and moves onto a change branch before the sync
+  round-trip — matching the operating model, where execution and the
+  timer-driven sync run only after `plan-end`.
+
+### 12. Simulate the closure and run the mechanical sync — [M]
+
+- **Prerequisite:** step 11; a change branch checked out
+  (`git checkout -b change/acceptance-example`).
 - **Do:** close `TASK-ACCEPTX-001`'s Bead (`bd close <id>`, or the stub in
   `--mechanical`), then `( cd "$target" && ./scripts/specforge sync )`.
 - **Expected:** the first sync flips **exactly one** `- [ ]` → `- [x]`
@@ -145,33 +157,27 @@ no network. That subset also runs from `scripts/test` (via
   `execution-log.md` entry keyed to that closure, and makes one
   `chore(sync): mirror Beads execution evidence` commit.
 
-### 12. Assert sync idempotency — [M]
+### 13. Assert sync idempotency — [M]
 
-- **Prerequisite:** step 11.
+- **Prerequisite:** step 12.
 - **Do:** `( cd "$target" && ./scripts/specforge sync )` again.
 - **Expected:** prints `sync: no changes`; `git diff` is empty; the
   execution-log entry count and the checked-task count are unchanged.
 
-### 13. Review discoveries — [A]
+### 14. Review discoveries — [A]
 
-- **Prerequisite:** step 5.
+- **Prerequisite:** step 9.
 - **Do:** `( cd "$target" && ./scripts/specforge discoveries )`.
 - **Expected:** every discovery filed during the run is listed (blocking first),
   or `no pending discoveries`. Record each discovery's Bead ID in the report.
 
-### 14. `doctor` and `audit` are clean — [M]
+### 15. `doctor` and `audit` are clean — [M]
 
-- **Prerequisite:** step 11.
+- **Prerequisite:** step 12.
 - **Do:** `( cd "$target" && ./scripts/specforge doctor )` then
   `( cd "$target" && ./scripts/specforge audit )`.
 - **Expected:** both exit 0; `audit` writes a report under `.specforge/reports/`
   with no `FAIL` lines.
-
-### 15. Close the planning session — [M]
-
-- **Prerequisite:** step 5.
-- **Do:** `( cd "$target" && ./scripts/specforge plan-end )`.
-- **Expected:** `planning session lock released`; the lock file is gone.
 
 ### 16. Tear down — [M]
 
@@ -201,6 +207,6 @@ no network. That subset also runs from `scripts/test` (via
 ## What the mechanical harness covers
 
 `scripts/acceptance.sh [--mechanical]` performs steps **1, 2, 3, 5, 7, 8, 9, 11,
-12, 14, 15, 16** in this order and prints the `[M]` tag of each. It does not
-perform the `[A]` steps (4, 6, 10, 13, 17, 18) — those are the human /
+12, 13, 15, 16** in this order and prints the `[M]` tag of each. It does not
+perform the `[A]` steps (4, 6, 10, 14, 17, 18) — those are the human /
 agent-driven remainder recorded in the report.

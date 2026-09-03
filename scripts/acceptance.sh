@@ -10,12 +10,12 @@
 #
 # It creates a throwaway git repo, installs SpecForge from this checkout
 # (node bin/cli.js init), opens a planning session, drops in the canned example
-# change (scripts/fixtures/acceptance/), validates, materializes, simulates the
-# closure of the first task's Bead, syncs twice, runs doctor/audit, ends the
-# planning session, and tears the repo down.
+# change (scripts/fixtures/acceptance/), validates, materializes, ends the
+# planning session, then on a change branch simulates the closure of the first
+# task's Bead, syncs twice, runs doctor/audit, and tears the repo down.
 #
-# Covered [M] runbook steps: 1 2 3 5 7 8 9 11 12 14 15 16.
-# The [A] steps (4 real-npx install, 6 authoring, 10 delegation, 13 discovery
+# Covered [M] runbook steps: 1 2 3 5 7 8 9 11 12 13 15 16.
+# The [A] steps (4 real-npx install, 6 authoring, 10 delegation, 14 discovery
 # review, 17 report, 18 sign-off) are the human remainder recorded in the report.
 set -euo pipefail
 
@@ -198,9 +198,28 @@ if [[ $mechanical -eq 1 ]]; then
 fi
 
 # ===========================================================================
-# 11 [M] — simulate the closure and run the mechanical sync  (step 10 [A])
+# 11 [M] — close the planning session
 # ===========================================================================
-step "[M] step 11: simulate the closure and run the mechanical sync"
+# The mechanical sync refuses to mirror while a planning session is open
+# (sync-safety / W5) or while HEAD is on a protected branch. The runbook
+# therefore ends the planning session and moves onto a change branch before the
+# execution / sync round-trip — matching the operating model, where execution
+# and the timer-driven sync run only after `plan-end`.
+step "[M] step 11: close the planning session"
+if ( cd "$target" && "$sf" plan-end ) >"$work/plan-end.out" 2>&1; then
+  grep -q "planning session lock released" "$work/plan-end.out" \
+    || die "step 11: plan-end did not report the lock released"
+else
+  die "step 11: plan-end exited non-zero"
+fi
+
+# ===========================================================================
+# 12 [M] — simulate the closure and run the mechanical sync  (step 10 [A])
+# ===========================================================================
+step "[M] step 12: simulate the closure and run the mechanical sync"
+# Execution work happens on a change branch, per the operating model; the sync
+# writer refuses a protected branch (main/develop), so move off the default one.
+git -C "$target" checkout -q -b change/acceptance-example
 closed_at="2026-01-01T00:00:00Z"
 tasks_md="$target/openspec/changes/acceptance-example/tasks.md"
 log_md="$target/openspec/changes/acceptance-example/execution-log.md"
@@ -216,75 +235,64 @@ JSON
 else
   first=$(cd "$target" && bd list --json --limit 0 2>/dev/null \
     | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const j=JSON.parse(s||"[]");const a=j.issues||j;const m=a.find(i=>(i.labels||[]).includes("openspec:task:TASK-ACCEPTX-001"));process.stdout.write(m?(m.id||""):"")})')
-  [[ -n "$first" ]] || die "step 11: could not find the Bead for TASK-ACCEPTX-001"
+  [[ -n "$first" ]] || die "step 12: could not find the Bead for TASK-ACCEPTX-001"
   ( cd "$target" && bd update "$first" --claim >/dev/null 2>&1 && bd close "$first" >/dev/null 2>&1 ) \
-    || die "step 11: could not close $first"
+    || die "step 12: could not close $first"
 fi
 if ( cd "$target" && "$sf" sync ) >"$work/sync1.out" 2>&1; then
   note "$(cat "$work/sync1.out")"
 else
-  die "step 11: first sync exited non-zero"
+  die "step 12: first sync exited non-zero"
   cat "$work/sync1.out"
 fi
 # The first sync flips exactly one "- [ ]" -> "- [x]" ...
 checked=$(grep -c '^- \[x\] ' "$tasks_md" || true)
-[[ "$checked" == "1" ]] || die "step 11: expected exactly one checked task after sync, got $checked"
-grep -q '^- \[x\] TASK-ACCEPTX-001 ' "$tasks_md" || die "step 11: TASK-ACCEPTX-001 was not checked"
-grep -q '^- \[ \] TASK-ACCEPTX-002 ' "$tasks_md" || die "step 11: TASK-ACCEPTX-002 must stay unchecked"
+[[ "$checked" == "1" ]] || die "step 12: expected exactly one checked task after sync, got $checked"
+grep -q '^- \[x\] TASK-ACCEPTX-001 ' "$tasks_md" || die "step 12: TASK-ACCEPTX-001 was not checked"
+grep -q '^- \[ \] TASK-ACCEPTX-002 ' "$tasks_md" || die "step 12: TASK-ACCEPTX-002 must stay unchecked"
 # ... and appends exactly one execution-log.md entry for the closed Bead.
-[[ -f "$log_md" ]] || die "step 11: execution-log.md was not written"
+[[ -f "$log_md" ]] || die "step 12: execution-log.md was not written"
 entries=$(grep -c '^<!-- specforge:' "$log_md" || true)
-[[ "$entries" == "1" ]] || die "step 11: expected exactly one execution-log entry, got $entries"
+[[ "$entries" == "1" ]] || die "step 12: expected exactly one execution-log entry, got $entries"
 if [[ $mechanical -eq 1 ]]; then
-  grep -q '<!-- specforge:SPEC-ax1:' "$log_md" || die "step 11: log entry is not keyed to the closed Bead SPEC-ax1"
+  grep -q '<!-- specforge:SPEC-ax1:' "$log_md" || die "step 12: log entry is not keyed to the closed Bead SPEC-ax1"
 fi
-grep -q 'closed for TASK-ACCEPTX-001' "$log_md" || die "step 11: log entry does not name TASK-ACCEPTX-001"
+grep -q 'closed for TASK-ACCEPTX-001' "$log_md" || die "step 12: log entry does not name TASK-ACCEPTX-001"
 # The mirror is a single commit.
 git -C "$target" log -1 --format=%s | grep -q '^chore(sync): mirror Beads execution evidence' \
-  || die "step 11: sync did not land the mirror commit"
+  || die "step 12: sync did not land the mirror commit"
 
 # ===========================================================================
-# 12 [M] — assert sync idempotency
+# 13 [M] — assert sync idempotency
 # ===========================================================================
-step "[M] step 12: assert sync idempotency"
+step "[M] step 13: assert sync idempotency"
 if ( cd "$target" && "$sf" sync ) >"$work/sync2.out" 2>&1; then
-  grep -q 'sync: no changes' "$work/sync2.out" || die "step 12: second sync was not a no-op"
+  grep -q 'sync: no changes' "$work/sync2.out" || die "step 13: second sync was not a no-op"
   # Scope the diff check to the example change: a real bd backend churns its
   # own .beads/*.jsonl export, which is not what "the example change files have
   # no further modification" is about.
   git -C "$target" diff --quiet -- openspec/changes/acceptance-example \
-    || die "step 12: second sync modified the example change files"
+    || die "step 13: second sync modified the example change files"
   [[ "$(grep -c '^<!-- specforge:' "$log_md" || true)" == "1" ]] \
-    || die "step 12: execution-log entry count changed on the second sync"
+    || die "step 13: execution-log entry count changed on the second sync"
   [[ "$(grep -c '^- \[x\] ' "$tasks_md" || true)" == "1" ]] \
-    || die "step 12: checked-task count changed on the second sync"
+    || die "step 13: checked-task count changed on the second sync"
 else
-  die "step 12: second sync exited non-zero"
+  die "step 13: second sync exited non-zero"
   cat "$work/sync2.out"
 fi
 
 # ===========================================================================
-# 14 [M] — doctor and audit are clean   (step 13 [A]: discovery review)
+# 15 [M] — doctor and audit are clean   (step 14 [A]: discovery review)
 # ===========================================================================
-step "[M] step 14: doctor and audit are clean"
+step "[M] step 15: doctor and audit are clean"
 if ( cd "$target" && "$sf" doctor ) >"$work/doctor.out" 2>&1; then
-  grep -q '^FAIL' "$work/doctor.out" && { die "step 14: doctor reported FAIL lines"; cat "$work/doctor.out"; } || true
+  grep -q '^FAIL' "$work/doctor.out" && { die "step 15: doctor reported FAIL lines"; cat "$work/doctor.out"; } || true
 else
-  die "step 14: doctor exited non-zero"
+  die "step 15: doctor exited non-zero"
   cat "$work/doctor.out"
 fi
-( cd "$target" && "$sf" audit ) >"$work/audit.out" 2>&1 || die "step 14: audit exited non-zero"
-
-# ===========================================================================
-# 15 [M] — close the planning session
-# ===========================================================================
-step "[M] step 15: close the planning session"
-if ( cd "$target" && "$sf" plan-end ) >"$work/plan-end.out" 2>&1; then
-  grep -q "planning session lock released" "$work/plan-end.out" \
-    || die "step 15: plan-end did not report the lock released"
-else
-  die "step 15: plan-end exited non-zero"
-fi
+( cd "$target" && "$sf" audit ) >"$work/audit.out" 2>&1 || die "step 15: audit exited non-zero"
 
 # ===========================================================================
 # 16 [M] — tear down
@@ -298,4 +306,4 @@ if [[ $fail -ne 0 ]]; then
   exit 1
 fi
 echo "acceptance: all [M] steps passed ($mode_label mode)"
-echo "covered [M] runbook steps: 1 2 3 5 7 8 9 11 12 14 15 16"
+echo "covered [M] runbook steps: 1 2 3 5 7 8 9 11 12 13 15 16"

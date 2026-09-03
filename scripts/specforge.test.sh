@@ -171,6 +171,10 @@ MD
   git -C "$r" config user.email test@example.com
   git -C "$r" config user.name "SpecForge Test"
   git -C "$r" add -A && git -C "$r" commit -q -m "chore: scratch root [SPEC-000]"
+  # `git init` lands on `main`, which is a protected branch for the sync writer.
+  # Scratch repos that exercise a real mirror sit on a change branch, matching
+  # the operating model; tests that need a protected branch check one out.
+  git -C "$r" checkout -q -b work
 }
 
 # A dispatching `bd` stub. `list` prints $BD_FIXTURE; `show` reads
@@ -586,7 +590,7 @@ git -C "$root" log -1 --format='%s' | grep -qF 'chore(sync)' \
 git -C "$root" checkout -q -b other
 printf 'divergent\n' >>"$root/openspec/changes/demo/tasks.md"
 git -C "$root" commit -q -am "chore: diverge openspec [SPEC-000]"
-git -C "$root" checkout -q master 2>/dev/null || git -C "$root" checkout -q main
+git -C "$root" checkout -q work
 git -C "$root" merge -q --no-edit other >"$out" 2>&1 \
   && echo "ok   - twb-sync: git merge across an openspec/ diff succeeds with the sentinel present" \
   || { echo "FAIL - twb-sync: git merge blocked"; cat "$out"; fail=1; }

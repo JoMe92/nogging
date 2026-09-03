@@ -367,6 +367,13 @@ def record_failure(exc):
 def clear_failure():
     FAILURE_RECORD.unlink(missing_ok=True)
 def sync():
+    state, info = repo_sync_state()
+    if state == "skip":
+        # A skipped tick is a no-op, not a failure: no sync-failure.json, no
+        # backoff, last-success.json untouched, so the next tick just retries.
+        print(f"sync: skipped ({info})")
+        return
+    branch = info
     path = None
     try:
         path = lock("sync", CFG["sync_lock_ttl_seconds"])
