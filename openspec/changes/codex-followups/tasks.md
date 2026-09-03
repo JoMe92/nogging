@@ -15,6 +15,6 @@
 
 ## Tests
 
-- [ ] TASK-CXF-008 `scripts/session.test.sh`: flip the codex-network coverage — `--full-access` codex launch emits `--network on` + `network_access=true`; restricted codex launch emits `--network off` + `network_access=false`. Update the existing `codex-full: network disabled` / `codex-wrap` assertions.
+- [x] TASK-CXF-008 `scripts/session.test.sh`: flip the codex-network coverage — `--full-access` codex launch emits `--network on` + `network_access=true`; restricted codex launch emits `--network off` + `network_access=false`. Update the existing `codex-full: network disabled` / `codex-wrap` assertions.
 - [ ] TASK-CXF-009 `scripts/specforge.test.sh` (stub `CODEX_HOME` under `SPECFORGE_ROOT`): `codex-prompts-link` creates the `specforge-<name>.md` symlinks, is idempotent, repoints a wrong target, reports a non-symlink collision without clobbering, `--unlink` removes only `specforge-*`; `doctor` prints the prompt-link NOTE when unlinked, omits it once linked, and the NOTE never changes doctor's exit code (guard the `doctor` calls per the lint).
 - [ ] TASK-CXF-010 Run `scripts/test` (confirm `cli.test.sh`: the trimmed `.codex/rules/specforge.rules` still ships with the floor classes). `npx openspec validate codex-followups --strict` green.
