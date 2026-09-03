@@ -70,7 +70,11 @@ reimplement the planning lock, discovery sorting, or sync.
 
 `AGENTS.md` keeps a one-line pointer to these files and the equivalent manual
 `scripts/specforge` sequence, so a non-Claude tool can run the same steps by
-hand.
+hand. A Codex session invokes the same three commands from
+`.codex/prompts/{plan,discovery-review,sync-now}.md`; see
+[`using-with-codex.md`](using-with-codex.md) for the Codex specifics (the
+`.codex/` payload, the execpolicy floor, the out-of-process specialist model,
+and the known limitations).
 
 ## Branches and commits
 

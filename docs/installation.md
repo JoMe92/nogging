@@ -25,7 +25,8 @@ clone fails to authenticate, run `gh auth setup-git` once, or use the SSH form
 | Tool files | `scripts/specforge`, `scripts/install-hooks`, `scripts/test`, `scripts/*.test.sh`, `scripts/hooks/*`, `.agents/skills/**` | copied verbatim, overwritten on every `init` / `update` |
 | Reference docs | `docs/specforge/{operating-model,architecture,failure-recovery}.md` | copied verbatim |
 | Scaffold | `openspec/config.yaml`, `openspec/project.md`, `.specforge/config.json` | written **only when absent** — never overwritten |
-| Merged | `.claude/settings.json`, `.gitignore`, `CLAUDE.md`, `AGENTS.md` | edited idempotently; your other content is preserved |
+| Merged | `.claude/settings.json`, `.gitignore`, `CLAUDE.md`, `AGENTS.md`, `.codex/hooks.json` | edited idempotently; your other content is preserved (a `bd`-written `.codex/hooks.json` is never clobbered) |
+| Codex payload | `.codex/rules/specforge.rules`, `.codex/prompts/{plan,discovery-review,sync-now}.md` | copied verbatim; only relevant if you run the loop from Codex — see [`docs/using-with-codex.md`](using-with-codex.md) |
 | Rendered | `systemd/specforge-sync-<slug>.service` and `.timer` | generated with this repo's absolute path; `<slug>` is the repo directory name |
 
 `.specforge/config.json` records `name` (your repo's directory name) and
@@ -66,6 +67,8 @@ npx github:JoMe92/specforge update
 - **Node.js ≥ 18** — only to run the installer.
 - **python3** — the `scripts/specforge` sync bridge runs under it.
 - **bd (Beads)** and, for sync, a reachable **Dolt** — as SpecForge needs anyway.
+- For the **Codex agent path only**: the `codex` CLI and a Codex login. See
+  [`docs/using-with-codex.md`](using-with-codex.md).
 
 ## Caveat: `core.hooksPath`
 

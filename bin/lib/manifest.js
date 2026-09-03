@@ -47,6 +47,7 @@ module.exports = {
     { from: 'docs/operating-model.md', to: 'docs/specforge/operating-model.md' },
     { from: 'docs/architecture.md', to: 'docs/specforge/architecture.md' },
     { from: 'docs/failure-recovery.md', to: 'docs/specforge/failure-recovery.md' },
+    { from: 'docs/using-with-codex.md', to: 'docs/specforge/using-with-codex.md' },
   ],
 
   // Written only when the destination does not already exist.
