@@ -375,12 +375,18 @@ def read_last_success():
         return data if isinstance(data, dict) else {}
     except (ValueError, OSError):
         return {}
-def sync():
-    state, info = repo_sync_state()
+def sync(on_request=False):
+    state, info = repo_sync_state(on_request=on_request)
     if state == "skip":
         # A skipped tick is a no-op, not a failure: no sync-failure.json, no
         # backoff, last-success.json untouched, so the next tick just retries.
-        print(f"sync: skipped ({info})")
+        # `sync --now` (on_request) is allowed on a protected branch but a
+        # genuine mid-operation / held planning lock still refuses here — the
+        # operator has to finish that first.
+        if on_request:
+            print(f"sync --now: refused — {info}; finish that first, then rerun")
+        else:
+            print(f"sync: skipped ({info})")
         return
     branch = info
     path = None
@@ -522,7 +528,7 @@ def sync_now():
               f"the timer is mid-pass — not retrying")
         return
     try:
-        sync()
+        sync(on_request=True)
     except LockBusyError as exc:
         # The timer grabbed the lock between the check above and sync()'s own
         # acquire. Same outcome: report, do not retry.
