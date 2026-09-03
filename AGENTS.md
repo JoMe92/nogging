@@ -34,6 +34,18 @@ the rest applies to every runtime — Claude Code, Codex, or another.
        --append-notes "Prose summary: what was found, the evidence, and why it blocks this task."
      ```
 
+5. Leave an intent breadcrumb. Before an expensive or hard-to-reverse step, and
+   before ending a turn with a Bead still `in_progress`, append a one-line
+   `progress: <next step>` to the Bead note:
+
+   ```bash
+   bd update <id> --append-notes "progress: <what is done, what is next>"
+   ```
+
+   The agent's working memory does not survive an interruption; on resume — in
+   any tool — this note is the primary "where was I" signal, and it costs
+   nothing.
+
 ## The write boundary
 
 OpenSpec owns approved product intent, Beads owns executable work, Git owns the

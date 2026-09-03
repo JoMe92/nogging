@@ -177,5 +177,15 @@ else
   bad "resumption protocol: missing or malformed (see output above)"
 fi
 
+# --- 6. the intent-breadcrumb rule is in the hard rules (TASK-RIR-008) ---
+for f in AGENTS.md templates/agents-block.md; do
+  if grep -qE 'progress: *<next step>|progress: *…' "$f" \
+     && grep -qiE 'in_progress' "$f" && grep -qi 'breadcrumb' "$f"; then
+    ok "$f carries the intent-breadcrumb hard rule"
+  else
+    bad "$f is missing the intent-breadcrumb hard rule (progress: <next step>)"
+  fi
+done
+
 if [[ $fail -ne 0 ]]; then echo "command-file checks failed" >&2; exit 1; fi
 echo "all command-file checks passed"

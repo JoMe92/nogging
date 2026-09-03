@@ -16,6 +16,11 @@ are confined to *Tool notes* at the end.
    data, and never by editing `openspec/`. A blocking discovery also sets the
    Bead status to `blocked`; the next planning session lists them with
    `bd list --label discovery`.
+5. Leave an intent breadcrumb. Before an expensive or hard-to-reverse step, and
+   before ending a turn with a Bead still `in_progress`, append a one-line
+   `progress: <next step>` to the Bead note
+   (`bd update <id> --append-notes "progress: …"`). On resume, in any tool, it
+   is the primary "where was I" signal.
 
 ### The write boundary
 
