@@ -1142,5 +1142,87 @@ PY
   || { echo "FAIL - rir-arity: validate() arity/shape is '$arity'"; fail=1; }
 unset SPECFORGE_ROOT BD_FIXTURE
 
+# ===========================================================================
+# Scenario: codex-prompts-link + the doctor prompt-link NOTE (TASK-CXF-005/006)
+# CODEX_HOME is stubbed under SPECFORGE_ROOT so nothing touches the real
+# ~/.codex. codex 0.148 only loads user-scoped prompts, so the helper links
+# each repo .codex/prompts/*.md to <CODEX_HOME>/prompts/specforge-<name>.md.
+# ===========================================================================
+root="$work/cxf-prompts"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export BD_FIXTURE="$work/cxf-prompts-beads.json"; printf '[]\n' >"$BD_FIXTURE"
+export BD_STUB_DIR="$root"
+mkdir -p "$root/.codex/prompts"
+printf 'plan prompt\n' >"$root/.codex/prompts/plan.md"
+printf 'sync prompt\n' >"$root/.codex/prompts/sync-now.md"
+export CODEX_HOME="$root/.codex-home"
+
+# --- link: creates the specforge-<name>.md symlinks ---------------------
+"$specforge" codex-prompts-link >"$out" 2>&1 \
+  || { echo "FAIL - cxf-link: helper errored"; cat "$out"; fail=1; }
+[[ -L "$CODEX_HOME/prompts/specforge-plan.md" && -L "$CODEX_HOME/prompts/specforge-sync-now.md" ]] \
+  && echo "ok   - cxf-link: both prompts linked as specforge-<name>.md" \
+  || { echo "FAIL - cxf-link: symlinks not created"; ls -la "$CODEX_HOME/prompts" 2>&1; fail=1; }
+[[ "$(readlink -f "$CODEX_HOME/prompts/specforge-plan.md")" == "$(readlink -f "$root/.codex/prompts/plan.md")" ]] \
+  && echo "ok   - cxf-link: specforge-plan.md points at the repo prompt" \
+  || { echo "FAIL - cxf-link: wrong link target"; fail=1; }
+
+# --- idempotent: a correct link is left, nothing relinked --------------
+"$specforge" codex-prompts-link >"$out" 2>&1 || true
+refute "cxf-link: idempotent run relinks nothing" "relinked"
+grep -qE '^ok +' "$out" \
+  && echo "ok   - cxf-link: idempotent run reports the existing links as ok" \
+  || { echo "FAIL - cxf-link: no ok line on the idempotent run"; cat "$out"; fail=1; }
+
+# --- a wrong target is repointed -------------------------------------
+ln -sfn /etc/hostname "$CODEX_HOME/prompts/specforge-plan.md"
+"$specforge" codex-prompts-link >"$out" 2>&1 || true
+check "cxf-link: a wrong target is repointed" "relinked"
+[[ "$(readlink -f "$CODEX_HOME/prompts/specforge-plan.md")" == "$(readlink -f "$root/.codex/prompts/plan.md")" ]] \
+  && echo "ok   - cxf-link: the stale link now points back at the repo prompt" \
+  || { echo "FAIL - cxf-link: stale link not repaired"; fail=1; }
+
+# --- a real (non-symlink) file in the way is reported, not clobbered ---
+rm -f "$CODEX_HOME/prompts/specforge-sync-now.md"
+printf 'HAND WRITTEN\n' >"$CODEX_HOME/prompts/specforge-sync-now.md"
+"$specforge" codex-prompts-link >"$out" 2>&1 || true
+check "cxf-link: a real file in the way is reported" "exists and is not a specforge symlink"
+[[ "$(cat "$CODEX_HOME/prompts/specforge-sync-now.md")" == "HAND WRITTEN" ]] \
+  && echo "ok   - cxf-link: the colliding real file is left untouched" \
+  || { echo "FAIL - cxf-link: colliding file was clobbered"; fail=1; }
+
+# --- --unlink removes only the specforge-* symlinks -------------------
+"$specforge" codex-prompts-link --unlink >"$out" 2>&1 || true
+[[ ! -e "$CODEX_HOME/prompts/specforge-plan.md" ]] \
+  && echo "ok   - cxf-unlink: the specforge-plan.md symlink is removed" \
+  || { echo "FAIL - cxf-unlink: symlink survived --unlink"; fail=1; }
+[[ -f "$CODEX_HOME/prompts/specforge-sync-now.md" \
+   && "$(cat "$CODEX_HOME/prompts/specforge-sync-now.md")" == "HAND WRITTEN" ]] \
+  && echo "ok   - cxf-unlink: a real file named specforge-* is left in place" \
+  || { echo "FAIL - cxf-unlink: --unlink removed a non-symlink"; fail=1; }
+rm -f "$CODEX_HOME/prompts/specforge-sync-now.md"
+
+# --- doctor NOTE: shown when unlinked, gone once linked, exit code stable
+cat >"$work/bin/codex" <<'STUB'
+#!/usr/bin/env bash
+exit 0
+STUB
+chmod +x "$work/bin/codex"
+rc_unlinked=0; "$specforge" doctor >"$out" 2>&1 || rc_unlinked=$?
+check "cxf-doctor: NOTE flags the unlinked codex prompts" \
+  "codex prompts present in .codex/prompts/ but not linked into"
+check "cxf-doctor: NOTE points at the helper" \
+  "run: ./scripts/specforge codex-prompts-link"
+"$specforge" codex-prompts-link >/dev/null 2>&1 || true
+rc_linked=0; "$specforge" doctor >"$out" 2>&1 || rc_linked=$?
+refute "cxf-doctor: NOTE is gone once every prompt is linked" \
+  "codex prompts present in .codex/prompts/"
+[[ "$rc_unlinked" == "$rc_linked" ]] \
+  && echo "ok   - cxf-doctor: the prompt-link NOTE never changes doctor's exit code ($rc_linked)" \
+  || { echo "FAIL - cxf-doctor: doctor exit code moved $rc_unlinked -> $rc_linked"; fail=1; }
+rm -f "$work/bin/codex"
+"$specforge" codex-prompts-link --unlink >/dev/null 2>&1 || true
+unset SPECFORGE_ROOT BD_FIXTURE BD_STUB_DIR CODEX_HOME
+
 if [[ $fail -ne 0 ]]; then echo "specforge checks failed" >&2; exit 1; fi
 echo "all specforge checks passed"
