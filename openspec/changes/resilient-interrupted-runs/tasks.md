@@ -24,4 +24,4 @@
 ## Tests
 
 - [x] TASK-RIR-013 `scripts/specforge.test.sh` (stub `bd`, `SPECFORGE_ROOT` scratch repo): `recover` reports a committed-but-open Bead as LIMBO and exits non-zero; a stale lock; an `in_progress` Bead with a commit as `resumable`; a change dir with mapped Beads but a dirty `tasks.md` as materialized-but-uncommitted; a leftover `materialize-<change>.json` naming the missing task; a clean repo exits zero. `validate()` returns the LIMBO warning without reddening `sync`.
-- [ ] TASK-RIR-014 `scripts/session.test.sh`: `session reap` moves a `running` record with no tmux to `failed`; `session cleanup` then retires it; a live record is untouched.
+- [x] TASK-RIR-014 `scripts/session.test.sh`: `session reap` moves a `running` record with no tmux to `failed`; `session cleanup` then retires it; a live record is untouched.
