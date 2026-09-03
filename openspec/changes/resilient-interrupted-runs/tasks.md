@@ -2,7 +2,7 @@
 
 ## Phase 1 — make interruptions safe to resume (P0)
 
-- [ ] TASK-RIR-001 Add a `warnings` list to `validate()` (return `(tasks, issues, problems, warnings)`) and update every caller (`sync`, `doctor`, `materialize`, `audit`, the tests). `sync()`'s `AuditError` path stays keyed on `problems` only.
+- [x] TASK-RIR-001 Add a `warnings` list to `validate()` (return `(tasks, issues, problems, warnings)`) and update every caller (`sync`, `doctor`, `materialize`, `audit`, the tests). `sync()`'s `AuditError` path stays keyed on `problems` only.
 - [ ] TASK-RIR-002 Add the committed-but-open-Bead check: for each Bead with a `[<id>]` token commit on the current branch and `status != "closed"`, add a `warnings` entry `LIMBO: <id> committed in <sha> but status=<status>`. `doctor` prints it as `WARN`.
 - [ ] TASK-RIR-003 Add `scripts/specforge recover` per the design "recover" decision: read-only (no `bd` mutation, no writes), the eight sections it lists (locks, LIMBO from `git rev-list --no-merges <base>..HEAD` with `<base>` from a new `recover_base_branch` config key, `in_progress` classification, materialized-but-uncommitted, orphans, crashed sessions, working-tree/mid-op, last-sync), and the non-zero exit condition it specifies.
 - [ ] TASK-RIR-004 Have `doctor` run `recover`'s checks (or accept `doctor --recover`); keep `doctor` read-only and its existing exit semantics for tool availability.
