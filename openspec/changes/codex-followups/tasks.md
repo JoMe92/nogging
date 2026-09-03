@@ -9,7 +9,7 @@
 
 ## SPEC-51d — link the Codex prompts into `$CODEX_HOME`
 
-- [ ] TASK-CXF-005 Add `scripts/specforge codex-prompts-link [--unlink]` per design "Decision 3": symlink each `.codex/prompts/*.md` to `${CODEX_HOME:-$HOME/.codex}/prompts/specforge-<basename>.md` (mkdir target), idempotent (correct link left, wrong target repointed, non-symlink real file reported and left); `--unlink` removes only `specforge-*` symlinks. Register in the CLI dispatch and `--help`.
+- [x] TASK-CXF-005 Add `scripts/specforge codex-prompts-link [--unlink]` per design "Decision 3": symlink each `.codex/prompts/*.md` to `${CODEX_HOME:-$HOME/.codex}/prompts/specforge-<basename>.md` (mkdir target), idempotent (correct link left, wrong target repointed, non-symlink real file reported and left); `--unlink` removes only `specforge-*` symlinks. Register in the CLI dispatch and `--help`.
 - [ ] TASK-CXF-006 Add the `doctor` NOTE (never a failure): when `codex` is on `PATH`, `.codex/prompts/*.md` exist, and at least one is not linked into `${CODEX_HOME:-$HOME/.codex}/prompts/`, print `NOTE  codex prompts present in .codex/prompts/ but not linked into <CODEX_HOME>/prompts/ (run: ./scripts/specforge codex-prompts-link)`.
 - [ ] TASK-CXF-007 Update `docs/using-with-codex.md`: replace the manual copy/symlink steps with `./scripts/specforge codex-prompts-link`; keep the note that `.agents/skills/` openspec skills are auto-loaded and upstream-aligned, and that repo-scoped `.codex/prompts/` is pending upstream (openai/codex#4734, #9848).
 
