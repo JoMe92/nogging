@@ -1503,10 +1503,17 @@ def doctor(audit=False, with_recover=False):
         if srec.get("reason"):
             notes.append(f"last sync skipped: {srec['reason']} "
                          f"({humanize_age(srec.get('at'))})")
-    for cmd in ("codex",):
-        present = subprocess.run(["sh", "-lc", f"command -v {cmd}"], capture_output=True).returncode == 0
-        notes.append(f"{cmd} available" if present
-                     else f"{cmd} not installed; only needed for the Codex agent path")
+    codex_present = subprocess.run(["sh", "-lc", "command -v codex"], capture_output=True).returncode == 0
+    notes.append("codex available" if codex_present
+                 else "codex not installed; only needed for the Codex agent path")
+    # Informational nudge (never a failure): the repo ships Codex prompts but at
+    # least one is not linked into the dir Codex 0.148 actually reads.
+    if codex_present:
+        prompt_plan = codex_prompt_link_plan()
+        if prompt_plan and any(state != "linked" for _, _, state in prompt_plan):
+            notes.append(f"codex prompts present in .codex/prompts/ but not linked into "
+                         f"{codex_home() / 'prompts'}/ "
+                         f"(run: ./scripts/specforge codex-prompts-link)")
     # The interrupted-run checks: doctor always prints a one-line summary
     # (`recover` folds the full report). Read-only, like the rest of doctor.
     try:
