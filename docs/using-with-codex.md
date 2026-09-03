@@ -37,24 +37,53 @@ In addition to the usual target-repo prerequisites (`bd`/Beads, `python3`,
 
 A user's own `.codex/AGENTS.md` or `.codex/config.toml` is never touched.
 
+### Launch authority levels
+
+`scripts/specforge session launch --agent codex` maps a SpecForge authority
+level onto Codex's sandbox / approval / network model via
+`.specforge/launch-profiles/*.codex.toml`. It mirrors the Claude trusted /
+restricted split:
+
+| Level | Selected by | Sandbox / approval | Outbound network | Can `git push` |
+| --- | --- | --- | --- | --- |
+| **trusted** | `--full-access` | `workspace-write` / `never` | **on** (`network_access = true`) | **yes** |
+| **restricted** | default (also `--read-only` forces the sandbox to `read-only`) | `workspace-write` / `on-request` | **off** (`network_access = false`) | no |
+
+A **trusted** Codex Lead session completes an integration itself, exactly like
+the Claude trusted path: it pushes the feature branch, fast-forward-merges into
+`develop` locally, and pushes `develop` — **no pull request**. A **restricted**
+session has no network, so `git push`, `bd sync`, and `dolt push|pull` all fail;
+it stops and reports instead.
+
 ### The execpolicy floor — `.codex/rules/specforge.rules`
 
 Codex loads every `*.rules` file under `<repo>/.codex/rules/` (once the
 `.codex/` layer is trusted) and evaluates model-generated shell commands
-against them. SpecForge's floor mirrors the Claude launch floor — it forbids:
+against them. SpecForge's floor is the Codex-side mirror of the Claude
+`FLOOR_DENY` set — the classes denied in *every* session regardless of level.
+It forbids only:
 
-- writing to a git remote (`git push`, `git remote`, `git config`);
-- remote Dolt / Beads sync (`bd sync`, `bd dolt push|pull|clone`,
-  `dolt push|pull|remote`);
-- destructive host commands (`sudo`, `rm -rf`/`rm -fr`, `dd`, `mkfs` and its
-  `mkfs.*` variants, `shutdown`, `reboot`, `systemctl`, `chown`);
+- privilege escalation (`sudo`);
+- destructive host commands (`rm -rf`/`rm -fr`, `dd`, `mkfs` and its `mkfs.*`
+  variants, `shutdown`, `reboot`, `systemctl`, `chown`);
 - outbound network fetch (`curl`, `wget`).
+
+Remote/network operations (`git push`, `git remote`, `git config`, `bd sync`,
+`bd dolt push|pull|clone`, `dolt push|pull|remote`) are **not** in the floor —
+they are a *restricted-level* boundary, enforced by the network-off
+workspace-write sandbox (`network_access = false`), which fails all of them with
+no network. On codex-cli 0.148 execpolicy has no per-profile rules selection, so
+a second execpolicy copy of that denial could only block the trusted path, which
+is allowed to push. One mechanism per concern: the floor is the `.rules` file,
+the level boundary is the sandbox.
 
 Check any command against the floor:
 
 ```bash
-codex execpolicy check --rules .codex/rules/specforge.rules -- git push
+codex execpolicy check --rules .codex/rules/specforge.rules -- sudo apt
 # => {"decision":"forbidden"}
+codex execpolicy check --rules .codex/rules/specforge.rules -- git push
+# => {"matchedRules":[]}   (unmatched — the sandbox, not the floor, gates this)
 ```
 
 Grammar note: on codex-cli 0.148 a rule is
@@ -62,13 +91,6 @@ Grammar note: on codex-cli 0.148 a rule is
 `decision="deny"` is rejected, and there is no `regex_rule`, so `mkfs.*` is
 written as a literal union. If a future Codex changes the grammar, the floor
 requirement is behavioural — the file can be rewritten without a spec change.
-
-**Known gap.** A `trusted` / `--full-access` Codex session that must `git push`
-and `git push origin develop` to finish integration is still blocked by this
-base floor (it *can* `git merge --ff-only` locally — `git merge` is not
-forbidden). Relaxing `git push` for a trusted Codex session belongs to the
-launch authority-level mapping, not this floor; until that lands, run the final
-`git push` steps from a plain shell.
 
 ## How the commands map
 
@@ -153,7 +175,6 @@ discovered automatically or invoked by name (`$openspec-propose`).
   2. the **execpolicy floor** (`.codex/rules/specforge.rules`);
   3. the **commit hooks** (`pre-commit` refuses an `openspec/` change from a
      non-planning writer; `commit-msg` requires the Beads ID token).
-- **`git push` for a trusted session** — see *Known gap* above.
 - **Repo-scoped custom prompts** — see *How the commands map* above.
 - **Codex CI job** — there is none, and none is needed: the mechanical CI
   subset (`invariants`, `acceptance`) is already agent-neutral.
