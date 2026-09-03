@@ -886,6 +886,117 @@ grep -qF -- '- [ ] TASK-DEMO-001' "$root/openspec/changes/demo/tasks.md" \
 unset SPECFORGE_ROOT BD_FIXTURE BD_STUB_DIR
 
 # ===========================================================================
+# Scenario: `recover` — the interrupted-run diagnostic (TASK-RIR-003)
+# Read-only; exits non-zero on a LIMBO Bead / stale lock / orphan /
+# materialized-but-uncommitted change / crashed session, zero on a clean repo.
+# ===========================================================================
+
+# --- clean repo exits zero -------------------------------------------------
+root="$work/rec-clean"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export BD_FIXTURE="$work/rec-clean-beads.json"; printf '[]\n' >"$BD_FIXTURE"
+export BD_STUB_DIR="$root"
+"$specforge" recover >"$out" 2>&1 \
+  && echo "ok   - rec-clean: recover exits zero on a clean repo" \
+  || { echo "FAIL - rec-clean: recover exited non-zero on a clean repo"; cat "$out"; fail=1; }
+check "rec-clean: says nothing is in flight" "nothing in flight"
+unset SPECFORGE_ROOT BD_FIXTURE BD_STUB_DIR
+
+# --- a committed-but-open Bead is LIMBO and exits non-zero ---------------
+root="$work/rec-limbo"; make_root "$root"
+git -C "$root" commit -q --allow-empty -m "feat(demo): limbo work [SPEC-lim]"
+sha_lim="$(git -C "$root" rev-parse --short=12 HEAD)"
+export SPECFORGE_ROOT="$root"
+export BD_FIXTURE="$work/rec-limbo-beads.json"
+export BD_STUB_DIR="$root"
+cat >"$BD_FIXTURE" <<'JSON'
+[
+  {"id": "SPEC-lim", "status": "open",
+   "labels": ["openspec:change:demo", "openspec:task:TASK-DEMO-001"]}
+]
+JSON
+"$specforge" recover >"$out" 2>&1 \
+  && { echo "FAIL - rec-limbo: recover should exit non-zero"; cat "$out"; fail=1; } \
+  || echo "ok   - rec-limbo: recover exits non-zero with a committed-but-open Bead"
+check "rec-limbo: lists the LIMBO Bead" "LIMBO: SPEC-lim committed in"
+check "rec-limbo: names the commit SHA" "$sha_lim"
+check "rec-limbo: attention summary names it" "need attention"
+unset SPECFORGE_ROOT BD_FIXTURE BD_STUB_DIR
+
+# --- a stale lock exits non-zero ---------------------------------------
+root="$work/rec-lock"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export BD_FIXTURE="$work/rec-lock-beads.json"; printf '[]\n' >"$BD_FIXTURE"
+export BD_STUB_DIR="$root"
+printf '{"pid":999999,"host":"ghost","created_at":"2000-01-01T00:00:00+00:00"}\n' \
+  >"$root/.specforge/locks/planning.lock"
+"$specforge" recover >"$out" 2>&1 \
+  && { echo "FAIL - rec-lock: recover should exit non-zero on a stale lock"; cat "$out"; fail=1; } \
+  || echo "ok   - rec-lock: recover exits non-zero on a stale lock"
+check "rec-lock: reports the stale planning lock" "planning.lock: STALE"
+rm -f "$root/.specforge/locks/planning.lock"
+unset SPECFORGE_ROOT BD_FIXTURE BD_STUB_DIR
+
+# --- an in_progress Bead with a commit classifies resumable ------------
+root="$work/rec-resumable"; make_root "$root"
+git -C "$root" commit -q --allow-empty -m "feat(demo): resumable work [SPEC-rsm]"
+export SPECFORGE_ROOT="$root"
+export BD_FIXTURE="$work/rec-resumable-beads.json"
+export BD_STUB_DIR="$root"
+cat >"$BD_FIXTURE" <<'JSON'
+[
+  {"id": "SPEC-rsm", "status": "in_progress", "updated_at": "2026-09-03T00:00:00Z",
+   "assignee": "someone",
+   "labels": ["openspec:change:demo", "openspec:task:TASK-DEMO-002"]}
+]
+JSON
+"$specforge" recover >"$out" 2>&1 || true
+check "rec-resumable: in_progress Bead with a commit is resumable" "SPEC-rsm [resumable]"
+unset SPECFORGE_ROOT BD_FIXTURE BD_STUB_DIR
+
+# --- a live change with mapped Beads but a dirty tasks.md --------------
+root="$work/rec-matuncommitted"; make_root "$root"
+printf '\n<!-- uncommitted edit -->\n' >>"$root/openspec/changes/demo/tasks.md"
+export SPECFORGE_ROOT="$root"
+export BD_FIXTURE="$work/rec-matuncommitted-beads.json"
+export BD_STUB_DIR="$root"
+cat >"$BD_FIXTURE" <<'JSON'
+[
+  {"id": "SPEC-mmm", "status": "open",
+   "labels": ["openspec:change:demo", "openspec:task:TASK-DEMO-001"]}
+]
+JSON
+"$specforge" recover >"$out" 2>&1 \
+  && { echo "FAIL - rec-matuncommitted: recover should exit non-zero"; cat "$out"; fail=1; } \
+  || echo "ok   - rec-matuncommitted: recover exits non-zero for a dirty mapped tasks.md"
+check "rec-matuncommitted: names the change and the reason" "demo: tasks.md has uncommitted changes"
+unset SPECFORGE_ROOT BD_FIXTURE BD_STUB_DIR
+
+# --- recover mutates nothing -----------------------------------------
+root="$work/rec-readonly"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export BD_FIXTURE="$work/rec-readonly-beads.json"
+export BD_STUB_DIR="$root"
+cat >"$BD_FIXTURE" <<'JSON'
+[
+  {"id": "SPEC-ro1", "status": "in_progress", "updated_at": "2026-09-03T00:00:00Z",
+   "labels": ["openspec:change:demo", "openspec:task:TASK-DEMO-001"]}
+]
+JSON
+before_state="$(find "$root/.specforge" -type f | sort | xargs cksum 2>/dev/null | cksum)"
+before_tree="$(git -C "$root" status --porcelain; git -C "$root" rev-parse HEAD)"
+"$specforge" recover >"$out" 2>&1 || true
+after_state="$(find "$root/.specforge" -type f | sort | xargs cksum 2>/dev/null | cksum)"
+after_tree="$(git -C "$root" status --porcelain; git -C "$root" rev-parse HEAD)"
+[[ "$before_state" == "$after_state" ]] \
+  && echo "ok   - rec-readonly: recover wrote no file under .specforge/" \
+  || { echo "FAIL - rec-readonly: .specforge/ changed"; fail=1; }
+[[ "$before_tree" == "$after_tree" ]] \
+  && echo "ok   - rec-readonly: recover made no commit and did not touch the tree" \
+  || { echo "FAIL - rec-readonly: working tree / HEAD changed"; fail=1; }
+unset SPECFORGE_ROOT BD_FIXTURE BD_STUB_DIR
+
+# ===========================================================================
 # Scenario: validate() returns a 4-tuple (TASK-RIR-001)
 # (tasks, issues, problems, warnings) — warnings is a list, distinct from
 # problems, so `sync()`'s AuditError path stays keyed on `problems` only.

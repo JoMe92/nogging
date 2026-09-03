@@ -1098,6 +1098,252 @@ def session_log(name, follow):
     if follow:
         os.execvp("tail", ["tail", "-n", "+1", "-F", str(lp)])
     sys.stdout.write(lp.read_text())
+def recover_base_branch():
+    """The branch a run's LIMBO / commits-since-fork scan is measured against.
+    `recover_base_branch` config key wins; otherwise the first protected branch
+    (`sync_protected_branches[0]`, i.e. `main`), never a hardcoded `develop`."""
+    key = CFG.get("recover_base_branch")
+    if key:
+        return key
+    protected = CFG.get("sync_protected_branches") or []
+    return protected[0] if protected else "main"
+def resolve_ref(name):
+    """`name` if it resolves in this repo, else `origin/<name>` if that does,
+    else None (a detached-HEAD / no-base checkout must not crash `recover`)."""
+    if not name:
+        return None
+    for cand in (name, f"origin/{name}"):
+        if run("git", "rev-parse", "--verify", "--quiet", f"{cand}^{{commit}}",
+               check=False).returncode == 0:
+            return cand
+    return None
+def commit_tokens_with_subject(rev_range=None):
+    """`[<id>]` token -> (newest sha, subject) over non-merge commits, optionally
+    restricted to a `<base>..HEAD` range. Empty when this is not a git repo or
+    the range will not resolve."""
+    args = ["git", "log", "--no-merges", "--format=%H%x1f%s"]
+    if rev_range:
+        args.append(rev_range)
+    res = run(*args, check=False)
+    if res.returncode:
+        return {}
+    out = {}
+    for line in res.stdout.splitlines():
+        h, _, subject = line.partition("\x1f")
+        for token in LIMBO_TOKEN_RE.findall(subject):
+            out.setdefault(token, (h, subject))
+    return out
+MATERIALIZE_JOURNAL_RE = re.compile(r"^materialize-(.+)\.json$")
+def materialize_journals():
+    """Every leftover `.specforge/state/materialize-<change>.json` journal
+    (written by `materialize()`, deleted on clean completion) as
+    `{change: parsed-json}`. A crash between `bd create` calls leaves one; its
+    `tasks_planned` minus `tasks_created` is exactly what still needs a Bead."""
+    out = {}
+    if not STATE.is_dir():
+        return out
+    for p in sorted(STATE.glob("materialize-*.json")):
+        m = MATERIALIZE_JOURNAL_RE.match(p.name)
+        if not m:
+            continue
+        try:
+            out[m.group(1)] = json.loads(p.read_text())
+        except (ValueError, OSError):
+            out[m.group(1)] = {}
+    return out
+def recover():
+    """The interrupted-run diagnostic (handoff §5.1). Strictly read-only: it
+    mutates no Bead and writes no file. Prints what was in flight, section by
+    section (each omitted when it has nothing to say), and exits non-zero when
+    any committed-but-open Bead, stale lock, orphan Bead,
+    materialized-but-uncommitted change, or crashed session record is present."""
+    attention = []          # human-readable reasons for a non-zero exit
+    def section(title, body_lines):
+        if body_lines:
+            print(f"== {title} ==")
+            for ln in body_lines:
+                print(f"  {ln}")
+            print()
+
+    host = socket.gethostname()
+    now_dt = dt.datetime.now(dt.timezone.utc)
+
+    # --- Locks ------------------------------------------------------------
+    lock_lines = []
+    for name, ttl in (("planning", CFG.get("planning_lock_ttl_seconds", 7200)),
+                      ("sync", CFG.get("sync_lock_ttl_seconds", 120))):
+        path = LOCKS / f"{name}.lock"
+        if not path.exists():
+            continue
+        try:
+            info = json.loads(path.read_text())
+            then = dt.datetime.fromisoformat(info["created_at"])
+        except (ValueError, OSError, KeyError):
+            lock_lines.append(f"{name}.lock: present but unreadable")
+            attention.append(f"{name}.lock unreadable")
+            continue
+        age = int((now_dt - then).total_seconds())
+        fresh = age < ttl
+        pid, lhost = info.get("pid"), info.get("host")
+        if lhost != host:
+            liveness = f"pid {pid} on {lhost} (not this host)"
+        elif isinstance(pid, int) and pid_alive(pid):
+            liveness = f"pid {pid} alive"
+        else:
+            liveness = f"pid {pid} dead"
+        state = "held (fresh)" if fresh else "STALE"
+        lock_lines.append(f"{name}.lock: {state}, age {age}s / ttl {ttl}s, {liveness}")
+        if not fresh:
+            attention.append(f"stale {name}.lock")
+    section("Locks", lock_lines)
+
+    issues = beads()
+    by_id = {str(issue_id(i)): i for i in issues}
+
+    # --- LIMBO: committed but not closed --------------------------------
+    base_name = recover_base_branch()
+    base_ref = resolve_ref(base_name)
+    rng = f"{base_ref}..HEAD" if base_ref else None
+    limbo_lines = []
+    if base_ref is None:
+        limbo_lines.append(f"(base {base_name!r} does not resolve — scanning full HEAD history)")
+    for token, (sha, subject) in sorted(commit_tokens_with_subject(rng).items()):
+        iss = by_id.get(token)
+        if iss is None:
+            continue
+        status = iss.get("status") or "unknown"
+        if status != "closed":
+            limbo_lines.append(f'LIMBO: {token} committed in {sha[:12]} "{subject}" but status={status}')
+            attention.append(f"LIMBO {token}")
+    section("Committed but not closed", limbo_lines)
+
+    # --- in_progress Beads --------------------------------------------
+    head_tokens = branch_commit_tokens()
+    stale_secs = int(CFG.get("claim_stale_seconds", 14400))
+    ip_lines = []
+    for iss in issues:
+        if iss.get("status") != "in_progress":
+            continue
+        bid = str(issue_id(iss) or "")
+        _, task = mapping(iss)
+        updated = iss.get("updated_at")
+        try:
+            age_s = int((now_dt - dt.datetime.fromisoformat(updated)).total_seconds())
+        except (ValueError, TypeError):
+            age_s = None
+        if bid in head_tokens:
+            cls = "resumable"
+            attention.append(f"resumable {bid}")
+        elif age_s is not None and age_s >= stale_secs:
+            cls = "stale"
+            attention.append(f"stale claim {bid}")
+        else:
+            cls = "active"
+        age_str = humanize_age(updated) if updated else "age unknown"
+        ip_lines.append(f"{bid} [{cls}] task={task or '-'} "
+                        f"assignee={iss.get('assignee') or '-'} updated {age_str} ago")
+    section("Claimed (in_progress) Beads", ip_lines)
+
+    # --- Materialized but uncommitted --------------------------------
+    mu_lines = []
+    journals = materialize_journals()
+    live_change_names = {c.name for c in changes()}
+    mapped_by_change = {}
+    for iss in issues:
+        ch, _ = mapping(iss)
+        if ch:
+            mapped_by_change.setdefault(ch, []).append(str(issue_id(iss)))
+    for change in changes():
+        name = change.name
+        mapped = mapped_by_change.get(name) or []
+        if not mapped:
+            continue
+        rel = f"openspec/changes/{name}"
+        dirty = bool(run("git", "status", "--porcelain", "--", f"{rel}/tasks.md",
+                         check=False).stdout.strip())
+        in_log = bool(run("git", "log", "-1", "--format=%H", "--", rel,
+                          check=False).stdout.strip())
+        if dirty or not in_log:
+            why = "tasks.md has uncommitted changes" if dirty else "change dir absent from git log"
+            mu_lines.append(f"{name}: {why} but has {len(mapped)} mapped Bead(s)")
+            attention.append(f"materialized-but-uncommitted {name}")
+    for change, journal in journals.items():
+        planned = list(journal.get("tasks_planned") or [])
+        created = set(journal.get("tasks_created") or [])
+        missing = [t for t in planned if t not in created]
+        note = f"journal materialize-{change}.json present"
+        if missing:
+            note += f" — still needs a Bead: {', '.join(missing)}"
+        elif planned:
+            note += " — every planned task has a Bead (journal not cleaned up)"
+        mu_lines.append(note)
+        attention.append(f"materialize journal for {change}")
+    section("Materialized but uncommitted", mu_lines)
+
+    # --- Orphan Beads ------------------------------------------------
+    orphan_lines = []
+    try:
+        _, _, problems, _ = validate()
+    except Exception as exc:
+        problems = [f"validate() failed: {exc}"]
+    for p in problems:
+        if "maps missing task" in p or "change label disagrees" in p or "incomplete OpenSpec labels" in p:
+            orphan_lines.append(p)
+            attention.append("orphan Bead")
+    section("Orphan Beads", orphan_lines)
+
+    # --- Crashed sessions -----------------------------------------
+    crashed_lines = []
+    sdir = ROOT / scfg("session_state_dir", ".specforge/state/sessions")
+    if sdir.is_dir():
+        live = tmux_sessions()
+        for _, rec in session_records():
+            if rec.get("state") in SESSION_ACTIVE_STATES and rec.get("name") not in live:
+                crashed_lines.append(f"{rec.get('name')} (bead {rec.get('bead_id')}, "
+                                     f"role {rec.get('role')}): record {rec.get('state')} "
+                                     f"but tmux session gone")
+                attention.append("crashed session")
+    section("Crashed sessions", crashed_lines)
+
+    # --- Working tree / mid-operation -----------------------------
+    wt_lines = []
+    porcelain = run("git", "status", "--porcelain", check=False).stdout.strip().splitlines()
+    if porcelain:
+        wt_lines.append(f"{len(porcelain)} path(s) with uncommitted changes")
+    gd = git_dir()
+    if gd is not None:
+        for marker, reason in MIDOP_MARKERS:
+            if (gd / marker).exists():
+                wt_lines.append(f"{reason} — finish or abort it before resuming")
+    section("Working tree", wt_lines)
+
+    # --- Last sync ----------------------------------------------
+    ls_lines = []
+    last = read_last_success()
+    if last.get("at"):
+        ls_lines.append(f"last successful sync {humanize_age(last['at'])} ago"
+                        + (f" on {last['branch']}" if last.get("branch") else ""))
+    if FAILURE_RECORD.exists():
+        try:
+            frec = json.loads(FAILURE_RECORD.read_text())
+        except (ValueError, OSError):
+            frec = {}
+        if frec:
+            ls_lines.append(f"active sync failure ({frec.get('classification')}): "
+                            f"attempt {frec.get('attempts')}/{frec.get('max_attempts')}")
+    if SKIP_RECORD.exists():
+        try:
+            srec = json.loads(SKIP_RECORD.read_text())
+        except (ValueError, OSError):
+            srec = {}
+        if srec.get("reason"):
+            ls_lines.append(f"last tick skipped: {srec['reason']} ({humanize_age(srec.get('at'))})")
+    section("Last sync", ls_lines)
+
+    if attention:
+        print(f"recover: {len(attention)} item(s) need attention: {', '.join(attention)}")
+        sys.exit(1)
+    print("recover: nothing in flight — clear to select work with bd ready")
 def doctor(audit=False):
     # A fresh install starts with the OpenSpec write boundary closed. Bootstrap
     # the sentinel once, only when nothing has toggled the boundary yet (no
@@ -1154,6 +1400,7 @@ def doctor(audit=False):
 def main():
     p = argparse.ArgumentParser(); sub = p.add_subparsers(dest="command", required=True)
     sub.add_parser("validate"); sub.add_parser("doctor"); sub.add_parser("audit")
+    sub.add_parser("recover")
     sy = sub.add_parser("sync"); sy.add_argument("--now", action="store_true",
         help="on-demand: signal a running sync daemon, else run one pass; report sync-lock contention without retrying")
     d = sub.add_parser("discoveries"); d.add_argument("--ack", nargs="+", metavar="BEAD_ID",
@@ -1195,6 +1442,7 @@ def main():
         write_sentinel()
         print("openspec write boundary closed")
     elif args.command == "materialize": materialize(args.change)
+    elif args.command == "recover": recover()
     elif args.command == "sync": sync_now() if args.now else sync()
     elif args.command == "discoveries": ack_discoveries(args.ack) if args.ack else discoveries()
     elif args.command == "session": session_cmd(args)
