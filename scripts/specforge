@@ -219,6 +219,37 @@ def lock(name, ttl, force=False):
             raise LockBusyError(f"{name} lock held by {info['host']} pid {info['pid']}; use --force only after verifying it is stale")
     path.write_text(json.dumps({"pid": os.getpid(), "host": socket.gethostname(), "created_at": now()}, indent=2) + "\n")
     return path
+LIMBO_TOKEN_RE = re.compile(r"\[([A-Z][A-Z0-9]*-[0-9a-z]+)\]")
+def branch_commit_tokens():
+    """Bead ID token `[<id>]` -> newest non-merge commit SHA on HEAD's history
+    whose subject carries it (the `[SPEC-xxx]` token the `commit-msg` hook
+    enforces on execution commits). Empty when this is not a git repository."""
+    res = run("git", "log", "--no-merges", "--format=%H %s", check=False)
+    if res.returncode:
+        return {}
+    out = {}
+    for line in res.stdout.splitlines():
+        h, _, subject = line.partition(" ")
+        for token in LIMBO_TOKEN_RE.findall(subject):
+            out.setdefault(token, h)
+    return out
+def limbo_warnings(issues, commit_tokens=None):
+    """`LIMBO: <id> committed in <sha> but status=<status>` for every Bead that
+    has a commit carrying its ID token on HEAD's history but is not closed (W1:
+    a committed-but-not-closed Bead is invisible and risks a duplicate commit on
+    resume). A warning, never a problem — the sync timer must keep mirroring the
+    Beads that *are* closed."""
+    commit_tokens = branch_commit_tokens() if commit_tokens is None else commit_tokens
+    out = []
+    for issue in issues:
+        bid = str(issue_id(issue) or "")
+        sha = commit_tokens.get(bid)
+        if not bid or not sha:
+            continue
+        status = issue.get("status") or "unknown"
+        if status != "closed":
+            out.append(f"LIMBO: {bid} committed in {sha[:12]} but status={status}")
+    return out
 def validate():
     # include_archived=True so a closed Bead still labelled for a change that
     # has since been archived resolves cleanly instead of tripping "maps missing
@@ -250,6 +281,7 @@ def validate():
         if re.search(rf"^- \[x\] {re.escape(task)}\b", info["file"].read_text(), re.M):
             issue = next((i for i in issues if mapping(i)[1] == task), None)
             if not issue or issue.get("status") != "closed": problems.append(f"checked task {task} has no closed Bead")
+    warnings.extend(limbo_warnings(issues))
     return tasks, issues, problems, warnings
 def materialize(change):
     tasks, issues, problems, _warnings = validate()

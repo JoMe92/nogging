@@ -852,6 +852,40 @@ fi
 unset SPECFORGE_ROOT
 
 # ===========================================================================
+# Scenario: a committed-but-open Bead is a warning, not a problem (TASK-RIR-002)
+# validate() reports `LIMBO: <id> committed in <sha> but status=<status>` as a
+# warning; doctor prints it as WARN; sync still mirrors a separate closed Bead.
+# ===========================================================================
+root="$work/rir-limbo"; make_root "$root"
+git -C "$root" commit -q --allow-empty -m "feat(demo): limbo thing [SPEC-lmb]"
+git -C "$root" commit -q --allow-empty -m "feat(demo): done thing [SPEC-dun]"
+export SPECFORGE_ROOT="$root"
+export BD_FIXTURE="$work/rir-limbo-beads.json"
+export BD_STUB_DIR="$root"
+cat >"$BD_FIXTURE" <<'JSON'
+[
+  {"id": "SPEC-lmb", "status": "in_progress",
+   "labels": ["openspec:change:demo", "openspec:task:TASK-DEMO-001"]},
+  {"id": "SPEC-dun", "status": "closed", "closed_at": "2026-09-02T09:00:00Z",
+   "notes": "done", "labels": ["openspec:change:demo", "openspec:task:TASK-DEMO-002"]}
+]
+JSON
+"$specforge" validate >"$out" 2>&1 || true
+check "rir-limbo: validate reports the LIMBO warning" "LIMBO: SPEC-lmb committed in"
+check "rir-limbo: validate marks it as a WARN line" "WARN  LIMBO: SPEC-lmb"
+refute "rir-limbo: the LIMBO line is not a FAIL" "FAIL  LIMBO"
+"$specforge" doctor >"$out" 2>&1 || true
+check "rir-limbo: doctor prints the LIMBO as WARN" "WARN  LIMBO: SPEC-lmb committed in"
+"$specforge" sync >"$out" 2>&1 || { echo "FAIL - rir-limbo: sync errored on a limbo Bead"; cat "$out"; fail=1; }
+grep -qF -- '- [x] TASK-DEMO-002' "$root/openspec/changes/demo/tasks.md" \
+  && echo "ok   - rir-limbo: sync still mirrored the separate closed Bead" \
+  || { echo "FAIL - rir-limbo: sync did not mirror the closed Bead"; cat "$out"; fail=1; }
+grep -qF -- '- [ ] TASK-DEMO-001' "$root/openspec/changes/demo/tasks.md" \
+  && echo "ok   - rir-limbo: the limbo Bead's task stays unchecked" \
+  || { echo "FAIL - rir-limbo: limbo task was checked"; fail=1; }
+unset SPECFORGE_ROOT BD_FIXTURE BD_STUB_DIR
+
+# ===========================================================================
 # Scenario: validate() returns a 4-tuple (TASK-RIR-001)
 # (tasks, issues, problems, warnings) — warnings is a list, distinct from
 # problems, so `sync()`'s AuditError path stays keyed on `problems` only.
