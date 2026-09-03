@@ -677,7 +677,7 @@ cp "$TMUX_STUB_DIR/calls.log" "$out"
 check "codex-full: wrapper call carries --agent codex"          "--agent codex"
 check "codex-full: trusted maps to workspace-write sandbox"     "--sandbox workspace-write"
 check "codex-full: trusted maps to approval never"              "--approval never"
-check "codex-full: network disabled"                            "--network off"
+check "codex-full: trusted enables outbound network"            "--network on"
 check "codex-full: openspec/ requested as a read-only root (TASK-TWB-004)" "--readonly-root"
 grep -qE -- "--readonly-root [^ ]*/openspec" "$out" \
   && echo "ok   - codex-full: the read-only root is the session's openspec/ dir" \
@@ -693,16 +693,27 @@ unset SPECFORGE_ROOT
 # ===========================================================================
 export CODEX_ARGV_LOG="$work/codex-argv.log"; : >"$CODEX_ARGV_LOG"
 "$here/session-launch" --agent codex --sandbox read-only --approval on-request \
-  --network off --prompt "$work/codex-full/.specforge/launch-prompts/autonomous.md" \
+  --network on --prompt "$work/codex-full/.specforge/launch-prompts/autonomous.md" \
   --cwd "$work/codex-full" --bead SPEC-cdx >"$out" 2>&1 \
   || { echo "FAIL - codex-wrap: wrapper errored"; cat "$out"; fail=1; }
 cp "$CODEX_ARGV_LOG" "$out"
 check "codex-wrap: passes --cd"                         "<--cd>"
 check "codex-wrap: passes the sandbox mode to --sandbox" "<--sandbox> <read-only>"
 check "codex-wrap: maps approval to --ask-for-approval" "<--ask-for-approval> <on-request>"
-check "codex-wrap: disables network via -c override"   "sandbox_workspace_write.network_access=false"
+check "codex-wrap: --network on enables network via -c override" "sandbox_workspace_write.network_access=true"
+refute "codex-wrap: --network on does not also emit the =false override" "network_access=false"
 refute "codex-wrap: never passes --ignore-rules"       "ignore-rules"
 refute "codex-wrap: never bypasses approvals/sandbox"  "dangerously-bypass"
+
+# ... and --network off emits the =false override (restricted path)
+: >"$CODEX_ARGV_LOG"
+"$here/session-launch" --agent codex --sandbox read-only --approval on-request \
+  --network off --prompt "$work/codex-full/.specforge/launch-prompts/autonomous.md" \
+  --cwd "$work/codex-full" --bead SPEC-cdx >"$out" 2>&1 \
+  || { echo "FAIL - codex-wrap-off: wrapper errored"; cat "$out"; fail=1; }
+cp "$CODEX_ARGV_LOG" "$out"
+check  "codex-wrap-off: --network off disables network via -c override" "sandbox_workspace_write.network_access=false"
+refute "codex-wrap-off: --network off does not emit the =true override" "network_access=true"
 
 # ===========================================================================
 # Scenario: --read-only forces the Codex sandbox to read-only at launch
@@ -715,6 +726,7 @@ export BD_KNOWN="SPEC-cro"
   || { echo "FAIL - codex-ro: launch errored"; cat "$out"; fail=1; }
 cp "$TMUX_STUB_DIR/calls.log" "$out"
 check "codex-ro: --read-only forces --sandbox read-only" "--sandbox read-only"
+check "codex-ro: restricted level keeps outbound network off" "--network off"
 unset SPECFORGE_ROOT
 
 # ===========================================================================
