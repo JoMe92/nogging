@@ -39,9 +39,7 @@ reorder.
 5. **Validate.** Run `scripts/specforge validate` and resolve every problem it
    reports before continuing.
 
-6. **Materialize the Beads.** Run `scripts/specforge materialize <change>`.
-
-7. **Commit the `openspec/` changes as the `planning` writer.** Use a
+6. **Commit the `openspec/` changes as the `planning` writer.** Use a
    Conventional subject (`docs(openspec): …` or `chore(openspec): …`) and set
    the writer, either way works:
 
@@ -52,6 +50,11 @@ reorder.
 
    A planning commit needs no Beads ID token but still needs the Conventional
    subject and the `SpecForge-Writer: planning` trailer (or the env var).
+
+7. **Materialize the Beads.** Run `scripts/specforge materialize <change>`.
+   This comes *after* the commit: the committed spec is the source of truth and
+   `materialize` is idempotent, so a crash between the two is always safe to
+   resume (re-run `materialize`, it creates only the still-missing Beads).
 
 8. **Release the planning lock.** Run `scripts/specforge plan-end`.
 

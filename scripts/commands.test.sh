@@ -94,5 +94,61 @@ grep -q 'plan-end' "$cmd_dir/plan.md" \
   && ok "plan.md releases the lock with plan-end" \
   || bad "plan.md lost its plan-end step"
 
+# --- 4. the canonical planning flow commits the spec before materialize --
+#     (TASK-RIR-005) and the /plan step list matches docs/operating-model.md.
+if python3 - <<'PY'
+import re, sys
+
+COMMIT = r"(as the `planning` writer|SPECFORGE_WRITER=planning)"
+MATERIALIZE = r"materialize|materializes Beads"
+
+bad = 0
+
+# 1. Every surface that states the planning flow puts the planning commit
+#    before materialize (the point of the change). First occurrence of each.
+for f in (".claude/commands/plan.md", ".codex/prompts/plan.md",
+          "docs/operating-model.md", "AGENTS.md", "templates/agents-block.md"):
+    try:
+        t = open(f).read()
+    except OSError as e:
+        print(f"MISSING {f}: {e}"); bad = 1; continue
+    c = re.search(COMMIT, t)
+    m = re.search(MATERIALIZE, t)
+    if not c or not m:
+        print(f"MISSING STEP {f}: commit={bool(c)} materialize={bool(m)}"); bad = 1
+    elif c.start() > m.start():
+        print(f"ORDER {f}: materialize appears before the planning commit"); bad = 1
+
+# 2. The /plan step list matches docs/operating-model.md: the same ordered
+#    sequence of mechanical steps in the /plan command file and in the
+#    operating-model /plan row.
+ORDER = ["plan-begin", r"\bvalidate\b", COMMIT, MATERIALIZE, "plan-end"]
+
+def subseq_ok(text):
+    pos = 0
+    for pat in ORDER:
+        m = re.search(pat, text[pos:])
+        if not m:
+            return False
+        pos += m.end()
+    return True
+
+# the /plan row of the operating-model Commands table
+row = next((ln for ln in open("docs/operating-model.md") if "`/plan` (`plan.md`)" in ln), "")
+if not subseq_ok(row):
+    print(f"OPMODEL /plan row order wrong: {row.strip()[:160]}"); bad = 1
+if not subseq_ok(open(".claude/commands/plan.md").read()):
+    print("plan.md step order does not match the canonical sequence"); bad = 1
+if not subseq_ok(open(".codex/prompts/plan.md").read()):
+    print("codex plan.md step order does not match the canonical sequence"); bad = 1
+
+sys.exit(bad)
+PY
+then
+  ok "planning flow: commit precedes materialize; /plan matches operating-model.md"
+else
+  bad "planning flow: commit-before-materialize order is inconsistent (see output above)"
+fi
+
 if [[ $fail -ne 0 ]]; then echo "command-file checks failed" >&2; exit 1; fi
 echo "all command-file checks passed"
