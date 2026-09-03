@@ -96,6 +96,18 @@ repo, either:
   script sequence plus a persona); or
 - use the auto-loaded `.agents/skills/` OpenSpec skills (see *Skills*).
 
+## Resuming a run after a tool switch
+
+Switching between Claude Code and Codex mid-run is a supported interruption. The
+durable state — `git`, `bd` / Dolt, `openspec/`, `.specforge/state/` — is not
+Claude-specific, and Codex's `SessionStart` hook (`bd codex-hook SessionStart`)
+primes Beads context the same way. So on the next start, before touching
+`bd ready`, a resumed or switched session runs `./scripts/specforge recover`
+and resolves what it reports with the
+[`failure-recovery.md`](failure-recovery.md) § "Resuming an interrupted run"
+playbook — exactly as `AGENTS.md` § "Resuming a run" describes. The protocol is
+tool-neutral; nothing about it is Claude- or Codex-specific.
+
 ## Specialists
 
 Codex has **no in-process subagent mechanism** — there is no Codex equivalent

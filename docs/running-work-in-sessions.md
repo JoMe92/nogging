@@ -52,6 +52,14 @@ not attach you — the session comes up idle at a prompt, waiting for direction.
 Then give it its task: attach (below) and tell it what to do, or point it at a
 briefing file.
 
+If the session is **resuming** interrupted work — a previous session ran out of
+budget or crashed, or you are switching tools — have it run
+`./scripts/specforge recover` and work through what it reports (the
+[`failure-recovery.md`](failure-recovery.md) § "Resuming an interrupted run"
+playbook) *before* it selects work with `bd ready`. `AGENTS.md` § "Resuming a
+run" is the tool-neutral protocol; a `LIMBO` / `resumable` Bead is verified and
+closed, never re-implemented.
+
 ## Choosing the agent
 
 A session runs **Claude Code** by default. To run **OpenAI Codex** instead:

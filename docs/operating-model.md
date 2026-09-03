@@ -76,6 +76,23 @@ hand. A Codex session invokes the same three commands from
 `.codex/` payload, the execpolicy floor, the out-of-process specialist model,
 and the known limitations).
 
+## Resuming an interrupted run
+
+A planning or development run can stop mid-way — the token budget runs out, the
+process crashes, the SSH session drops, or the operator switches tools (Claude
+Code ↔ Codex). On the next start, every session — fresh, resumed, or
+tool-switched — runs `./scripts/specforge recover` **before** `bd ready`.
+`recover` is a read-only diagnostic: it reports stale/held locks,
+committed-but-not-closed (`LIMBO`) Beads, `in_progress` Beads classified
+`resumable` / `stale` / `active`, a materialized-but-uncommitted change (with
+any leftover `materialize-<change>.json` journal), orphan Beads, crashed
+session records and the working-tree state, and exits non-zero when any of
+those needs a decision. The agent then resolves each item with the playbook in
+[`failure-recovery.md`](failure-recovery.md) § "Resuming an interrupted run" —
+in particular, a `LIMBO` / `resumable` Bead's work is already done and is
+verified-and-closed, never re-implemented. `AGENTS.md` § "Resuming a run" states
+the protocol tool-neutrally; `doctor` also prints a one-line `recover` summary.
+
 ## Branches and commits
 
 `main` is the stable integration branch. `develop` is the active integration

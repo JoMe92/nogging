@@ -187,5 +187,16 @@ for f in AGENTS.md templates/agents-block.md; do
   fi
 done
 
+# --- 7. the docs point at recover / the resume protocol (TASK-RIR-009) ---
+grep -q 'specforge recover' docs/operating-model.md \
+  && grep -qi 'Resuming an interrupted run' docs/operating-model.md \
+  && ok "operating-model.md points at recover / the resume protocol" \
+  || bad "operating-model.md is missing the recover pointer"
+for f in docs/using-with-codex.md docs/running-work-in-sessions.md; do
+  grep -q 'specforge recover' "$f" && grep -qi 'resum' "$f" \
+    && ok "$f references the resumption protocol" \
+    || bad "$f does not reference the resumption protocol"
+done
+
 if [[ $fail -ne 0 ]]; then echo "command-file checks failed" >&2; exit 1; fi
 echo "all command-file checks passed"
