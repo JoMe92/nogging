@@ -936,6 +936,17 @@ unset SPECFORGE_ROOT BD_FIXTURE BD_STUB_DIR
 # Scenario: `recover` — the interrupted-run diagnostic (TASK-RIR-003)
 # Read-only; exits non-zero on a LIMBO Bead / stale lock / orphan /
 # materialized-but-uncommitted change / crashed session, zero on a clean repo.
+#
+# TASK-RIR-013 checklist coverage:
+#   - committed-but-open Bead -> LIMBO, non-zero exit ...... rec-limbo (below)
+#   - stale lock .......................................... rec-lock (below)
+#   - in_progress Bead with a commit -> resumable ......... rec-resumable (below)
+#   - old commitless in_progress claim -> stale ........... rec-stale-claim (below)
+#   - mapped Beads + dirty tasks.md -> mat-uncommitted .... rec-matuncommitted (below)
+#   - leftover materialize-<change>.json names the task ... rec-journal (below) + mat-journal
+#   - clean repo exits zero .............................. rec-clean (below)
+#   - validate() LIMBO warning does not redden sync ...... rir-limbo (above)
+#   - recover mutates nothing ........................... rec-readonly (below)
 # ===========================================================================
 
 # --- clean repo exits zero -------------------------------------------------
@@ -1038,6 +1049,27 @@ JSON
   && { echo "FAIL - rec-matuncommitted: recover should exit non-zero"; cat "$out"; fail=1; } \
   || echo "ok   - rec-matuncommitted: recover exits non-zero for a dirty mapped tasks.md"
 check "rec-matuncommitted: names the change and the reason" "demo: tasks.md has uncommitted changes"
+unset SPECFORGE_ROOT BD_FIXTURE BD_STUB_DIR
+
+# --- a hand-placed leftover materialize journal (crash simulation) -----
+# (TASK-RIR-013) distinct from mat-journal's real interrupted run: recover
+# reads a journal that a crash left on disk and names the task with no Bead.
+root="$work/rec-journal"; make_root "$root"
+mkdir -p "$root/.specforge/state"
+cat >"$root/.specforge/state/materialize-demo.json" <<'JSON'
+{
+  "started_at": "2026-09-03T00:00:00+00:00",
+  "tasks_planned": ["TASK-DEMO-001", "TASK-DEMO-002"],
+  "tasks_created": ["TASK-DEMO-001"]
+}
+JSON
+export SPECFORGE_ROOT="$root"
+export BD_FIXTURE="$work/rec-journal-beads.json"; printf '[]\n' >"$BD_FIXTURE"
+export BD_STUB_DIR="$root"
+"$specforge" recover >"$out" 2>&1 \
+  && { echo "FAIL - rec-journal: recover should exit non-zero for a leftover journal"; cat "$out"; fail=1; } \
+  || echo "ok   - rec-journal: recover exits non-zero for a leftover materialize journal"
+check "rec-journal: names the still-missing task" "still needs a Bead: TASK-DEMO-002"
 unset SPECFORGE_ROOT BD_FIXTURE BD_STUB_DIR
 
 # --- recover mutates nothing -----------------------------------------
