@@ -165,6 +165,51 @@ def boundary_state_line():
     if (LOCKS / "planning.lock").exists() and not fresh:
         return "openspec write boundary: LOCKED (stale planning lock present — run plan-end --force)"
     return "openspec write boundary: LOCKED"
+_PREFIX_RULE_RE = re.compile(r"^\s*(?:prefix_rule|regex_rule)\s*\(")
+def _codex_rule_files():
+    """Every Codex execpolicy `.rules` file that could apply here: the user
+    layer `~/.codex/rules/*.rules`, this repo's `.codex/rules/*.rules`, and a
+    bare `<repo>/.rules`. Missing directories are simply skipped."""
+    seen, out = set(), []
+    for d in (Path.home() / ".codex/rules", ROOT / ".codex/rules"):
+        if d.is_dir():
+            out.extend(sorted(p for p in d.glob("*.rules") if p.is_file()))
+    bare = ROOT / ".rules"
+    if bare.is_file():
+        out.append(bare)
+    return [p for p in out if not (p in seen or seen.add(p))]
+def stale_codex_rule_lines():
+    """INFO lines for any Codex `prefix_rule` / `regex_rule` whose command
+    pattern names a filesystem path that does not resolve under ROOT — a rule
+    left behind by an unrelated project (e.g. the `~/.codex/rules/default.rules`
+    `mkdir -p /srv/repos/...` leftover). Hygiene only, never a failure."""
+    lines = []
+    for f in _codex_rule_files():
+        try:
+            text = f.read_text()
+        except OSError:
+            continue
+        for raw in text.splitlines():
+            if not _PREFIX_RULE_RE.match(raw):
+                continue
+            for tok in re.findall(r'"([^"]*)"|\'([^\']*)\'', raw):
+                val = tok[0] or tok[1]
+                # Only tokens that look like a path (absolute, or containing a
+                # separator) are candidates; plain command words are ignored.
+                if not val or (not val.startswith(("/", "~", ".")) and "/" not in val):
+                    continue
+                cand = Path(val).expanduser()
+                if not cand.is_absolute():
+                    cand = (ROOT / val)
+                try:
+                    resolved = cand.resolve()
+                    inside = resolved == ROOT or ROOT in resolved.parents
+                except (OSError, RuntimeError):
+                    inside = False
+                if not (inside and resolved.exists()):
+                    lines.append(f"stale external Codex rule: {raw.strip()} ({f})")
+                    break
+    return lines
 def lock(name, ttl, force=False):
     path = data_dir(LOCKS) / f"{name}.lock"
     if path.exists() and not force:
@@ -946,13 +991,18 @@ def doctor(audit=False):
     notes = [boundary_state_line()]
     for cmd in ("codex",):
         present = subprocess.run(["sh", "-lc", f"command -v {cmd}"], capture_output=True).returncode == 0
-        notes.append(f"{cmd} {'available' if present else 'not installed (optional)'}")
+        notes.append(f"{cmd} available" if present
+                     else f"{cmd} not installed; only needed for the Codex agent path")
     for note in notes: print(f"NOTE  {note}")
+    # Informational only: never a checked failure, never changes the exit code.
+    infos = stale_codex_rule_lines()
+    for info in infos: print(f"INFO  {info}")
     if audit:
         report = data_dir(REPORTS) / f"audit-{dt.datetime.now():%Y%m%dT%H%M%S}.txt"
         report.write_text("\n".join(
             [f"{'OK' if ok else 'FAIL'}  {name}" for name, ok in checks]
-            + [f"NOTE  {note}" for note in notes]) + "\n")
+            + [f"NOTE  {note}" for note in notes]
+            + [f"INFO  {info}" for info in infos]) + "\n")
         print(f"report: {report.relative_to(ROOT)}")
     if any(not ok for _, ok in checks): sys.exit(1)
 def main():

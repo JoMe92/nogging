@@ -655,5 +655,38 @@ grep -qF 'stale' "$work/twb-guard.err" \
 rm -f "$root/.specforge/locks/planning.lock"
 unset SPECFORGE_ROOT BD_FIXTURE
 
+# ===========================================================================
+# Scenario: doctor flags a stale external Codex execpolicy rule (TASK-COB-007)
+# A prefix_rule whose pattern names a path that does not resolve under ROOT is
+# printed as an INFO line naming the rule and its file, and never as a failure.
+# ===========================================================================
+root="$work/codex-doctor"; make_root "$root"
+mkdir -p "$root/.codex/rules"
+cat >"$root/.codex/rules/stale.rules" <<'RULES'
+prefix_rule(pattern=["mkdir", "-p", "/srv/repos/some-other-project"], decision="allow")
+RULES
+cat >"$root/.codex/rules/clean.rules" <<'RULES'
+prefix_rule(pattern=["git", "push"], decision="forbidden")
+prefix_rule(pattern=["cat", "openspec/changes/demo/tasks.md"], decision="allow")
+RULES
+export SPECFORGE_ROOT="$root"
+"$specforge" doctor >"$out" 2>&1 || true
+check "codex-doctor: stale external rule surfaced as INFO" \
+  "INFO  stale external Codex rule:"
+check "codex-doctor: the INFO line names the offending pattern" \
+  "/srv/repos/some-other-project"
+check "codex-doctor: the INFO line names the rules file" "stale.rules"
+if grep -qF -- 'clean.rules' "$out"; then
+  echo "FAIL - codex-doctor: a rule that resolves under ROOT was flagged"; fail=1
+else
+  echo "ok   - codex-doctor: an in-repo rule path is not flagged"
+fi
+if grep -E 'FAIL .*Codex rule' "$out" >/dev/null 2>&1; then
+  echo "FAIL - codex-doctor: the stale rule was treated as a failure"; fail=1
+else
+  echo "ok   - codex-doctor: the stale rule is informational, not a failure"
+fi
+unset SPECFORGE_ROOT
+
 if [[ $fail -ne 0 ]]; then echo "specforge checks failed" >&2; exit 1; fi
 echo "all specforge checks passed"
