@@ -46,6 +46,14 @@ check "launch prompts shipped"     test -f "$repo/.specforge/launch-prompts/auto
 check "reference docs under docs/specforge" test -f "$repo/docs/specforge/architecture.md"
 check "codex guide under docs/specforge" test -f "$repo/docs/specforge/using-with-codex.md"
 check "codex execpolicy floor installed" test -f "$repo/.codex/rules/specforge.rules"
+check "codex floor keeps the always-on classes" \
+  grep -Eq 'pattern=\["sudo"\]' "$repo/.codex/rules/specforge.rules"
+check "codex floor keeps mkfs + variants" \
+  grep -q 'mkfs.ext4' "$repo/.codex/rules/specforge.rules"
+check "codex floor keeps the network-fetch classes" \
+  grep -Eq 'pattern=\["curl"\]' "$repo/.codex/rules/specforge.rules"
+check "codex floor no longer carries a git push rule (restricted-profile / sandbox concern)" \
+  bash -c "! grep -Eq '^[[:space:]]*(prefix|regex)_rule.*push' '$repo/.codex/rules/specforge.rules'"
 check "codex prompt plan.md installed"    test -f "$repo/.codex/prompts/plan.md"
 check "codex prompt discovery-review.md installed" test -f "$repo/.codex/prompts/discovery-review.md"
 check "codex prompt sync-now.md installed" test -f "$repo/.codex/prompts/sync-now.md"
