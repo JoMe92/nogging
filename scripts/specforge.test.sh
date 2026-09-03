@@ -22,6 +22,20 @@ work=$(mktemp -d)
 trap 'rm -f "$out"; rm -rf "$work"' EXIT
 out=$(mktemp)
 
+# --- lint: no test invokes `specforge doctor|validate|audit` unguarded --------
+# Those subcommands exit non-zero on a host missing an optional tool (dolt on a
+# CI runner), and with `set -e` an unguarded call kills the test with no message
+# (SPEC-3wn, then SPEC-v4t / the v1.2.0 CI break). Every call must be `|| true`,
+# `|| rc=...`, or the condition of an `if`/`while`.
+lint_hits=$(grep -RnE '"\$specforge" (doctor|validate|audit)\b' "$repo_root"/scripts \
+  | grep -vE '\|\| (true|rc)|:\s*if ' || true)
+if [[ -n "$lint_hits" ]]; then
+  echo "FAIL - lint: unguarded specforge doctor/validate/audit in a test:"
+  echo "$lint_hits" | sed 's/^/    /'
+  exit 1
+fi
+echo "ok   - lint: every specforge doctor/validate/audit call in a test is guarded"
+
 # A `bd` stub: `list --label discovery --json` and `show <id> --json` read
 # fixture files from $BD_STUB_DIR; everything else is an error.
 mkdir -p "$work/bin"
@@ -597,9 +611,10 @@ rm -f "$root/.specforge/locks/openspec.readonly"
 "$specforge" doctor >"$out" 2>&1 || true
 check "twb-doctor: stale planning lock named as the reason" \
   "LOCKED (stale planning lock present — run plan-end --force)"
-"$specforge" doctor >/dev/null 2>&1; rc_doctor=$?
-# a stale lock + closed boundary is a NOTE, not a checked failure: exit code is
-# whatever the tool-availability checks produce, never reddened by the boundary.
+# a stale lock + closed boundary is a NOTE, not a checked failure: doctor's exit
+# code is whatever the tool-availability checks produce (non-zero on a host
+# without dolt, e.g. CI) and `set -e` must not see it — hence `|| true`.
+"$specforge" doctor >/dev/null 2>&1 || true
 rm -f "$root/.specforge/locks/planning.lock"
 unset SPECFORGE_ROOT BD_FIXTURE
 
