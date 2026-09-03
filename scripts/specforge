@@ -366,6 +366,15 @@ def record_failure(exc):
     return record
 def clear_failure():
     FAILURE_RECORD.unlink(missing_ok=True)
+def read_last_success():
+    """The parsed `last-success.json`, or `{}` when it is missing or unreadable.
+    A legacy `{"at": ...}`-only file (no `branch`) reads back fine — callers use
+    `.get("branch")`."""
+    try:
+        data = json.loads((STATE / "last-success.json").read_text())
+        return data if isinstance(data, dict) else {}
+    except (ValueError, OSError):
+        return {}
 def sync():
     state, info = repo_sync_state()
     if state == "skip":
@@ -404,7 +413,12 @@ def sync():
                 env={**os.environ, "SPECFORGE_WRITER": "sync"})
             print(f"synced {len(set(changed))} file(s)")
         else: print("sync: no changes")
-        data_dir(STATE).joinpath("last-success.json").write_text(json.dumps({"at": now()}, indent=2) + "\n")
+        prev = read_last_success()
+        prev_branch = prev.get("branch")
+        if prev_branch and prev_branch != branch:
+            print(f"sync: note — mirroring on {branch} (last run was on {prev_branch})")
+        data_dir(STATE).joinpath("last-success.json").write_text(
+            json.dumps({"at": now(), "branch": branch}, indent=2) + "\n")
         clear_failure()
     except Exception as exc:
         record_failure(exc)
