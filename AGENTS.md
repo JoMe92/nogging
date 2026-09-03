@@ -44,6 +44,22 @@ writable only during a planning session that holds
 the write guard consults it. Each tool also enforces this in its own way — see
 *Tool notes*.
 
+## Resuming a run
+
+A planning or development run can stop mid-way — token budget, a crash, an SSH
+drop, or a deliberate tool switch (Claude Code ↔ Codex). On session start —
+fresh, resumed, or after a tool switch — **before selecting work with
+`bd ready`**:
+
+1. Let the `SessionStart` hook prime Beads context (or run `bd prime`).
+2. Run `./scripts/specforge recover`.
+3. Resolve every item it reports, using the playbook in
+   `docs/failure-recovery.md` § "Resuming an interrupted run". A `LIMBO` /
+   `resumable` Bead's work is **already done** — verify it (`scripts/test`), add
+   the evidence note, and `bd close` it; **never re-implement it** (that
+   produces a duplicate commit).
+4. Only then select work with `bd ready`.
+
 ## Specialist delegation
 
 Isolated implementation or review work may be delegated to a specialist, but

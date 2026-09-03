@@ -150,5 +150,32 @@ else
   bad "planning flow: commit-before-materialize order is inconsistent (see output above)"
 fi
 
+# --- 5. the resumption protocol + playbook exist (TASK-RIR-007) ----------
+if python3 - <<'PY'
+import re, sys
+bad = 0
+agents = open("AGENTS.md").read()
+m = re.search(r"^##+ Resuming a run\b", agents, re.M)
+if not m:
+    print("AGENTS.md has no 'Resuming a run' section"); bad = 1
+else:
+    body = agents[m.start():m.start()+1200]
+    if "specforge recover" not in body:
+        print("AGENTS.md 'Resuming a run' does not run scripts/specforge recover"); bad = 1
+    if not re.search(r"before[^.]*bd ready", body):
+        print("AGENTS.md 'Resuming a run' must place recover before bd ready"); bad = 1
+fr = open("docs/failure-recovery.md").read()
+if not re.search(r"^##+ Resuming an interrupted run\b", fr, re.M):
+    print("failure-recovery.md has no 'Resuming an interrupted run' playbook"); bad = 1
+if "LIMBO" not in fr or not re.search(r"[Dd]o not re-implement|[Nn]ever re-implement", fr):
+    print("failure-recovery.md playbook missing the LIMBO 'do not re-implement' rule"); bad = 1
+sys.exit(bad)
+PY
+then
+  ok "resumption protocol: AGENTS.md 'Resuming a run' + failure-recovery.md playbook present"
+else
+  bad "resumption protocol: missing or malformed (see output above)"
+fi
+
 if [[ $fail -ne 0 ]]; then echo "command-file checks failed" >&2; exit 1; fi
 echo "all command-file checks passed"

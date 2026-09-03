@@ -5,6 +5,27 @@ mapping errors and the last sync failure without modifying data. Run
 `./scripts/specforge audit` for the same invariant checks plus a timestamped
 local report.
 
+## Resuming an interrupted run
+
+A planning or development run can stop mid-way — the token budget runs out, the
+process crashes, the SSH session drops, or the operator switches tools. On the
+next start — fresh, resumed, or after a tool switch — every agent runs
+`./scripts/specforge recover` **before** `bd ready` (see `AGENTS.md` §
+"Resuming a run"), then resolves what it reports with this playbook:
+
+| `recover` reports | Action |
+| --- | --- |
+| Stale `planning.lock` | Confirm no planning session is actually running, then `./scripts/specforge plan-end --force`. |
+| Fresh `planning.lock`, not yours | A planning session is active elsewhere. Do not start execution that depends on unmaterialized work — wait or coordinate. |
+| `LIMBO: <id> committed … but status=<status>` | The work is **done**. `git show` the commit, run `scripts/test`, add the evidence note (`bd update <id> --append-notes "commit <sha>; <evidence>"`), `bd close <id>`. **Do not re-implement it** — that produces a duplicate commit. |
+| `in_progress` Bead, `resumable` | Same as `LIMBO`: it has a commit, so the work is done — verify, note, close. Never re-implement. |
+| `in_progress` Bead, `stale`, with a diff | Decide: finish the uncommitted diff, or `git stash` it and re-claim clean. Record the decision in the Bead note. |
+| `in_progress` Bead, `stale`, no diff | Likely never started. Re-claim and work it normally. |
+| Orphan Bead | Planning session only: restore the task line, or cancel the Bead with a recorded reason (§ "Orphaned Beads and bad mirrors"). An execution agent stops and reports it. |
+| Materialized-but-uncommitted change | If the `.md` files are complete: commit them (`SPECFORGE_WRITER=planning`), re-run `./scripts/specforge materialize <change>` (idempotent — a leftover `materialize-<change>.json` journal names what is left), continue. If a `tasks.md` write was truncated: repair it against the Beads that exist, then commit. |
+| Crashed session record | `./scripts/specforge session stop <name>` then `./scripts/specforge session cleanup <name>` (see § "A crashed or stuck supervised session"). |
+| Working tree mid-merge / mid-rebase | Finish or abort the operation before resuming; the sync timer skips while it is in progress. |
+
 ## A failed sync
 
 A failed sync writes `.specforge/state/sync-failure.json` and appends the same
