@@ -61,6 +61,39 @@ idempotent across re-runs through a stable `<!-- specforge:<id>:<closed_at> -->`
 event key; a later note amendment moves the timestamp and appends a fresh entry
 rather than rewriting history.
 
+### Safe-state gate
+
+Before it takes the sync lock, `sync` classifies the repository with
+`repo_sync_state()` and **skips the tick** — no mirroring, no commit — when the
+working tree is not a safe place to write:
+
+- a fresh `planning.lock` is held (planning and sync must not interleave);
+- a merge, rebase, cherry-pick, or bisect is in progress (`.git/MERGE_HEAD`,
+  `rebase-merge/`, `rebase-apply/`, `CHERRY_PICK_HEAD`, `BISECT_LOG`, with the
+  git directory found via `git rev-parse --git-dir` so linked worktrees work);
+- `HEAD` is detached;
+- `HEAD` is on a branch in `sync_protected_branches` (default `["main",
+  "develop"]`).
+
+A skip is a **no-op, not a failure**: it prints `sync: skipped (<reason>)`,
+exits 0, writes no `sync-failure.json`, applies no backoff, and leaves
+`last-success.json` untouched, so the next tick simply retries once the reason
+clears. This is weakness **W5** from the crash-resilience handoff — the timer
+firing every 30 s used to drop a `chore(sync)` commit onto whatever branch
+`HEAD` pointed at, including mid-`git switch` during an integration.
+
+`sync --now` (operator-invoked, `/sync-now`) passes `on_request=True`, which
+**allows a protected branch** — a deliberate catch-up after working directly on
+`develop` — but still refuses a genuine mid-merge/rebase/cherry-pick/bisect or a
+held planning lock, telling the operator to finish that first.
+
+A successful sync records the branch it committed on in `last-success.json`
+(`{"at", "branch"}`; a legacy `at`-only file still reads) and prints
+`sync: note — mirroring on <new> (last run was on <old>)` when it changes. A
+skipped tick writes `.specforge/state/last-skip.json` (`{"at", "reason"}`,
+cleared by the next real or no-op sync); `doctor` surfaces it as
+`NOTE  last sync skipped: <reason> (<age>)` so a stalled mirror is visible.
+
 ### Sync failure handling
 
 `scripts/specforge` takes a short exclusive file lock for each sync. Planning

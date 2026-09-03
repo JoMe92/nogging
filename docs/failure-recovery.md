@@ -31,6 +31,31 @@ Do not edit the execution log or its event keys by hand.
 For a stale planning lock, confirm its process is gone and run
 `./scripts/specforge plan-end --force`.
 
+## The sync keeps skipping
+
+The timer-driven `sync` refuses to mirror when the repository is not a safe
+place to commit, and a skip is a no-op — no failure record, so `sync-failure.json`
+stays empty. If closed Beads are not being mirrored, run
+`./scripts/specforge doctor`: a `NOTE  last sync skipped: <reason> (<age>)` line
+names why the most recent tick skipped. The reasons and their fixes:
+
+- **`on protected branch <b>`** — `HEAD` is on `main` or `develop`. Move to a
+  change branch (the operating model: one branch per change) and the next tick
+  mirrors normally, or run `./scripts/specforge sync --now` for a deliberate
+  one-off catch-up on that branch. To change the policy, edit
+  `sync_protected_branches` in `.specforge/config.json` (an operator who really
+  does day-to-day work on `develop` can set it to `["main"]`).
+- **`planning session active`** — a planning session holds `planning.lock`.
+  This is deliberate; the mirror resumes after `plan-end`. If the lock is stale,
+  `./scripts/specforge plan-end --force`.
+- **`<op> in progress`** (merge / rebase / cherry-pick / bisect) — finish or
+  abort the operation; the next tick then mirrors. `sync --now` also refuses
+  this one.
+- **`detached HEAD`** — check out a branch.
+
+`last-skip.json` is cleared automatically by the next real or no-op sync; it is
+local and safe to delete.
+
 ## Discoveries closed before review
 
 `./scripts/specforge discoveries` lists every `discovery`-labelled Bead
