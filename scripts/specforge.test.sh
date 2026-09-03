@@ -187,7 +187,11 @@ case "${1:-}" in
   list)  cat "$BD_FIXTURE" ;;
   show)  f="${BD_STUB_DIR:-/nonexistent}/show-${2:-}.json"
          if [[ -f "$f" ]]; then cat "$f"; else echo '[]'; fi ;;
-  create) printf '%s\n' "$*" >>"${BD_CREATE_LOG:-/dev/null}"; echo "created stub issue" ;;
+  create) printf '%s\n' "$*" >>"${BD_CREATE_LOG:-/dev/null}"
+          if [[ -n "${BD_CREATE_FAIL:-}" && "$*" == *"${BD_CREATE_FAIL}"* ]]; then
+            echo "stub bd create: forced failure for ${BD_CREATE_FAIL}" >&2; exit 1
+          fi
+          echo "created stub issue" ;;
   *) echo "unexpected bd call: $*" >&2; exit 1 ;;
 esac
 STUB
@@ -294,7 +298,50 @@ JSON
 grep -qF 'already materialized TASK-DEMO-001' "$out" \
   && echo "ok   - mat-idem: the closed Bead's task counts as materialized" \
   || { echo "FAIL - mat-idem: closed task not recognised"; cat "$out"; fail=1; }
+[[ ! -f "$root/.specforge/state/materialize-demo.json" ]] \
+  && echo "ok   - mat-idem: the materialize journal is deleted on clean completion" \
+  || { echo "FAIL - mat-idem: journal left behind after a clean run"; fail=1; }
 unset SPECFORGE_ROOT BD_CREATE_LOG
+
+# --- Scenario: an interrupted materialize leaves a resumable journal -------
+# (TASK-RIR-006) The journal names planned vs created tasks; recover reads a
+# leftover one; a resumed run completes and removes it.
+root="$work/mat-journal"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export BD_FIXTURE="$work/mat-journal-beads.json"; printf '[]\n' >"$BD_FIXTURE"
+export BD_STUB_DIR="$root"
+export BD_CREATE_LOG="$work/mat-journal-create.log"; : >"$BD_CREATE_LOG"
+export BD_CREATE_FAIL="TASK-DEMO-002"
+"$specforge" materialize demo >"$out" 2>&1 \
+  && { echo "FAIL - mat-journal: materialize should fail on the forced bd create error"; fail=1; } \
+  || echo "ok   - mat-journal: materialize errors out mid-run"
+jr="$root/.specforge/state/materialize-demo.json"
+[[ -f "$jr" ]] \
+  && echo "ok   - mat-journal: a journal is left behind after the interrupted run" \
+  || { echo "FAIL - mat-journal: no journal after interruption"; cat "$out"; fail=1; }
+grep -qF '"tasks_planned"' "$jr" && grep -qF 'TASK-DEMO-001' "$jr" && grep -qF 'TASK-DEMO-002' "$jr" \
+  && echo "ok   - mat-journal: journal records the planned tasks" \
+  || { echo "FAIL - mat-journal: journal missing planned tasks"; cat "$jr"; fail=1; }
+"$specforge" recover >"$out" 2>&1 || true
+check "mat-journal: recover names the task still needing a Bead" "still needs a Bead: TASK-DEMO-002"
+# resume — TASK-DEMO-001 now has a Bead, the forced failure is cleared
+unset BD_CREATE_FAIL
+cat >"$BD_FIXTURE" <<'JSON'
+[
+  {"id": "SPEC-mj1", "status": "open",
+   "labels": ["openspec:change:demo", "openspec:task:TASK-DEMO-001"]}
+]
+JSON
+"$specforge" materialize demo >"$out" 2>&1 \
+  || { echo "FAIL - mat-journal: resumed materialize errored"; cat "$out"; fail=1; }
+grep -qF 'already materialized TASK-DEMO-001' "$out" \
+  && grep -qF 'materialized TASK-DEMO-002' "$out" \
+  && echo "ok   - mat-journal: the resume creates only the still-missing Bead" \
+  || { echo "FAIL - mat-journal: resume did not finish cleanly"; cat "$out"; fail=1; }
+[[ ! -f "$jr" ]] \
+  && echo "ok   - mat-journal: the journal is removed once every task has a Bead" \
+  || { echo "FAIL - mat-journal: journal survived a clean resume"; cat "$jr"; fail=1; }
+unset SPECFORGE_ROOT BD_FIXTURE BD_STUB_DIR BD_CREATE_LOG
 
 # --- Scenario: a permanent (audit) failure is recorded, not retried --------
 root="$work/fail-perm"; make_root "$root"

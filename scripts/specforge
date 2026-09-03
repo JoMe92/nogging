@@ -294,12 +294,29 @@ def materialize(change):
     # recreated (discovery SPEC-dvu: a partly-done change was duplicating the
     # Beads of its finished tasks on a re-run).
     existing = {mapping(issue)[1] for issue in issues if mapping(issue)[0] == change}
+    # A resumable journal: which tasks this run set out to create, and which it
+    # has a Bead for so far. A task whose Bead already exists counts as created;
+    # `tasks_planned` minus `tasks_created` is exactly what a resumed run (or
+    # `recover`) still needs. Written before the first `bd create`, updated after
+    # each, deleted on clean completion.
+    planned = [task for task, _ in selected]
+    created = [task for task in planned if task in existing]
+    journal = data_dir(STATE) / f"materialize-{change}.json"
+    started = now()
+    def write_journal():
+        journal.write_text(json.dumps(
+            {"started_at": started, "tasks_planned": planned, "tasks_created": sorted(created)},
+            indent=2, sort_keys=True) + "\n")
+    write_journal()
     for task, info in selected:
         if task in existing:
             print(f"already materialized {task}")
             continue
         run(CFG["beads_command"], "create", "--title", f"{task}: {info['title']}", "--type", "task", "--labels", f"openspec:change:{change},openspec:task:{task}")
+        created.append(task)
+        write_journal()
         print(f"materialized {task}")
+    journal.unlink(missing_ok=True)
 def commit_refs(issue):
     """Implementation commit references for a closed Bead, determined without a
     native Beads field:
