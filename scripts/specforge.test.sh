@@ -499,6 +499,150 @@ kill "$daemon_pid" 2>/dev/null || true
 unset SPECFORGE_ROOT
 
 # ===========================================================================
+# sync-safety (TASK-STS-001..007): the timer-driven sync refuses an unsafe
+# repository state and records why; `sync --now` overrides only a protected
+# branch. All fixtures live inside the SPECFORGE_ROOT scratch repo — the real
+# planning lock and the real .git are never touched.
+# ===========================================================================
+
+# --- Scenario: a held fresh planning lock -> skip, no failure, no-op --------
+root="$work/sts-planlock"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export BD_FIXTURE="$work/sts-planlock-beads.json"; printf '[]\n' >"$BD_FIXTURE"
+seed='{"at":"2020-01-01T00:00:00+00:00","branch":"seed-branch"}'
+printf '%s\n' "$seed" >"$root/.specforge/state/last-success.json"
+held="$(date -u +%Y-%m-%dT%H:%M:%S+00:00)"
+printf '{"pid":1,"host":"h","created_at":"%s"}\n' "$held" \
+  >"$root/.specforge/locks/planning.lock"
+"$specforge" sync >"$out" 2>&1 || { echo "FAIL - sts-planlock: sync exited non-zero"; cat "$out"; fail=1; }
+check "sts-planlock: skip reason printed" "sync: skipped (planning session active)"
+[[ ! -f "$root/.specforge/state/sync-failure.json" ]] \
+  && echo "ok   - sts-planlock: no failure record for a skipped tick" \
+  || { echo "FAIL - sts-planlock: failure record written on skip"; fail=1; }
+[[ "$(cat "$root/.specforge/state/last-success.json")" == "$seed" ]] \
+  && echo "ok   - sts-planlock: last-success.json left untouched" \
+  || { echo "FAIL - sts-planlock: last-success.json changed on skip"; cat "$root/.specforge/state/last-success.json"; fail=1; }
+grep -qF -- '"reason": "planning session active"' "$root/.specforge/state/last-skip.json" \
+  && echo "ok   - sts-planlock: last-skip.json records the reason" \
+  || { echo "FAIL - sts-planlock: last-skip.json missing or wrong"; fail=1; }
+"$specforge" doctor >"$out" 2>&1 || true
+check "sts-planlock: doctor surfaces the stalled mirror" "last sync skipped: planning session active"
+rm -f "$root/.specforge/locks/planning.lock"
+unset SPECFORGE_ROOT
+
+# --- Scenario: a merge in progress -> skip; sync --now still refuses it -----
+root="$work/sts-merge"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export BD_FIXTURE="$work/sts-merge-beads.json"; printf '[]\n' >"$BD_FIXTURE"
+touch "$root/.git/MERGE_HEAD"
+"$specforge" sync >"$out" 2>&1 || { echo "FAIL - sts-merge: sync exited non-zero"; cat "$out"; fail=1; }
+check "sts-merge: timer skips a mid-merge" "sync: skipped (merge in progress)"
+[[ ! -f "$root/.specforge/state/sync-failure.json" ]] \
+  && echo "ok   - sts-merge: no failure record on a mid-merge skip" \
+  || { echo "FAIL - sts-merge: failure record on mid-merge skip"; fail=1; }
+"$specforge" sync --now >"$out" 2>&1 || { echo "FAIL - sts-merge: sync --now exited non-zero"; cat "$out"; fail=1; }
+check "sts-merge: sync --now refuses a mid-merge" "finish that first"
+rm -f "$root/.git/MERGE_HEAD"
+unset SPECFORGE_ROOT
+
+# --- Scenario: a detached HEAD -> skip -------------------------------------
+root="$work/sts-detached"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export BD_FIXTURE="$work/sts-detached-beads.json"; printf '[]\n' >"$BD_FIXTURE"
+git -C "$root" checkout -q --detach
+"$specforge" sync >"$out" 2>&1 || { echo "FAIL - sts-detached: sync exited non-zero"; cat "$out"; fail=1; }
+check "sts-detached: timer skips a detached HEAD" "sync: skipped (detached HEAD)"
+unset SPECFORGE_ROOT
+
+# --- Scenario: HEAD on develop -> timer skips, sync --now proceeds ---------
+root="$work/sts-protected"; make_root "$root"
+git -C "$root" checkout -q -b develop
+git -C "$root" commit -q --allow-empty -m "feat(demo): protected thing [SPEC-p1]"
+export SPECFORGE_ROOT="$root"
+export BD_FIXTURE="$work/sts-protected-beads.json"
+export BD_STUB_DIR="$root"
+cat >"$BD_FIXTURE" <<'JSON'
+[
+  {"id": "SPEC-p1", "status": "closed", "closed_at": "2026-09-02T10:00:00Z",
+   "notes": "did the protected thing",
+   "labels": ["openspec:change:demo", "openspec:task:TASK-DEMO-001"]}
+]
+JSON
+"$specforge" sync >"$out" 2>&1 || { echo "FAIL - sts-protected: timer sync exited non-zero"; cat "$out"; fail=1; }
+check "sts-protected: timer skips a protected branch" "sync: skipped (on protected branch develop)"
+grep -qF -- '- [ ] TASK-DEMO-001' "$root/openspec/changes/demo/tasks.md" \
+  && echo "ok   - sts-protected: the timer skip left the checkbox unflipped" \
+  || { echo "FAIL - sts-protected: checkbox flipped on a protected branch"; fail=1; }
+"$specforge" sync --now >"$out" 2>&1 || { echo "FAIL - sts-protected: sync --now exited non-zero"; cat "$out"; fail=1; }
+grep -qF -- '- [x] TASK-DEMO-001' "$root/openspec/changes/demo/tasks.md" \
+  && echo "ok   - sts-protected: sync --now proceeds on a protected branch" \
+  || { echo "FAIL - sts-protected: sync --now did not mirror on develop"; cat "$out"; fail=1; }
+grep -qF -- '"branch": "develop"' "$root/.specforge/state/last-success.json" \
+  && echo "ok   - sts-protected: last-success.json records the develop branch" \
+  || { echo "FAIL - sts-protected: branch not recorded"; cat "$root/.specforge/state/last-success.json"; fail=1; }
+[[ ! -f "$root/.specforge/state/last-skip.json" ]] \
+  && echo "ok   - sts-protected: the successful sync --now cleared last-skip.json" \
+  || { echo "FAIL - sts-protected: last-skip.json not cleared by a successful sync"; fail=1; }
+unset SPECFORGE_ROOT BD_STUB_DIR
+
+# --- Scenario: the branch changes between runs -> note + recorded branch ---
+root="$work/sts-branchnote"; make_root "$root"
+git -C "$root" checkout -q -b feat/one
+git -C "$root" commit -q --allow-empty -m "feat(demo): one [SPEC-o1]"
+export SPECFORGE_ROOT="$root"
+export BD_FIXTURE="$work/sts-branchnote-beads.json"
+export BD_STUB_DIR="$root"
+cat >"$BD_FIXTURE" <<'JSON'
+[
+  {"id": "SPEC-o1", "status": "closed", "closed_at": "2026-09-02T10:00:00Z",
+   "notes": "one", "labels": ["openspec:change:demo", "openspec:task:TASK-DEMO-001"]}
+]
+JSON
+"$specforge" sync >"$out" 2>&1 || { echo "FAIL - sts-branchnote: first sync errored"; cat "$out"; fail=1; }
+grep -qF -- '"branch": "feat/one"' "$root/.specforge/state/last-success.json" \
+  && echo "ok   - sts-branchnote: first run records feat/one" \
+  || { echo "FAIL - sts-branchnote: feat/one not recorded"; cat "$root/.specforge/state/last-success.json"; fail=1; }
+git -C "$root" checkout -q -b feat/two
+cat >"$BD_FIXTURE" <<'JSON'
+[
+  {"id": "SPEC-o1", "status": "closed", "closed_at": "2026-09-02T10:00:00Z",
+   "notes": "one", "labels": ["openspec:change:demo", "openspec:task:TASK-DEMO-001"]},
+  {"id": "SPEC-o2", "status": "closed", "closed_at": "2026-09-02T11:00:00Z",
+   "notes": "two", "labels": ["openspec:change:demo", "openspec:task:TASK-DEMO-002"]}
+]
+JSON
+"$specforge" sync >"$out" 2>&1 || { echo "FAIL - sts-branchnote: second sync errored"; cat "$out"; fail=1; }
+check "sts-branchnote: branch-change note printed" "sync: note — mirroring on feat/two (last run was on feat/one)"
+grep -qF -- '"branch": "feat/two"' "$root/.specforge/state/last-success.json" \
+  && echo "ok   - sts-branchnote: last-success.json branch updated to feat/two" \
+  || { echo "FAIL - sts-branchnote: branch not updated"; cat "$root/.specforge/state/last-success.json"; fail=1; }
+unset SPECFORGE_ROOT BD_STUB_DIR
+
+# --- Scenario: a skipped tick retries once the reason clears ---------------
+root="$work/sts-retry"; make_root "$root"
+git -C "$root" commit -q --allow-empty -m "feat(demo): retry thing [SPEC-r1]"
+export SPECFORGE_ROOT="$root"
+export BD_FIXTURE="$work/sts-retry-beads.json"
+export BD_STUB_DIR="$root"
+cat >"$BD_FIXTURE" <<'JSON'
+[
+  {"id": "SPEC-r1", "status": "closed", "closed_at": "2026-09-02T10:00:00Z",
+   "notes": "retry", "labels": ["openspec:change:demo", "openspec:task:TASK-DEMO-001"]}
+]
+JSON
+touch "$root/.git/MERGE_HEAD"
+"$specforge" sync >"$out" 2>&1 || { echo "FAIL - sts-retry: skipped sync exited non-zero"; cat "$out"; fail=1; }
+rm -f "$root/.git/MERGE_HEAD"
+"$specforge" sync >"$out" 2>&1 || { echo "FAIL - sts-retry: recovery sync errored"; cat "$out"; fail=1; }
+grep -qF -- '- [x] TASK-DEMO-001' "$root/openspec/changes/demo/tasks.md" \
+  && echo "ok   - sts-retry: the next tick mirrors once the mid-merge clears" \
+  || { echo "FAIL - sts-retry: outstanding closure not mirrored after the reason cleared"; cat "$out"; fail=1; }
+[[ ! -f "$root/.specforge/state/last-skip.json" ]] \
+  && echo "ok   - sts-retry: last-skip.json cleared by the recovery sync" \
+  || { echo "FAIL - sts-retry: last-skip.json not cleared"; fail=1; }
+unset SPECFORGE_ROOT BD_STUB_DIR
+
+# ===========================================================================
 # Scenario: a fresh install starts with the OpenSpec write boundary closed
 # (TASK-TWB-002). doctor bootstraps the sentinel once, only when nothing has
 # toggled the boundary yet; plan-begin / plan-end toggle it thereafter.
