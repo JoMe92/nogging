@@ -107,16 +107,30 @@ commit as the `planning` writer → `plan-end`; `discoveries` / `--ack`;
 `sync --now`) are agent-neutral.
 
 **Custom-prompt discovery is version-dependent.** codex-cli 0.148 loads custom
-prompts only from `~/.codex/prompts/` (user-scoped); repo-scoped
-`<repo>/.codex/prompts/` is a pending upstream feature. SpecForge ships the
-files repo-scoped and version-controlled anyway. Until Codex reads them from the
-repo, either:
+prompts only from `${CODEX_HOME:-~/.codex}/prompts/` (user-scoped); repo-scoped
+`<repo>/.codex/prompts/` is a pending upstream feature
+([openai/codex#4734](https://github.com/openai/codex/issues/4734),
+[#9848](https://github.com/openai/codex/issues/9848)). SpecForge ships the files
+repo-scoped and version-controlled anyway. Until Codex reads them from the repo,
+either:
 
-- symlink them into your user prompts dir —
-  `mkdir -p ~/.codex/prompts && ln -sfn "$PWD"/.codex/prompts/*.md ~/.codex/prompts/`; or
+- link them into your user prompts dir with the repo helper —
+
+  ```bash
+  ./scripts/specforge codex-prompts-link          # link (idempotent)
+  ./scripts/specforge codex-prompts-link --unlink # remove the specforge-* links
+  ```
+
+  It symlinks each `.codex/prompts/*.md` to
+  `${CODEX_HOME:-~/.codex}/prompts/specforge-<name>.md`, repoints a stale link,
+  and reports (without clobbering) a real file that is in the way. It is
+  **opt-in** — `npx … init`/`update` never writes into `$HOME`. `scripts/specforge
+  doctor` prints a NOTE when the prompts are present but unlinked. or
 - run the `scripts/specforge` steps directly (the prompt files are just the
   script sequence plus a persona); or
-- use the auto-loaded `.agents/skills/` OpenSpec skills (see *Skills*).
+- use the auto-loaded `.agents/skills/` OpenSpec skills (see *Skills*) — the
+  upstream-aligned way to run the same flows, and unaffected by the prompt-scope
+  gap.
 
 ## Resuming a run after a tool switch
 
