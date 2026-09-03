@@ -1151,19 +1151,17 @@ def materialize_journals():
         except (ValueError, OSError):
             out[m.group(1)] = {}
     return out
-def recover():
-    """The interrupted-run diagnostic (handoff §5.1). Strictly read-only: it
-    mutates no Bead and writes no file. Prints what was in flight, section by
-    section (each omitted when it has nothing to say), and exits non-zero when
-    any committed-but-open Bead, stale lock, orphan Bead,
-    materialized-but-uncommitted change, or crashed session record is present."""
+def recover_scan():
+    """Run the interrupted-run checks (handoff §5.1) and return
+    `(sections, attention)` — `sections` a list of `(title, [lines])` with the
+    empty ones dropped, `attention` the human-readable reasons a resume needs a
+    decision. Strictly read-only: mutates no Bead and writes no file. Shared by
+    `recover` (full report + exit code) and `doctor` (summary line)."""
     attention = []          # human-readable reasons for a non-zero exit
+    sections = []
     def section(title, body_lines):
         if body_lines:
-            print(f"== {title} ==")
-            for ln in body_lines:
-                print(f"  {ln}")
-            print()
+            sections.append((title, list(body_lines)))
 
     host = socket.gethostname()
     now_dt = dt.datetime.now(dt.timezone.utc)
@@ -1340,11 +1338,22 @@ def recover():
             ls_lines.append(f"last tick skipped: {srec['reason']} ({humanize_age(srec.get('at'))})")
     section("Last sync", ls_lines)
 
+    return sections, attention
+def recover():
+    """The interrupted-run diagnostic. Prints every non-empty section and exits
+    non-zero when any committed-but-open Bead, stale lock, orphan Bead,
+    materialized-but-uncommitted change, or crashed session record is present."""
+    sections, attention = recover_scan()
+    for title, lines in sections:
+        print(f"== {title} ==")
+        for ln in lines:
+            print(f"  {ln}")
+        print()
     if attention:
         print(f"recover: {len(attention)} item(s) need attention: {', '.join(attention)}")
         sys.exit(1)
     print("recover: nothing in flight — clear to select work with bd ready")
-def doctor(audit=False):
+def doctor(audit=False, with_recover=False):
     # A fresh install starts with the OpenSpec write boundary closed. Bootstrap
     # the sentinel once, only when nothing has toggled the boundary yet (no
     # sentinel and no planning lock). An install whose repo has core.hooksPath
@@ -1384,7 +1393,22 @@ def doctor(audit=False):
         present = subprocess.run(["sh", "-lc", f"command -v {cmd}"], capture_output=True).returncode == 0
         notes.append(f"{cmd} available" if present
                      else f"{cmd} not installed; only needed for the Codex agent path")
+    # The interrupted-run checks: doctor always prints a one-line summary
+    # (`recover` folds the full report). Read-only, like the rest of doctor.
+    try:
+        rsections, rattention = recover_scan()
+    except Exception as exc:
+        rsections, rattention = [], []
+        notes.append(f"recover checks could not run: {exc}")
+    notes.append(f"recover: {len(rattention)} item(s) need attention"
+                 + (f" — {', '.join(rattention)}" if rattention else " (nothing in flight)"))
     for note in notes: print(f"NOTE  {note}")
+    recover_lines = []
+    if with_recover:
+        for title, lines in rsections:
+            recover_lines.append(f"RECOVER  {title}")
+            recover_lines.extend(f"RECOVER    {ln}" for ln in lines)
+        for ln in recover_lines: print(ln)
     # Informational only: never a checked failure, never changes the exit code.
     infos = stale_codex_rule_lines()
     for info in infos: print(f"INFO  {info}")
@@ -1394,13 +1418,19 @@ def doctor(audit=False):
             [f"{'OK' if ok else 'FAIL'}  {name}" for name, ok in checks]
             + [f"WARN  {w}" for w in warnings]
             + [f"NOTE  {note}" for note in notes]
+            + recover_lines
             + [f"INFO  {info}" for info in infos]) + "\n")
         print(f"report: {report.relative_to(ROOT)}")
-    if any(not ok for _, ok in checks): sys.exit(1)
+    # `doctor` keeps its tool-availability exit semantics; `doctor --recover`
+    # additionally fails when the interrupted-run checks flag anything.
+    if any(not ok for _, ok in checks) or (with_recover and rattention): sys.exit(1)
 def main():
     p = argparse.ArgumentParser(); sub = p.add_subparsers(dest="command", required=True)
-    sub.add_parser("validate"); sub.add_parser("doctor"); sub.add_parser("audit")
-    sub.add_parser("recover")
+    sub.add_parser("validate")
+    dp = sub.add_parser("doctor")
+    dp.add_argument("--recover", action="store_true",
+                    help="also run the interrupted-run checks and fail if any need attention")
+    sub.add_parser("audit"); sub.add_parser("recover")
     sy = sub.add_parser("sync"); sy.add_argument("--now", action="store_true",
         help="on-demand: signal a running sync daemon, else run one pass; report sync-lock contention without retrying")
     d = sub.add_parser("discoveries"); d.add_argument("--ack", nargs="+", metavar="BEAD_ID",
@@ -1446,7 +1476,7 @@ def main():
     elif args.command == "sync": sync_now() if args.now else sync()
     elif args.command == "discoveries": ack_discoveries(args.ack) if args.ack else discoveries()
     elif args.command == "session": session_cmd(args)
-    else: doctor(args.command == "audit")
+    else: doctor(args.command == "audit", getattr(args, "recover", False))
 def session_cmd(args):
     if args.session_command == "launch":
         session_launch(args.role, args.bead, args.cwd, args.read_only, args.owner,

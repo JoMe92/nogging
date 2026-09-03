@@ -997,6 +997,31 @@ after_tree="$(git -C "$root" status --porcelain; git -C "$root" rev-parse HEAD)"
 unset SPECFORGE_ROOT BD_FIXTURE BD_STUB_DIR
 
 # ===========================================================================
+# Scenario: doctor runs recover's checks (TASK-RIR-004)
+# Plain `doctor` prints a one-line recover summary NOTE and keeps its
+# tool-availability exit semantics; `doctor --recover` folds the full report
+# and fails when anything needs attention.
+# ===========================================================================
+root="$work/rir-doctor-recover"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export BD_FIXTURE="$work/rir-doctor-recover-beads.json"; printf '[]\n' >"$BD_FIXTURE"
+export BD_STUB_DIR="$root"
+"$specforge" doctor >"$out" 2>&1 || true
+check "rir-doctor-recover: plain doctor prints a recover summary NOTE" "NOTE  recover:"
+refute "rir-doctor-recover: plain doctor does not print the RECOVER block" "RECOVER  "
+printf '{"pid":999999,"host":"ghost","created_at":"2000-01-01T00:00:00+00:00"}\n' \
+  >"$root/.specforge/locks/planning.lock"
+"$specforge" doctor >"$out" 2>&1 || true
+check "rir-doctor-recover: the summary NOTE names the stale lock" "stale planning.lock"
+rc=0; "$specforge" doctor --recover >"$out" 2>&1 || rc=$?
+[[ "$rc" -ne 0 ]] \
+  && echo "ok   - rir-doctor-recover: doctor --recover exits non-zero when recover flags something" \
+  || { echo "FAIL - rir-doctor-recover: doctor --recover should fail on a stale lock"; cat "$out"; fail=1; }
+check "rir-doctor-recover: doctor --recover prints the RECOVER report" "RECOVER  Locks"
+rm -f "$root/.specforge/locks/planning.lock"
+unset SPECFORGE_ROOT BD_FIXTURE BD_STUB_DIR
+
+# ===========================================================================
 # Scenario: validate() returns a 4-tuple (TASK-RIR-001)
 # (tasks, issues, problems, warnings) — warnings is a list, distinct from
 # problems, so `sync()`'s AuditError path stays keyed on `problems` only.
