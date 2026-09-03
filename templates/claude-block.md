@@ -1,15 +1,14 @@
 ## SpecForge
 
-This repository uses the SpecForge operating model. OpenSpec owns approved
-product intent, Beads owns executable work, Git owns the implementation.
+This repository uses the SpecForge operating model. **`AGENTS.md` is the
+canonical instruction file** — read it (and `docs/specforge/`) for the hard
+rules, the write boundary, and the workflow. This block carries only the one
+detail specific to Claude Code.
 
-- **Do not edit `openspec/` outside a planning session.** A `PreToolUse` hook
-  blocks `Edit`/`Write` under `openspec/` unless `.specforge/locks/planning.lock`
-  is held (`./scripts/specforge plan-begin` … `plan-end`).
-- Execution commits must be Conventional Commits carrying a real Beads issue ID,
-  e.g. `feat(area): summary [SPEC-abc]`.
-- Record discoveries on the active Bead with the native `discovery` label plus a
-  human-readable note; never edit `openspec/` to capture them.
+- **Claude-only:** a `PreToolUse` hook (`scripts/hooks/pre-tool-use-openspec-guard`,
+  wired in `.claude/settings.json`) blocks `Edit`/`Write` under `openspec/`
+  unless the planning lock is held. It is a fast in-editor backstop to the
+  tool-neutral write boundary described in `AGENTS.md`; the boundary holds
+  without it.
 
-See `AGENTS.md` and `docs/specforge/` for the full model. Update SpecForge with
-`npx github:JoMe92/specforge update`.
+Update SpecForge with `npx github:JoMe92/specforge update`.
