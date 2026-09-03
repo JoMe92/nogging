@@ -1,6 +1,9 @@
 # SpecForge agent instructions
 
 Read `README.md`, `docs/operating-model.md`, and the active Bead before work.
+This file is the single canonical instruction file for every agent tool.
+Anything tool-specific is confined to the **Tool notes** section at the end;
+the rest applies to every runtime — Claude Code, Codex, or another.
 
 ## Hard rules
 
@@ -31,19 +34,28 @@ Read `README.md`, `docs/operating-model.md`, and the active Bead before work.
        --append-notes "Prose summary: what was found, the evidence, and why it blocks this task."
      ```
 
-## Specialist delegation (Claude Code)
+## The write boundary
 
-Claude Code sessions have a specialist roster in `.claude/agents/` — `architect`,
-`ui-ux-designer`, `backend-engineer`, `frontend-engineer`, `code-reviewer`,
-`test-runner` — invoked through the Task tool. The Lead Agent delegation model is
-described in the *Lead Agent delegation* section of `CLAUDE.md`; the definitions
-themselves live in `.claude/agents/` and are not duplicated here.
+OpenSpec owns approved product intent, Beads owns executable work, Git owns the
+implementation. `openspec/` is **read-only** for every execution agent and is
+writable only during a planning session that holds
+`.specforge/locks/planning.lock` (`./scripts/specforge plan-begin` …
+`plan-end`). The lock toggles a `.specforge/locks/openspec.readonly` sentinel;
+the write guard consults it. Each tool also enforces this in its own way — see
+*Tool notes*.
 
-The tool-neutral rule any agent runtime follows: isolated implementation or
-review work may be delegated to a specialist, but claiming a Bead, closing it,
-and committing stay with the Main Worker, and no delegated context may write
-`openspec/`. A non-Claude tool without a subagent mechanism simply does this work
-inline under the same constraints.
+## Specialist delegation
+
+Isolated implementation or review work may be delegated to a specialist, but
+**claiming a Bead, closing it, writing the evidence note, and committing stay
+with the Main Worker**, and no delegated context may write `openspec/`. A
+specialist works exactly one already-claimed Bead, returns a structured result,
+and never claims, closes, re-statuses, or commits. A plan-relevant finding from
+a specialist is recorded as a discovery by the Main Worker, not the specialist.
+
+How a specialist run is dispatched depends on the tool (see *Tool notes*): an
+in-process subagent where the runtime has one, otherwise a separate supervised
+session or inline work under the same constraints.
 
 ## Supervised sessions
 
@@ -51,14 +63,16 @@ Lead Agent and specialist sessions that SpecForge starts run inside a named
 tmux session on the delivery host, tracked by a durable record under
 `.specforge/state/sessions/` and an append-only log. Operators use
 `scripts/specforge session list | attach | log | stop | cleanup` from a plain
-SSH shell; see `docs/operating-model.md`.
+SSH shell; see `docs/operating-model.md`. `session launch --agent
+{claude|codex}` chooses the agent; the `restricted` / `trusted` authority
+levels are tool-neutral and resolve per agent.
 
 If you are running inside such a session:
 
 - Being launched is not permission to start a Bead. Do not run `bd ready` and
   self-assign work; claim only the Bead the operator names, only when they
   direct it in this session.
-- You have a restricted permission profile (no `git push`, no remote Dolt
+- You have a restricted authority level (no `git push`, no remote Dolt
   sync, no destructive shell). Do not work around it.
 - Never echo a credential or token value and never pass one on a command line.
 
@@ -68,22 +82,22 @@ fast-forward-merge to `develop` — but only for the single named change it was
 started for. Every other hard rule still holds: no `openspec/` edits, no
 touching another change's Beads, discoveries recorded, commit-and-note before
 closing a Bead. A short command floor (`rm -rf`, `sudo`, `dd`, `mkfs`,
-`shutdown`, `reboot`, fork bomb) is denied under every profile.
-
-A specialist delegated **in process** through the Task tool runs inside the
-Lead Agent's session and shares these constraints. A specialist gets its own
-supervised session only when the operator launches one explicitly for isolated
-long-running work; it still works exactly one already-claimed Bead and never
-claims, closes, or commits.
+`shutdown`, `reboot`, fork bomb) is denied under every profile and every agent.
 
 ## Commands
 
-`.claude/commands/{plan,discovery-review,sync-now}.md` are the operator entry
-points (see the *Commands* table in `docs/operating-model.md`); a non-Claude
-tool runs the same steps by hand — `/plan` is `scripts/specforge plan-begin` →
-discovery review → author → `validate` → `materialize <change>` → commit as the
-`planning` writer → `plan-end`; `/discovery-review` is `scripts/specforge
-discoveries` (+ `--ack`); `/sync-now` is `scripts/specforge sync --now`.
+The operator entry points are `/plan`, `/discovery-review` and `/sync-now`
+(see the *Commands* table in `docs/operating-model.md`). Each is a thin wrapper
+over `scripts/specforge`; a tool without a command mechanism runs the same
+steps by hand:
+
+- `/plan` — `scripts/specforge plan-begin` → discovery review → author →
+  `validate` → `materialize <change>` → commit as the `planning` writer →
+  `plan-end`.
+- `/discovery-review` — `scripts/specforge discoveries` (+ `--ack`).
+- `/sync-now` — `scripts/specforge sync --now`.
+
+Where each tool reads those command files is in *Tool notes*.
 
 ## Planning only
 
@@ -91,3 +105,41 @@ The Planning Agent first runs `./scripts/specforge plan-begin`, writes or
 revises OpenSpec, runs validation, materializes Beads, commits, then runs
 `./scripts/specforge plan-end`. If an active Bead loses its task mapping, stop
 and resolve the orphan explicitly; do not delete it.
+
+## Tool notes
+
+Everything above is tool-neutral. The specifics below are per runtime — read
+the subsection for the tool you are running as, and ignore the others.
+
+### Claude Code
+
+- **Write boundary.** In addition to the per-session authority backstop,
+  `openspec/` writes are blocked by a `PreToolUse` hook
+  (`scripts/hooks/pre-tool-use-openspec-guard`) wired in `.claude/settings.json`
+  — it rejects `Edit`/`Write` under `openspec/` unless the planning lock is
+  held.
+- **Specialists.** The roster is `.claude/agents/*.md` — `architect`,
+  `ui-ux-designer`, `backend-engineer`, `frontend-engineer`, `code-reviewer`,
+  `test-runner` — invoked **in process through the Task tool**. The Lead Agent
+  delegation model is the *Lead Agent delegation* section of `CLAUDE.md`.
+- **Operator entry points.** `.claude/commands/{plan,discovery-review,sync-now}.md`.
+
+### Codex
+
+- **Write boundary.** Codex has no per-tool hook. `openspec/` stays read-only
+  through the filesystem write guard (the `.specforge/locks/openspec.readonly`
+  sentinel + the commit hooks); `plan-begin` / `plan-end` toggle it. The
+  command floor is `.codex/rules/specforge.rules` (execpolicy `prefix_rule`
+  lines), loaded once the project's `.codex/` layer is trusted.
+- **Specialists.** Codex has no in-process subagent mechanism. A specialist run
+  is a **separate supervised session**:
+  `scripts/specforge session launch --agent codex --role specialist:<type>
+  --bead <id>`, under every specialist boundary rule above. The six
+  `.claude/agents/*.md` are Claude-Code-only and are not ported to Codex; there
+  is no MCP bridge. Where a separate session is overkill, the Lead Agent does
+  the work inline under the same constraints.
+- **Operator entry points.** `.codex/prompts/{plan,discovery-review,sync-now}.md`
+  (same persona and steps as the Claude commands). On a Codex build that reads
+  custom prompts only from `~/.codex/prompts/`, symlink or copy them there, or
+  run the `scripts/specforge` steps directly. Codex auto-loads the repo's
+  `.agents/skills/**/SKILL.md`, so the OpenSpec skills are available as-is.
