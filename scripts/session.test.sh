@@ -285,6 +285,48 @@ check "reap: a second reap finds nothing" "no vanished active sessions to reap"
 unset SPECFORGE_ROOT
 
 # ===========================================================================
+# Scenario: reap -> cleanup retires the crashed record; a live one is untouched
+# (TASK-RIR-014)
+# ===========================================================================
+root="$work/reapclean"; make_root "$root" 0.2
+export SPECFORGE_ROOT="$root"
+export TMUX_STUB_DIR="$work/reapclean-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-rc1 SPEC-rc2"
+"$specforge" session launch --role lead --bead SPEC-rc1 >/dev/null 2>&1
+"$specforge" session launch --role lead --bead SPEC-rc2 >/dev/null 2>&1
+pick() { ls "$root/.specforge/state/sessions" | grep "^sf-lead-spec-$1-" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//'; }
+dead="$(pick rc1)"
+live="$(pick rc2)"
+deadrec="$root/.specforge/state/sessions/$dead.json"
+liverec="$root/.specforge/state/sessions/$live.json"
+
+rm -f "$TMUX_STUB_DIR/sess-$dead"        # only the first session's tmux vanishes
+"$specforge" session reap >"$out" 2>&1 || { echo "FAIL - reapclean: reap errored"; cat "$out"; fail=1; }
+check "reapclean: reap names only the vanished session" "reaped 1 vanished session(s): $dead"
+[[ "$(record "$deadrec" state)" == "failed" ]] \
+  && echo "ok   - reapclean: the vanished record is failed" \
+  || { echo "FAIL - reapclean: dead state is $(record "$deadrec" state)"; fail=1; }
+[[ "$(record "$liverec" state)" == "running" ]] \
+  && echo "ok   - reapclean: the live record is left running by reap" \
+  || { echo "FAIL - reapclean: live state is $(record "$liverec" state)"; fail=1; }
+
+"$specforge" session cleanup >"$out" 2>&1 || { echo "FAIL - reapclean: cleanup errored"; cat "$out"; fail=1; }
+check "reapclean: cleanup retires the reaped record" "retired $dead"
+[[ "$(record "$deadrec" state)" == "retired" ]] \
+  && echo "ok   - reapclean: reaped record now retired" \
+  || { echo "FAIL - reapclean: dead state is $(record "$deadrec" state)"; fail=1; }
+[[ "$(record "$liverec" state)" == "running" ]] \
+  && echo "ok   - reapclean: the live record is still running after cleanup" \
+  || { echo "FAIL - reapclean: live state is $(record "$liverec" state)"; fail=1; }
+[[ -f "$TMUX_STUB_DIR/sess-$live" ]] \
+  && echo "ok   - reapclean: the live tmux session was not touched" \
+  || { echo "FAIL - reapclean: live tmux session killed"; fail=1; }
+ls "$root/.specforge/state/sessions/$live.log" >/dev/null 2>&1 \
+  && echo "ok   - reapclean: the live session's active log is intact" \
+  || { echo "FAIL - reapclean: live log archived away"; fail=1; }
+unset SPECFORGE_ROOT
+
+# ===========================================================================
 # Scenario: a seeded secret reaches neither the recorded command nor the log
 # ===========================================================================
 root="$work/secret"; make_root "$root"
