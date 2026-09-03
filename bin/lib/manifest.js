@@ -30,6 +30,11 @@ module.exports = {
   // Directories copied verbatim (recursive).
   verbatimDirs: [
     { from: '.agents/skills', to: '.agents/skills' },
+    // The Codex payload: the execpolicy floor (.codex/rules/); the workflow
+    // prompts (.codex/prompts/) are added alongside their files in
+    // TASK-COB-003. Both ride the package "files" list. mergeCodex() preserves
+    // a `bd`-written .codex/hooks.json separately.
+    { from: '.codex/rules', to: '.codex/rules' },
     // launch-profiles ships both the Claude settings files (<level>.json) and
     // the Codex launch specs (<level>.codex.toml); the whole directory rides
     // along, and package.json "files" lists it.

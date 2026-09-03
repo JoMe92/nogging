@@ -13,6 +13,8 @@
     ".agents",
     ".specforge/launch-profiles",
     ".specforge/launch-prompts",
+    ".codex/rules",
+    ".codex/prompts",
     "docs",
     "openspec/config.yaml",
     "AGENTS.md"

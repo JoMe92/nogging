@@ -1,0 +1,50 @@
+# SpecForge Codex execution-policy floor.
+#
+# Codex loads this file (every `*.rules` under `<repo>/.codex/rules/`) once the
+# project's `.codex/` layer is trusted. It is the Codex-side sibling of the
+# Claude launch floor (`FLOOR_DENY` in `scripts/specforge` + the `deny` list in
+# `.specforge/launch-profiles/*.json`): the same command classes are refused for
+# a Codex session started under SpecForge supervision.
+#
+# Grammar note (verified against codex-cli 0.148.0): a rule is
+#   prefix_rule(pattern=[<tokens>], decision="forbidden" | "prompt" | "allow")
+# `decision="deny"` is NOT valid on this version — it raises `invalid decision`.
+# `forbidden` refuses the command outright. Check a command against this file
+# with:  codex execpolicy check --rules .codex/rules/specforge.rules -- <cmd...>
+#
+# A `trusted` / `--full-access` Codex session that must `git push` and
+# `git merge` gets that through the authority-level mapping in
+# `agent-neutral-launch` (a rules variant or an `--ignore-rules`-scoped
+# override), not by weakening this base floor.
+
+# --- no writing to a git remote --------------------------------------------
+prefix_rule(pattern=["git", "push"], decision="forbidden")
+prefix_rule(pattern=["git", "remote"], decision="forbidden")
+prefix_rule(pattern=["git", "config"], decision="forbidden")
+
+# --- no remote Dolt / Beads sync ------------------------------------------
+prefix_rule(pattern=["bd", "sync"], decision="forbidden")
+prefix_rule(pattern=["bd", "dolt", "push"], decision="forbidden")
+prefix_rule(pattern=["bd", "dolt", "pull"], decision="forbidden")
+prefix_rule(pattern=["bd", "dolt", "clone"], decision="forbidden")
+prefix_rule(pattern=["dolt", "push"], decision="forbidden")
+prefix_rule(pattern=["dolt", "pull"], decision="forbidden")
+prefix_rule(pattern=["dolt", "remote"], decision="forbidden")
+
+# --- no destructive host commands ----------------------------------------
+prefix_rule(pattern=["sudo"], decision="forbidden")
+prefix_rule(pattern=["rm", "-rf"], decision="forbidden")
+prefix_rule(pattern=["rm", "-fr"], decision="forbidden")
+prefix_rule(pattern=["dd"], decision="forbidden")
+# `mkfs` and its filesystem-specific variants (`mkfs.ext4`, `mkfs.xfs`, …).
+# A prefix token matches whole words only, so each variant is listed as an
+# alternative — codex-cli 0.148.0 has no regex rule form.
+prefix_rule(pattern=[["mkfs", "mkfs.ext2", "mkfs.ext3", "mkfs.ext4", "mkfs.xfs", "mkfs.btrfs", "mkfs.vfat", "mkfs.fat", "mkfs.f2fs", "mkfs.ntfs", "mkfs.exfat", "mkfs.minix"]], decision="forbidden")
+prefix_rule(pattern=["shutdown"], decision="forbidden")
+prefix_rule(pattern=["reboot"], decision="forbidden")
+prefix_rule(pattern=["systemctl"], decision="forbidden")
+prefix_rule(pattern=["chown"], decision="forbidden")
+
+# --- no outbound network fetch ------------------------------------------
+prefix_rule(pattern=["curl"], decision="forbidden")
+prefix_rule(pattern=["wget"], decision="forbidden")
