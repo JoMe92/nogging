@@ -1247,11 +1247,14 @@ def recover_scan():
         except (ValueError, TypeError):
             age_s = None
         if bid in head_tokens:
+            # A commit carries its token but the Bead is not closed — the same
+            # committed-but-open case as LIMBO, so it needs a decision.
             cls = "resumable"
             attention.append(f"resumable {bid}")
         elif age_s is not None and age_s >= stale_secs:
+            # Claimed long ago (`claim_stale_seconds`) with no commit — reported
+            # for a human's attention but not an exit-code trigger on its own.
             cls = "stale"
-            attention.append(f"stale claim {bid}")
         else:
             cls = "active"
         age_str = humanize_age(updated) if updated else "age unknown"

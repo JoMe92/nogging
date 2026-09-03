@@ -1001,6 +1001,27 @@ JSON
 check "rec-resumable: in_progress Bead with a commit is resumable" "SPEC-rsm [resumable]"
 unset SPECFORGE_ROOT BD_FIXTURE BD_STUB_DIR
 
+# --- an old in_progress claim with no commit is stale (TASK-RIR-010) --
+root="$work/rec-stale-claim"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export BD_FIXTURE="$work/rec-stale-claim-beads.json"
+export BD_STUB_DIR="$root"
+cat >"$BD_FIXTURE" <<'JSON'
+[
+  {"id": "SPEC-old", "status": "in_progress", "updated_at": "2020-01-01T00:00:00Z",
+   "assignee": "someone",
+   "labels": ["openspec:change:demo", "openspec:task:TASK-DEMO-001"]}
+]
+JSON
+grep -q '"claim_stale_seconds"' "$root/.specforge/config.json" \
+  && echo "ok   - rec-stale-claim: config carries claim_stale_seconds" \
+  || { echo "FAIL - rec-stale-claim: claim_stale_seconds not in config"; fail=1; }
+"$specforge" recover >"$out" 2>&1 \
+  && echo "ok   - rec-stale-claim: a stale claim alone does not fail recover" \
+  || { echo "FAIL - rec-stale-claim: recover exited non-zero for a stale claim only"; cat "$out"; fail=1; }
+check "rec-stale-claim: the old claim is labelled stale" "SPEC-old [stale]"
+unset SPECFORGE_ROOT BD_FIXTURE BD_STUB_DIR
+
 # --- a live change with mapped Beads but a dirty tasks.md --------------
 root="$work/rec-matuncommitted"; make_root "$root"
 printf '\n<!-- uncommitted edit -->\n' >>"$root/openspec/changes/demo/tasks.md"

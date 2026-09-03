@@ -8,6 +8,7 @@
   "sync_retry_base_seconds": 30,
   "sync_retry_cap_seconds": 1800,
   "sync_protected_branches": ["main", "develop"],
+  "claim_stale_seconds": 14400,
   "change_states": ["open", "done", "archived"],
   "session_tmux_command": "tmux",
   "session_tmux_socket": "specforge",
