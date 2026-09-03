@@ -851,5 +851,26 @@ else
 fi
 unset SPECFORGE_ROOT
 
+# ===========================================================================
+# Scenario: validate() returns a 4-tuple (TASK-RIR-001)
+# (tasks, issues, problems, warnings) — warnings is a list, distinct from
+# problems, so `sync()`'s AuditError path stays keyed on `problems` only.
+# ===========================================================================
+root="$work/rir-arity"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export BD_FIXTURE="$work/rir-arity-beads.json"; printf '[]\n' >"$BD_FIXTURE"
+arity=$(python3 - "$repo_root/scripts/specforge" <<'PY'
+import sys
+from importlib.machinery import SourceFileLoader
+m = SourceFileLoader("sf_arity", sys.argv[1]).load_module()
+r = m.validate()
+print(len(r), isinstance(r[2], list), isinstance(r[3], list))
+PY
+)
+[[ "$arity" == "4 True True" ]] \
+  && echo "ok   - rir-arity: validate() returns (tasks, issues, problems, warnings)" \
+  || { echo "FAIL - rir-arity: validate() arity/shape is '$arity'"; fail=1; }
+unset SPECFORGE_ROOT BD_FIXTURE
+
 if [[ $fail -ne 0 ]]; then echo "specforge checks failed" >&2; exit 1; fi
 echo "all specforge checks passed"
