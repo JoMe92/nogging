@@ -44,6 +44,14 @@ check "launch profiles ship codex fragments" test -f "$repo/.specforge/launch-pr
 check "launch profiles ship trusted codex fragment" test -f "$repo/.specforge/launch-profiles/trusted.codex.toml"
 check "launch prompts shipped"     test -f "$repo/.specforge/launch-prompts/autonomous.md"
 check "reference docs under docs/specforge" test -f "$repo/docs/specforge/architecture.md"
+check "codex guide under docs/specforge" test -f "$repo/docs/specforge/using-with-codex.md"
+check "codex execpolicy floor installed" test -f "$repo/.codex/rules/specforge.rules"
+check "codex prompt plan.md installed"    test -f "$repo/.codex/prompts/plan.md"
+check "codex prompt discovery-review.md installed" test -f "$repo/.codex/prompts/discovery-review.md"
+check "codex prompt sync-now.md installed" test -f "$repo/.codex/prompts/sync-now.md"
+check "AGENTS.md carries a Tool notes section" grep -q 'Tool notes' "$repo/AGENTS.md"
+check "AGENTS.md Tool notes labels Claude Code"  grep -q 'Claude Code' "$repo/AGENTS.md"
+check "AGENTS.md Tool notes labels Codex"        grep -q 'Codex' "$repo/AGENTS.md"
 check "openspec scaffold written"  test -f "$repo/openspec/config.yaml"
 check "project.md scaffold written" test -f "$repo/openspec/project.md"
 check "config.json written"        test -f "$repo/.specforge/config.json"
@@ -136,6 +144,42 @@ check "CLAUDE.md keeps existing content" grep -q "Existing notes." "$merged/CLAU
 check "CLAUDE.md has one begin marker" [ "$(grep -c 'specforge:begin' "$merged/CLAUDE.md")" = "1" ]
 check "CLAUDE.md has one end marker" [ "$(grep -c 'specforge:end' "$merged/CLAUDE.md")" = "1" ]
 check "AGENTS.md created with block" grep -q "specforge:begin" "$merged/AGENTS.md"
+
+# --- mergeCodex preserves a bd-written .codex/hooks.json ------------------
+codexrepo="$work/codexmerge"
+mkdir -p "$codexrepo/.codex"
+git -C "$codexrepo" init -q
+cat > "$codexrepo/.codex/hooks.json" <<'JSON'
+{
+  "hooks": {
+    "SessionStart": [
+      { "matcher": "startup|resume|clear",
+        "hooks": [ { "type": "command", "command": "bd codex-hook SessionStart" } ] }
+    ]
+  }
+}
+JSON
+printf '[features]\nhooks = true\n' > "$codexrepo/.codex/config.toml"
+hooks_before=$(md5sum < "$codexrepo/.codex/hooks.json")
+toml_before=$(md5sum < "$codexrepo/.codex/config.toml")
+
+( cd "$codexrepo" && node "$cli" init --no-beads --no-systemd >/dev/null )
+( cd "$codexrepo" && node "$cli" init --no-beads --no-systemd >/dev/null )
+
+bd_entries=$(node -e "
+  const h = require('$codexrepo/.codex/hooks.json');
+  const ss = (h.hooks && h.hooks.SessionStart) || [];
+  let n = 0;
+  for (const e of ss) for (const x of (e.hooks||[])) if ((x.command||'') === 'bd codex-hook SessionStart') n++;
+  process.stdout.write(String(n));
+")
+check "mergeCodex keeps the bd SessionStart entry exactly once" [ "$bd_entries" = "1" ]
+check "mergeCodex does not rewrite a valid .codex/hooks.json" \
+  [ "$hooks_before" = "$(md5sum < "$codexrepo/.codex/hooks.json")" ]
+check "mergeCodex never touches .codex/config.toml" \
+  [ "$toml_before" = "$(md5sum < "$codexrepo/.codex/config.toml")" ]
+check "mergeCodex still installs the rules floor alongside" \
+  test -f "$codexrepo/.codex/rules/specforge.rules"
 
 # --- strict idempotency: commit, re-run, expect no tracked diff ----------
 idem="$work/idempotent"
@@ -246,6 +290,11 @@ if command -v npm >/dev/null 2>&1; then
     check "packed install ships trusted codex fragment" test -f "$packrepo/.specforge/launch-profiles/trusted.codex.toml"
     check "packed install ships launch prompts"     test -f "$packrepo/.specforge/launch-prompts/no-autonomous-claim.md"
     check "packed install ships the skills"         test -f "$packrepo/.agents/skills/openspec-propose/SKILL.md"
+    check "packed install ships the codex rules floor" test -f "$packrepo/.codex/rules/specforge.rules"
+    check "packed install ships codex prompt plan.md" test -f "$packrepo/.codex/prompts/plan.md"
+    check "packed install ships codex prompt discovery-review.md" test -f "$packrepo/.codex/prompts/discovery-review.md"
+    check "packed install ships codex prompt sync-now.md" test -f "$packrepo/.codex/prompts/sync-now.md"
+    check "packed install AGENTS.md has Tool notes"  grep -q 'Tool notes' "$packrepo/AGENTS.md"
   else
     echo "ok   - packed-install check skipped (npm pack failed)"
   fi
