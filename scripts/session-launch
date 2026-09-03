@@ -78,7 +78,14 @@ case "$agent" in
     : "${sandbox:=workspace-write}"
     : "${approval:=on-request}"
     set -- --cd "$(pwd)" --sandbox "$sandbox" --ask-for-approval "$approval"
-    [ "$network" = off ] && set -- "$@" -c 'sandbox_workspace_write.network_access=false'
+    # Emit the network_access override explicitly in both directions rather than
+    # omitting it for `on` and leaning on the codex default: the trusted profile
+    # (network on) must be able to `git push` to complete an integration, the
+    # restricted profile (network off) must not.
+    case "$network" in
+      on)  set -- "$@" -c 'sandbox_workspace_write.network_access=true' ;;
+      off) set -- "$@" -c 'sandbox_workspace_write.network_access=false' ;;
+    esac
     if [ -n "$readonly_root" ]; then
       # Make $readonly_root (openspec/) a read-only path. codex exposes
       # --sandbox-state-readable-root only on the `codex sandbox` subcommand in
