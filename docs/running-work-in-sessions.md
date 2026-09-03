@@ -222,7 +222,8 @@ Otherwise: **one session at a time against the repo root.**
 | `session log <name> [--follow]` | print / tail the log; never attaches |
 | `session attach <name> [--read-only]` | attach the terminal; `Ctrl-b d` to detach |
 | `session stop <name> [--reason <text>]` | interrupt, terminate, record a terminal state; idempotent |
-| `session cleanup [<name>]` | retire terminal records; refuses a live one |
+| `session reap` | move vanished active-state records to `failed`; a live one is untouched |
+| `session cleanup [<name>] [--reap]` | retire terminal records; refuses a live one (`--reap` fails the dead ones first) |
 
 Config keys (`.specforge/config.json`): `session_agent` (`claude` |  `codex`,
 default `claude`), `session_tmux_socket`, `session_state_dir`,

@@ -260,7 +260,8 @@ From any plain SSH shell (no `TERM`, no tmux client needed):
 | `session attach <name> [--read-only]` | attach the terminal to a session (`-r` blocks input). The only command that attaches. |
 | `session log <name> [--follow]` | print or tail the append-only log without attaching. |
 | `session stop <name> [--reason <text>]` | interrupt Claude, terminate the pane after the grace period, record `stopped` with `ended_at`/`exit_reason`. Idempotent. |
-| `session cleanup [<name>]` | remove a lingering tmux session, archive-rotate the log, retire the record. **Refuses** a `starting`/`running`/`idle` record — stop it first. |
+| `session reap` | move every active-state record whose tmux session is gone to `failed` (a live one is untouched), so `cleanup` can retire it. |
+| `session cleanup [<name>] [--reap]` | remove a lingering tmux session, archive-rotate the log, retire the record. **Refuses** a `starting`/`running`/`idle` record — stop or `--reap` it first. |
 
 ### Relationship to Task-tool specialists
 

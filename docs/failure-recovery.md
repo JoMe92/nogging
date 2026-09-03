@@ -23,7 +23,7 @@ next start — fresh, resumed, or after a tool switch — every agent runs
 | `in_progress` Bead, `stale`, no diff | Likely never started. Re-claim and work it normally. |
 | Orphan Bead | Planning session only: restore the task line, or cancel the Bead with a recorded reason (§ "Orphaned Beads and bad mirrors"). An execution agent stops and reports it. |
 | Materialized-but-uncommitted change | If the `.md` files are complete: commit them (`SPECFORGE_WRITER=planning`), re-run `./scripts/specforge materialize <change>` (idempotent — a leftover `materialize-<change>.json` journal names what is left), continue. If a `tasks.md` write was truncated: repair it against the Beads that exist, then commit. |
-| Crashed session record | `./scripts/specforge session stop <name>` then `./scripts/specforge session cleanup <name>` (see § "A crashed or stuck supervised session"). |
+| Crashed session record | `./scripts/specforge session reap` then `./scripts/specforge session cleanup` (or `session cleanup --reap`); a still-live session is untouched. See § "A crashed or stuck supervised session". |
 | Working tree mid-merge / mid-rebase | Finish or abort the operation before resuming; the sync timer skips while it is in progress. |
 
 ## A failed sync
@@ -88,13 +88,20 @@ it stops resurfacing. The ledger
 
 ## A crashed or stuck supervised session
 
-`scripts/specforge session list` shows every SpecForge-managed Claude session
-and reconciles each record against live tmux.
+`scripts/specforge session list` shows every SpecForge-managed session and
+reconciles each record against live tmux — a record still in an active state
+whose tmux session is gone is shown as `failed`.
+
+Start with **`scripts/specforge session reap`**: it moves every such vanished
+record to the terminal `failed` state (a still-live session is left untouched),
+which is what lets `session cleanup` retire it. `session cleanup --reap` does
+the reap and the cleanup in one step.
 
 - **Reported `failed`** — the metadata record is still active but the tmux
-  session is gone (the Claude process crashed or was killed outside SpecForge).
-  Read `session log <name>` for the last output, then `session cleanup <name>`
-  to archive the log and retire the record.
+  session is gone (the process crashed or was killed outside SpecForge). Read
+  `session log <name>` for the last output, then `session reap` followed by
+  `session cleanup` (or `session cleanup --reap`) to archive the log and retire
+  the record.
 - **Stuck / hung** — `session log <name> --follow` to see what it is doing,
   `session attach <name>` to intervene, or `session stop <name> --reason
   "<why>"` to interrupt Claude and terminate the tmux session. `stop` is

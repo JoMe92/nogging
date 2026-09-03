@@ -1052,10 +1052,32 @@ def _remove_effective_settings(rec):
     if esp and Path(esp).exists():
         Path(esp).unlink()
         rec["effective_settings_removed_at"] = now()
-def session_cleanup(name):
+def session_reap():
+    """Move every session record in an active state (`starting`/`running`/`idle`)
+    whose tmux session no longer exists to the terminal `failed` state, so a
+    following `session cleanup` can retire it. A record whose tmux session is
+    still live is left untouched. Never starts or kills a tmux session."""
+    live = tmux_sessions()
+    reaped = []
+    for path, rec in session_records():
+        if rec.get("state") in SESSION_ACTIVE_STATES and rec.get("name") not in live:
+            transition(path, rec, "failed",
+                       exit_reason="tmux session vanished during a reap")
+            reaped.append(rec.get("name"))
+    if reaped:
+        print(f"reaped {len(reaped)} vanished session(s): {', '.join(reaped)}")
+        print("run `session cleanup` to retire them")
+    else:
+        print("no vanished active sessions to reap")
+    return reaped
+def session_cleanup(name, reap=False):
     """Remove a lingering tmux session, archive-rotate its log, and retire the
     metadata record. Refuses any record still `starting`, `running` or `idle`
-    - stop it first. With no name, acts only on already-terminal records."""
+    - stop it first. With no name, acts only on already-terminal records.
+    `--reap` first moves vanished active records to `failed` (see
+    `session_reap`), so a single call retires a crashed session."""
+    if reap:
+        session_reap()
     if name:
         path, rec = load_session(name)
         if rec.get("state") in SESSION_ACTIVE_STATES:
@@ -1474,7 +1496,10 @@ def main():
     sa = ssub.add_parser("attach"); sa.add_argument("name"); sa.add_argument("--read-only", action="store_true")
     slg = ssub.add_parser("log"); slg.add_argument("name"); slg.add_argument("--follow", action="store_true")
     sst = ssub.add_parser("stop"); sst.add_argument("name"); sst.add_argument("--reason")
+    ssub.add_parser("reap")
     scl = ssub.add_parser("cleanup"); scl.add_argument("name", nargs="?")
+    scl.add_argument("--reap", action="store_true",
+                     help="first move vanished active sessions to failed, then clean up")
     args = p.parse_args()
     if args.command == "plan-begin":
         lock("planning", CFG["planning_lock_ttl_seconds"], args.force)
@@ -1509,8 +1534,10 @@ def session_cmd(args):
         session_log(args.name, args.follow)
     elif args.session_command == "stop":
         session_stop(args.name, args.reason)
+    elif args.session_command == "reap":
+        session_reap()
     elif args.session_command == "cleanup":
-        session_cleanup(args.name)
+        session_cleanup(args.name, args.reap)
 if __name__ == "__main__":
     try: main()
     except Exception as exc: print(f"specforge: {exc}", file=sys.stderr); sys.exit(1)

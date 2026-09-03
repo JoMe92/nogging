@@ -261,6 +261,30 @@ ls "$root/.specforge/state/sessions/$name.log".archived-* >/dev/null 2>&1 \
 unset SPECFORGE_ROOT
 
 # ===========================================================================
+# Scenario: session reap moves a vanished active record to failed (TASK-RIR-011)
+# ===========================================================================
+root="$work/reap"; make_root "$root" 0.2
+export SPECFORGE_ROOT="$root"
+export TMUX_STUB_DIR="$work/reap-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-rp1"
+"$specforge" session launch --role lead --bead SPEC-rp1 >/dev/null 2>&1
+name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
+rec="$root/.specforge/state/sessions/$name.json"
+rm -f "$TMUX_STUB_DIR"/sess-*        # the tmux session vanishes behind specforge's back
+"$specforge" session reap >"$out" 2>&1 \
+  || { echo "FAIL - reap: errored"; cat "$out"; fail=1; }
+check "reap: reports the vanished session" "reaped 1 vanished session"
+[[ "$(record "$rec" state)" == "failed" ]] \
+  && echo "ok   - reap: the vanished record is now failed" \
+  || { echo "FAIL - reap: state is $(record "$rec" state)"; fail=1; }
+[[ "$(record "$rec" exit_reason)" == "tmux session vanished during a reap" ]] \
+  && echo "ok   - reap: exit_reason records the reap" \
+  || { echo "FAIL - reap: exit_reason is $(record "$rec" exit_reason)"; fail=1; }
+"$specforge" session reap >"$out" 2>&1 || true
+check "reap: a second reap finds nothing" "no vanished active sessions to reap"
+unset SPECFORGE_ROOT
+
+# ===========================================================================
 # Scenario: a seeded secret reaches neither the recorded command nor the log
 # ===========================================================================
 root="$work/secret"; make_root "$root"
