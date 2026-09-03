@@ -2,14 +2,22 @@
 # `session launch --agent codex` session. The Codex-side sibling of
 # trusted.json: it runs without approval prompts (`never`) so a session can
 # execute one named change end to end, while still keeping the workspace-write
-# sandbox and denying outbound network. `--full-access` selects this level.
+# sandbox. `--full-access` selects this level.
+#
+# Network split (mirrors trusted.json, which allows `git push`): the trusted
+# level enables outbound network (`network_access = true`) so a trusted Codex
+# Lead session can push a branch and push `develop` to complete an integration
+# itself, no PR — exactly like the Claude trusted path. `curl` / `wget` stay
+# refused by the always-on `.codex/rules/specforge.rules` floor. The
+# `restricted` level keeps `network_access = false`.
 #
 # Keys (all three are required; `session_launch()` reads exactly these):
 #   sandbox           one of read-only | workspace-write | danger-full-access
 #                     -> codex --sandbox <mode>
 #   ask_for_approval  one of untrusted | on-request | never
 #                     -> codex --ask-for-approval <policy>
-#   network_access    bool; false -> codex -c 'sandbox_workspace_write.network_access=false'
+#   network_access    bool; true  -> codex -c 'sandbox_workspace_write.network_access=true'
+#                           false -> codex -c 'sandbox_workspace_write.network_access=false'
 sandbox          = "workspace-write"
 ask_for_approval = "never"
-network_access   = false
+network_access   = true
