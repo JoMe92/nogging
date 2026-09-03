@@ -375,6 +375,27 @@ def read_last_success():
         return data if isinstance(data, dict) else {}
     except (ValueError, OSError):
         return {}
+SKIP_RECORD = STATE / "last-skip.json"
+def record_skip(reason):
+    """Persist why the most recent tick skipped, so a mirror that has quietly
+    stalled (a long planning session, a forgotten mid-merge) is visible to
+    `doctor`. Cleared by the next real or no-op sync."""
+    data_dir(STATE).joinpath("last-skip.json").write_text(
+        json.dumps({"at": now(), "reason": reason}, indent=2) + "\n")
+def clear_skip():
+    SKIP_RECORD.unlink(missing_ok=True)
+def humanize_age(iso):
+    """A compact age string (`45s`, `12m`, `3h`, `2d`) for an ISO timestamp, or
+    `age unknown` when it will not parse."""
+    try:
+        secs = int((dt.datetime.now(dt.timezone.utc)
+                    - dt.datetime.fromisoformat(iso)).total_seconds())
+    except (ValueError, TypeError):
+        return "age unknown"
+    for unit, size in (("d", 86400), ("h", 3600), ("m", 60)):
+        if secs >= size:
+            return f"{secs // size}{unit}"
+    return f"{max(secs, 0)}s"
 def sync(on_request=False):
     state, info = repo_sync_state(on_request=on_request)
     if state == "skip":
@@ -383,6 +404,7 @@ def sync(on_request=False):
         # `sync --now` (on_request) is allowed on a protected branch but a
         # genuine mid-operation / held planning lock still refuses here — the
         # operator has to finish that first.
+        record_skip(info)
         if on_request:
             print(f"sync --now: refused — {info}; finish that first, then rerun")
         else:
@@ -426,6 +448,7 @@ def sync(on_request=False):
         data_dir(STATE).joinpath("last-success.json").write_text(
             json.dumps({"at": now(), "branch": branch}, indent=2) + "\n")
         clear_failure()
+        clear_skip()
     except Exception as exc:
         record_failure(exc)
         raise
@@ -1062,6 +1085,12 @@ def doctor(audit=False):
     # Optional tools: reported as a note, never a checked failure — a missing
     # one does not redden `doctor` or change its exit code.
     notes = [boundary_state_line()]
+    if SKIP_RECORD.exists():
+        try: srec = json.loads(SKIP_RECORD.read_text())
+        except (ValueError, OSError): srec = {}
+        if srec.get("reason"):
+            notes.append(f"last sync skipped: {srec['reason']} "
+                         f"({humanize_age(srec.get('at'))})")
     for cmd in ("codex",):
         present = subprocess.run(["sh", "-lc", f"command -v {cmd}"], capture_output=True).returncode == 0
         notes.append(f"{cmd} available" if present
