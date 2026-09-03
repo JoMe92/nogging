@@ -44,6 +44,17 @@ A specialist owns none of steps 2, 8, or 9: claiming, closing, status changes,
 the evidence note, and the commit stay with the Lead Agent. See the *Lead Agent
 delegation* section of `CLAUDE.md` and the definitions in `.claude/agents/`.
 
+The six specialists in `.claude/agents/` are a **Claude Code** mechanism — they
+are Task-tool subagents and are not ported to Codex, and there is no MCP bridge
+exposing them. A **Codex** Lead Agent has no in-process subagent mechanism, so
+it either does the isolated work inline under the same constraints, or — when
+the operator wants a separate observable process — starts one with
+`scripts/specforge session launch --agent codex --role specialist:<type>
+--bead <id>`. Either way every specialist boundary rule still holds: one
+already-claimed Bead, no `openspec/` writes, no claim/close/commit, plan-relevant
+findings reported to the Lead Agent as discoveries. `AGENTS.md` *Tool notes*
+states the same.
+
 ## Commands
 
 Three slash commands under `.claude/commands/` are the operator's entry points
@@ -240,13 +251,16 @@ get their own tmux session or metadata record — they run inside the Lead
 Agent's supervised session, share its launch profile, and are visible in
 that session's own log.
 
-A specialist run gets **its own observable tmux session** only when it must run
-as a separate, long-lived Claude Code process — a large self-contained chunk of
-work the operator wants to watch, attach to, or stop independently. The
-operator (or the Lead Agent on operator direction) then runs `session launch
---role specialist:<type> --bead <id>`. Such a launched specialist still obeys
-every specialist boundary rule: one already-claimed Bead, no `openspec/`
-writes, no claim/close/commit, discoveries reported up to the Lead Agent.
+A specialist run gets **its own observable tmux session** when it must run as a
+separate, long-lived process — a large self-contained chunk of work the operator
+wants to watch, attach to, or stop independently. The operator (or the Lead
+Agent on operator direction) then runs `session launch --role specialist:<type>
+--bead <id>`, adding `--agent codex` for a Codex specialist. For Codex this is
+the *only* delegation path — it has no in-process subagent mechanism, so an
+isolated slice is either handled inline or split out as its own session. Such a
+launched specialist still obeys every specialist boundary rule: one
+already-claimed Bead, no `openspec/` writes, no claim/close/commit, discoveries
+reported up to the Lead Agent.
 
 ## Discoveries
 
