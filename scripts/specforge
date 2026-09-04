@@ -5,7 +5,7 @@ It intentionally contains no LLM call and makes no semantic product decision.
 """
 from __future__ import annotations
 
-import argparse, datetime as dt, getpass, json, os, re, shlex, signal, socket, subprocess, sys, time
+import argparse, datetime as dt, getpass, json, os, re, shlex, shutil, signal, socket, subprocess, sys, time
 from pathlib import Path
 
 # ROOT is the repository the bridge operates on. It defaults to the checkout the
@@ -1467,6 +1467,8 @@ def recover():
         print(f"recover: {len(attention)} item(s) need attention: {', '.join(attention)}")
         sys.exit(1)
     print("recover: nothing in flight — clear to select work with bd ready")
+def tool_on_path(name):
+    return shutil.which(name) is not None
 def doctor(audit=False, with_recover=False):
     # A fresh install starts with the OpenSpec write boundary closed. Bootstrap
     # the sentinel once, only when nothing has toggled the boundary yet (no
@@ -1477,7 +1479,7 @@ def doctor(audit=False, with_recover=False):
         write_sentinel(by="doctor")
     checks = []
     for cmd in ("git", "python3", CFG["beads_command"], "dolt"):
-        checks.append((cmd, subprocess.run(["sh", "-lc", f"command -v {cmd}"], capture_output=True).returncode == 0))
+        checks.append((cmd, tool_on_path(cmd)))
     warnings = []
     try: _, _, problems, warnings = validate()
     except Exception as exc: problems = [str(exc)]
@@ -1503,7 +1505,7 @@ def doctor(audit=False, with_recover=False):
         if srec.get("reason"):
             notes.append(f"last sync skipped: {srec['reason']} "
                          f"({humanize_age(srec.get('at'))})")
-    codex_present = subprocess.run(["sh", "-lc", "command -v codex"], capture_output=True).returncode == 0
+    codex_present = tool_on_path("codex")
     notes.append("codex available" if codex_present
                  else "codex not installed; only needed for the Codex agent path")
     # Informational nudge (never a failure): the repo ships Codex prompts but at
