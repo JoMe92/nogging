@@ -55,6 +55,21 @@ echo "unexpected bd call: $*" >&2
 exit 1
 STUB
 chmod +x "$work/bin/bd"
+
+# A hostile `sh`: always fails `-lc "command -v ..."` regardless of the target,
+# ahead of the real `sh` on PATH. Detection (SPEC-usrt) must never shell out to
+# a login shell to check tool presence, so this stub having no effect on
+# doctor's checks is the regression test for that (a login-shell profile
+# script that resets PATH would otherwise hide a tool that IS on PATH).
+cat >"$work/bin/sh" <<'STUB'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "-lc" && "${2:-}" == command\ -v* ]]; then
+  exit 127
+fi
+exec /bin/sh "$@"
+STUB
+chmod +x "$work/bin/sh"
+
 export PATH="$work/bin:$PATH"
 
 fail=0
@@ -703,6 +718,8 @@ sentinel="$root/.specforge/locks/openspec.readonly"
 [[ -f "$sentinel" ]] \
   && echo "ok   - twb-bootstrap: first doctor run creates the sentinel" \
   || { echo "FAIL - twb-bootstrap: doctor did not create the sentinel"; cat "$out"; fail=1; }
+check "rtd-hostile-sh: OK git still detected with a hostile sh stub ahead of it in PATH" \
+  "OK  git"
 grep -qF '"by": "doctor"' "$sentinel" \
   && echo "ok   - twb-bootstrap: sentinel records who closed the boundary" \
   || { echo "FAIL - twb-bootstrap: sentinel body wrong"; cat "$sentinel"; fail=1; }
@@ -1213,6 +1230,8 @@ check "cxf-doctor: NOTE flags the unlinked codex prompts" \
   "codex prompts present in .codex/prompts/ but not linked into"
 check "cxf-doctor: NOTE points at the helper" \
   "run: ./scripts/specforge codex-prompts-link"
+check "rtd-hostile-sh: codex-prompts NOTE still fires with the hostile sh stub in PATH" \
+  "codex prompts present in .codex/prompts/ but not linked into"
 "$specforge" codex-prompts-link >/dev/null 2>&1 || true
 rc_linked=0; "$specforge" doctor >"$out" 2>&1 || rc_linked=$?
 refute "cxf-doctor: NOTE is gone once every prompt is linked" \
