@@ -214,6 +214,37 @@ def codex_home():
     """`$CODEX_HOME` if set, else `~/.codex` — the dir Codex 0.148 loads custom
     prompts from (`<CODEX_HOME>/prompts/`)."""
     return Path(os.environ.get("CODEX_HOME") or (Path.home() / ".codex"))
+def pi_trust_path():
+    """`~/.pi/agent/trust.json` — Pi's per-project trust decision store. No
+    env-var override exists for this location (unlike Codex's CODEX_HOME);
+    confirmed from the installed @earendil-works/pi-coding-agent source."""
+    return Path.home() / ".pi/agent/trust.json"
+def pi_project_trusted(workdir):
+    """Whether `workdir` (or its nearest trusted/untrusted ancestor) has a
+    standing Pi project-trust decision, mirroring Pi's own nearest-ancestor
+    lookup (ProjectTrustStore.getEntry / findNearestTrustEntry): walk upward
+    from `workdir` until an entry is found. Returns True/False when a
+    decision exists, None when nothing in the trust file covers this path at
+    all (a fresh project pi has never been run against, or the trust file
+    itself doesn't exist yet)."""
+    path = pi_trust_path()
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text())
+    except (ValueError, OSError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    cur = Path(workdir).resolve()
+    while True:
+        val = data.get(str(cur))
+        if isinstance(val, bool):
+            return val
+        parent = cur.parent
+        if parent == cur:
+            return None
+        cur = parent
 def _codex_repo_prompts():
     """The repo's version-controlled Codex prompt files, `.codex/prompts/*.md`."""
     d = ROOT / ".codex/prompts"
@@ -1592,6 +1623,18 @@ def doctor(audit=False, with_recover=False):
             notes.append(f"codex prompts present in .codex/prompts/ but not linked into "
                          f"{codex_home() / 'prompts'}/ "
                          f"(run: ./scripts/specforge codex-prompts-link)")
+    pi_present = tool_on_path("pi")
+    notes.append("pi available" if pi_present
+                 else "pi not installed; only needed for the Pi agent path")
+    # Informational nudge (never a failure): the repo ships a Pi guard
+    # extension, but Pi won't load it until the project has standing trust.
+    if pi_present:
+        guard_file = ROOT / ".pi/extensions/specforge-guard.ts"
+        if guard_file.is_file() and pi_project_trusted(ROOT) is not True:
+            notes.append(
+                "pi is present but this project is not yet trusted for .pi/extensions/ "
+                "(the SpecForge guard extension won't load) - run once with `pi --approve` "
+                "or use pi's `/trust` command to grant standing trust")
     # The interrupted-run checks: doctor always prints a one-line summary
     # (`recover` folds the full report). Read-only, like the rest of doctor.
     try:
