@@ -27,6 +27,7 @@ clone fails to authenticate, run `gh auth setup-git` once, or use the SSH form
 | Scaffold | `openspec/config.yaml`, `openspec/project.md`, `.specforge/config.json` | written **only when absent** — never overwritten |
 | Merged | `.claude/settings.json`, `.gitignore`, `CLAUDE.md`, `AGENTS.md`, `.codex/hooks.json` | edited idempotently; your other content is preserved (a `bd`-written `.codex/hooks.json` is never clobbered) |
 | Codex payload | `.codex/rules/specforge.rules`, `.codex/prompts/{plan,discovery-review,sync-now}.md` | copied verbatim; only relevant if you run the loop from Codex — see [`docs/using-with-codex.md`](using-with-codex.md) |
+| Pi payload | `.pi/prompts/{plan,discovery-review,sync-now}.md`, `.pi/extensions/specforge-guard.ts` | copied verbatim; only relevant if you run the loop from Pi — see [`docs/using-with-pi.md`](using-with-pi.md) |
 | Rendered | `systemd/specforge-sync-<slug>.service` and `.timer` | generated with this repo's absolute path; `<slug>` is the repo directory name |
 
 `.specforge/config.json` records `name` (your repo's directory name) and
@@ -69,6 +70,9 @@ npx github:JoMe92/specforge update
 - **bd (Beads)** and, for sync, a reachable **Dolt** — as SpecForge needs anyway.
 - For the **Codex agent path only**: the `codex` CLI and a Codex login. See
   [`docs/using-with-codex.md`](using-with-codex.md).
+- For the **Pi agent path only**: the `pi` CLI (needs Node.js ≥ 22.19.0 to
+  run, separate from the installer's own Node ≥ 18) and a configured model
+  provider. See [`docs/using-with-pi.md`](using-with-pi.md).
 
 ## Caveat: `core.hooksPath`
 

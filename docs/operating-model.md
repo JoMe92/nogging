@@ -74,7 +74,12 @@ hand. A Codex session invokes the same three commands from
 `.codex/prompts/{plan,discovery-review,sync-now}.md`; see
 [`using-with-codex.md`](using-with-codex.md) for the Codex specifics (the
 `.codex/` payload, the execpolicy floor, the out-of-process specialist model,
-and the known limitations).
+and the known limitations). A Pi session invokes them from
+`.pi/prompts/{plan,discovery-review,sync-now}.md`; see
+[`using-with-pi.md`](using-with-pi.md) for the Pi specifics (the guard
+extension, the out-of-process specialist model, and the explicit limitation
+that Pi's `restricted` level is floor-only with no network or filesystem
+sandbox).
 
 ## Resuming an interrupted run
 
