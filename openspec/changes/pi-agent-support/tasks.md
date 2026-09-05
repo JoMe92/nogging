@@ -7,7 +7,7 @@
 ## Launch mechanics
 
 - [x] TASK-PIA-002 Add a `pi` branch to `scripts/session-launch`: `cd` into `$cwd`, pass the prompt file via `--append-system-prompt`, pass `--approve` for a non-interactive supervised launch, and forward a model/provider pair when the resolved launch profile names one. Extend `session launch --agent` to accept `pi`.
-- [ ] TASK-PIA-003 Resolve `restricted` / `trusted` authority for `--agent pi`: both levels always keep the guard extension active (never pass a flag that would suppress or bypass it); `trusted` additionally uses the autonomous prompt. Reject a Claude or Codex profile file passed with `--agent pi`, mirroring the existing cross-agent profile rejection.
+- [x] TASK-PIA-003 Resolve `restricted` / `trusted` authority for `--agent pi`: both levels always keep the guard extension active (never pass a flag that would suppress or bypass it); `trusted` additionally uses the autonomous prompt. Reject a Claude or Codex profile file passed with `--agent pi`, mirroring the existing cross-agent profile rejection.
 
 ## The floor
 
