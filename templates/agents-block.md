@@ -57,5 +57,14 @@ between them never leaves Beads without a committed spec.
   `scripts/specforge session launch --agent codex --role specialist:<type>
   --bead <id>`, under every specialist boundary rule. Operator entry points:
   `.codex/prompts/{plan,discovery-review,sync-now}.md`.
+- **Pi.** No per-tool hook and no execpolicy file — `openspec/` writes are
+  blocked by the project-local guard extension
+  (`.pi/extensions/specforge-guard.ts`), which also enforces the command
+  floor; `restricted` is floor-only (no network or filesystem sandbox at
+  either authority level, unlike Claude Code or Codex). Pi has no in-process
+  subagent mechanism: a specialist run is a separate supervised session,
+  `scripts/specforge session launch --agent pi --role specialist:<type>
+  --bead <id>`, under every specialist boundary rule. Operator entry points:
+  `.pi/prompts/{plan,discovery-review,sync-now}.md`.
 
 Update SpecForge itself with `npx github:JoMe92/specforge update`.
