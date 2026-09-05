@@ -2,7 +2,7 @@
 
 ## Verification first
 
-- [ ] TASK-PIA-001 Install the `pi` CLI and verify hands-on: the built-in tool name(s) for shell execution and for file write/edit, the exact `tool_call` event payload shape (field names, sync vs async return), whether `--approve` and `defaultProjectTrust` behave as pi.dev's docs describe, and whether `.pi/prompts/*.md` and repo-local `AGENTS.md` are picked up as documented. Record any mismatch as a discovery and adjust the remaining tasks before writing code against it.
+- [x] TASK-PIA-001 Install the `pi` CLI and verify hands-on: the built-in tool name(s) for shell execution and for file write/edit, the exact `tool_call` event payload shape (field names, sync vs async return), whether `--approve` and `defaultProjectTrust` behave as pi.dev's docs describe, and whether `.pi/prompts/*.md` and repo-local `AGENTS.md` are picked up as documented. Record any mismatch as a discovery and adjust the remaining tasks before writing code against it.
 
 ## Launch mechanics
 
