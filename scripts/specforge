@@ -874,6 +874,28 @@ def resolve_codex_profile(profile, full_access):
             f"Codex launch spec (a level name or a .codex.toml path), not a permissions JSON")
     return resolve_launch_file(
         value, "session_launch_profile_dir", ".specforge/launch-profiles", ".codex.toml")
+def resolve_pi_profile(profile, full_access):
+    """Resolve a Pi launch level to a `.pi.toml` spec.
+
+    Same name-or-path rules as the other resolvers, but the directory suffix
+    is `.pi.toml` and the default level is `restricted`. A `--profile` that
+    points at a Claude settings JSON or a Codex `.codex.toml` spec is rejected
+    here, before any session exists — a Pi launch has no `permissions` file
+    and no sandbox/approval/network spec. `Path.suffix` only returns the LAST
+    suffix, so `foo.codex.toml` and `foo.pi.toml` both report `.toml`; the
+    Codex case is therefore checked with a full-suffix `endswith`, not
+    `Path.suffix`."""
+    value = profile or ("trusted" if full_access else "restricted")
+    if Path(value).suffix == ".json":
+        raise RuntimeError(
+            f"--profile {value!r} is a Claude settings file; --agent pi takes a "
+            f"Pi launch spec (a level name or a .pi.toml path), not a permissions JSON")
+    if str(value).endswith(".codex.toml"):
+        raise RuntimeError(
+            f"--profile {value!r} is a Codex launch spec; --agent pi takes a "
+            f"Pi launch spec (a level name or a .pi.toml path), not a .codex.toml file")
+    return resolve_launch_file(
+        value, "session_launch_profile_dir", ".specforge/launch-profiles", ".pi.toml")
 def resolved_launch_pair(profile, prompt, full_access, agent="claude"):
     """Resolve the launch selection to concrete files.
 
@@ -890,6 +912,8 @@ def resolved_launch_pair(profile, prompt, full_access, agent="claude"):
         prompt = prompt or "autonomous"
     if agent == "codex":
         profile_path, profile_label = resolve_codex_profile(profile, full_access)
+    elif agent == "pi":
+        profile_path, profile_label = resolve_pi_profile(profile, full_access)
     elif profile is not None:
         profile_path, profile_label = resolve_launch_file(
             profile, "session_launch_profile_dir", ".specforge/launch-profiles", ".json")
@@ -961,14 +985,43 @@ def load_codex_spec(path):
     if not isinstance(spec["network_access"], bool):
         raise RuntimeError(f"Codex launch spec {path}: network_access must be true or false")
     return spec
+def load_pi_spec(path):
+    """Read a `.pi.toml` launch fragment: two OPTIONAL flat keys, `provider`
+    and `model`. Deliberately a tiny tolerant reader (same shape as
+    `load_codex_spec`, no `tomllib` dependency): one `key = value` per line,
+    `#` comments and blanks ignored, values are a double-quoted string. Unlike
+    Codex, Pi's authority floor comes unconditionally from the guard
+    extension (`.pi/extensions/specforge-guard.ts`), not from this spec, so
+    neither key is required — a file with none of them, or no keys at all, is
+    valid and resolves to `{}`. A malformed line still fails loudly."""
+    try:
+        text = Path(path).read_text()
+    except OSError as exc:
+        raise RuntimeError(f"Pi launch spec {path} is not readable: {exc}")
+    spec = {}
+    for raw in text.splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        if "=" not in line:
+            raise RuntimeError(f"Pi launch spec {path}: cannot parse line {raw!r}")
+        key = line.partition("=")[0].strip()
+        value = line.partition("=")[2].strip()
+        if len(value) >= 2 and value[0] == value[-1] == '"':
+            spec[key] = value[1:-1]
+        else:
+            raise RuntimeError(
+                f"Pi launch spec {path}: value for {key!r} must be a quoted "
+                f"string, got {value!r}")
+    return spec
 def resolve_agent(agent):
     """The agent binary a launch runs: the explicit `--agent` flag wins, then
     the `session_agent` config key, then the historical `claude` default. No
     existing install changes behaviour: the key is absent by default."""
     resolved = agent or scfg("session_agent", "claude")
-    if resolved not in ("claude", "codex"):
+    if resolved not in ("claude", "codex", "pi"):
         raise RuntimeError(
-            f"session_agent {resolved!r} is not a known agent (claude, codex)")
+            f"session_agent {resolved!r} is not a known agent (claude, codex, pi)")
     return resolved
 def session_launch(role, bead, cwd, read_only, owner,
                    profile=None, prompt=None, full_access=False, agent=None):
@@ -993,10 +1046,12 @@ def session_launch(role, bead, cwd, read_only, owner,
     profile_path, profile_label, prompt_path = resolved_launch_pair(
         profile, prompt, full_access, agent)
     # A Claude launch reads a `permissions` JSON; a Codex launch reads a
-    # `.codex.toml` sandbox/approval spec. Both are validated here, before a
+    # `.codex.toml` sandbox/approval spec; a Pi launch reads an optional
+    # `.pi.toml` provider/model spec. All are validated here, before a
     # session exists.
     source_settings = load_profile_settings(profile_path) if agent == "claude" else None
     codex_spec = load_codex_spec(profile_path) if agent == "codex" else None
+    pi_spec = load_pi_spec(profile_path) if agent == "pi" else None
     if not bead_exists(bead):
         raise RuntimeError(f"Bead {bead} does not exist; launch refused")
     live = tmux_sessions()
@@ -1025,8 +1080,8 @@ def session_launch(role, bead, cwd, read_only, owner,
         effective_path.write_text(json.dumps(settings_out, indent=2) + "\n")
         effective_settings_path = str(effective_path)
         inner[1:1] = ["--settings", effective_settings_path]
-    else:  # codex: no per-session permissions file — the floor is the
-           # repo's `.codex/rules/` execpolicy directory, which Codex loads
+    elif agent == "codex":  # no per-session permissions file — the floor is
+           # the repo's `.codex/rules/` execpolicy directory, which Codex loads
            # from the working tree. That floor file ships with `codex-onboarding`;
            # warn (do not fail) when it is not present yet.
         floor_file = Path(workdir) / ".codex/rules/specforge.rules"
@@ -1046,6 +1101,27 @@ def session_launch(role, bead, cwd, read_only, owner,
         # pre-commit boundary hook. See the wrapper for the runtime check.
         if openspec_readonly:
             inner += ["--readonly-root", str(Path(workdir) / "openspec")]
+    else:  # pi: no per-session permissions file and no sandbox/approval/
+           # network spec — the floor is the always-on guard extension
+           # (`.pi/extensions/specforge-guard.ts`), which reads
+           # `.specforge/locks/openspec.readonly` directly at tool-call time.
+           # That means, unlike Codex, this branch passes nothing extra for
+           # the openspec/ write boundary (openspec_readonly is not consulted
+           # here) and never constructs a flag that would disable or bypass
+           # the guard for either authority level. That floor file ships with
+           # this same change (TASK-PIA-004); warn (do not fail) when it is
+           # not present yet.
+        floor_file = Path(workdir) / ".pi/extensions/specforge-guard.ts"
+        if not floor_file.is_file():
+            print(f"warning: {floor_file} is absent — the SpecForge command floor for "
+                  f"Pi is not in place for this session (it ships with this same "
+                  f"pi-agent-support change). Continuing.", file=sys.stderr)
+        effective_settings_path = None
+        inner += ["--agent", "pi"]
+        if "provider" in pi_spec:
+            inner += ["--provider", pi_spec["provider"]]
+        if "model" in pi_spec:
+            inner += ["--model", pi_spec["model"]]
     if read_only: inner.append("--read-only")
     record = {
         "name": name, "bead_id": bead, "role": role_meta, "host": socket.gethostname(),
