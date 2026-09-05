@@ -1570,7 +1570,7 @@ def main():
     sl.add_argument("--role", required=True); sl.add_argument("--bead", required=True)
     sl.add_argument("--cwd"); sl.add_argument("--read-only", action="store_true")
     sl.add_argument("--owner")
-    sl.add_argument("--agent", choices=("claude", "codex"),
+    sl.add_argument("--agent", choices=("claude", "codex", "pi"),
                     help="agent binary to launch; defaults to the session_agent config key, "
                          "then 'claude'")
     sl.add_argument("--profile", help="named launch profile or a path to a settings JSON file")

@@ -30,6 +30,8 @@
 #   session-launch --agent codex --sandbox <mode> --approval <policy> \
 #                  --network <on|off> --prompt <prompt.md> --cwd <dir> --bead <id> \
 #                  [--read-only]
+#   session-launch --agent pi --provider <name> --model <pattern> \
+#                  --prompt <prompt.md> --cwd <dir> --bead <id>
 set -eu
 
 agent="claude"
@@ -42,6 +44,8 @@ sandbox=""
 approval=""
 network="on"
 readonly_root=""
+provider=""
+model=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -54,6 +58,8 @@ while [ $# -gt 0 ]; do
     --approval)  approval=$2; shift 2 ;;
     --network)   network=$2; shift 2 ;;
     --readonly-root) readonly_root=$2; shift 2 ;;
+    --provider)  provider=$2; shift 2 ;;
+    --model)     model=$2; shift 2 ;;
     --read-only) read_only=1; shift ;;
     --)          shift; break ;;
     *) echo "session-launch: unknown argument: $1" >&2; exit 2 ;;
@@ -105,6 +111,16 @@ case "$agent" in
       exec codex "$@" "$(cat "$prompt")"
     fi
     exec codex "$@"
+    ;;
+  pi)
+    set -- --approve
+    [ -n "$provider" ] && set -- "$@" --provider "$provider"
+    [ -n "$model" ]    && set -- "$@" --model "$model"
+    if [ -n "$prompt" ] && [ -f "$prompt" ]; then
+      set -- "$@" --append-system-prompt "$(cat "$prompt")"
+    fi
+    echo "specforge: starting Pi for ${bead:-<no bead>} in $(pwd)"
+    exec pi "$@"
     ;;
   *)
     echo "session-launch: unknown agent: $agent" >&2
