@@ -23,4 +23,4 @@
 
 ## Tests
 
-- [ ] TASK-PIA-010 Extend `scripts/session.test.sh`: `session launch --agent pi` records `pi` as the agent, is visible in `session list`, resolves `restricted`/`trusted` per TASK-PIA-003, and rejects a Claude/Codex profile file. Extend `scripts/cli.test.sh`: a packed install places `.pi/prompts/*.md` and `.pi/extensions/specforge-guard.ts`, and a fresh install's `AGENTS.md` carries the Pi *Tool notes* subsection.
+- [x] TASK-PIA-010 Extend `scripts/session.test.sh`: `session launch --agent pi` records `pi` as the agent, is visible in `session list`, resolves `restricted`/`trusted` per TASK-PIA-003, and rejects a Claude/Codex profile file. Extend `scripts/cli.test.sh`: a packed install places `.pi/prompts/*.md` and `.pi/extensions/specforge-guard.ts`, and a fresh install's `AGENTS.md` carries the Pi *Tool notes* subsection.
