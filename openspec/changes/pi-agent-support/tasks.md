@@ -16,7 +16,7 @@
 
 ## Reporting and docs
 
-- [ ] TASK-PIA-006 Extend `scripts/specforge doctor`: report whether `pi` is on `PATH` (informational, absence never fails doctor, matching the existing Codex-availability pattern), and print a NOTE when `pi` is present but the project is not yet trusted for `.pi/extensions/` (name the fix: run once with `--approve` or `/trust`).
+- [x] TASK-PIA-006 Extend `scripts/specforge doctor`: report whether `pi` is on `PATH` (informational, absence never fails doctor, matching the existing Codex-availability pattern), and print a NOTE when `pi` is present but the project is not yet trusted for `.pi/extensions/` (name the fix: run once with `--approve` or `/trust`).
 - [ ] TASK-PIA-007 Ship `.pi/prompts/{plan,discovery-review,sync-now}.md` carrying the same persona and step text as `.claude/commands/` and `.codex/prompts/`. Add `.pi/prompts` and `.pi/extensions` to `bin/lib/manifest.js` `verbatimDirs` and to `package.json` `files`.
 - [ ] TASK-PIA-008 Restructure `AGENTS.md` *Tool notes* to add a **Pi** subsection: write boundary = the guard extension (not a hook, not execpolicy); specialists = out-of-process `session launch --agent pi --role specialist:<type>`; operator entry points = `.pi/prompts/`; state plainly that Pi's `restricted` level has no network or filesystem sandbox, floor-only.
 - [ ] TASK-PIA-009 Write `docs/using-with-pi.md`: prerequisites (`pi` CLI + provider auth), what the installer places under `.pi/`, how `/plan` / `/discovery-review` / `/sync-now` map, the out-of-process specialist model, and the explicit limitation that `restricted` is floor-only with no sandbox. Link it from `docs/installation.md` and `docs/operating-model.md`.
