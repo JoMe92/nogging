@@ -11,7 +11,7 @@
 
 ## The floor
 
-- [ ] TASK-PIA-004 Write `.pi/extensions/specforge-guard.ts`: block the SpecForge command-floor patterns (sudo, rm -rf/-fr, dd, mkfs and variants, shutdown, reboot, systemctl, chown, curl, wget, git push --force/-f/--force-with-lease, git reset --hard, git clean -fdx, git filter-branch) on the shell tool, and block a write/edit tool call under `openspec/` unless `.specforge/locks/openspec.readonly` says the boundary is open. Use the tool name(s) confirmed in TASK-PIA-001.
+- [x] TASK-PIA-004 Write `.pi/extensions/specforge-guard.ts`: block the SpecForge command-floor patterns (sudo, rm -rf/-fr, dd, mkfs and variants, shutdown, reboot, systemctl, chown, curl, wget, git push --force/-f/--force-with-lease, git reset --hard, git clean -fdx, git filter-branch) on the shell tool, and block a write/edit tool call under `openspec/` unless `.specforge/locks/openspec.readonly` says the boundary is open. Use the tool name(s) confirmed in TASK-PIA-001.
 - [ ] TASK-PIA-005 Add a `scripts/pi-guard.test.sh` that runs the extension's matching logic directly (not through a live `pi` process) against the floor command list and a set of openspec/non-openspec write paths, covering both the allow and the block side of each rule.
 
 ## Reporting and docs
