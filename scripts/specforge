@@ -322,6 +322,40 @@ def lock(name, ttl, force=False):
             raise LockBusyError(f"{name} lock held by {info['host']} pid {info['pid']}; use --force only after verifying it is stale")
     path.write_text(json.dumps({"pid": os.getpid(), "host": socket.gethostname(), "created_at": now()}, indent=2) + "\n")
     return path
+def orchestrator_lock_ttl():
+    """Staleness horizon for `.specforge/locks/orchestrator.lock`. Long by
+    default — the orchestrator is always-on and its supervisor rewrites the
+    lock's `created_at` on every (re)start — so a lock only reads as stale once
+    the supervisor has been gone for a full day."""
+    return int(CFG.get("orchestrator_lock_ttl_seconds", 86400))
+def acquire_orchestrator_lock(force=False):
+    """Acquire the single-instance orchestrator lock. Same JSON shape as the
+    planning lock (`pid` / `host` / `created_at`) and the same TTL staleness
+    rule, plus a same-host pid-liveness check: a fresh lock whose holder process
+    is gone is reclaimable without `--force`. Raises `LockBusyError`, naming the
+    holder, when a fresh lock is held by a live process (or by any process on
+    another host, which cannot be probed). `--force` reclaims unconditionally,
+    consistent with `plan-end --force`."""
+    path = data_dir(LOCKS) / "orchestrator.lock"
+    if path.exists() and not force:
+        try:
+            info = json.loads(path.read_text())
+        except (ValueError, OSError):
+            info = {}
+        fresh = fresh_lock("orchestrator", orchestrator_lock_ttl()) is not None
+        same_host = info.get("host") == socket.gethostname()
+        alive = (same_host and isinstance(info.get("pid"), int)
+                 and pid_alive(info["pid"]))
+        if fresh and (alive or not same_host):
+            raise LockBusyError(
+                f"orchestrator lock held by {info.get('host', '?')} pid "
+                f"{info.get('pid', '?')}; use --force only after verifying it is stale")
+    path.write_text(json.dumps(
+        {"pid": os.getpid(), "host": socket.gethostname(), "created_at": now()},
+        indent=2) + "\n")
+    return path
+def release_orchestrator_lock():
+    (LOCKS / "orchestrator.lock").unlink(missing_ok=True)
 LIMBO_TOKEN_RE = re.compile(r"\[([A-Z][A-Z0-9]*-[0-9a-z]+)\]")
 def branch_commit_tokens():
     """Bead ID token `[<id>]` -> newest non-merge commit SHA on HEAD's history
@@ -1453,7 +1487,8 @@ def recover_scan():
     # --- Locks ------------------------------------------------------------
     lock_lines = []
     for name, ttl in (("planning", CFG.get("planning_lock_ttl_seconds", 7200)),
-                      ("sync", CFG.get("sync_lock_ttl_seconds", 120))):
+                      ("sync", CFG.get("sync_lock_ttl_seconds", 120)),
+                      ("orchestrator", orchestrator_lock_ttl())):
         path = LOCKS / f"{name}.lock"
         if not path.exists():
             continue
