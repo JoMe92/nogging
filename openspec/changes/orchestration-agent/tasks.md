@@ -20,7 +20,7 @@ short so `materialize` can use them as Bead titles.
 
 ## Persona
 
-- [ ] TASK-ORC-007 Write `.specforge/launch-prompts/orchestrator.md` per design.md: orchestrate-only by default; explicit `/orchestrate takeover {plan|code}` is one task then back (takeover-plan commits with the `SpecForge-Writer: planning` trailer, takeover-code with the `[<bead-id>]` token); one sub-session at a time unless it provisions worktrees; never sign an acceptance report; never echo a credential.
+- [x] TASK-ORC-007 Write `.specforge/launch-prompts/orchestrator.md` per design.md: orchestrate-only by default; explicit `/orchestrate takeover {plan|code}` is one task then back (takeover-plan commits with the `SpecForge-Writer: planning` trailer, takeover-code with the `[<bead-id>]` token); one sub-session at a time unless it provisions worktrees; never sign an acceptance report; never echo a credential.
 - [ ] TASK-ORC-008 Write `.claude/commands/orchestrate.md` — how the operator reaches the always-on session (`orchestrator status`, `session attach`, Remote Control), the `takeover {plan|code} <description>` single-task format, a pointer to the operating-model section, and a note that Codex/Pi pendants are not shipped in v1.
 
 ## Installer
