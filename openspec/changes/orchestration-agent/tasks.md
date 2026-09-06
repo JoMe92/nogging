@@ -30,7 +30,7 @@ short so `materialize` can use them as Bead titles.
 
 ## Docs
 
-- [ ] TASK-ORC-011 Update the docs per design.md: `docs/operating-model.md` (Roles + a new Orchestration section), `docs/architecture.md` (the command floor is no longer absolute — the narrow `--role orchestrator` exception, safeguards named), `docs/running-work-in-sessions.md` (the `orchestrator` subcommands + linger), and the persona/boundary in `AGENTS.md`, `templates/agents-block.md`, `CLAUDE.md`, `templates/claude-block.md`.
+- [x] TASK-ORC-011 Update the docs per design.md: `docs/operating-model.md` (Roles + a new Orchestration section), `docs/architecture.md` (the command floor is no longer absolute — the narrow `--role orchestrator` exception, safeguards named), `docs/running-work-in-sessions.md` (the `orchestrator` subcommands + linger), and the persona/boundary in `AGENTS.md`, `templates/agents-block.md`, `CLAUDE.md`, `templates/claude-block.md`.
 
 ## Tests
 
