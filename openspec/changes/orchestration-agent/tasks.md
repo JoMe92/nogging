@@ -16,7 +16,7 @@ short so `materialize` can use them as Bead titles.
 ## Always-on lifecycle
 
 - [ ] TASK-ORC-005 Add the `orchestrator` subcommand group to `scripts/specforge`: `run` (idempotent supervisor — acquire the lock, adopt or create `sf-orchestrator-<slug>`, `claude --continue` when a conversation exists else launch with the prompt + effective settings, refresh the record, block until exit, release the lock, exit non-zero), `status`, `stop`, `restart`.
-- [ ] TASK-ORC-006 Add `.specforge/locks/orchestrator.lock` — same JSON shape and staleness rule as the planning lock, independent of it; `run` refuses and names the holder when a fresh lock is held by a live process; `--force` reclaim consistent with `plan-end --force`.
+- [x] TASK-ORC-006 Add `.specforge/locks/orchestrator.lock` — same JSON shape and staleness rule as the planning lock, independent of it; `run` refuses and names the holder when a fresh lock is held by a live process; `--force` reclaim consistent with `plan-end --force`.
 
 ## Persona
 
