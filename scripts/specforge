@@ -1899,6 +1899,29 @@ def doctor(audit=False, with_recover=False):
                 "pi is present but this project is not yet trusted for .pi/extensions/ "
                 "(the SpecForge guard extension won't load) - run once with `pi --approve` "
                 "or use pi's `/trust` command to grant standing trust")
+    # The always-on Orchestration Agent: report the service state, linger, and
+    # whether a FULL-ACCESS orchestrator session is live. Its absence or
+    # inactivity is never a failure (it is opt-in, like the Codex/Pi paths);
+    # only a service that is enabled while user lingering is off rates a NOTE.
+    orch_unit = orchestrator_unit()
+    if tool_on_path("systemctl"):
+        enabled = _systemctl("is-enabled", orch_unit).stdout.strip()
+        active = _systemctl("is-active", orch_unit).stdout.strip() or "inactive"
+        linger = _linger_on()
+        live = orchestrator_live_session() is not None
+        if enabled in ("", "not-found"):
+            notes.append(f"orchestrator service {orch_unit} not installed "
+                         f"(optional — run the printed `systemctl --user enable --now` line to use it)")
+        else:
+            notes.append(f"orchestrator service {orch_unit}: {enabled}, {active}; "
+                         f"linger {'on' if linger else 'off'}; "
+                         f"{'a FULL-ACCESS session is live' if live else 'no live session'}")
+            if enabled == "enabled" and not linger:
+                notes.append("orchestrator service is enabled but user lingering is off — "
+                             "it will not start at boot without a login; run "
+                             f"`loginctl enable-linger {getpass.getuser()}`")
+    else:
+        notes.append("systemctl not available; orchestrator service state not checked")
     # The interrupted-run checks: doctor always prints a one-line summary
     # (`recover` folds the full report). Read-only, like the rest of doctor.
     try:
