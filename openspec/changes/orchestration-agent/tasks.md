@@ -34,4 +34,4 @@ short so `materialize` can use them as Bead titles.
 
 ## Tests
 
-- [ ] TASK-ORC-012 Extend `scripts/session.test.sh` (orchestrator launches Bead-less, listed FULL-ACCESS, floor lifted only for `--role orchestrator` + the `orchestrator` profile, a `lead` session on that profile still floored) and `scripts/cli.test.sh` (packed install renders the unit and ships the profile/prompt). Add `scripts/orchestrator.test.sh` for the lock and the idempotent adopt path, tmux/`claude` stubbed.
+- [x] TASK-ORC-012 Extend `scripts/session.test.sh` (orchestrator launches Bead-less, listed FULL-ACCESS, floor lifted only for `--role orchestrator` + the `orchestrator` profile, a `lead` session on that profile still floored) and `scripts/cli.test.sh` (packed install renders the unit and ships the profile/prompt). Add `scripts/orchestrator.test.sh` for the lock and the idempotent adopt path, tmux/`claude` stubbed.
