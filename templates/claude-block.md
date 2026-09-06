@@ -10,5 +10,12 @@ detail specific to Claude Code.
   unless the planning lock is held. It is a fast in-editor backstop to the
   tool-neutral write boundary described in `AGENTS.md`; the boundary holds
   without it.
+- **Claude-only:** the **Orchestration Agent** — the always-on
+  `sf-orchestrator-<slug>` session above Planning and the Main Worker,
+  orchestrate-only by default, floor- and boundary-lifted for `--role
+  orchestrator`, reachable from a phone via Remote Control. `AGENTS.md` *The
+  Orchestration Agent* and `docs/specforge/operating-model.md` have the persona
+  and its scope; `scripts/specforge orchestrator {run,status,stop,restart}` and
+  `.claude/commands/orchestrate.md` drive it.
 
 Update SpecForge with `npx github:JoMe92/specforge update`.

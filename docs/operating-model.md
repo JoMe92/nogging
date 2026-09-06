@@ -3,10 +3,16 @@
 ## Roles
 
 - **Product Owner:** describes desired outcomes, decides ambiguities, accepts and archives changes.
+- **Orchestration Agent:** an always-on session above Planning and the Main Worker that drives the delivery loop — reads the whole state and launches, steers and stops Planning and Lead sessions. Orchestrate-only by default; see *Orchestration* below.
 - **Planning Agent:** works only in a deliberate planning session; writes OpenSpec and creates/reconciles Beads.
 - **Main Worker:** selects `bd ready`, delegates isolated implementation work, validates, commits, records evidence and closes Beads.
 - **Specialists:** work only on a claimed Bead and report results to the Main Worker.
 - **Sync timer:** polls every 30 seconds and mirrors facts only.
+
+The role hierarchy is **Product Owner → Orchestration Agent → {Planning Agent,
+Lead Agent} → Specialists**. Planning and the Main Worker still connect only
+through the shared OpenSpec/Beads state; the Orchestration Agent is the agent
+that holds the loop the Product Owner would otherwise hold by hand.
 
 ## Delegation model and the Lead Agent knowledge path
 
@@ -80,6 +86,51 @@ and the known limitations). A Pi session invokes them from
 extension, the out-of-process specialist model, and the explicit limitation
 that Pi's `restricted` level is floor-only with no network or filesystem
 sandbox).
+
+## Orchestration
+
+The **Orchestration Agent** is a third session persona, above the Planning Agent
+and the Main Worker. It runs always-on as a supervised
+`sf-orchestrator-<slug>` tmux session that a rendered systemd **user service**
+keeps alive across a crash or a host reboot, resuming its own conversation with
+`claude --continue`. The launched session registers with Remote Control, so the
+Product Owner can read and drive it from a phone with no SSH. Exactly one runs
+at a time, guarded by `.specforge/locks/orchestrator.lock` (the planning-lock
+shape and staleness rule, independent of the planning lock).
+
+**Default scope is orchestrate-only.** The Orchestration Agent reads the whole
+state (Beads, OpenSpec, session records and logs, `git`) and drives the loop by
+running `scripts/specforge` — `session launch|attach|log|stop`, `sync --now`,
+`recover`, `discoveries` — plus `bd` and `git` (read, and a local
+fast-forward integration). It does **not** write any file under `openspec/` and
+does **not** edit implementation code. When a spec change is needed it starts or
+directs a planning session; when a change is ready it launches a Lead session
+and steers it through the log and `attach`. It never does the sub-session's Bead
+work itself, and the sub-sessions it launches keep their normal
+`restricted` / `trusted` profiles — only the conductor is unfenced.
+
+**Explicit takeover.** Only on an explicit in-session operator instruction of
+the form `/orchestrate takeover {plan|code} <description>` does it perform one
+task directly — a planning task run as a full `plan-begin` … `plan-end`
+sequence committed with the `SpecForge-Writer: planning` trailer, or a code task
+claimed, implemented, committed with the `[<bead-id>]` token, evidence-noted and
+closed. After the one task it returns to orchestrate-only. Nothing mechanical
+enforces the return: the orchestrator profile is god-mode (see *Launch
+profiles* under *Session supervision*), so the discipline lives in
+`.specforge/launch-prompts/orchestrator.md` and the operator's explicit
+scoping, exactly as the `autonomous` prompt scopes a `--full-access` Lead
+session to one named change.
+
+**Acceptance stays human.** The Orchestration Agent may run the mechanical
+`[M]` acceptance steps and drive the `[A]` ones through sub-sessions, but it
+never completes the `Signed-off-by:` line of an acceptance report — that stays
+the Product Owner's one reserved act.
+
+**Claude Code only in this version.** Remote Control — the "reachable from a
+phone" requirement — is a Claude feature; a Codex/Pi orchestrator is a recorded
+follow-up. The `/orchestrate` command file documents how the operator reaches
+and scopes the session; `scripts/specforge orchestrator {run,status,stop,restart}`
+drives the service.
 
 ## Resuming an interrupted run
 
@@ -247,6 +298,23 @@ can lift it. It is a guard rail against an accident or a prompt-injected
 merge, so the floor and the visibility are the safeguards, not a boundary
 against a hostile agent.
 
+The **single exception** is the `orchestrator` profile combined with
+`--role orchestrator`. That profile runs `bypassPermissions` with an empty deny
+list and carries `specforge_floor: false` / `specforge_openspec_readonly:
+false`; those two keys are read **only** for `--role orchestrator`, and for that
+role only the floor merge and the per-session `openspec/**` deny are skipped —
+so the Orchestration Agent runs with full command access and `openspec/`
+writable. Any other role (`lead`, `specialist:*`) that selects the same profile
+still gets the floor unioned in and `openspec/` fenced; the keys are ignored for
+it. A session that actually ran with the floor lifted is recorded (`floor_lifted:
+true`) and shown by `session list` / `doctor` as `FULL-ACCESS`. The profile is
+Claude-only — there is no `orchestrator.codex.toml` / `.pi.toml`. This is a
+deliberate, narrow reversal of "no profile can lift the floor", scoped to the
+one role that was never meant to be fenced; the safeguards for it are visibility
+(the session list, the append-only log, the durable record) and the
+single-instance lock, not a boundary. See `docs/architecture.md` and
+*Orchestration* above.
+
 For a Claude session the merged, floored settings are written per session to
 `.specforge/state/sessions/<name>.settings.json` and that file — never the
 source profile — is passed to Claude. The metadata record stores the profile
@@ -261,12 +329,15 @@ From any plain SSH shell (no `TERM`, no tmux client needed):
 
 | Command | What it does |
 | --- | --- |
-| `session list` | every managed session with Bead, role, age, working dir, owner, state, and the launch profile it runs under (`restricted` renders as `-`); reconciles each record against live tmux and reports a vanished `running` session as `failed`. Read-only, never attaches. |
+| `session list` | every managed session with Bead, role, age, working dir, owner, state, and the launch profile it runs under (`restricted` renders as `-`, a floor-lifted orchestrator as `FULL-ACCESS`); reconciles each record against live tmux and reports a vanished `running` session as `failed`. Read-only, never attaches. |
 | `session attach <name> [--read-only]` | attach the terminal to a session (`-r` blocks input). The only command that attaches. |
 | `session log <name> [--follow]` | print or tail the append-only log without attaching. |
 | `session stop <name> [--reason <text>]` | interrupt Claude, terminate the pane after the grace period, record `stopped` with `ended_at`/`exit_reason`. Idempotent. |
 | `session reap` | move every active-state record whose tmux session is gone to `failed` (a live one is untouched), so `cleanup` can retire it. |
 | `session cleanup [<name>] [--reap]` | remove a lingering tmux session, archive-rotate the log, retire the record. **Refuses** a `starting`/`running`/`idle` record — stop or `--reap` it first. |
+| `orchestrator run` | the idempotent supervisor the systemd unit runs: acquire the orchestrator lock, adopt or start the `sf-orchestrator-<slug>` session (`claude --continue` when a prior conversation exists), block until it exits, release the lock, exit non-zero. Takes `--force` to reclaim a stale lock. |
+| `orchestrator status` | the unit's enabled/active state, whether user lingering is on, the lock holder, and the live `FULL-ACCESS` session with its last log lines. Read-only. |
+| `orchestrator stop` \| `restart` | stop-and-disable the unit (ending the session and releasing the lock; idempotent), or restart it. |
 
 ### Relationship to Task-tool specialists
 

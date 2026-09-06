@@ -44,6 +44,21 @@ OpenSpec, runs `./scripts/specforge validate`, commits with
 `./scripts/specforge plan-end`. The commit precedes `materialize` so a crash
 between them never leaves Beads without a committed spec.
 
+### The Orchestration Agent
+
+A fourth persona above Planning and the Main Worker (**Product Owner →
+Orchestration Agent → {Planning, Lead} → Specialists**), run always-on as the
+single supervised `sf-orchestrator-<slug>` session by a systemd user service and
+reachable from a phone via Remote Control. **Claude Code only** in this version.
+It is **orchestrate-only by default** — reads state and drives Planning and Lead
+sessions through `scripts/specforge`, writing no `openspec/` file and no code
+itself. The command floor and the `openspec/` boundary are lifted for it (the
+one documented exception, keyed to `--role orchestrator`); the discipline lives
+in `.specforge/launch-prompts/orchestrator.md`, and `session list` / `doctor`
+show it as `FULL-ACCESS`. It writes `openspec/` or code only under an explicit
+`/orchestrate takeover {plan|code}` instruction (one task, then back), and it
+never signs an acceptance report. See `docs/specforge/operating-model.md`.
+
 ### Tool notes
 
 - **Claude Code.** `openspec/` writes are also blocked by a `PreToolUse` hook

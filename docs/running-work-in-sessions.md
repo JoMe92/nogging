@@ -213,6 +213,37 @@ git worktree add ../specforge-cmd feat/planning-and-discovery-commands
 
 Otherwise: **one session at a time against the repo root.**
 
+## The always-on Orchestration Agent
+
+The **Orchestration Agent** is a special supervised session — Bead-less,
+single-instance, and always-on. It is not launched with `session launch`; a
+rendered systemd **user service** runs it:
+
+```bash
+systemctl --user enable --now specforge-orchestrator-<slug>.service
+loginctl enable-linger "$USER"   # so it starts at boot without a login
+```
+
+`init` / `update` print both lines. Then drive it with the `orchestrator`
+subcommand group:
+
+```bash
+./scripts/specforge orchestrator status    # unit + linger state, the lock, the live session, last log lines
+./scripts/specforge orchestrator restart   # bounce the service
+./scripts/specforge orchestrator stop      # stop + disable it, end the session, release the lock
+./scripts/specforge orchestrator run       # the supervisor itself (what the unit calls); --force reclaims a stale lock
+```
+
+`orchestrator run` acquires `.specforge/locks/orchestrator.lock`, adopts a live
+`sf-orchestrator-<slug>` tmux session or starts one (resuming its conversation
+with `claude --continue` when one exists), blocks until it exits, releases the
+lock and exits non-zero so `Restart=always` brings it back. It runs under the
+`orchestrator` profile with the command floor and the `openspec/` boundary
+lifted — `session list` and `doctor` show it as `FULL-ACCESS`. It is Claude-only
+and reachable from a phone through Remote Control. See
+`docs/operating-model.md` *Orchestration* for the persona and its
+orchestrate-only-by-default scope.
+
 ## Quick reference
 
 | Command | Effect |
@@ -224,11 +255,15 @@ Otherwise: **one session at a time against the repo root.**
 | `session stop <name> [--reason <text>]` | interrupt, terminate, record a terminal state; idempotent |
 | `session reap` | move vanished active-state records to `failed`; a live one is untouched |
 | `session cleanup [<name>] [--reap]` | retire terminal records; refuses a live one (`--reap` fails the dead ones first) |
+| `orchestrator run [--force]` | the always-on supervisor the systemd unit runs; `--force` reclaims a stale lock |
+| `orchestrator status` | unit enabled/active state, linger on/off, the lock holder, the live `FULL-ACCESS` session |
+| `orchestrator stop` \| `orchestrator restart` | stop-and-disable the unit (idempotent), or restart it |
 
 Config keys (`.specforge/config.json`): `session_agent` (`claude` |  `codex`,
 default `claude`), `session_tmux_socket`, `session_state_dir`,
 `session_log_max_bytes`, `session_log_rotation_depth`,
-`session_stop_grace_seconds`. The launch profile / prompt directories default
+`session_stop_grace_seconds`, `orchestrator_lock_ttl_seconds` (default 86400),
+`orchestrator_poll_seconds` (default 5). The launch profile / prompt directories default
 to `.specforge/launch-profiles/` and `.specforge/launch-prompts/` and are
 overridable with `session_launch_profile_dir` / `session_launch_prompt_dir`; a
 `session_launch_profile` / `session_launch_prompt` key still pins a single file
