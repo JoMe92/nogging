@@ -26,7 +26,7 @@ short so `materialize` can use them as Bead titles.
 ## Installer
 
 - [x] TASK-ORC-009 Add `templates/systemd/specforge-orchestrator.service.tmpl` and a `bin/lib/manifest.js` `systemd` entry rendering `systemd/specforge-orchestrator-{slug}.service` (`Type=simple`, `ExecStart=… orchestrator run`, `Restart=always`, `WantedBy=default.target`). Verify the profile/prompt ride the existing verbatim dirs. `init`/`update` print the `systemctl --user enable --now` line and the `loginctl enable-linger` hint.
-- [ ] TASK-ORC-010 Extend `scripts/specforge doctor`: report the orchestrator service state, linger on/off, and whether a FULL-ACCESS orchestrator session is live. Absence/inactivity never fails `doctor`; only `enabled` + linger off rates a NOTE.
+- [x] TASK-ORC-010 Extend `scripts/specforge doctor`: report the orchestrator service state, linger on/off, and whether a FULL-ACCESS orchestrator session is live. Absence/inactivity never fails `doctor`; only `enabled` + linger off rates a NOTE.
 
 ## Docs
 
