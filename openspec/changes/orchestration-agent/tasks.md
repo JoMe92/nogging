@@ -11,7 +11,7 @@ short so `materialize` can use them as Bead titles.
 
 - [x] TASK-ORC-002 Ship `.specforge/launch-profiles/orchestrator.json` — `bypassPermissions`, empty `allow`/`deny`, `additionalDirectories: ["/"]`, `specforge_floor: false`, `specforge_openspec_readonly: false`; header comment: Claude-only, no `.codex.toml`/`.pi.toml`, keys honoured only for `--role orchestrator`.
 - [x] TASK-ORC-003 `scripts/specforge`: `normalize_role()` accepts `orchestrator`; `session_launch()` allows `--bead` to be omitted for `--role orchestrator` (record `bead_id: null`), still required for every other role.
-- [ ] TASK-ORC-004 `scripts/specforge` `session_launch()`: read `specforge_floor` / `specforge_openspec_readonly` from the profile only when the role is `orchestrator`; when `false`, skip the `merge_floor()` union and the per-session `openspec/**` deny rules respectively. Ignore the keys for every other role. Record `floor_lifted`; render `FULL-ACCESS` in `session list`.
+- [x] TASK-ORC-004 `scripts/specforge` `session_launch()`: read `specforge_floor` / `specforge_openspec_readonly` from the profile only when the role is `orchestrator`; when `false`, skip the `merge_floor()` union and the per-session `openspec/**` deny rules respectively. Ignore the keys for every other role. Record `floor_lifted`; render `FULL-ACCESS` in `session list`.
 
 ## Always-on lifecycle
 
