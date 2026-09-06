@@ -910,5 +910,96 @@ PY
   && echo "ok   - redact-c: a non-secret -c override is left intact" \
   || { echo "FAIL - redact-c: over-redacted a benign override ($red_out)"; fail=1; }
 
+# ===========================================================================
+# Scenario: --role orchestrator launches Bead-less, FULL-ACCESS, floor lifted
+# (TASK-ORC-003 / TASK-ORC-004)
+# ===========================================================================
+root="$work/orc"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export TMUX_STUB_DIR="$work/orc-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN=""
+"$specforge" session launch --role orchestrator --profile orchestrator >"$out" 2>&1 \
+  || { echo "FAIL - orc: launch errored"; cat "$out"; fail=1; }
+check "orc: launch reports the singleton name" "launched sf-orchestrator-orc"
+orcrec="$root/.specforge/state/sessions/sf-orchestrator-orc.json"
+[[ -f "$orcrec" ]] \
+  && echo "ok   - orc: record written under the fixed name" \
+  || { echo "FAIL - orc: no record at the fixed name"; fail=1; }
+[[ "$(record "$orcrec" bead_id)" == "None" ]] \
+  && echo "ok   - orc: record carries a null Bead id" \
+  || { echo "FAIL - orc: bead_id is $(record "$orcrec" bead_id)"; fail=1; }
+[[ "$(record "$orcrec" role)" == "orchestrator" ]] \
+  && echo "ok   - orc: record role is orchestrator" \
+  || { echo "FAIL - orc: role is $(record "$orcrec" role)"; fail=1; }
+[[ "$(record "$orcrec" floor_lifted)" == "True" ]] \
+  && echo "ok   - orc: record marks floor_lifted true" \
+  || { echo "FAIL - orc: floor_lifted is $(record "$orcrec" floor_lifted)"; fail=1; }
+[[ "$(record "$orcrec" openspec_readonly)" == "False" ]] \
+  && echo "ok   - orc: openspec/ read-only root not applied" \
+  || { echo "FAIL - orc: openspec_readonly is $(record "$orcrec" openspec_readonly)"; fail=1; }
+cp "$(record "$orcrec" effective_settings_path)" "$out"
+check "orc: effective settings keep bypassPermissions" '"defaultMode": "bypassPermissions"'
+check "orc: effective settings keep the accepted-disclaimer key" '"skipDangerousModePermissionPrompt": true'
+refute "orc: no floor deny in the effective settings (sudo)"  'Bash(sudo:*)'
+refute "orc: no floor deny in the effective settings (rm -rf)" 'Bash(rm -rf:*)'
+refute "orc: no openspec/ deny in the effective settings" 'Edit(openspec/**)'
+refute "orc: the SpecForge-only keys never reach Claude" 'specforge_floor'
+env -u TERM "$specforge" session list >"$out" 2>&1
+check "orc: session list shows the orchestrator row" "sf-orchestrator-orc"
+check "orc: session list marks it FULL-ACCESS" "FULL-ACCESS"
+"$specforge" session launch --role orchestrator --profile orchestrator >"$out" 2>&1 \
+  && { echo "FAIL - orc: a second orchestrator launch should be refused"; fail=1; } \
+  || echo "ok   - orc: a second live orchestrator launch is refused"
+check "orc: the refusal points at orchestrator run" "orchestrator run"
+unset SPECFORGE_ROOT
+
+# ===========================================================================
+# Scenario: --bead is still required for every non-orchestrator role
+# ===========================================================================
+root="$work/orc-bead"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export TMUX_STUB_DIR="$work/orc-bead-tmux"; mkdir -p "$TMUX_STUB_DIR"
+"$specforge" session launch --role lead >"$out" 2>&1 \
+  && { echo "FAIL - orc-bead: lead without --bead should fail"; fail=1; } \
+  || echo "ok   - orc-bead: lead without --bead is refused"
+check "orc-bead: the message names the orchestrator exception" "except 'orchestrator'"
+unset SPECFORGE_ROOT
+
+# ===========================================================================
+# Scenario: the orchestrator profile's floor keys are ignored for other roles —
+# a lead session on --profile orchestrator still runs floored and fenced
+# (TASK-ORC-004)
+# ===========================================================================
+root="$work/orc-lead"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export TMUX_STUB_DIR="$work/orc-lead-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-ol1"
+"$specforge" session launch --role lead --bead SPEC-ol1 --profile orchestrator >"$out" 2>&1 \
+  || { echo "FAIL - orc-lead: launch errored"; cat "$out"; fail=1; }
+name="$(ls "$root/.specforge/state/sessions" | grep '^sf-lead' | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
+rec="$root/.specforge/state/sessions/$name.json"
+[[ "$(record "$rec" floor_lifted)" == "False" ]] \
+  && echo "ok   - orc-lead: floor NOT lifted for a lead on the orchestrator profile" \
+  || { echo "FAIL - orc-lead: floor_lifted is $(record "$rec" floor_lifted)"; fail=1; }
+cp "$(record "$rec" effective_settings_path)" "$out"
+check "orc-lead: the floor is still unioned in (sudo)"  'Bash(sudo:*)'
+check "orc-lead: the floor is still unioned in (rm -rf)" 'Bash(rm -rf:*)'
+check "orc-lead: openspec/ is still fenced" 'Edit(openspec/**)'
+[[ "$(record "$rec" openspec_readonly)" == "True" ]] \
+  && echo "ok   - orc-lead: openspec/ read-only root still applied" \
+  || { echo "FAIL - orc-lead: openspec_readonly is $(record "$rec" openspec_readonly)"; fail=1; }
+unset SPECFORGE_ROOT
+
+# ===========================================================================
+# Scenario: --role orchestrator is refused for a non-Claude agent (Claude-only)
+# ===========================================================================
+root="$work/orc-codex"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export TMUX_STUB_DIR="$work/orc-codex-tmux"; mkdir -p "$TMUX_STUB_DIR"
+"$specforge" session launch --role orchestrator --agent codex --profile orchestrator >"$out" 2>&1 \
+  && { echo "FAIL - orc-codex: should be refused"; fail=1; } \
+  || echo "ok   - orc-codex: --role orchestrator --agent codex is refused"
+unset SPECFORGE_ROOT
+
 if [[ $fail -ne 0 ]]; then echo "session checks failed" >&2; exit 1; fi
 echo "all session checks passed"
