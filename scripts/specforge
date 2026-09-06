@@ -1107,7 +1107,8 @@ def resolve_agent(agent):
             f"session_agent {resolved!r} is not a known agent (claude, codex, pi)")
     return resolved
 def session_launch(role, bead, cwd, read_only, owner,
-                   profile=None, prompt=None, full_access=False, agent=None):
+                   profile=None, prompt=None, full_access=False, agent=None,
+                   resume=False):
     """Start a supervised agent session for a Bead.
 
     This function performs NO Beads mutation. The only `bd` call it makes is
@@ -1191,6 +1192,8 @@ def session_launch(role, bead, cwd, read_only, owner,
     inner = [wrapper, "--prompt", str(prompt_path), "--cwd", workdir]
     if bead:
         inner += ["--bead", bead]
+    if resume and agent == "claude":
+        inner.append("--continue")
     if agent == "claude":
         # Write the merged, floored settings for THIS session and pass that file
         # to Claude — never the source profile, which is left untouched. The
@@ -1416,6 +1419,166 @@ def session_log(name, follow):
     if follow:
         os.execvp("tail", ["tail", "-n", "+1", "-F", str(lp)])
     sys.stdout.write(lp.read_text())
+# --- orchestrator: the always-on supervisor ------------------------------
+# `orchestrator run` is the idempotent process the systemd user service starts.
+# The thing kept alive is a normal supervised Claude session (a durable record,
+# an append-only log, listed by `session list`) — not a bespoke daemon. `status`
+# / `stop` / `restart` drive the service so the operator does not fight the
+# generic `session` commands.
+def orchestrator_slug(): return repo_slug()
+def orchestrator_session_name(): return f"sf-orchestrator-{orchestrator_slug()}"
+def orchestrator_unit(): return f"specforge-orchestrator-{orchestrator_slug()}.service"
+def _claude_project_dir(workdir):
+    return Path.home() / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(workdir))
+def claude_conversation_exists(workdir):
+    """True when Claude Code already has a stored conversation for `workdir` —
+    the signal that `orchestrator run` should resume with `claude --continue`
+    rather than start cold."""
+    d = _claude_project_dir(workdir)
+    return d.is_dir() and any(d.glob("*.jsonl"))
+def claude_project_trusted(workdir):
+    """Whether `~/.claude.json` records `hasTrustDialogAccepted` for `workdir`.
+    The orchestrator tmux pane is an interactive Claude session, which blocks on
+    the workspace-trust dialog for an untrusted directory, so the supervisor
+    refuses rather than hang. None when the file is missing or unreadable
+    (treated as unknown, not a hard failure)."""
+    p = Path.home() / ".claude.json"
+    if not p.is_file():
+        return None
+    try:
+        data = json.loads(p.read_text())
+    except (ValueError, OSError):
+        return None
+    entry = (data.get("projects") or {}).get(str(Path(workdir).resolve()))
+    return bool(entry.get("hasTrustDialogAccepted")) if isinstance(entry, dict) else None
+def _systemctl(*args):
+    return run("systemctl", "--user", *args, check=False)
+def _linger_on():
+    res = run("loginctl", "show-user", getpass.getuser(), "--property=Linger", check=False)
+    return res.returncode == 0 and res.stdout.strip().endswith("=yes")
+def orchestrator_live_session():
+    """`(path, record)` of a live orchestrator session, or None. Live = the
+    record's role is `orchestrator`, its tmux session exists, and its
+    reconciled state is active."""
+    live = tmux_sessions()
+    for path, rec in session_records():
+        if (rec.get("role") == "orchestrator" and rec.get("name") in live
+                and reconciled_state(rec, live) in SESSION_ACTIVE_STATES):
+            return path, rec
+    return None
+def orchestrator_run(force=False):
+    """Acquire the lock; adopt a live orchestrator tmux session or start one
+    (`claude --continue` when a prior conversation exists, else a cold start
+    with the persona prompt and the floor-lifted settings); refresh the record;
+    block until the tmux session exits; release the lock; exit non-zero so
+    `Restart=always` brings it back unless `orchestrator stop` disabled the
+    unit."""
+    def _term(_signum, _frame): raise SystemExit(1)
+    signal.signal(signal.SIGTERM, _term)
+    name = orchestrator_session_name()
+    workdir = str(ROOT)
+    acquire_orchestrator_lock(force)
+    try:
+        if tmux_has_session(name):
+            print(f"orchestrator: adopting the live session {name}")
+            rec_path = sessions_dir() / f"{name}.json"
+            log_path = sessions_dir() / f"{name}.log"
+            if rec_path.exists():
+                rec = json.loads(rec_path.read_text())
+            else:
+                rec = {"name": name, "bead_id": None, "role": "orchestrator",
+                       "host": socket.gethostname(), "started_at": now(),
+                       "working_dir": workdir, "log_path": str(log_path),
+                       "command": [], "profile": "orchestrator", "agent": "claude",
+                       "floor_lifted": True, "openspec_readonly": False,
+                       "read_only": False, "effective_settings_path": None,
+                       "owner": owner_identity(None)}
+            rec["ended_at"] = None; rec["exit_reason"] = None
+            transition(rec_path, rec, "running", adopted_at=now())
+            writer = str((ROOT / "scripts/session-log-writer").resolve())
+            sink = "exec " + " ".join(shlex.quote(a) for a in (
+                writer, str(log_path), str(int(scfg("session_log_max_bytes", 1048576))),
+                str(int(scfg("session_log_rotation_depth", 3)))))
+            tmux("pipe-pane", "-o", "-t", name, sink, check=False)
+        else:
+            session_reap()
+            if claude_project_trusted(workdir) is False:
+                raise RuntimeError(
+                    f"{workdir} is not a trusted Claude workspace — an interactive "
+                    f"orchestrator session would hang on the trust dialog. Run `claude` "
+                    f"once here and accept the prompt (or set "
+                    f"projects['{workdir}'].hasTrustDialogAccepted in ~/.claude.json), "
+                    f"then retry.")
+            resume = (claude_conversation_exists(workdir)
+                      or (sessions_dir() / f"{name}.json").exists())
+            session_launch("orchestrator", None, workdir, False, None,
+                           profile="orchestrator", prompt="orchestrator", resume=resume)
+        poll = float(scfg("orchestrator_poll_seconds", 5))
+        while tmux_has_session(name):
+            time.sleep(poll)
+        rec_path = sessions_dir() / f"{name}.json"
+        if rec_path.exists():
+            rec = json.loads(rec_path.read_text())
+            if rec.get("state") in SESSION_ACTIVE_STATES:
+                transition(rec_path, rec, "stopped",
+                           exit_reason="orchestrator tmux session exited")
+        print("orchestrator: session exited")
+    finally:
+        release_orchestrator_lock()
+    sys.exit(1)
+def orchestrator_status():
+    unit = orchestrator_unit()
+    enabled = _systemctl("is-enabled", unit).stdout.strip() or "not-installed"
+    active = _systemctl("is-active", unit).stdout.strip() or "unknown"
+    print(f"orchestrator unit: {unit}")
+    print(f"  enabled: {enabled}")
+    print(f"  active:  {active}")
+    print(f"  linger:  {'on' if _linger_on() else 'off'}")
+    lk = fresh_lock("orchestrator", orchestrator_lock_ttl())
+    print(f"  lock:    held by {lk.get('host')} pid {lk.get('pid')} "
+          f"(created {lk.get('created_at')})" if lk else "  lock:    free")
+    live = orchestrator_live_session()
+    if not live:
+        print("  session: no live orchestrator session"); return
+    _, rec = live
+    print(f"  session: {rec.get('name')} FULL-ACCESS "
+          f"{reconciled_state(rec, tmux_sessions())} (started {rec.get('started_at')})")
+    lp = Path(rec.get("log_path") or "")
+    if lp.exists():
+        print("  last log lines:")
+        for ln in lp.read_text().splitlines()[-15:]:
+            print(f"    {ln}")
+def orchestrator_stop():
+    unit = orchestrator_unit()
+    _systemctl("stop", unit)
+    _systemctl("disable", unit)
+    name = orchestrator_session_name()
+    if tmux_has_session(name):
+        tmux("send-keys", "-t", name, "C-c", check=False)
+        deadline = time.monotonic() + float(scfg("session_stop_grace_seconds", 10))
+        while time.monotonic() < deadline and tmux_has_session(name):
+            time.sleep(0.2)
+        if tmux_has_session(name):
+            tmux("kill-session", "-t", name, check=False)
+    rec_path = sessions_dir() / f"{name}.json"
+    if rec_path.exists():
+        rec = json.loads(rec_path.read_text())
+        if rec.get("state") in SESSION_ACTIVE_STATES:
+            transition(rec_path, rec, "stopped", exit_reason="stopped by operator")
+    release_orchestrator_lock()
+    print(f"orchestrator: stopped and disabled ({unit})")
+def orchestrator_restart():
+    unit = orchestrator_unit()
+    res = _systemctl("restart", unit)
+    if res.returncode:
+        raise RuntimeError(f"systemctl --user restart {unit} failed: "
+                           f"{res.stderr.strip() or res.stdout.strip()}")
+    print(f"orchestrator: restarted ({unit})")
+def orchestrator_cmd(args):
+    if args.orchestrator_command == "run": orchestrator_run(args.force)
+    elif args.orchestrator_command == "status": orchestrator_status()
+    elif args.orchestrator_command == "stop": orchestrator_stop()
+    elif args.orchestrator_command == "restart": orchestrator_restart()
 def recover_base_branch():
     """The branch a run's LIMBO / commits-since-fork scan is measured against.
     `recover_base_branch` config key wins; otherwise the first protected branch
@@ -1785,6 +1948,14 @@ def main():
         help="symlink .codex/prompts/*.md into <CODEX_HOME>/prompts/ as specforge-<name>.md")
     cpl.add_argument("--unlink", action="store_true",
         help="remove only the specforge-* prompt symlinks this command created")
+    orc = sub.add_parser("orchestrator")
+    orcsub = orc.add_subparsers(dest="orchestrator_command", required=True)
+    orun = orcsub.add_parser("run")
+    orun.add_argument("--force", action="store_true",
+                      help="reclaim a stale orchestrator lock (verify it is stale first)")
+    orcsub.add_parser("status")
+    orcsub.add_parser("stop")
+    orcsub.add_parser("restart")
     s = sub.add_parser("session"); ssub = s.add_subparsers(dest="session_command", required=True)
     sl = ssub.add_parser("launch")
     sl.add_argument("--role", required=True)
@@ -1828,6 +1999,7 @@ def main():
     elif args.command == "sync": sync_now() if args.now else sync()
     elif args.command == "discoveries": ack_discoveries(args.ack) if args.ack else discoveries()
     elif args.command == "session": session_cmd(args)
+    elif args.command == "orchestrator": orchestrator_cmd(args)
     else: doctor(args.command == "audit", getattr(args, "recover", False))
 def session_cmd(args):
     if args.session_command == "launch":

@@ -46,6 +46,7 @@ network="on"
 readonly_root=""
 provider=""
 model=""
+resume=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -61,6 +62,7 @@ while [ $# -gt 0 ]; do
     --provider)  provider=$2; shift 2 ;;
     --model)     model=$2; shift 2 ;;
     --read-only) read_only=1; shift ;;
+    --continue)  resume=1; shift ;;
     --)          shift; break ;;
     *) echo "session-launch: unknown argument: $1" >&2; exit 2 ;;
   esac
@@ -72,11 +74,16 @@ case "$agent" in
   claude)
     set --
     [ -n "$settings" ] && set -- "$@" --settings "$settings"
+    # --continue resumes the most recent conversation for this working dir (the
+    # orchestrator supervisor's restart path). The appended system prompt is
+    # still passed — it is harmless on a resume (applied after the next
+    # compaction) and it carries the persona on a cold start.
+    [ "$resume" -eq 1 ] && set -- "$@" --continue
     if [ -n "$prompt" ] && [ -f "$prompt" ]; then
       set -- "$@" --append-system-prompt "$(cat "$prompt")"
     fi
     [ "$read_only" -eq 1 ] && set -- "$@" --permission-mode plan
-    echo "specforge: starting Claude for ${bead:-<no bead>} in $(pwd) (read-only=${read_only})"
+    echo "specforge: starting Claude for ${bead:-<no bead>} in $(pwd) (read-only=${read_only} resume=${resume})"
     exec claude "$@"
     ;;
   codex)
