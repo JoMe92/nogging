@@ -102,5 +102,9 @@ module.exports = {
       from: 'templates/systemd/specforge-sync.timer.tmpl',
       to: 'systemd/specforge-sync-{slug}.timer',
     },
+    {
+      from: 'templates/systemd/specforge-orchestrator.service.tmpl',
+      to: 'systemd/specforge-orchestrator-{slug}.service',
+    },
   ],
 };
