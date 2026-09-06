@@ -1106,9 +1106,22 @@ def session_launch(role, bead, cwd, read_only, owner,
     # `.codex.toml` sandbox/approval spec; a Pi launch reads an optional
     # `.pi.toml` provider/model spec. All are validated here, before a
     # session exists.
+    if is_orchestrator and agent != "claude":
+        raise RuntimeError("--role orchestrator is Claude Code only in this version")
     source_settings = load_profile_settings(profile_path) if agent == "claude" else None
     codex_spec = load_codex_spec(profile_path) if agent == "codex" else None
     pi_spec = load_pi_spec(profile_path) if agent == "pi" else None
+    # The command-floor / openspec-boundary lift is the orchestrator's alone: the
+    # `specforge_floor` / `specforge_openspec_readonly` profile keys are honoured
+    # ONLY for --role orchestrator. For every other role they are ignored — the
+    # floor is unioned and openspec/ fenced exactly as before — so a lead or
+    # specialist session pointed at the `orchestrator` profile still runs floored
+    # and openspec/-fenced.
+    floor_lifted = False
+    if is_orchestrator and isinstance(source_settings, dict):
+        floor_lifted = source_settings.get("specforge_floor") is False
+        if source_settings.get("specforge_openspec_readonly") is False:
+            openspec_readonly = False
     if not is_orchestrator and not bead_exists(bead):
         raise RuntimeError(f"Bead {bead} does not exist; launch refused")
     live = tmux_sessions()
@@ -1150,7 +1163,10 @@ def session_launch(role, bead, cwd, read_only, owner,
         # claude wrapper call is byte-for-byte what it was before agent
         # selection existed (no `--agent` argument).
         effective_path = sdir / f"{name}.settings.json"
-        settings_out = merge_floor(source_settings)
+        # The SpecForge-only keys never reach Claude; strip them from the copy.
+        base_settings = {k: v for k, v in source_settings.items()
+                         if k not in ("//", "specforge_floor", "specforge_openspec_readonly")}
+        settings_out = base_settings if floor_lifted else merge_floor(base_settings)
         if openspec_readonly:
             settings_out = deny_openspec_writes(settings_out)
         effective_path.write_text(json.dumps(settings_out, indent=2) + "\n")
@@ -1206,6 +1222,7 @@ def session_launch(role, bead, cwd, read_only, owner,
         "read_only": bool(read_only), "ended_at": None, "exit_reason": None,
         "profile": profile_label, "effective_settings_path": effective_settings_path,
         "agent": agent, "openspec_readonly": bool(openspec_readonly),
+        "floor_lifted": bool(floor_lifted),
     }
     write_session(rec_path, record)                       # metadata before exec
     with log_path.open("a") as fh:                        # append-only log before exec
@@ -1252,9 +1269,13 @@ def session_list():
               f"{_agent_display(rec):<8}  "
               f"{_profile_display(rec):<12}  {rec.get('working_dir','')}")
 def _profile_display(rec):
-    """`session list` PROFILE cell: the restricted default (or an unset record
-    from before this column existed) shows as `-`; anything else shows its
-    name or the basename of the supplied path."""
+    """`session list` PROFILE cell: a session that actually ran with the command
+    floor lifted shows as `FULL-ACCESS` (a distinct token, not a profile name);
+    otherwise the restricted default (or an unset record from before this column
+    existed) shows as `-`, and anything else shows its name or the basename of
+    the supplied path."""
+    if rec.get("floor_lifted"):
+        return "FULL-ACCESS"
     p = rec.get("profile")
     return p if (p and p != "restricted") else "-"
 def _agent_display(rec):
