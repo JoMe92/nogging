@@ -5,7 +5,7 @@ short so `materialize` can use them as Bead titles.
 
 ## Verification first
 
-- [ ] TASK-ORC-001 Verify hands-on in a `tmux -L specforge` session: `claude --continue` resumes a prior conversation non-interactively; a `bypassPermissions` settings file with an empty deny list suppresses all prompts in a piped pane; the process registers with Remote Control and re-registers after a restart. Record mismatches as discoveries and adjust TASK-ORC-005 / TASK-ORC-007.
+- [x] TASK-ORC-001 Verify hands-on in a `tmux -L specforge` session: `claude --continue` resumes a prior conversation non-interactively; a `bypassPermissions` settings file with an empty deny list suppresses all prompts in a piped pane; the process registers with Remote Control and re-registers after a restart. Record mismatches as discoveries and adjust TASK-ORC-005 / TASK-ORC-007.
 
 ## Authority level
 
