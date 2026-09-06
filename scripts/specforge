@@ -816,16 +816,29 @@ def owner_identity(explicit=None):
     user = explicit or os.environ.get("SUDO_USER") or getpass.getuser()
     conn = os.environ.get("SSH_CONNECTION", "").split()
     return f"{user} (ssh {conn[0]})" if conn else user
+def slugify(name):
+    """Lowercase, non-alphanumerics to single hyphens, trimmed; empty -> 'repo'.
+    Mirrors bin/lib/install.js slugify() so a session name and a systemd unit
+    name for the same repo agree on the slug."""
+    s = re.sub(r"-+$", "", re.sub(r"^-+", "", re.sub(r"[^a-z0-9]+", "-", str(name).lower())))
+    return s or "repo"
+def repo_slug():
+    """The per-repository slug — `slugify(<repo dir basename>)`. Used for the
+    singleton orchestrator session name `sf-orchestrator-<slug>`."""
+    return slugify(ROOT.name)
 def normalize_role(role):
     """Return (metadata_role, name_slug). Accepts `lead`, `specialist:<type>`
-    or `spec-<type>`."""
+    or `spec-<type>`, and `orchestrator` (the always-on Orchestration Agent —
+    Bead-less, floor-liftable under the `orchestrator` profile)."""
     if role == "lead": return "lead", "lead"
+    if role == "orchestrator": return "orchestrator", "orchestrator"
     if role.startswith("specialist:"):
         t = role.split(":", 1)[1]
         if t: return f"specialist:{t}", f"spec-{t}"
     if role.startswith("spec-") and role[5:]:
         return f"specialist:{role[5:]}", role
-    raise RuntimeError(f"--role must be 'lead' or 'specialist:<type>', got {role!r}")
+    raise RuntimeError(
+        f"--role must be 'lead', 'specialist:<type>' or 'orchestrator', got {role!r}")
 def session_records():
     """Enumerate true session-record files only.
 
@@ -841,7 +854,12 @@ def session_records():
         if p.name.endswith(".settings.json"): continue
         try: rec = json.loads(p.read_text())
         except (ValueError, OSError): continue
-        if not (isinstance(rec, dict) and rec.get("name") and rec.get("bead_id")): continue
+        # A true record has a `name` and a `bead_id` key (the orchestrator's is
+        # null, so test presence, not truthiness) or a `role`. The per-session
+        # `<name>.settings.json` is a bare permissions dict — no name, no role,
+        # no bead_id — and is still skipped.
+        if not (isinstance(rec, dict) and rec.get("name")
+                and ("bead_id" in rec or rec.get("role"))): continue
         out.append((p, rec))
     return out
 def load_session(name):
@@ -1064,6 +1082,14 @@ def session_launch(role, bead, cwd, read_only, owner,
     the operator directs (see .specforge/session-launch-prompt.md)."""
     agent = resolve_agent(agent)
     role_meta, role_slug = normalize_role(role)
+    is_orchestrator = role_meta == "orchestrator"
+    # The Orchestration Agent is not anchored to a Bead: `--bead` may be omitted
+    # for it (and is ignored if passed), recorded as a null `bead_id`. Every
+    # other role still requires a real, existing Bead.
+    if is_orchestrator:
+        bead = None
+    elif not bead:
+        raise RuntimeError("--bead is required for every role except 'orchestrator'")
     # An execution session (any non-planning role) launched outside a fresh
     # planning session gets openspec/ as a read-only root in its effective
     # authority — tool-agnostically. A planning role, or a launch while a fresh
@@ -1083,22 +1109,41 @@ def session_launch(role, bead, cwd, read_only, owner,
     source_settings = load_profile_settings(profile_path) if agent == "claude" else None
     codex_spec = load_codex_spec(profile_path) if agent == "codex" else None
     pi_spec = load_pi_spec(profile_path) if agent == "pi" else None
-    if not bead_exists(bead):
+    if not is_orchestrator and not bead_exists(bead):
         raise RuntimeError(f"Bead {bead} does not exist; launch refused")
     live = tmux_sessions()
     for _, rec in session_records():
-        if (rec.get("bead_id") == bead and rec.get("role") == role_meta
+        if is_orchestrator:
+            if (rec.get("role") == "orchestrator"
+                    and rec.get("state") in SESSION_ACTIVE_STATES and rec.get("name") in live):
+                raise RuntimeError(
+                    f"a live orchestrator session already exists: {rec['name']} "
+                    f"(use `orchestrator run` to adopt it)")
+        elif (rec.get("bead_id") == bead and rec.get("role") == role_meta
                 and rec.get("state") in SESSION_ACTIVE_STATES and rec.get("name") in live):
             raise RuntimeError(
                 f"a live {role_meta} session already covers {bead}: {rec['name']}")
-    name = gen_session_name(role_slug, bead)
+    # The orchestrator is a singleton: a fixed, nonce-free `sf-orchestrator-<slug>`
+    # name (a stale terminal record of the same name is reused in place). Every
+    # other role gets the deterministic `sf-<role>-<bead>-<nonce>` shape.
+    name = f"sf-orchestrator-{repo_slug()}" if is_orchestrator else gen_session_name(role_slug, bead)
     workdir = str(Path(cwd or ROOT).resolve())
     sdir = sessions_dir()
     rec_path, log_path = sdir / f"{name}.json", sdir / f"{name}.log"
-    if rec_path.exists() or tmux_has_session(name):    # last-line race guard
+    if tmux_has_session(name):    # last-line race guard
         raise RuntimeError(f"session {name} already exists; refusing to reuse or overwrite it")
+    if rec_path.exists():
+        # The singleton orchestrator reuses its fixed name once the prior record
+        # is terminal; every other session name is nonce-unique and must not be
+        # reused or overwritten.
+        prior_terminal = is_orchestrator and (
+            json.loads(rec_path.read_text()).get("state") in SESSION_TERMINAL_STATES)
+        if not prior_terminal:
+            raise RuntimeError(f"session {name} already exists; refusing to reuse or overwrite it")
     wrapper = str((ROOT / "scripts/session-launch").resolve())
-    inner = [wrapper, "--prompt", str(prompt_path), "--cwd", workdir, "--bead", bead]
+    inner = [wrapper, "--prompt", str(prompt_path), "--cwd", workdir]
+    if bead:
+        inner += ["--bead", bead]
     if agent == "claude":
         # Write the merged, floored settings for THIS session and pass that file
         # to Claude — never the source profile, which is left untouched. The
@@ -1164,7 +1209,7 @@ def session_launch(role, bead, cwd, read_only, owner,
     }
     write_session(rec_path, record)                       # metadata before exec
     with log_path.open("a") as fh:                        # append-only log before exec
-        fh.write(f"# specforge session {name} for {bead} ({role_meta}) started {record['started_at']}\n")
+        fh.write(f"# specforge session {name} for {bead or 'no bead'} ({role_meta}) started {record['started_at']}\n")
     try:
         tmux("new-session", "-d", "-s", name, "-c", workdir, "--", *inner)
         writer = str((ROOT / "scripts/session-log-writer").resolve())
@@ -1178,7 +1223,7 @@ def session_launch(role, bead, cwd, read_only, owner,
         raise
     transition(rec_path, record, "running")
     print(f"launched {name}")
-    print(f"  bead={bead} role={role_meta} cwd={workdir}")
+    print(f"  bead={bead or '-'} role={role_meta} cwd={workdir}")
     print(f"  log={log_path}")
     print(f"  attach: {tmux_bin()} -L {tmux_socket()} attach -t {name}  (or: specforge session attach {name})")
 
@@ -1201,7 +1246,7 @@ def session_list():
            f"{'STATE':<8}  {'OWNER':<16}  {'AGENT':<8}  {'PROFILE':<12}  WORKING_DIR")
     print(hdr)
     for _, rec in recs:
-        print(f"{rec.get('name',''):<40}  {rec.get('bead_id',''):<10}  "
+        print(f"{rec.get('name',''):<40}  {(rec.get('bead_id') or '-'):<10}  "
               f"{rec.get('role',''):<24}  {rec.get('started_at',''):<20}  "
               f"{reconciled_state(rec, live):<8}  {str(rec.get('owner','')):<16}  "
               f"{_agent_display(rec):<8}  "
@@ -1686,7 +1731,8 @@ def main():
         help="remove only the specforge-* prompt symlinks this command created")
     s = sub.add_parser("session"); ssub = s.add_subparsers(dest="session_command", required=True)
     sl = ssub.add_parser("launch")
-    sl.add_argument("--role", required=True); sl.add_argument("--bead", required=True)
+    sl.add_argument("--role", required=True)
+    sl.add_argument("--bead", help="mapped Bead ID; required for every role except 'orchestrator'")
     sl.add_argument("--cwd"); sl.add_argument("--read-only", action="store_true")
     sl.add_argument("--owner")
     sl.add_argument("--agent", choices=("claude", "codex", "pi"),
