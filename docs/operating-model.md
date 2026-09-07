@@ -166,7 +166,7 @@ Every other working branch is named `<type>/<slug>`:
   `openspec/changes/archive/<date>-<slug>/` (so a branch opened before the
   change was archived does not start failing; never the literal `archive`).
   This is what makes the branch traceable to agreed intent. Any of the `<type>`
-  values may front a change branch, e.g. `feat/photo-import-filesystem`.
+  values may front a change branch, e.g. `feat/dark-mode-toggle`.
 - `chore/<topic>` and `plan/<topic>` cover work not scoped to a single change —
   tooling, multi-change planning. `<topic>` is a free kebab slug and needs no
   `openspec/changes/` match.
@@ -176,7 +176,7 @@ Every other working branch is named `<type>/<slug>`:
 it. A branch that does not match fails CI.
 
 Use Conventional Commits, for example
-`feat(import): add filesystem picker [SPEC-abc123]`.
+`feat(ui): add dark mode toggle [SPEC-abc123]`.
 
 Planning changes are committed on their change branch and merged into `develop`
 after `./scripts/specforge validate`. A planning commit uses a Conventional
