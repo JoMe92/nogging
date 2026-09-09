@@ -110,7 +110,36 @@ fast-forward-merge to `develop` — but only for the single named change it was
 started for. Every other hard rule still holds: no `openspec/` edits, no
 touching another change's Beads, discoveries recorded, commit-and-note before
 closing a Bead. A short command floor (`rm -rf`, `sudo`, `dd`, `mkfs`,
-`shutdown`, `reboot`, fork bomb) is denied under every profile and every agent.
+`shutdown`, `reboot`, fork bomb) is denied under every profile and every agent —
+with the **single exception** of the Orchestration Agent (below).
+
+## The Orchestration Agent
+
+The **Orchestration Agent** is a fourth persona, above the Planning Agent and
+the Main Worker: **Product Owner → Orchestration Agent → {Planning, Lead} →
+Specialists**. It runs always-on as the single supervised
+`sf-orchestrator-<slug>` session (a systemd user service keeps it alive across
+crash and reboot; it is reachable from a phone via Remote Control). It is
+**Claude Code only** in this version.
+
+- **Default scope is orchestrate-only.** It reads the whole state and drives
+  Planning and Lead sessions through `scripts/specforge` (`session
+  launch|attach|log|stop`, `sync --now`, `recover`, `discoveries`), `bd`, and
+  `git` (read + local fast-forward integration). It writes **no** file under
+  `openspec/` and edits **no** implementation code.
+- **The command floor and the `openspec/` boundary are lifted for it** — the
+  one documented exception, keyed to `--role orchestrator` under the
+  `orchestrator` profile. Nothing mechanical enforces the limits above; the
+  discipline lives in `.specforge/launch-prompts/orchestrator.md`. `session
+  list` / `doctor` show the session as `FULL-ACCESS`.
+- **Explicit takeover only.** On an explicit `/orchestrate takeover
+  {plan|code} <description>` it does one task directly — a planning task
+  committed with the `SpecForge-Writer: planning` trailer, or a code task
+  committed with the `[<bead-id>]` token — then returns to orchestrate-only.
+- **Acceptance stays human.** It never completes an acceptance report's
+  `Signed-off-by:` line.
+
+See `docs/operating-model.md` *Orchestration* and `docs/architecture.md`.
 
 ## Commands
 
@@ -175,3 +204,28 @@ the subsection for the tool you are running as, and ignore the others.
   custom prompts only from `~/.codex/prompts/`, symlink or copy them there, or
   run the `scripts/specforge` steps directly. Codex auto-loads the repo's
   `.agents/skills/**/SKILL.md`, so the OpenSpec skills are available as-is.
+
+### Pi
+
+- **Write boundary.** Pi has no per-tool hook and no execution-policy file.
+  `openspec/` writes are blocked by the project-local guard extension
+  (`.pi/extensions/specforge-guard.ts`), which intercepts the `tool_call`
+  event and rejects a write/edit under `openspec/` unless the
+  `.specforge/locks/openspec.readonly` sentinel is absent (a planning session
+  is active); `plan-begin` / `plan-end` toggle it. The same extension
+  enforces the SpecForge command floor on the shell tool. Pi's `restricted`
+  authority level is **floor-only**: unlike Claude and Codex, there is no
+  network or filesystem sandbox at either authority level — the guard
+  extension and the `openspec/` write boundary are the only enforcement.
+- **Specialists.** Pi has no in-process subagent mechanism. A specialist run
+  is a **separate supervised session**:
+  `scripts/specforge session launch --agent pi --role specialist:<type>
+  --bead <id>`, under every specialist boundary rule above. The six
+  `.claude/agents/*.md` are Claude-Code-only and are not ported to Pi. Where a
+  separate session is overkill, the Lead Agent does the work inline under the
+  same constraints.
+- **Operator entry points.** `.pi/prompts/{plan,discovery-review,sync-now}.md`
+  (same persona and steps as the Claude commands and Codex prompts). Pi reads
+  `.pi/prompts/` directly from the repository — no symlink helper is needed
+  (unlike Codex, which needs `codex-prompts-link` because it only reads
+  custom prompts from `~/.codex/prompts/`).

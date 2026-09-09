@@ -16,8 +16,8 @@ slug. The branches `main` and `develop` SHALL be exempt.
 
 #### Scenario: Change branch matches a change directory
 
-- **WHEN** a branch is named `feat/photo-import-filesystem`
-- **AND** `openspec/changes/photo-import-filesystem/` exists
+- **WHEN** a branch is named `feat/dark-mode-toggle`
+- **AND** `openspec/changes/dark-mode-toggle/` exists
 - **THEN** the branch satisfies the convention
 
 #### Scenario: Change branch with no matching change is rejected
@@ -28,7 +28,7 @@ slug. The branches `main` and `develop` SHALL be exempt.
 
 #### Scenario: Unknown type is rejected
 
-- **WHEN** a branch is named `wip/photo-import-filesystem`
+- **WHEN** a branch is named `wip/dark-mode-toggle`
 - **THEN** the branch violates the convention
 
 #### Scenario: Topic branch needs no change directory

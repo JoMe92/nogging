@@ -34,6 +34,14 @@ function renderSystemd(ctx) {
         `    systemctl --user enable --now "$PWD/${timer}"`,
     );
   }
+  const orchestrator = written.find((p) => p.includes('orchestrator'));
+  if (orchestrator) {
+    ctx.notes.push(
+      'Enable the always-on Orchestration Agent (optional — the operator\'s choice):\n' +
+        `    systemctl --user enable --now "$PWD/${orchestrator}"\n` +
+        `    loginctl enable-linger ${process.env.USER || '<user>'}   # so it starts at boot without a login`,
+    );
+  }
 }
 
 module.exports = { render, renderSystemd };

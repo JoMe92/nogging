@@ -30,11 +30,22 @@ module.exports = {
   // Directories copied verbatim (recursive).
   verbatimDirs: [
     { from: '.agents/skills', to: '.agents/skills' },
+    // The Claude Code payload: specialist definitions and repository-scoped
+    // workflow commands. Settings remain under mergeClaudeSettings() so a
+    // target repository's unrelated Claude configuration is preserved.
+    { from: '.claude/agents', to: '.claude/agents' },
+    { from: '.claude/commands', to: '.claude/commands' },
     // The Codex payload: the execpolicy floor (.codex/rules/) and the workflow
     // prompts (.codex/prompts/). Both ride the package "files" list.
     // mergeCodex() preserves a `bd`-written .codex/hooks.json separately.
     { from: '.codex/rules', to: '.codex/rules' },
     { from: '.codex/prompts', to: '.codex/prompts' },
+    // The Pi payload: the workflow prompts (.pi/prompts/) and the guard
+    // extension (.pi/extensions/), Pi's project-local floor since it has no
+    // native sandbox or execution-policy mechanism. Both ride the package
+    // "files" list.
+    { from: '.pi/prompts', to: '.pi/prompts' },
+    { from: '.pi/extensions', to: '.pi/extensions' },
     // launch-profiles ships both the Claude settings files (<level>.json) and
     // the Codex launch specs (<level>.codex.toml); the whole directory rides
     // along, and package.json "files" lists it.
@@ -95,6 +106,10 @@ module.exports = {
     {
       from: 'templates/systemd/specforge-sync.timer.tmpl',
       to: 'systemd/specforge-sync-{slug}.timer',
+    },
+    {
+      from: 'templates/systemd/specforge-orchestrator.service.tmpl',
+      to: 'systemd/specforge-orchestrator-{slug}.service',
     },
   ],
 };

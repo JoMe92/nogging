@@ -33,7 +33,7 @@ git switch develop
 ./scripts/specforge plan-begin
 # Plan with OpenSpec, then add stable TASK-... IDs to tasks.md.
 ./scripts/specforge validate
-./scripts/specforge materialize photo-import-filesystem
+./scripts/specforge materialize <change-name>
 ./scripts/specforge plan-end
 ./scripts/specforge sync
 ```
@@ -42,10 +42,8 @@ The timer is installed with `systemctl --user enable --now specforge-sync.timer`
 See [docs/vision-and-architecture.md](docs/vision-and-architecture.md) for the
 goal and the design, [docs/operating-model.md](docs/operating-model.md) for the
 process, [docs/running-work-in-sessions.md](docs/running-work-in-sessions.md) for
-running work in supervised host sessions,
-[docs/walkthrough-photo-import.md](docs/walkthrough-photo-import.md) for a worked
-example, and [docs/acceptance.md](docs/acceptance.md) for the end-to-end
-acceptance runbook.
+running work in supervised host sessions, and
+[docs/acceptance.md](docs/acceptance.md) for the end-to-end acceptance runbook.
 
 ## Install into another repo
 

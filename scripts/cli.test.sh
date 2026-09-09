@@ -38,10 +38,18 @@ check "install-hooks installed"    test -f "$repo/scripts/install-hooks"
 check "boundary hook installed"    test -f "$repo/scripts/hooks/pre-tool-use-openspec-guard"
 check "bridge is executable"       test -x "$repo/scripts/specforge"
 check "skills copied"              test -f "$repo/.agents/skills/openspec-propose/SKILL.md"
+check "all Claude agents installed" diff -qr "$root/.claude/agents" "$repo/.claude/agents"
+check "all Claude commands installed" diff -qr "$root/.claude/commands" "$repo/.claude/commands"
 check "launch profiles shipped"    test -f "$repo/.specforge/launch-profiles/restricted.json"
 check "launch profiles ship trusted" test -f "$repo/.specforge/launch-profiles/trusted.json"
 check "launch profiles ship codex fragments" test -f "$repo/.specforge/launch-profiles/restricted.codex.toml"
 check "launch profiles ship trusted codex fragment" test -f "$repo/.specforge/launch-profiles/trusted.codex.toml"
+check "launch profiles ship pi fragments" test -f "$repo/.specforge/launch-profiles/restricted.pi.toml"
+check "launch profiles ship trusted pi fragment" test -f "$repo/.specforge/launch-profiles/trusted.pi.toml"
+check "pi guard extension installed" test -f "$repo/.pi/extensions/specforge-guard.ts"
+check "pi prompt plan.md installed"    test -f "$repo/.pi/prompts/plan.md"
+check "pi prompt discovery-review.md installed" test -f "$repo/.pi/prompts/discovery-review.md"
+check "pi prompt sync-now.md installed" test -f "$repo/.pi/prompts/sync-now.md"
 check "launch prompts shipped"     test -f "$repo/.specforge/launch-prompts/autonomous.md"
 check "reference docs under docs/specforge" test -f "$repo/docs/specforge/architecture.md"
 check "codex guide under docs/specforge" test -f "$repo/docs/specforge/using-with-codex.md"
@@ -60,6 +68,7 @@ check "codex prompt sync-now.md installed" test -f "$repo/.codex/prompts/sync-no
 check "AGENTS.md carries a Tool notes section" grep -q 'Tool notes' "$repo/AGENTS.md"
 check "AGENTS.md Tool notes labels Claude Code"  grep -q 'Claude Code' "$repo/AGENTS.md"
 check "AGENTS.md Tool notes labels Codex"        grep -q 'Codex' "$repo/AGENTS.md"
+check "AGENTS.md Tool notes labels Pi"  grep -q '.pi/extensions/specforge-guard.ts' "$repo/AGENTS.md"
 check "openspec scaffold written"  test -f "$repo/openspec/config.yaml"
 check "project.md scaffold written" test -f "$repo/openspec/project.md"
 check "config.json written"        test -f "$repo/.specforge/config.json"
@@ -201,6 +210,8 @@ git -C "$idem" -c core.hooksPath=/dev/null commit -q -m "install specforge"
 ( cd "$idem" && node "$cli" init --no-beads >/dev/null )
 ( cd "$idem" && node "$cli" update >/dev/null )
 check "re-init + update produce no tracked diff" git -C "$idem" diff --quiet
+check "re-init + update preserve Claude agents byte-for-byte" diff -qr "$root/.claude/agents" "$idem/.claude/agents"
+check "re-init + update preserve Claude commands byte-for-byte" diff -qr "$root/.claude/commands" "$idem/.claude/commands"
 
 # --- scaffold files are preserved -----------------------------------------
 repo2="$work/existing"
@@ -236,6 +247,8 @@ check "warns when core.hooksPath diverts git" bash -c "grep -q 'core.hooksPath' 
 upd="$work/update"
 mkdir -p "$upd"; git -C "$upd" init -q
 ( cd "$upd" && node "$cli" init --no-beads --no-systemd >/dev/null )
+printf 'stale agent\n' > "$upd/.claude/agents/architect.md"
+printf 'stale command\n' > "$upd/.claude/commands/plan.md"
 mkdir -p "$upd/openspec/changes/my-change"
 printf '# Tasks\n\n- [ ] TASK-X-001 do a thing\n' > "$upd/openspec/changes/my-change/tasks.md"
 printf '# My project\n\nCustom purpose.\n' > "$upd/openspec/project.md"
@@ -253,6 +266,8 @@ check "update exits 0" [ "$rc" -eq 0 ]
 changes_after=$(cd "$upd" && git -C "$upd" hash-object openspec/changes/my-change/tasks.md 2>/dev/null || md5sum "$upd/openspec/changes/my-change/tasks.md")
 check "update leaves openspec/changes untouched" [ "$changes_before" = "$changes_after" ]
 check "update leaves openspec/project.md untouched" grep -q "Custom purpose." "$upd/openspec/project.md"
+check "update refreshes a stale Claude agent" cmp -s "$root/.claude/agents/architect.md" "$upd/.claude/agents/architect.md"
+check "update refreshes a stale Claude command" cmp -s "$root/.claude/commands/plan.md" "$upd/.claude/commands/plan.md"
 
 new_name=$(node -e "process.stdout.write(require('$upd/.specforge/config.json').name)")
 check "update keeps config name" [ "$new_name" = "my-custom-name" ]
@@ -293,16 +308,42 @@ if command -v npm >/dev/null 2>&1; then
     ( cd "$packrepo" && node "$pkg/bin/cli.js" init --no-beads --no-systemd >/dev/null 2>&1 ) || rc=$?
     check "packed install succeeds"                 [ "$rc" -eq 0 ]
     check "packed install ships the tool bridge"    test -f "$packrepo/scripts/specforge"
+    check "packed install ships all Claude agents"  diff -qr "$root/.claude/agents" "$packrepo/.claude/agents"
+    check "packed install ships all Claude commands" diff -qr "$root/.claude/commands" "$packrepo/.claude/commands"
     check "packed install ships launch profiles"    test -f "$packrepo/.specforge/launch-profiles/restricted.json"
     check "packed install ships codex fragments"    test -f "$packrepo/.specforge/launch-profiles/restricted.codex.toml"
     check "packed install ships trusted codex fragment" test -f "$packrepo/.specforge/launch-profiles/trusted.codex.toml"
+    check "packed install ships pi fragments"    test -f "$packrepo/.specforge/launch-profiles/restricted.pi.toml"
+    check "packed install ships trusted pi fragment" test -f "$packrepo/.specforge/launch-profiles/trusted.pi.toml"
+    check "packed install ships the pi guard extension" test -f "$packrepo/.pi/extensions/specforge-guard.ts"
+    check "packed install ships pi prompt plan.md" test -f "$packrepo/.pi/prompts/plan.md"
+    check "packed install ships pi prompt discovery-review.md" test -f "$packrepo/.pi/prompts/discovery-review.md"
+    check "packed install ships pi prompt sync-now.md" test -f "$packrepo/.pi/prompts/sync-now.md"
     check "packed install ships launch prompts"     test -f "$packrepo/.specforge/launch-prompts/no-autonomous-claim.md"
+    check "packed install ships the orchestrator profile" test -f "$packrepo/.specforge/launch-profiles/orchestrator.json"
+    check "packed install ships the orchestrator prompt"  test -f "$packrepo/.specforge/launch-prompts/orchestrator.md"
+    check "packed install ships the orchestrator unit template" \
+      test -f "$pkg/templates/systemd/specforge-orchestrator.service.tmpl"
+    # A packed install WITH systemd renders the per-repo orchestrator unit.
+    orcrepo="$work/packorc"; mkdir -p "$orcrepo"; git -C "$orcrepo" init -q
+    orc_out=$( cd "$orcrepo" && node "$pkg/bin/cli.js" init --no-beads 2>&1 ) || true
+    orc_unit=$(find "$orcrepo/systemd" -name 'specforge-orchestrator-*.service' 2>/dev/null | head -1)
+    check "packed install renders the orchestrator unit" test -n "$orc_unit"
+    check "orchestrator unit ExecStart calls orchestrator run" \
+      grep -qx "ExecStart=$orcrepo/scripts/specforge orchestrator run" "$orc_unit"
+    check "orchestrator unit restarts always"  grep -qx "Restart=always" "$orc_unit"
+    check "orchestrator unit targets default.target" grep -qx "WantedBy=default.target" "$orc_unit"
+    check "init prints the orchestrator enable line" \
+      bash -c "printf '%s' \"\$1\" | grep -q 'specforge-orchestrator-'" _ "$orc_out"
+    check "init prints the loginctl enable-linger hint" \
+      bash -c "printf '%s' \"\$1\" | grep -q 'loginctl enable-linger'" _ "$orc_out"
     check "packed install ships the skills"         test -f "$packrepo/.agents/skills/openspec-propose/SKILL.md"
     check "packed install ships the codex rules floor" test -f "$packrepo/.codex/rules/specforge.rules"
     check "packed install ships codex prompt plan.md" test -f "$packrepo/.codex/prompts/plan.md"
     check "packed install ships codex prompt discovery-review.md" test -f "$packrepo/.codex/prompts/discovery-review.md"
     check "packed install ships codex prompt sync-now.md" test -f "$packrepo/.codex/prompts/sync-now.md"
     check "packed install AGENTS.md has Tool notes"  grep -q 'Tool notes' "$packrepo/AGENTS.md"
+    check "packed install AGENTS.md labels Pi"       grep -q '.pi/extensions/specforge-guard.ts' "$packrepo/AGENTS.md"
   else
     echo "ok   - packed-install check skipped (npm pack failed)"
   fi

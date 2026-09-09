@@ -750,6 +750,131 @@ check "codex-reject: message says it is a Claude settings file" "Claude settings
 unset SPECFORGE_ROOT
 
 # ===========================================================================
+# Scenario: --agent pi --full-access (trusted) maps onto the always-on guard
+# extension (TASK-PIA-010)
+# ===========================================================================
+# pi stub: PATH-injected, logs its argv, never starts a real process.
+cat >"$work/bin/pi" <<'STUB'
+#!/usr/bin/env bash
+{ printf 'pi'; for a in "$@"; do printf ' <%s>' "$a"; done; printf '\n'; } \
+  >>"${PI_ARGV_LOG:?PI_ARGV_LOG unset}"
+STUB
+chmod +x "$work/bin/pi"
+
+root="$work/pi-full"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export TMUX_STUB_DIR="$work/pi-full-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-pia"
+"$specforge" session launch --role lead --bead SPEC-pia --agent pi --full-access >"$out" 2>&1 \
+  || { echo "FAIL - pi-full: launch errored"; cat "$out"; fail=1; }
+check "pi-full: missing-floor warning names the guard extension" ".pi/extensions/specforge-guard.ts"
+name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
+rec="$root/.specforge/state/sessions/$name.json"
+[[ "$(record "$rec" agent)" == "pi" ]] \
+  && echo "ok   - pi-full: record shows agent pi" \
+  || { echo "FAIL - pi-full: agent is $(record "$rec" agent)"; fail=1; }
+[[ "$(record "$rec" effective_settings_path)" == "None" ]] \
+  && echo "ok   - pi-full: no per-session effective-settings file for Pi" \
+  || { echo "FAIL - pi-full: effective_settings_path is $(record "$rec" effective_settings_path)"; fail=1; }
+[[ ! -f "$root/.specforge/state/sessions/$name.settings.json" ]] \
+  && echo "ok   - pi-full: no <name>.settings.json written" \
+  || { echo "FAIL - pi-full: a settings file was written for Pi"; fail=1; }
+cp "$TMUX_STUB_DIR/calls.log" "$out"
+check "pi-full: wrapper call carries --agent pi" "--agent pi"
+"$specforge" session list >"$out" 2>&1
+check "pi-full: session list has an AGENT column"         "AGENT"
+# a bare "pi" substring would spuriously match "SPEC-pia" itself, so anchor on
+# the padded AGENT cell (2+ spaces on both sides — see _agent_display()).
+check "pi-full: session list shows pi in the AGENT column" "  pi  "
+unset SPECFORGE_ROOT
+
+# ===========================================================================
+# Scenario: --agent pi with no --full-access stays on the restricted profile
+# (the observable difference from the trusted scenario above is which prompt
+# resolves and which profile label is recorded — the guard extension itself
+# is never suppressed at either level, by design)
+# ===========================================================================
+root="$work/pi-restricted"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export TMUX_STUB_DIR="$work/pi-restricted-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-pir"
+"$specforge" session launch --role lead --bead SPEC-pir --agent pi >"$out" 2>&1 \
+  || { echo "FAIL - pi-restricted: launch errored"; cat "$out"; fail=1; }
+name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
+rec="$root/.specforge/state/sessions/$name.json"
+[[ "$(record "$rec" agent)" == "pi" ]] \
+  && echo "ok   - pi-restricted: record shows agent pi" \
+  || { echo "FAIL - pi-restricted: agent is $(record "$rec" agent)"; fail=1; }
+[[ "$(record "$rec" profile)" == "restricted" ]] \
+  && echo "ok   - pi-restricted: record profile is restricted (no --full-access)" \
+  || { echo "FAIL - pi-restricted: record profile is $(record "$rec" profile)"; fail=1; }
+cp "$TMUX_STUB_DIR/calls.log" "$out"
+grep -qE -- "--prompt [^ ]*/no-autonomous-claim\.md" "$out" \
+  && echo "ok   - pi-restricted: no-autonomous-claim prompt resolved (vs. autonomous for trusted)" \
+  || { echo "FAIL - pi-restricted: default prompt not passed"; cat "$out"; fail=1; }
+refute "pi-restricted: no guard-suppressing flag is ever emitted" "no-approve"
+unset SPECFORGE_ROOT
+
+# ===========================================================================
+# Scenario: the wrapper execs `pi` with the mapped flags, and never a flag
+# that would suppress or bypass the always-on guard extension
+# ===========================================================================
+export PI_ARGV_LOG="$work/pi-argv.log"; : >"$PI_ARGV_LOG"
+"$here/session-launch" --agent pi --provider anthropic --model claude-x \
+  --prompt "$work/pi-full/.specforge/launch-prompts/autonomous.md" \
+  --cwd "$work/pi-full" --bead SPEC-pia >"$out" 2>&1 \
+  || { echo "FAIL - pi-wrap: wrapper errored"; cat "$out"; fail=1; }
+cp "$PI_ARGV_LOG" "$out"
+check "pi-wrap: always passes --approve"                       "<--approve>"
+check "pi-wrap: forwards --provider"                           "<--provider> <anthropic>"
+check "pi-wrap: forwards --model"                              "<--model> <claude-x>"
+check "pi-wrap: appends the prompt via --append-system-prompt" "<--append-system-prompt>"
+refute "pi-wrap: never passes --no-approve"     "no-approve"
+refute "pi-wrap: never passes --no-extensions"  "no-extensions"
+
+# ===========================================================================
+# Scenario: a Claude settings file with --agent pi fails before any session
+# ===========================================================================
+root="$work/pi-reject-json"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export TMUX_STUB_DIR="$work/pi-reject-json-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-prc"
+"$specforge" session launch --role lead --bead SPEC-prc --agent pi \
+  --profile "$root/.specforge/launch-profiles/restricted.json" >"$out" 2>&1 \
+  && { echo "FAIL - pi-reject-json: launch should have failed"; fail=1; } \
+  || echo "ok   - pi-reject-json: a .json profile with --agent pi is refused"
+check "pi-reject-json: message says it is a Claude settings file" "Claude settings file"
+[[ -z "$(ls -A "$root/.specforge/state/sessions" 2>/dev/null)" ]] \
+  && echo "ok   - pi-reject-json: no session record was created" \
+  || { echo "FAIL - pi-reject-json: session state left behind"; ls -A "$root/.specforge/state/sessions"; fail=1; }
+[[ ! -f "$TMUX_STUB_DIR/calls.log" ]] || ! grep -qF "new-session " "$TMUX_STUB_DIR/calls.log" \
+  && echo "ok   - pi-reject-json: no tmux session was created" \
+  || { echo "FAIL - pi-reject-json: tmux new-session was called"; fail=1; }
+unset SPECFORGE_ROOT
+
+# ===========================================================================
+# Scenario: a Codex .codex.toml profile with --agent pi is also refused (the
+# endswith(".codex.toml") check in resolve_pi_profile() — Path.suffix alone
+# would not catch this, since it only returns the LAST suffix, ".toml")
+# ===========================================================================
+root="$work/pi-reject-codex-toml"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export TMUX_STUB_DIR="$work/pi-reject-codex-toml-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-prt"
+"$specforge" session launch --role lead --bead SPEC-prt --agent pi \
+  --profile "$root/.specforge/launch-profiles/restricted.codex.toml" >"$out" 2>&1 \
+  && { echo "FAIL - pi-reject-codex-toml: launch should have failed"; fail=1; } \
+  || echo "ok   - pi-reject-codex-toml: a .codex.toml profile with --agent pi is refused"
+check "pi-reject-codex-toml: message says it is a Codex launch spec" "Codex launch spec"
+[[ -z "$(ls -A "$root/.specforge/state/sessions" 2>/dev/null)" ]] \
+  && echo "ok   - pi-reject-codex-toml: no session record was created" \
+  || { echo "FAIL - pi-reject-codex-toml: session state left behind"; ls -A "$root/.specforge/state/sessions"; fail=1; }
+[[ ! -f "$TMUX_STUB_DIR/calls.log" ]] || ! grep -qF "new-session " "$TMUX_STUB_DIR/calls.log" \
+  && echo "ok   - pi-reject-codex-toml: no tmux session was created" \
+  || { echo "FAIL - pi-reject-codex-toml: tmux new-session was called"; fail=1; }
+unset SPECFORGE_ROOT
+
+# ===========================================================================
 # Scenario: the default launch still execs `claude` — no --agent argument
 # ===========================================================================
 root="$work/codex-default"; make_root "$root"
@@ -784,6 +909,97 @@ PY
 [[ "$red_out" == *'network_access=false'* ]] \
   && echo "ok   - redact-c: a non-secret -c override is left intact" \
   || { echo "FAIL - redact-c: over-redacted a benign override ($red_out)"; fail=1; }
+
+# ===========================================================================
+# Scenario: --role orchestrator launches Bead-less, FULL-ACCESS, floor lifted
+# (TASK-ORC-003 / TASK-ORC-004)
+# ===========================================================================
+root="$work/orc"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export TMUX_STUB_DIR="$work/orc-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN=""
+"$specforge" session launch --role orchestrator --profile orchestrator >"$out" 2>&1 \
+  || { echo "FAIL - orc: launch errored"; cat "$out"; fail=1; }
+check "orc: launch reports the singleton name" "launched sf-orchestrator-orc"
+orcrec="$root/.specforge/state/sessions/sf-orchestrator-orc.json"
+[[ -f "$orcrec" ]] \
+  && echo "ok   - orc: record written under the fixed name" \
+  || { echo "FAIL - orc: no record at the fixed name"; fail=1; }
+[[ "$(record "$orcrec" bead_id)" == "None" ]] \
+  && echo "ok   - orc: record carries a null Bead id" \
+  || { echo "FAIL - orc: bead_id is $(record "$orcrec" bead_id)"; fail=1; }
+[[ "$(record "$orcrec" role)" == "orchestrator" ]] \
+  && echo "ok   - orc: record role is orchestrator" \
+  || { echo "FAIL - orc: role is $(record "$orcrec" role)"; fail=1; }
+[[ "$(record "$orcrec" floor_lifted)" == "True" ]] \
+  && echo "ok   - orc: record marks floor_lifted true" \
+  || { echo "FAIL - orc: floor_lifted is $(record "$orcrec" floor_lifted)"; fail=1; }
+[[ "$(record "$orcrec" openspec_readonly)" == "False" ]] \
+  && echo "ok   - orc: openspec/ read-only root not applied" \
+  || { echo "FAIL - orc: openspec_readonly is $(record "$orcrec" openspec_readonly)"; fail=1; }
+cp "$(record "$orcrec" effective_settings_path)" "$out"
+check "orc: effective settings keep bypassPermissions" '"defaultMode": "bypassPermissions"'
+check "orc: effective settings keep the accepted-disclaimer key" '"skipDangerousModePermissionPrompt": true'
+refute "orc: no floor deny in the effective settings (sudo)"  'Bash(sudo:*)'
+refute "orc: no floor deny in the effective settings (rm -rf)" 'Bash(rm -rf:*)'
+refute "orc: no openspec/ deny in the effective settings" 'Edit(openspec/**)'
+refute "orc: the SpecForge-only keys never reach Claude" 'specforge_floor'
+env -u TERM "$specforge" session list >"$out" 2>&1
+check "orc: session list shows the orchestrator row" "sf-orchestrator-orc"
+check "orc: session list marks it FULL-ACCESS" "FULL-ACCESS"
+"$specforge" session launch --role orchestrator --profile orchestrator >"$out" 2>&1 \
+  && { echo "FAIL - orc: a second orchestrator launch should be refused"; fail=1; } \
+  || echo "ok   - orc: a second live orchestrator launch is refused"
+check "orc: the refusal points at orchestrator run" "orchestrator run"
+unset SPECFORGE_ROOT
+
+# ===========================================================================
+# Scenario: --bead is still required for every non-orchestrator role
+# ===========================================================================
+root="$work/orc-bead"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export TMUX_STUB_DIR="$work/orc-bead-tmux"; mkdir -p "$TMUX_STUB_DIR"
+"$specforge" session launch --role lead >"$out" 2>&1 \
+  && { echo "FAIL - orc-bead: lead without --bead should fail"; fail=1; } \
+  || echo "ok   - orc-bead: lead without --bead is refused"
+check "orc-bead: the message names the orchestrator exception" "except 'orchestrator'"
+unset SPECFORGE_ROOT
+
+# ===========================================================================
+# Scenario: the orchestrator profile's floor keys are ignored for other roles —
+# a lead session on --profile orchestrator still runs floored and fenced
+# (TASK-ORC-004)
+# ===========================================================================
+root="$work/orc-lead"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export TMUX_STUB_DIR="$work/orc-lead-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-ol1"
+"$specforge" session launch --role lead --bead SPEC-ol1 --profile orchestrator >"$out" 2>&1 \
+  || { echo "FAIL - orc-lead: launch errored"; cat "$out"; fail=1; }
+name="$(ls "$root/.specforge/state/sessions" | grep '^sf-lead' | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
+rec="$root/.specforge/state/sessions/$name.json"
+[[ "$(record "$rec" floor_lifted)" == "False" ]] \
+  && echo "ok   - orc-lead: floor NOT lifted for a lead on the orchestrator profile" \
+  || { echo "FAIL - orc-lead: floor_lifted is $(record "$rec" floor_lifted)"; fail=1; }
+cp "$(record "$rec" effective_settings_path)" "$out"
+check "orc-lead: the floor is still unioned in (sudo)"  'Bash(sudo:*)'
+check "orc-lead: the floor is still unioned in (rm -rf)" 'Bash(rm -rf:*)'
+check "orc-lead: openspec/ is still fenced" 'Edit(openspec/**)'
+[[ "$(record "$rec" openspec_readonly)" == "True" ]] \
+  && echo "ok   - orc-lead: openspec/ read-only root still applied" \
+  || { echo "FAIL - orc-lead: openspec_readonly is $(record "$rec" openspec_readonly)"; fail=1; }
+unset SPECFORGE_ROOT
+
+# ===========================================================================
+# Scenario: --role orchestrator is refused for a non-Claude agent (Claude-only)
+# ===========================================================================
+root="$work/orc-codex"; make_root "$root"
+export SPECFORGE_ROOT="$root"
+export TMUX_STUB_DIR="$work/orc-codex-tmux"; mkdir -p "$TMUX_STUB_DIR"
+"$specforge" session launch --role orchestrator --agent codex --profile orchestrator >"$out" 2>&1 \
+  && { echo "FAIL - orc-codex: should be refused"; fail=1; } \
+  || echo "ok   - orc-codex: --role orchestrator --agent codex is refused"
+unset SPECFORGE_ROOT
 
 if [[ $fail -ne 0 ]]; then echo "session checks failed" >&2; exit 1; fi
 echo "all session checks passed"

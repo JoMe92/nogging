@@ -44,6 +44,21 @@ OpenSpec, runs `./scripts/specforge validate`, commits with
 `./scripts/specforge plan-end`. The commit precedes `materialize` so a crash
 between them never leaves Beads without a committed spec.
 
+### The Orchestration Agent
+
+A fourth persona above Planning and the Main Worker (**Product Owner →
+Orchestration Agent → {Planning, Lead} → Specialists**), run always-on as the
+single supervised `sf-orchestrator-<slug>` session by a systemd user service and
+reachable from a phone via Remote Control. **Claude Code only** in this version.
+It is **orchestrate-only by default** — reads state and drives Planning and Lead
+sessions through `scripts/specforge`, writing no `openspec/` file and no code
+itself. The command floor and the `openspec/` boundary are lifted for it (the
+one documented exception, keyed to `--role orchestrator`); the discipline lives
+in `.specforge/launch-prompts/orchestrator.md`, and `session list` / `doctor`
+show it as `FULL-ACCESS`. It writes `openspec/` or code only under an explicit
+`/orchestrate takeover {plan|code}` instruction (one task, then back), and it
+never signs an acceptance report. See `docs/specforge/operating-model.md`.
+
 ### Tool notes
 
 - **Claude Code.** `openspec/` writes are also blocked by a `PreToolUse` hook
@@ -57,5 +72,14 @@ between them never leaves Beads without a committed spec.
   `scripts/specforge session launch --agent codex --role specialist:<type>
   --bead <id>`, under every specialist boundary rule. Operator entry points:
   `.codex/prompts/{plan,discovery-review,sync-now}.md`.
+- **Pi.** No per-tool hook and no execpolicy file — `openspec/` writes are
+  blocked by the project-local guard extension
+  (`.pi/extensions/specforge-guard.ts`), which also enforces the command
+  floor; `restricted` is floor-only (no network or filesystem sandbox at
+  either authority level, unlike Claude Code or Codex). Pi has no in-process
+  subagent mechanism: a specialist run is a separate supervised session,
+  `scripts/specforge session launch --agent pi --role specialist:<type>
+  --bead <id>`, under every specialist boundary rule. Operator entry points:
+  `.pi/prompts/{plan,discovery-review,sync-now}.md`.
 
 Update SpecForge itself with `npx github:JoMe92/specforge update`.

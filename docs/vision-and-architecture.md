@@ -211,8 +211,7 @@ order:
    exercises the whole chain and its assertions are written against
    post-`reliable-beads-sync` behaviour.
 
-Within a change, work the tasks in `tasks.md` order. `photo-import-filesystem`
-is a concept walkthrough, not scheduled work — its Beads are deferred.
+Within a change, work the tasks in `tasks.md` order.
 
 ### Known gaps not yet on the roadmap
 

@@ -176,6 +176,42 @@ specialist is given **its own** supervised tmux session
 long-lived Claude Code process the operator wants to observe or stop
 independently; it still obeys every specialist boundary rule.
 
+### The Orchestration Agent and the command floor
+
+The **Orchestration Agent** is a fourth supervised session persona, above
+Planning and the Lead Agent (see `docs/operating-model.md`). Mechanically it is
+an ordinary supervised session — a durable record, an append-only log, listed by
+`session list` — with three differences:
+
+- **No Bead.** `--role orchestrator` is launched without `--bead`; the record
+  carries `bead_id: null` and `floor_lifted: true`. The session name is the
+  fixed singleton `sf-orchestrator-<slug>` (no nonce); `orchestrator run`
+  adopts an existing live one rather than failing on the name.
+- **The command floor is lifted — for this role only.** The `orchestrator`
+  profile (`bypassPermissions`, empty deny, `specforge_floor: false`,
+  `specforge_openspec_readonly: false`) is the *single* documented exception to
+  "a fixed command floor cannot be lifted by any profile". `session launch`
+  reads those two keys **only** when the role is `orchestrator`; for every other
+  role they are ignored and the floor is unioned in and `openspec/` fenced
+  exactly as before, so pointing a `lead` session at `--profile orchestrator`
+  still runs it floored. This is not an OS sandbox escape — a `trusted` session
+  can already push and merge. It is a role that was never meant to be fenced,
+  and the safeguards for it are **visibility** (`session list` /  `doctor` show
+  it as `FULL-ACCESS`, the append-only log, the durable record) and the
+  **single-instance lock** (`.specforge/locks/orchestrator.lock`), not a
+  boundary. The accepted residual risk is that an always-on god-mode session
+  that auto-resumes its own conversation is a standing prompt-injection target;
+  it is mitigated by delivery-host-only blast radius, full visibility, and the
+  single instance, not eliminated.
+- **Always-on.** A rendered systemd user service
+  (`specforge-orchestrator-<slug>.service`, `Restart=always`,
+  `WantedBy=default.target`) runs `scripts/specforge orchestrator run`, an
+  idempotent supervisor that keeps the one session alive and resumes its
+  conversation with `claude --continue` after a crash or a reboot (with
+  `loginctl enable-linger`). The session registers with Remote Control for
+  phone access. `doctor` reports the service state and linger without failing
+  on its absence — it is opt-in.
+
 ## The OpenSpec write boundary
 
 Invariant 5 — execution agents do not alter `openspec/` — is enforced in depth
@@ -323,4 +359,8 @@ the branch, or the commit by SHA and subject.
 Invariant 5 is enforced in depth by three layers (see *The OpenSpec write
 boundary*). Requirement-to-code fidelity is not claimed to be automatically
 decidable; tests, review and Product Owner acceptance remain the evidence for
-that judgement.
+that judgement. The **Orchestration Agent** under an explicit `takeover plan`
+instruction is the one persona that writes `openspec/` outside a `/plan`
+session; its commit still carries the `SpecForge-Writer: planning` trailer, so
+the CI `invariants` job accepts it exactly as it accepts a planning session's
+commit (see *The Orchestration Agent and the command floor*).

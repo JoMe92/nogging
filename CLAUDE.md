@@ -98,6 +98,25 @@ If a specialist reports a plan-relevant finding, you record the discovery per
 Agent; an agreed-intent change waits for a planning session.
 
 
+## The Orchestration Agent
+
+Above the Planning Agent and this Lead Agent persona sits the **Orchestration
+Agent** — a separate always-on session (`sf-orchestrator-<slug>`, kept alive by
+a systemd user service, reachable from a phone via Remote Control), **Claude
+Code only**. Hierarchy: **Product Owner → Orchestration Agent → {Planning,
+Lead} → Specialists**. It is **orchestrate-only by default**: it reads the whole
+state and drives Planning and Lead sessions through `scripts/specforge`, and
+writes no `openspec/` file and no implementation code itself. Its command floor
+and `openspec/` boundary are lifted (the one documented exception, keyed to
+`--role orchestrator`; `session list` / `doctor` show it as `FULL-ACCESS`), so
+the discipline is prompt-borne — see `.specforge/launch-prompts/orchestrator.md`.
+It writes `openspec/` or code only under an explicit
+`/orchestrate takeover {plan|code}` instruction (one task, then back to
+orchestrate-only), and it never signs an acceptance report. Reach and drive it
+with `.claude/commands/orchestrate.md` and `scripts/specforge orchestrator
+{run,status,stop,restart}`. See `docs/operating-model.md` *Orchestration*.
+
+
 ## Build & Test
 
 _Add your build and test commands here_
