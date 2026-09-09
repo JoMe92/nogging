@@ -11,6 +11,8 @@
     "templates",
     "scripts",
     ".agents",
+    ".claude/agents",
+    ".claude/commands",
     ".specforge/launch-profiles",
     ".specforge/launch-prompts",
     ".codex/rules",
