@@ -2,7 +2,7 @@
 
 ## 1. Identity decision gates
 
-- [ ] TASK-IDENT-001 Re-run and commit the dated name-collision matrix for the current name, `DeliveryLoom`, and at least two fresh fallbacks across general web search, GitHub, npm, PyPI, relevant domains and official trademark databases in intended markets; record sources, exact queries, known collisions and uncertainty, and verify that no “available” result is presented as legal clearance.
+- [x] TASK-IDENT-001 Re-run and commit the dated name-collision matrix for the current name, `DeliveryLoom`, and at least two fresh fallbacks across general web search, GitHub, npm, PyPI, relevant domains and official trademark databases in intended markets; record sources, exact queries, known collisions and uncertainty, and verify that no “available” result is presented as legal clearance.
 - [ ] TASK-IDENT-002 Human owner selects the canonical name after legal review, manually claims the required domains/accounts/package scope, and records non-secret ownership evidence plus the rejected alternatives; verify every minimum property resolves to the owner before closing this human-gated task. No agent may purchase, register or transfer a property.
 
 ## 2. Canonical identity
