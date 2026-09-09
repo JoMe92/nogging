@@ -7,6 +7,8 @@
     "specforge": "bin/cli.js"
   },
   "files": [
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
     "bin",
     "templates",
     "scripts",
