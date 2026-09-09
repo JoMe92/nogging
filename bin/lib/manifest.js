@@ -30,6 +30,11 @@ module.exports = {
   // Directories copied verbatim (recursive).
   verbatimDirs: [
     { from: '.agents/skills', to: '.agents/skills' },
+    // The Claude Code payload: specialist definitions and repository-scoped
+    // workflow commands. Settings remain under mergeClaudeSettings() so a
+    // target repository's unrelated Claude configuration is preserved.
+    { from: '.claude/agents', to: '.claude/agents' },
+    { from: '.claude/commands', to: '.claude/commands' },
     // The Codex payload: the execpolicy floor (.codex/rules/) and the workflow
     // prompts (.codex/prompts/). Both ride the package "files" list.
     // mergeCodex() preserves a `bd`-written .codex/hooks.json separately.
