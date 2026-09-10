@@ -3,7 +3,7 @@
 ## 1. Identity decision and evidence
 
 - [x] TASK-IDENT-001 Re-run and commit dated name-collision research for SpecForge and proposed umbrella names across relevant web, source, package, domain, and trademark sources; record uncertainty and ensure no availability observation is presented as legal clearance.
-- [ ] TASK-IDENT-002 Record the owner's decision that SpecForge remains the canonical public project name and Agentsembli is only a provisional ecosystem working name; document that no domain, account, package-scope, trademark, website, or repository claim is required for this release, and retain rejected alternatives as research evidence.
+- [x] TASK-IDENT-002 Record the owner's decision that SpecForge remains the canonical public project name and Agentsembli is only a provisional ecosystem working name; document that no domain, account, package-scope, trademark, website, or repository claim is required for this release, and retain rejected alternatives as research evidence.
 
 ## 2. Stable public identity
 
