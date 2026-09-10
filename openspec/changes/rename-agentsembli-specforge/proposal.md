@@ -22,7 +22,10 @@ while giving the project a distinctive ecosystem-qualified identity.
   release automation, installation examples, and acceptance evidence to the
   new repository.
 - Provide an exact owner-run cutover, rollback, and old-repository retirement
-  checklist. Repository visibility and final acceptance remain human actions.
+  checklist. While private, `SECURITY.md` supplies the reporting instructions;
+  the owner enables and verifies GitHub Private Vulnerability Reporting
+  immediately after making the repository public. Visibility and final
+  acceptance remain human actions.
 
 ## Capabilities
 

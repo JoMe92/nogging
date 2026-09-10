@@ -15,9 +15,17 @@ paths, canonical links, repository metadata, and absence of forbidden history.
 ### Requirement: Public launch requires later human sign-off
 
 The rename acceptance report SHALL be committed unsigned. Agent automation
-SHALL NOT change repository visibility or fill its `Signed-off-by:` field.
+SHALL NOT change repository visibility or fill its `Signed-off-by:` field. The
+pre-launch report SHALL verify the private-phase `SECURITY.md` route and record
+Private Vulnerability Reporting as an owner cutover check that can pass only
+after the repository becomes public.
 
 #### Scenario: Candidate is mechanically ready
 
 - **WHEN** all automated acceptance checks pass but the owner has not signed
 - **THEN** Agentsembli SpecForge remains private and is not reported as publicly accepted
+
+#### Scenario: Owner completes the public cutover
+
+- **WHEN** the owner makes the validated repository public
+- **THEN** the owner immediately enables and verifies Private Vulnerability Reporting before completing `Signed-off-by:`

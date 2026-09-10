@@ -11,7 +11,10 @@ A complete pre-rewrite mirror and bundle exist outside the repository. The
 clean rewrite mirror contains normalized public GitHub noreply identities and
 removes internal documents, interaction history, old execution/acceptance
 evidence, generated host units, bytecode, and maintainer paths. Repository
-visibility, security settings, and acceptance sign-off remain owner-controlled.
+visibility, public-only vulnerability-reporting enablement, and acceptance
+sign-off remain owner-controlled. GitHub returned HTTP 404 when Private
+Vulnerability Reporting was requested while the successor was private, matching
+GitHub's documented public-repository availability boundary.
 
 ## Goals / Non-Goals
 
@@ -97,7 +100,7 @@ verified successor releases.
 ## Migration Plan
 
 1. Verify the new repository exists, is private and empty; record its immutable
-   owner/name and configure private vulnerability reporting before advertising it.
+   owner/name and provide the private-phase reporting route in `SECURITY.md`.
 2. Rebuild or revalidate the sanitized mirror from the recorded backup and push
    only explicitly approved branches/tags to the successor.
 3. Fresh-clone the successor as a mirror; scan refs, history, identities, paths,
@@ -108,7 +111,9 @@ verified successor releases.
 6. Create a successor release candidate and unsigned acceptance report; obtain
    owner sign-off in a later commit.
 7. Owner archives or deletes the old private repository, updates external GitHub
-   settings, and—only after every gate passes—changes successor visibility.
+   settings, and—only after every pre-launch gate passes—changes successor
+   visibility, immediately enables and verifies Private Vulnerability Reporting,
+   then completes final acceptance sign-off.
 
 Rollback before public launch: remove successor refs or delete the still-private
 successor, restore the old private repository from the verified bundle if needed,

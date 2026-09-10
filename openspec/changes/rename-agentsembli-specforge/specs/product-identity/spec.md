@@ -46,9 +46,14 @@ public installation unless the owner explicitly approves a safe redirect.
 
 Automation SHALL NOT make the new repository public or sign the final
 acceptance report. Those actions SHALL require the Product Owner after all
-privacy, security, migration, link, and release gates pass.
+privacy, security, migration, link, and release gates pass. While the repository
+is private, `SECURITY.md` SHALL provide the applicable reporting instructions.
+Because GitHub exposes Private Vulnerability Reporting only for public
+repositories, the owner cutover SHALL enable and verify it immediately after
+the visibility change and before signing final acceptance.
 
 #### Scenario: Mechanical checks finish
 
 - **WHEN** every automated rename and release check passes
 - **THEN** the repository remains private and the acceptance report remains unsigned until the owner acts
+- **AND** the owner checklist sequences public visibility, Private Vulnerability Reporting enablement and verification, then final sign-off
