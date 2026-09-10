@@ -63,6 +63,36 @@ npx github:JoMe92/agentsembli-specforge update
 `openspec/project.md`, the config `name`, and everything under
 `openspec/changes/` are left exactly as they are.
 
+### Updating an installation from the legacy repository
+
+The repository name changed, but the installed identifiers did not. Update an
+installation made from a pinned legacy SpecForge tag by running a pinned
+successor tag from the target repository root:
+
+```bash
+npx github:JoMe92/agentsembli-specforge#<new-tag> update
+```
+
+For rollback, run `update` from the exact preceding legacy tag. This restores
+that tag's managed payload while retaining OpenSpec changes, Beads data,
+`.specforge/` state, the configuration name, service filenames, and unrelated
+Claude, Codex, and Pi settings. Do not use an unpinned branch for either step.
+
+## Removing the installed payload
+
+Run the pinned successor package that is currently installed:
+
+```bash
+npx github:JoMe92/agentsembli-specforge#<tag> remove
+```
+
+`remove` deletes exact manifest-owned tool, prompt, agent, reference-document,
+and generated-unit files. It also removes the managed blocks from `AGENTS.md`
+and `CLAUDE.md` and the matching Claude guard entry. It preserves OpenSpec,
+Beads, `.specforge/` configuration/state/reports, and unrelated settings.
+Shared `.gitignore` entries and Git hooks are left for manual review because
+the installer cannot prove whether another tool now owns them.
+
 ## Prerequisites in the target repo
 
 - **Node.js ≥ 18** — only to run the installer.

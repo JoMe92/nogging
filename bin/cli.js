@@ -7,6 +7,7 @@ const path = require('path');
 const install = require('./lib/install');
 const { applyMerges } = require('./lib/merge');
 const { renderSystemd } = require('./lib/systemd');
+const { removeInstallation } = require('./lib/remove');
 
 const USAGE = `specforge — install the Agentsembli SpecForge operating structure into a repo
 
@@ -17,6 +18,7 @@ Commands:
   init      Install Agentsembli SpecForge into the current git repository
   update    Refresh Agentsembli SpecForge tool files and re-apply merges (keeps your
             openspec/changes, openspec/project.md and config name)
+  remove    Remove managed payload while preserving project-owned state
   doctor    Run the installed ./scripts/specforge doctor
 
 Options:
@@ -101,6 +103,12 @@ function cmdUpdate(args) {
   install.readinessVerdict(ctx);
 }
 
+function cmdRemove(args) {
+  const ctx = install.makeContext(args);
+  removeInstallation(ctx);
+  report(ctx);
+}
+
 function cmdDoctor() {
   const { spawnSync } = require('child_process');
   if (!fs.existsSync('scripts/specforge')) {
@@ -128,6 +136,7 @@ function main() {
     switch (args.command) {
       case 'init': cmdInit(args); break;
       case 'update': cmdUpdate(args); break;
+      case 'remove': cmdRemove(args); break;
       case 'doctor': cmdDoctor(args); break;
       default:
         process.stderr.write(`specforge: unknown command: ${args.command}\n`);
