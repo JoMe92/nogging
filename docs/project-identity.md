@@ -51,3 +51,26 @@ uses tagged GitHub installation and does not publish to that npm name.
 No Agentsembli property needs to be claimed for this release. A future umbrella
 brand requires new collision and trademark research, explicit owner action, and
 a separately approved migration if technical identifiers would change.
+
+## Technical identifier inventory
+
+The first public release deliberately keeps the identifiers already used by
+installed repositories. They are part of the compatibility surface, not places
+where the provisional ecosystem name may be substituted:
+
+| Surface | Stable identifier |
+| --- | --- |
+| npm/GitHub package metadata | `specforge` |
+| Executable and CLI help | `specforge` |
+| Repository-local command | `scripts/specforge` |
+| Configuration and state root | `.specforge/` |
+| Installed reference documentation | `docs/specforge/` |
+| Generated systemd units | `specforge-sync-<slug>` and `specforge-orchestrator-<slug>` |
+| Dedicated tmux socket and sessions | `specforge` and `sf-<role>-<bead>-<nonce>` |
+| Codex prompt links | `specforge-<prompt>.md` |
+
+Consequently, a clean installation, an update from an earlier SpecForge tag,
+a rollback to that tag, and removal of the installed tool payload require no
+identity migration. OpenSpec content, `.beads/`, project configuration, and
+unrelated agent settings remain target-owned data and must not be renamed or
+removed as part of those operations.

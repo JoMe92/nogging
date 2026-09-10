@@ -24,6 +24,32 @@ grep -q 'only component' "$identity" || fail "Beads-only adoption boundary is mi
 grep -q 'independent implementation' "$identity" || fail "independent implementation statement is missing"
 grep -q 'not affiliated with or' "$identity" || fail "non-affiliation statement is missing"
 grep -q 'a local-first delivery system that carries approved intent' "$identity" || fail "concept statement is missing"
+grep -q '## Technical identifier inventory' "$identity" || fail "technical identifier inventory is missing"
+grep -q 'require no' "$identity" || fail "no-migration lifecycle decision is missing"
+
+# Technical identity surfaces must retain the established SpecForge identifiers.
+# Agentsembli is ecosystem language only and must never become an installed name.
+technical_surfaces=(
+  package.json
+  bin
+  scripts
+  templates
+  .specforge/launch-profiles
+  .specforge/launch-prompts
+  .codex
+  .pi
+)
+if grep -Rni --exclude='identity.test.sh' 'agentsembli' "${technical_surfaces[@]}"; then
+  fail "provisional ecosystem name leaked into a technical identity surface"
+fi
+
+grep -q 'npx github:JoMe92/specforge' bin/cli.js || fail "CLI install command changed identity"
+grep -q "'scripts/specforge'" bin/lib/manifest.js || fail "installed command path changed identity"
+grep -q "to: 'docs/specforge/" bin/lib/manifest.js || fail "installed documentation path changed identity"
+grep -q 'specforge-sync-{slug}' bin/lib/manifest.js || fail "generated sync unit changed identity"
+grep -q 'specforge-orchestrator-{slug}' bin/lib/manifest.js || fail "generated orchestrator unit changed identity"
+grep -q '"name": "SpecForge"' templates/specforge-config.json || fail "generated config changed identity"
+grep -q 'scfg("session_tmux_socket", "specforge")' scripts/specforge || fail "tmux socket changed identity"
 
 node -e '
   const pkg = require("./package.json");
