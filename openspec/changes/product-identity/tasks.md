@@ -7,7 +7,7 @@
 
 ## 2. Stable public identity
 
-- [ ] TASK-IDENT-003 Add `docs/project-identity.md` with the canonical project name, provisional ecosystem status, stable repository/command/package identifiers, support and security destinations, optional Agent Console relationship, concise concept statement, and linked Gas Town/Beads provenance plus independent-implementation and non-affiliation language; add focused validation for required fields and links.
+- [x] TASK-IDENT-003 Add `docs/project-identity.md` with the canonical project name, provisional ecosystem status, stable repository/command/package identifiers, support and security destinations, optional Agent Console relationship, concise concept statement, and linked Gas Town/Beads provenance plus independent-implementation and non-affiliation language; add focused validation for required fields and links.
 - [ ] TASK-IDENT-004 Inventory package metadata, CLI help/output, scripts, generated services/configuration, installation commands, and installed payload identifiers; verify they remain SpecForge-based, add a regression check against accidental Agentsembli renaming, and confirm clean install, update, rollback, and uninstall require no identity migration.
 - [ ] TASK-IDENT-005 Apply the checked-in identity to README, current user/maintainer documentation, templates, agent instructions, security/support routes, examples, and release text where relevant; require every current Agentsembli occurrence to say it is provisional, keep Agent Console optional, and verify Gas Town inspiration, Beads-only adoption, independent implementation, non-affiliation, links, and standalone SpecForge usability.
 
