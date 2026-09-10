@@ -13,6 +13,8 @@
     "bin",
     "templates",
     "scripts",
+    "!scripts/__pycache__",
+    "!scripts/**/*.pyc",
     ".agents",
     ".claude/agents",
     ".claude/commands",
@@ -23,6 +25,8 @@
     ".pi/prompts",
     ".pi/extensions",
     "docs",
+    "!docs/source",
+    "!docs/acceptance",
     "openspec/config.yaml",
     "AGENTS.md"
   ],
