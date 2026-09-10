@@ -3,7 +3,7 @@
 ## 1. Legal and public-data gates
 
 - [x] TASK-PUB-001 Add the full ISC license and copyright identity, inventory bundled/generated third-party material, add required notices plus a vendor non-affiliation statement, and verify GitHub/package license detection and every distributed component's license compatibility.
-- [ ] TASK-PUB-002 Run a reproducible credential/privacy audit across every advertised Git ref, complete Git history, package payload, `.beads/interactions.jsonl`, `refs/dolt/data`, `__dolt_remote_info__`, acceptance reports, execution logs, and `docs/source/`; commit a redacted audit report listing tools, scope, findings, accepted exceptions, and blockers, and stop with a discovery rather than rewriting history if destructive remediation is required.
+- [x] TASK-PUB-002 Run a reproducible credential/privacy audit across every advertised Git ref, complete Git history, package payload, `.beads/interactions.jsonl`, `refs/dolt/data`, `__dolt_remote_info__`, acceptance reports, execution logs, and `docs/source/`; commit a redacted audit report listing tools, scope, findings, accepted exceptions, and blockers, and stop with a discovery rather than rewriting history if destructive remediation is required.
 - [ ] TASK-PUB-003 Remove or sanitize current-ref operational artifacts found unsuitable by TASK-PUB-002, including host-specific generated systemd units and internal/package-only documents; add regression checks that prevent their return, and verify the public tree and package contain no private host path or forbidden artifact.
 
 ## 2. Public documentation and governance
