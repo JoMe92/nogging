@@ -1,6 +1,7 @@
 {
   "name": "specforge",
   "version": "1.4.0",
+  "private": true,
   "description": "Lean local-first operating model for agentic software delivery — installable into any repo",
   "main": "bin/cli.js",
   "bin": {
@@ -29,10 +30,25 @@
     "node": ">=18"
   },
   "scripts": {
-    "test": "scripts/test"
+    "test": "scripts/test",
+    "prepublishOnly": "node -e \"console.error('SpecForge is distributed from tagged GitHub releases, not the npm registry.'); process.exit(1)\""
   },
-  "keywords": [],
-  "author": "",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JoMe92/specforge.git"
+  },
+  "homepage": "https://github.com/JoMe92/specforge#readme",
+  "bugs": {
+    "url": "https://github.com/JoMe92/specforge/issues"
+  },
+  "keywords": [
+    "agentic-development",
+    "beads",
+    "codex",
+    "openspec",
+    "software-delivery"
+  ],
+  "author": "Jonas Meier",
   "license": "ISC",
   "devDependencies": {
     "@fission-ai/openspec": "^1.11.0"

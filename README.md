@@ -47,9 +47,14 @@ running work in supervised host sessions, and
 
 ## Install into another repo
 
+The first public distribution is GitHub-only. The unscoped npm name
+`specforge` belongs to another project, so this package is marked private and
+must not be published to the npm registry. Install an exact SpecForge GitHub
+tag instead:
+
 ```bash
 cd /path/to/your-repo
-npx github:JoMe92/specforge init      # then: update, doctor
+npx github:JoMe92/specforge#v1.4.0 init      # then: update, doctor
 ```
 
 `init` copies the tool files verbatim, writes an OpenSpec scaffold only where one
