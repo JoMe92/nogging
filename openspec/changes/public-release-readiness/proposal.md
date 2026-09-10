@@ -17,6 +17,12 @@ decision should be reduced to one explicit visibility-change checklist.
 - Replace the maintainer-oriented README with a user-first introduction,
   five-minute walkthrough, support matrix, safety model, and links to task-based
   documentation.
+- Keep **SpecForge** as the public project name and describe **Agentsembli** only
+  as the provisional working name for the wider ecosystem; do not require a
+  repository rename, product website, or broader brand rollout for this release.
+- Credit Gas Town as a conceptual inspiration, state that SpecForge is an
+  independent implementation, and identify Beads as the only Gas Town component
+  currently adopted rather than implying code reuse or affiliation.
 - Reconcile installation and operating documentation with current behavior,
   including Beads initialization, Claude/Pi/Codex payloads, version pinning,
   hooks, systemd, update, rollback, and uninstall.
@@ -58,5 +64,7 @@ decision should be reduced to one explicit visibility-change checklist.
 The change affects repository metadata and community files, README and user
 documentation, npm package metadata/allowlisting, installer behavior and tests,
 GitHub workflows, release tooling, acceptance procedures and reports, tracked
-operational artifacts, and potentially public Git/Dolt history. It does not
-publish to npm and does not change repository visibility.
+operational artifacts, and potentially public Git/Dolt history. It documents
+Agent Console as an optional sibling project without changing that repository.
+It does not rename SpecForge, launch an Agentsembli website, publish to npm, or
+change repository visibility.

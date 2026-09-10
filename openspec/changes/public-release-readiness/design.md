@@ -17,6 +17,8 @@ scope and the four delta specs for required outcomes.
 - Keep legal, privacy, security, documentation, packaging, compatibility, CI,
   and acceptance work independently executable where possible.
 - End with a report that leaves only the GitHub visibility toggle to the owner.
+- Present SpecForge as a credible standalone open-source project while allowing
+  a lightweight reference to the provisional Agentsembli ecosystem.
 
 **Non-Goals:**
 
@@ -26,6 +28,8 @@ scope and the four delta specs for required outcomes.
   explicitly approves the destructive migration.
 - Promising native Windows, macOS, or unsupported agent compatibility without
   matching evidence.
+- Renaming the SpecForge repository, creating an Agentsembli website, or
+  treating the provisional ecosystem name as a finished commercial product.
 
 ## Decisions
 
@@ -57,6 +61,20 @@ Keep repository history and design evidence available where safe, but package
 only an explicit user-document set. The README becomes a routing page with one
 short successful journey; detailed concepts remain in architecture/operating
 docs. Link and payload tests enforce the boundary.
+
+### Keep the public identity narrow and credit its inspiration precisely
+
+Publish the repository under its established **SpecForge** name. The README may
+describe it as the workflow core of the emerging **Agentsembli** ecosystem, but
+must label Agentsembli as a working name and must not depend on a website,
+repository rename, or sibling product to explain SpecForge's value. Refer to the
+UI/orchestration repository as the optional **Agent Console** sibling project.
+
+Give Gas Town a visible, direct-link acknowledgement as conceptual inspiration.
+State in the same section that SpecForge is independently implemented, is not
+affiliated with or endorsed by Gas Town's maintainers, and currently adopts only
+Beads rather than Gas Town runtime components. This is provenance and scope
+documentation, not a claim that the projects are compatible or interchangeable.
 
 ### Declare compatibility before expanding it
 

@@ -21,6 +21,28 @@ claiming an affiliation that does not exist.
 - **THEN** the same license is clearly identified in both places
 - **AND** third-party attribution and non-affiliation information are available
 
+### Requirement: The public identity preserves project independence and provenance
+
+The repository SHALL continue to present **SpecForge** as the public project
+name and SHALL explain its purpose without requiring a separate product website
+or sibling application. It MAY identify **Agentsembli** as the provisional
+working name for a wider ecosystem and **Agent Console** as an optional sibling,
+but SHALL NOT present either as a prerequisite or finished commercial product.
+
+The public README SHALL visibly credit Gas Town as a conceptual inspiration,
+link to the upstream Gas Town and Beads projects, state that SpecForge is an
+independent implementation, identify Beads as the only Gas Town component
+currently adopted, and disclaim affiliation or endorsement. It SHALL NOT imply
+that Gas Town runtime code or components are included.
+
+#### Scenario: A reader evaluates the project's origin and product relationship
+
+- **WHEN** a reader opens the public README without prior project context
+- **THEN** SpecForge is understandable and installable as a standalone project
+- **AND** Agentsembli is identified only as a provisional ecosystem working name
+- **AND** Gas Town inspiration, Beads adoption, independent implementation, and
+  non-affiliation are stated together with direct upstream links
+
 ### Requirement: Public users and contributors have complete entry-point documentation
 
 The repository SHALL provide a user-first README, a copyable five-minute
@@ -35,6 +57,8 @@ operations, recovery, security, and compatibility guidance.
 - **WHEN** a user opens the public repository for the first time
 - **THEN** the README explains what SpecForge does, who it is for, its maturity and supported environments
 - **AND** the user can follow a copyable path from prerequisites through a first successful readiness check
+- **AND** no product website, renamed repository, or Agent Console installation
+  is required to complete that path
 
 #### Scenario: A contributor reports or fixes a problem
 
