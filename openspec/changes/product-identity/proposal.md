@@ -1,47 +1,41 @@
 ## Why
 
-The current name, SpecForge, is already used by an unrelated npm package and
-other software projects, making a public launch confusing and preventing this
-project from claiming its obvious unscoped package identity. The product also
-needs a concise concept statement and a defensible naming decision before
-public documentation, accounts, domains, and release artifacts are finalized.
+SpecForge needs a clear public identity before its documentation and release
+metadata are finalized. A forced rename would add migration and ownership work
+without improving the first public release. The owner has therefore chosen to
+keep **SpecForge** as the standalone public project name and use
+**Agentsembli** only as a provisional working name for a possible ecosystem.
 
 ## What Changes
 
-- Define the product concept as a local-first delivery system that carries
-  approved intent through executable work to verifiable Git evidence.
-- Establish objective name criteria: distinctive, pronounceable, tool-neutral,
-  internationally usable, available across required namespaces, and not
-  misleading about vendor affiliation.
-- Record a dated, reproducible collision and availability review for the
-  current name and shortlisted candidates.
-- Make formal trademark review and claiming domains/accounts explicit manual
-  owner gates; availability observations alone do not authorize registration
-  or establish trademark clearance.
-- Select a canonical product name only after those gates pass.
-- **BREAKING**: Once selected and claimed, rename user-facing identity,
-  repository/package metadata, CLI output, installed paths and documentation
-  through a compatibility-controlled migration.
-- Preserve historical provenance and publish an old-to-new-name transition
-  notice rather than silently rewriting project history.
+- Record SpecForge as the canonical public project name for this release.
+- Define Agentsembli as a provisional ecosystem working name, not a required
+  product, package, domain, organization, or website.
+- Keep existing repository, command, installer, service, and package identifiers
+  stable; no rename or compatibility migration is introduced.
+- Add a concise, checked-in identity and provenance statement.
+- Credit Gas Town as conceptual inspiration while stating that SpecForge is an
+  independent implementation, currently adopts only Beads from that ecosystem,
+  and is not affiliated with or endorsed by Gas Town's maintainers.
+- Describe Agent Console as an optional sibling rather than a dependency.
+- Preserve prior collision research and defer future commercial umbrella-brand
+  work without blocking this release.
 
 ## Capabilities
 
 ### New Capabilities
 
-- `product-identity`: Defines the concept, naming evidence, owner-controlled
-  claim gates, canonical identity, and compatibility requirements for a public
-  product rename.
+- `product-identity`: Defines the stable SpecForge identity, provisional
+  Agentsembli language, provenance, and no-rename boundary.
 
 ### Modified Capabilities
 
-None. The public-release-readiness change remains independently planned and is
-blocked from final public metadata until this identity decision is complete.
+None. Public-release readiness consumes this decision and owns the actual
+README, governance, distribution, and acceptance work.
 
 ## Impact
 
-The decision can affect the GitHub repository and organization, domains, npm
-and other package namespaces, package name and metadata, CLI name and output,
-installed files and service names, documentation, badges, links, release tags,
-security contacts, and downstream installation commands. No domain, account,
-package, trademark, or repository rename is performed during planning.
+The change affects identity documentation, public wording, validation, and
+acceptance evidence. It does not rename technical identifiers; claim external
+properties; publish to npm; create a website; change visibility; or modify
+Agent Console.

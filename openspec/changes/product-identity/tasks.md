@@ -1,21 +1,21 @@
 # Tasks
 
-## 1. Identity decision gates
+## 1. Identity decision and evidence
 
-- [x] TASK-IDENT-001 Re-run and commit the dated name-collision matrix for the current name, `DeliveryLoom`, and at least two fresh fallbacks across general web search, GitHub, npm, PyPI, relevant domains and official trademark databases in intended markets; record sources, exact queries, known collisions and uncertainty, and verify that no “available” result is presented as legal clearance.
-- [ ] TASK-IDENT-002 Human owner selects the canonical name after legal review, manually claims the required domains/accounts/package scope, and records non-secret ownership evidence plus the rejected alternatives; verify every minimum property resolves to the owner before closing this human-gated task. No agent may purchase, register or transfer a property.
+- [x] TASK-IDENT-001 Re-run and commit dated name-collision research for SpecForge and proposed umbrella names across relevant web, source, package, domain, and trademark sources; record uncertainty and ensure no availability observation is presented as legal clearance.
+- [ ] TASK-IDENT-002 Record the owner's decision that SpecForge remains the canonical public project name and Agentsembli is only a provisional ecosystem working name; document that no domain, account, package-scope, trademark, website, or repository claim is required for this release, and retain rejected alternatives as research evidence.
 
-## 2. Canonical identity
+## 2. Stable public identity
 
-- [ ] TASK-IDENT-003 Add a single checked-in identity manifest containing the owner-approved display name, command/package slugs, repository, homepage, documentation, support/security contacts, legacy aliases and the concept statement “a local-first delivery system that carries approved intent through executable work to verifiable Git evidence”; add validation proving required fields, URL schemes and slug formats.
-- [ ] TASK-IDENT-004 Rename package metadata, CLI help/output, scripts, generated services/configuration and installed payload identifiers from the manifest while retaining a documented old-command/config compatibility window; verify clean install, upgrade, rollback and uninstall preserve target-owned OpenSpec, Beads and unrelated settings.
-- [ ] TASK-IDENT-005 Update README, user/maintainer documentation, templates, agent instructions, security/support routes, examples and release text to the canonical identity; verify links and an allowlisted legacy-name scan leave the old name only in migration, attribution and historical contexts.
+- [ ] TASK-IDENT-003 Add `docs/project-identity.md` with the canonical project name, provisional ecosystem status, stable repository/command/package identifiers, support and security destinations, optional Agent Console relationship, concise concept statement, and linked Gas Town/Beads provenance plus independent-implementation and non-affiliation language; add focused validation for required fields and links.
+- [ ] TASK-IDENT-004 Inventory package metadata, CLI help/output, scripts, generated services/configuration, installation commands, and installed payload identifiers; verify they remain SpecForge-based, add a regression check against accidental Agentsembli renaming, and confirm clean install, update, rollback, and uninstall require no identity migration.
+- [ ] TASK-IDENT-005 Apply the checked-in identity to README, current user/maintainer documentation, templates, agent instructions, security/support routes, examples, and release text where relevant; require every current Agentsembli occurrence to say it is provisional, keep Agent Console optional, and verify Gas Town inspiration, Beads-only adoption, independent implementation, non-affiliation, links, and standalone SpecForge usability.
 
-## 3. External cutover and compatibility
+## 3. Deferred branding boundary
 
-- [ ] TASK-IDENT-006 Produce the exact owner-run GitHub/domain cutover checklist, then have the human owner rename/configure the claimed external properties; verify HTTPS, redirects, repository remotes, security/support destinations and package links without changing repository visibility or publishing to npm.
-- [ ] TASK-IDENT-007 Publish a versioned old-to-new transition and deprecation policy, compatibility shim and rollback procedure; verify an installation from the preceding SpecForge-tagged release upgrades to the renamed candidate and can roll back without state loss.
+- [ ] TASK-IDENT-006 Add an owner-facing future-branding checklist that requires fresh collision research, legal review, explicit claims, and a separately approved migration before any later umbrella-brand launch; verify the current release has no domain, website, account, package-scope, redirect, or repository-rename dependency.
+- [ ] TASK-IDENT-007 Document the no-rename compatibility decision and verify a preceding SpecForge-tagged installation updates to and rolls back from the candidate without command, service, configuration, OpenSpec, or Beads identity migration.
 
 ## 4. Acceptance
 
-- [ ] TASK-IDENT-008 Run identity acceptance from a clean environment covering ownership evidence, collision-free discovery, exact-tag installation, upgrade, rollback, uninstall, redirects and stale-brand scans; commit the report unsigned and require a later human sign-off before the product-identity change or public-release metadata is accepted.
+- [ ] TASK-IDENT-008 Add identity checks to the public release-candidate acceptance evidence: canonical SpecForge naming, provisional Agentsembli wording, unchanged identifiers, standalone installability, optional Agent Console relationship, and correct Gas Town/Beads provenance; keep the final report unsigned until the required human public-release sign-off.

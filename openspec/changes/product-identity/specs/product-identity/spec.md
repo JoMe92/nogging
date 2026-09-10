@@ -1,94 +1,84 @@
 ## Purpose
 
-Defines a distinctive, evidence-backed public identity and a controlled rename
-that preserves user compatibility, provenance, and owner authority over claims.
+Defines a stable public identity for SpecForge while keeping the wider
+Agentsembli concept explicitly provisional and preserving provenance.
 
 ## ADDED Requirements
 
-### Requirement: The product concept is stable before the name is selected
+### Requirement: SpecForge remains the standalone public project identity
 
-The project SHALL describe itself as a local-first delivery system that carries
-approved intent through executable work to verifiable evidence. The concept
-SHALL remain vendor-neutral and SHALL distinguish the product from a generic
-specification generator, task tracker, coding agent, or CI service.
+The project SHALL use **SpecForge** as its public display name and retain its
+existing repository, command, installer, service, and package identifiers.
+Installation and use SHALL NOT require a website, renamed repository, claimed
+umbrella-brand property, or Agent Console.
 
-#### Scenario: A candidate name is evaluated
+#### Scenario: A new user discovers the project
 
-- **WHEN** a candidate name is reviewed
-- **THEN** reviewers can judge whether it represents the documented concept
-- **AND** the description does not imply ownership of or affiliation with an integrated tool
+- **WHEN** the user reaches the repository without ecosystem context
+- **THEN** SpecForge's purpose, installation, and support routes are complete
+- **AND** no rename or external brand property is required
 
-### Requirement: Name selection uses dated collision evidence
+### Requirement: Agentsembli remains provisional and non-blocking
 
-Before a canonical name is adopted, the project SHALL record a dated search of
-relevant search engines, source hosts, package registries, domain registries,
-social or organization handles, and official trademark databases in intended
-markets. The record SHALL distinguish an observed absence from legal clearance
-and SHALL list known collisions and residual uncertainty.
+Public documentation MAY describe **Agentsembli** as the provisional working
+name for a possible ecosystem containing SpecForge and optional Agent Console.
+It SHALL NOT present Agentsembli as registered, claimed, released, required, or
+a finished commercial product.
 
-#### Scenario: A namespace appears available
+#### Scenario: Ecosystem language is shown
 
-- **WHEN** a registry returns no record for a candidate
-- **THEN** the result is recorded with registry, exact spelling, date and scope
-- **AND** it is described as a point-in-time observation rather than guaranteed availability
+- **WHEN** Agentsembli appears in current public material
+- **THEN** it is identified as a provisional working name
+- **AND** SpecForge remains independently understandable and usable
 
-#### Scenario: A confusing collision is found
+### Requirement: Inspiration and implementation boundaries are explicit
 
-- **WHEN** an active product, package, repository or mark has a confusingly similar name
-- **THEN** the candidate is rejected or escalated for explicit legal review
-- **AND** implementation does not silently proceed under that candidate
+The public identity statement SHALL link to Gas Town and Beads, credit Gas Town
+as conceptual inspiration, identify Beads as the only component currently
+adopted from that ecosystem, and state that SpecForge is independently
+implemented and unaffiliated. It SHALL NOT imply inclusion of Gas Town runtime
+components, compatibility, endorsement, or shared ownership.
 
-### Requirement: Claims and final selection remain owner-controlled
+#### Scenario: A reader evaluates provenance
 
-Registering domains, package namespaces, accounts or marks and choosing the
-canonical name SHALL require an explicit Product Owner action. Automation MAY
-verify the resulting ownership but SHALL NOT purchase, register, transfer or
-represent legal clearance on the owner's behalf.
+- **WHEN** the reader reviews the README or identity statement
+- **THEN** inspiration, adopted dependency, independent implementation, and
+  non-affiliation are presented together
 
-#### Scenario: Research recommends a candidate
+### Requirement: Identity facts have one testable source
 
-- **WHEN** automated and manual availability checks favor one candidate
-- **THEN** the change remains blocked until the Product Owner records the final choice and claims the required properties
-
-### Requirement: The canonical identity is internally consistent
-
-After owner approval, the canonical display name, command name, package scope,
-repository location, domains, support/security contacts and concise concept
-statement SHALL be recorded once in an identity manifest and used consistently
-across user-facing surfaces.
+The repository SHALL contain a concise identity document recording the
+canonical name, provisional ecosystem status, stable identifiers, destinations,
+optional sibling relationship, concept, and provenance. Automated checks SHALL
+detect contradictions in designated current public entry points.
 
 #### Scenario: Public identity surfaces are audited
 
-- **WHEN** package metadata, CLI output, installed files, documentation, GitHub metadata and release assets are compared
-- **THEN** they resolve to the identity manifest without stale primary branding
+- **WHEN** current public entry points are compared with the identity document
+- **THEN** SpecForge remains canonical, Agentsembli remains provisional, and
+  existing technical identifiers remain unchanged
 
-### Requirement: A rename preserves compatibility and provenance
+### Requirement: Future umbrella branding is a separate owner decision
 
-A rename SHALL document old-to-new mapping, preserve release and contribution
-history, provide redirects or compatibility aliases where technically possible,
-and give users tested migration and rollback instructions. Historical evidence
-SHALL NOT be rewritten merely to replace the old product name.
+Claims for a future umbrella brand SHALL remain owner-controlled and out of
+scope. Reopening that work SHALL require fresh research, appropriate legal
+review, explicit owner action, and a separately planned migration if needed.
 
-#### Scenario: An existing user upgrades across the rename
+#### Scenario: A future name is considered
 
-- **WHEN** a supported installation using the old name updates to the first release under the new name
-- **THEN** its OpenSpec, Beads, configuration and project-owned work remain intact
-- **AND** the user receives an actionable deprecation or migration message
+- **WHEN** the owner later considers commercializing or renaming the ecosystem
+- **THEN** current observations are not treated as reservations or clearance
+- **AND** the current public release remains valid without that change
 
-#### Scenario: The rename is rolled back
+### Requirement: Identity acceptance is part of release acceptance
 
-- **WHEN** acceptance fails before public cutover
-- **THEN** repository code and metadata can return to the prior identity without losing user state or claimed-property ownership records
+The public release SHALL verify identity wording, unchanged installation
+identifiers, attribution links, and absence of an Agentsembli ownership
+dependency. Final acceptance SHALL retain the human sign-off required by
+public-release readiness.
 
-### Requirement: Release approval verifies ownership and discoverability
+#### Scenario: Identity checks pass mechanically
 
-The renamed product SHALL NOT be approved for public release until ownership of
-required properties is verified, primary links resolve securely, old public
-entry points route to the transition notice where possible, and a fresh user
-can find and install the intended project without confusing it with a collision.
-
-#### Scenario: Identity acceptance runs
-
-- **WHEN** the release candidate is evaluated
-- **THEN** the report includes evidence for owned properties, redirects, package/repository identity, migration, rollback and collision-free discovery
-- **AND** human sign-off remains required
+- **WHEN** automated checks confirm every identity requirement
+- **THEN** the identity portion is mechanically complete
+- **AND** it does not substitute for human release sign-off
