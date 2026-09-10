@@ -30,7 +30,8 @@ grep -q 'require no' "$identity" || fail "no-migration lifecycle decision is mis
 # The legacy URL is provenance only. Its one maintained occurrence is the
 # migration/rollback record; all active destinations must use the successor.
 legacy_hits=$(git grep -l 'JoMe92/specforge' -- ':!openspec/**' ':!scripts/identity.test.sh' || true)
-test "$legacy_hits" = 'docs/security/successor-migration-2026-09-10.md' \
+test "$legacy_hits" = "docs/public-cutover.md
+docs/security/successor-migration-2026-09-10.md" \
   || fail "legacy repository URL escaped its transition-document allowlist"
 
 grep -q 'npx github:JoMe92/agentsembli-specforge' bin/cli.js || fail "CLI install command changed identity"
