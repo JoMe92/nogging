@@ -1,15 +1,14 @@
 # Vision and architecture
 
-This document states what SpecForge is for, describes the architecture as it is
-built today, and records where the implementation deliberately departs from the
-concept conversation of 2026-08-31 (`docs/source/konversation-export.md`).
+This document states what Agentsembli SpecForge is for and describes the
+architecture as it is built today.
 
 For the day-to-day process see `operating-model.md`; for the data contracts and
 the write-boundary enforcement see `architecture.md`.
 
 ## Goal
 
-SpecForge lets one person run a spec-driven development loop with AI agents
+Agentsembli SpecForge lets one person run a spec-driven development loop with AI agents
 without an enterprise ALM stack. It keeps three authorities separate and lets a
 mechanical process — no LLM, no judgement — keep them consistent:
 
@@ -84,7 +83,7 @@ layers cover Bash writes and non–Claude-Code editors.
 
 ### Distribution: the installer
 
-`npx github:JoMe92/specforge init` installs the whole structure into a target
+`npx github:JoMe92/agentsembli-specforge init` installs the whole structure into a target
 git repository in one command; `update` refreshes it; `doctor` reports
 readiness. The CLI is a zero-dependency Node program (`bin/`), published from
 this repository — no npm-registry release, no build step. It writes files by
@@ -176,7 +175,7 @@ Beads (`reliable-beads-sync` carries the fix).
 ## Status
 
 `v1.0.0` is the installer plus the base structure: a target repo can run
-`npx github:JoMe92/specforge init` and reach a ready-to-plan state. The six
+`npx github:JoMe92/agentsembli-specforge init` and reach a ready-to-plan state. The six
 roadmap changes above are planned in `openspec/changes/` and materialised as
 Beads; they harden the sync, add the operator commands, and bring the specialist
 execution model online.

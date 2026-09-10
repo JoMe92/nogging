@@ -1,6 +1,8 @@
-# SpecForge
+# Agentsembli SpecForge
 
-SpecForge is a lean, local-first operating model for agentic software delivery.
+Agentsembli SpecForge is a lean, local-first operating model for agentic
+software delivery. The compatible command and installed state remain named
+`specforge`.
 OpenSpec owns approved product intent, Beads owns executable work, and Git owns
 the implementation. A deterministic sync process mirrors execution evidence
 back into OpenSpec; it never makes product decisions.
@@ -49,12 +51,12 @@ running work in supervised host sessions, and
 
 The first public distribution is GitHub-only. The unscoped npm name
 `specforge` belongs to another project, so this package is marked private and
-must not be published to the npm registry. Install an exact SpecForge GitHub
-tag instead:
+must not be published to the npm registry. Install an exact Agentsembli
+SpecForge GitHub tag instead:
 
 ```bash
 cd /path/to/your-repo
-npx github:JoMe92/specforge#v1.4.0 init      # then: update, doctor
+npx github:JoMe92/agentsembli-specforge#v1.4.0 init      # then: update, doctor
 ```
 
 `init` copies the tool files verbatim, writes an OpenSpec scaffold only where one
@@ -74,9 +76,8 @@ touches `openspec/changes/`, `.beads/`, or your `package.json`. Full details in
 
 `open → done → archived` is the entire change lifecycle. Product acceptance is
 an explicit `accepted: true` record, not another workflow state: a change is not
-accepted until a signed acceptance report exists under
-[docs/acceptance/](docs/acceptance/), produced by running
-[docs/acceptance.md](docs/acceptance.md) and filled in from
+accepted until a signed acceptance report has been committed, produced by
+running [docs/acceptance.md](docs/acceptance.md) and filled in from
 [docs/acceptance-report-template.md](docs/acceptance-report-template.md). The
 mechanical subset of that runbook runs unattended as the `acceptance` CI job.
 

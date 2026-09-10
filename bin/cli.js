@@ -8,14 +8,14 @@ const install = require('./lib/install');
 const { applyMerges } = require('./lib/merge');
 const { renderSystemd } = require('./lib/systemd');
 
-const USAGE = `specforge — install the SpecForge operating structure into a repo
+const USAGE = `specforge — install the Agentsembli SpecForge operating structure into a repo
 
 Usage:
-  npx github:JoMe92/specforge <command> [options]
+  npx github:JoMe92/agentsembli-specforge <command> [options]
 
 Commands:
-  init      Install SpecForge into the current git repository
-  update    Refresh SpecForge tool files and re-apply merges (keeps your
+  init      Install Agentsembli SpecForge into the current git repository
+  update    Refresh Agentsembli SpecForge tool files and re-apply merges (keeps your
             openspec/changes, openspec/project.md and config name)
   doctor    Run the installed ./scripts/specforge doctor
 
@@ -69,7 +69,7 @@ function cmdInit(args) {
   const reinstall = fs.existsSync(path.join(ctx.targetRoot, '.specforge/config.json'));
   if (reinstall && !ctx.dryRun) {
     process.stdout.write(
-      'SpecForge is already installed here; re-running init idempotently ' +
+      'Agentsembli SpecForge is already installed here; re-running init idempotently ' +
         '(use `update` for routine refreshes).\n',
     );
   }

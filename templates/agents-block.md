@@ -1,4 +1,4 @@
-## SpecForge agent instructions
+## Agentsembli SpecForge agent instructions
 
 Read `docs/specforge/operating-model.md` and the active Bead before work. This
 block is the canonical, tool-neutral instruction set; the per-tool specifics
@@ -82,4 +82,4 @@ never signs an acceptance report. See `docs/specforge/operating-model.md`.
   --bead <id>`, under every specialist boundary rule. Operator entry points:
   `.pi/prompts/{plan,discovery-review,sync-now}.md`.
 
-Update SpecForge itself with `npx github:JoMe92/specforge update`.
+Update SpecForge itself with `npx github:JoMe92/agentsembli-specforge update`.

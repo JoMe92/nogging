@@ -1,4 +1,4 @@
-name: SpecForge validation
+name: Agentsembli SpecForge validation
 on: [push, pull_request]
 jobs:
   script-tests:

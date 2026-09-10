@@ -1,9 +1,9 @@
-# Using SpecForge with OpenAI Codex
+# Using Agentsembli SpecForge with OpenAI Codex
 
-SpecForge is tool-neutral. `AGENTS.md` is the canonical instruction file for
+Agentsembli SpecForge is tool-neutral. `AGENTS.md` is the canonical instruction file for
 every agent runtime, and the mechanical bridge (`scripts/specforge`) is the same
 whichever agent runs it. This page covers what is specific to running the
-SpecForge loop from **OpenAI Codex** instead of Claude Code.
+Agentsembli SpecForge loop from **OpenAI Codex** instead of Claude Code.
 
 Everything verified below was checked against **codex-cli 0.148.0**. Codex moves
 fast; where a detail is version-dependent it is called out so you can re-check.
@@ -27,7 +27,7 @@ In addition to the usual target-repo prerequisites (`bd`/Beads, `python3`,
 
 ## What the installer places under `.codex/`
 
-`npx github:JoMe92/specforge init` (or `update`) runs a `mergeCodex` step that:
+`npx github:JoMe92/agentsembli-specforge init` (or `update`) runs a `mergeCodex` step that:
 
 | Path | Behaviour |
 | --- | --- |

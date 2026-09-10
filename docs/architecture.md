@@ -1,6 +1,6 @@
 # Architecture
 
-SpecForge deliberately separates semantic decisions from mechanical state
+Agentsembli SpecForge deliberately separates semantic decisions from mechanical state
 reconciliation. It is not a general-purpose ALM system.
 
 ## Data contracts

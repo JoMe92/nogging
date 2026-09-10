@@ -1,9 +1,9 @@
-# Using SpecForge with Pi
+# Using Agentsembli SpecForge with Pi
 
-SpecForge is tool-neutral. `AGENTS.md` is the canonical instruction file for
+Agentsembli SpecForge is tool-neutral. `AGENTS.md` is the canonical instruction file for
 every agent runtime, and the mechanical bridge (`scripts/specforge`) is the same
 whichever agent runs it. This page covers what is specific to running the
-SpecForge loop from **Pi** (`https://pi.dev/`, package
+Agentsembli SpecForge loop from **Pi** (`https://pi.dev/`, package
 `@earendil-works/pi-coding-agent`) instead of Claude Code or Codex.
 
 Everything verified below was checked hands-on against the installed
@@ -46,7 +46,7 @@ In addition to the usual target-repo prerequisites (`bd`/Beads, `python3`,
 
 ## What the installer places under `.pi/`
 
-`npx github:JoMe92/specforge init` (or `update`) ships two directories,
+`npx github:JoMe92/agentsembli-specforge init` (or `update`) ships two directories,
 copied verbatim on every `init`/`update`:
 
 | Path | Behaviour |

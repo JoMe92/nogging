@@ -1,4 +1,4 @@
-# SpecForge acceptance report — <YYYY-MM-DD> — <hostname>
+# Agentsembli SpecForge acceptance report — <YYYY-MM-DD> — <hostname>
 
 Copy this template to `docs/acceptance/<YYYY-MM-DD>-<hostname>.md` for each run
 (date the run started, short hostname of the delivery host, e.g.
@@ -16,7 +16,7 @@ line in a separate commit (see `docs/acceptance.md` step 18).
 | Toolkit version | <`.specforge/config.json` `specforge_version`> |
 | Git commit | <`git rev-parse HEAD` of the SpecForge checkout> |
 | Runbook revision | <`git log -1 --format=%h -- docs/acceptance.md`> |
-| Install path exercised | <`node bin/cli.js init` and/or `npx github:JoMe92/specforge#<tag> init`> |
+| Install path exercised | <`node bin/cli.js init` and/or `npx github:JoMe92/agentsembli-specforge#<tag> init`> |
 | Backend | <real `bd` + `dolt` / mechanical stub only> |
 
 ## Step results

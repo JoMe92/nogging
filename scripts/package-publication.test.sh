@@ -14,16 +14,16 @@ const pkg = require('./package.json');
 const expected = {
   name: 'specforge',
   private: true,
-  homepage: 'https://github.com/JoMe92/specforge#readme',
+  homepage: 'https://github.com/JoMe92/agentsembli-specforge#readme',
   author: 'Jonas Meier',
 };
 for (const [key, value] of Object.entries(expected)) {
   if (pkg[key] !== value) throw new Error(`${key} must be ${JSON.stringify(value)}`);
 }
-if (pkg.repository?.url !== 'git+https://github.com/JoMe92/specforge.git') {
+if (pkg.repository?.url !== 'git+https://github.com/JoMe92/agentsembli-specforge.git') {
   throw new Error('repository metadata is missing or incorrect');
 }
-if (pkg.bugs?.url !== 'https://github.com/JoMe92/specforge/issues') {
+if (pkg.bugs?.url !== 'https://github.com/JoMe92/agentsembli-specforge/issues') {
   throw new Error('bugs metadata is missing or incorrect');
 }
 if (!Array.isArray(pkg.keywords) || pkg.keywords.length < 5) {
@@ -44,6 +44,6 @@ grep -q 'distributed from tagged GitHub releases' "$publish_log" \
   || fail "publish refusal does not explain the GitHub-only route"
 
 grep -q 'unscoped npm name' README.md || fail "README does not document the npm name collision"
-grep -q 'github:JoMe92/specforge#v1.4.0' README.md || fail "README does not use a pinned GitHub tag"
+grep -q 'github:JoMe92/agentsembli-specforge#v1.4.0' README.md || fail "README does not use a pinned GitHub tag"
 
 printf 'GitHub-only package publication policy: ok\n'

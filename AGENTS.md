@@ -1,4 +1,4 @@
-# SpecForge agent instructions
+# Agentsembli SpecForge agent instructions
 
 Read `README.md`, `docs/operating-model.md`, and the active Bead before work.
 This file is the single canonical instruction file for every agent tool.

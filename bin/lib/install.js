@@ -179,9 +179,9 @@ function readinessVerdict(ctx) {
   const uniq = [...new Set(gaps)];
   process.stdout.write('\n');
   if (uniq.length === 0) {
-    process.stdout.write('SpecForge is ready — run ./scripts/specforge plan-begin to start.\n');
+    process.stdout.write('Agentsembli SpecForge is ready — run ./scripts/specforge plan-begin to start.\n');
   } else {
-    process.stdout.write(`SpecForge is installed but not ready: ${uniq.join('; ')}\n`);
+    process.stdout.write(`Agentsembli SpecForge is installed but not ready: ${uniq.join('; ')}\n`);
   }
 }
 

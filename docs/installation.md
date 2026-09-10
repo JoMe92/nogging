@@ -1,22 +1,22 @@
-# Installing SpecForge into another repository
+# Installing Agentsembli SpecForge into another repository
 
-SpecForge ships as a small Node CLI. Run it from the root of the git repository
+Agentsembli SpecForge ships as a small Node CLI. Run it from the root of the git repository
 you want to adopt the operating model.
 
 ```bash
 cd /path/to/your-repo
-npx github:JoMe92/specforge init
+npx github:JoMe92/agentsembli-specforge init
 ```
 
 Pin a release instead of tracking the default branch:
 
 ```bash
-npx github:JoMe92/specforge#v1.0.0 init
+npx github:JoMe92/agentsembli-specforge#v1.0.0 init
 ```
 
 `npx` clones this (private) repository over your existing Git credential. If the
 clone fails to authenticate, run `gh auth setup-git` once, or use the SSH form
-`npx github:JoMe92/specforge init` after adding an SSH key to GitHub.
+`npx github:JoMe92/agentsembli-specforge init` after adding an SSH key to GitHub.
 
 ## What `init` writes
 
@@ -55,7 +55,7 @@ systemctl --user enable --now "$PWD/systemd/specforge-sync-<slug>.timer"
 ## Updating
 
 ```bash
-npx github:JoMe92/specforge update
+npx github:JoMe92/agentsembli-specforge update
 ```
 
 `update` refreshes the tool files, reference docs and merged files, and bumps
