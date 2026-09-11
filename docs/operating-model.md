@@ -155,11 +155,11 @@ the protocol tool-neutrally; `doctor` also prints a one-line `recover` summary.
 branch. `main` and `develop` are protected and exempt from the branch-naming
 convention below.
 
-Every other working branch is named `<type>/<slug>`:
+Every implementation branch is named `<type>/<slug>`; every planning branch is
+named `plan/<planning-id>/<description>`:
 
-- `<type>` is one of `feat`, `fix`, `chore`, `docs`, `refactor`, `perf`,
-  `test`, or `plan`. All but `plan` are Conventional Commit types; `plan` is
-  reserved for a planning-session branch.
+- `<type>` is one of `feat`, `fix`, `chore`, `docs`, `refactor`, `perf`, or
+  `test`.
 - A **change branch** — one that advances an OpenSpec change — MUST use that
   change's directory name as its `<slug>`, matching a live
   `openspec/changes/<slug>/` or an archived
@@ -167,9 +167,10 @@ Every other working branch is named `<type>/<slug>`:
   change was archived does not start failing; never the literal `archive`).
   This is what makes the branch traceable to agreed intent. Any of the `<type>`
   values may front a change branch, e.g. `feat/dark-mode-toggle`.
-- `chore/<topic>` and `plan/<topic>` cover work not scoped to a single change —
-  tooling, multi-change planning. `<topic>` is a free kebab slug and needs no
-  `openspec/changes/` match.
+- `chore/<topic>` covers work not scoped to a single change. `<topic>` is a
+  free kebab slug and needs no `openspec/changes/` match. `plan` is reserved
+  for an isolated planning worktree: both `<planning-id>` and `<description>`
+  are kebab-case, such as `plan/agent-runtime/parallel-execution`.
 
 `scripts/check-branch-name <ref>` is the one implementation of this rule; the
 `pre-push` hook and the CI `invariants` job both call it and neither re-encodes
