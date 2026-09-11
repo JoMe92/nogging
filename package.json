@@ -1,6 +1,6 @@
 {
   "name": "specforge",
-  "version": "1.5.0-rc.1",
+  "version": "1.5.0",
   "private": true,
   "description": "Agentsembli SpecForge — a local-first operating model for agentic software delivery",
   "main": "bin/cli.js",
