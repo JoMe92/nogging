@@ -148,10 +148,12 @@ The operator entry points are `/plan`, `/discovery-review` and `/sync-now`
 over `scripts/specforge`; a tool without a command mechanism runs the same
 steps by hand:
 
-- `/plan` — `scripts/specforge plan-begin` → discovery review → author →
-  `validate` → commit as the `planning` writer → `materialize <change>` →
-  `plan-end`. The spec is committed **before** `materialize`, so a crash
-  between the two never leaves Beads without a committed spec.
+- `/plan` — allocate `scripts/specforge worktree plan <planning-id>
+  <description>` from updated `origin/develop`, then in that worktree run
+  `plan-begin` → discovery review → author → `validate` → commit as the `planning` writer
+  → `materialize <change>` → integrate into `develop` → safe
+  cleanup → `plan-end`. The spec is committed **before** `materialize`, so a
+  crash between the two never leaves Beads without a committed spec.
 - `/discovery-review` — `scripts/specforge discoveries` (+ `--ack`).
 - `/sync-now` — `scripts/specforge sync --now`.
 
@@ -159,13 +161,16 @@ Where each tool reads those command files is in *Tool notes*.
 
 ## Planning only
 
-The Planning Agent first runs `./scripts/specforge plan-begin`, writes or
-revises OpenSpec, runs validation, commits the change as the `planning` writer,
-materializes Beads, then runs `./scripts/specforge plan-end`. Committing before
-`materialize` keeps a crash in that window recoverable (`materialize` is
-idempotent and the committed spec is the source of truth). If an active Bead
-loses its task mapping, stop and resolve the orphan explicitly; do not delete
-it.
+The Planning Agent first allocates `./scripts/specforge worktree plan
+<planning-id> <description>` from updated `origin/develop` and works only in
+that dedicated worktree. It then runs `plan-begin`, writes or revises OpenSpec,
+runs validation, commits the change as the `planning` writer, and materializes
+Beads. It fast-forward integrates the planning branch into `develop` before
+removing only a clean worktree whose branch is integrated, then runs
+`plan-end`. Committing before `materialize` keeps a crash in that window
+recoverable (`materialize` is idempotent and the committed spec is the source
+of truth). If an active Bead loses its task mapping, stop and resolve the
+orphan explicitly; do not delete it.
 
 ## Tool notes
 
