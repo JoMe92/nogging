@@ -246,6 +246,34 @@ check "wt-plan: duplicate reports durable collision" "planning allocation record
 git -C "$root" worktree remove --force "$destination"
 unset SPECFORGE_ROOT
 
+# --- implementation worktrees require a claimed Bead and clean safe cleanup -
+root="$work/wt-implementation"; make_root "$root"
+remote="$work/wt-implementation-origin.git"; git init -q --bare "$remote"
+git -C "$root" branch develop
+git -C "$root" remote add origin "$remote"
+git -C "$root" push -q origin develop
+export SPECFORGE_ROOT="$root"
+export BD_FIXTURE="$work/wt-implementation-beads.json"
+printf '[{"id":"SPEC-impl","status":"in_progress","labels":[]}]\n' >"$BD_FIXTURE"
+destination="$work/wt-implementation-destination"
+"$specforge" worktree implement SPEC-impl feat/demo --path "$destination" >"$out" 2>&1 \
+  || { echo "FAIL - wt-implementation: allocation errored"; cat "$out"; fail=1; }
+[[ "$(git -C "$destination" branch --show-current)" == "feat/demo" ]] \
+  && echo "ok   - wt-implementation: claimed Bead receives its own conventional branch" \
+  || { echo "FAIL - wt-implementation: branch missing"; fail=1; }
+other="$work/wt-implementation-other"
+rc=0; "$specforge" worktree implement SPEC-other feat/other --path "$destination" >"$out" 2>&1 || rc=$?
+[[ "$rc" -ne 0 ]] && echo "ok   - wt-implementation: concurrent allocation cannot reuse another path" \
+  || { echo "FAIL - wt-implementation: concurrent path reuse should fail"; fail=1; }
+record="implementation--spec-impl.json"
+"$specforge" worktree cleanup "$record" >"$out" 2>&1 \
+  && echo "ok   - wt-implementation: clean develop-integrated branch is retired" \
+  || { echo "FAIL - wt-implementation: safe cleanup errored"; cat "$out"; fail=1; }
+[[ ! -e "$destination" && ! -e "$root/.specforge/state/worktrees/$record" ]] \
+  && echo "ok   - wt-implementation: cleanup removes only the recorded clean worktree" \
+  || { echo "FAIL - wt-implementation: cleanup left recorded artifacts"; fail=1; }
+unset SPECFORGE_ROOT BD_FIXTURE
+
 # --- Scenario: a closed mapped Bead is mirrored exactly once ----------------
 root="$work/sync-once"; make_root "$root"
 git -C "$root" commit -q --allow-empty -m "feat(demo): first demo thing [SPEC-d01]"

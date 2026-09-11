@@ -127,6 +127,62 @@ def planning_worktree(planning_id, description, location=None):
     print(f"planning worktree allocated: {location}")
     print(f"branch: {branch} (from {base})")
     print(f"record: {record_path.relative_to(ROOT)}")
+IMPLEMENT_BRANCH_RE = re.compile(r"^(feat|fix|chore|docs|refactor|perf|test)/[a-z0-9]+(?:-[a-z0-9]+)*$")
+def claimed_bead(bead_id):
+    matches = [issue for issue in beads() if str(issue_id(issue)) == bead_id]
+    if not matches or matches[0].get("status") != "in_progress":
+        raise RuntimeError(f"implementation worktree requires an in_progress claimed Bead: {bead_id}")
+    return matches[0]
+def implementation_worktree(bead_id, branch, location=None):
+    """Allocate a per-Bead implementation checkout without touching develop."""
+    if not IMPLEMENT_BRANCH_RE.fullmatch(branch or ""):
+        raise RuntimeError("implementation branch must use a conventional <type>/<kebab-slug> form")
+    claimed_bead(bead_id)
+    safe_id = re.sub(r"[^a-z0-9-]", "-", bead_id.lower())
+    location = Path(location).expanduser().resolve() if location else ROOT.parent / f"{ROOT.name}-{safe_id}"
+    record_path = WORKTREE_STATE / f"implementation--{safe_id}.json"
+    if record_path.exists():
+        raise RuntimeError(f"implementation allocation record already exists: {record_path.relative_to(ROOT)}")
+    if location.exists() or str(location) in git_worktree_paths():
+        raise RuntimeError(f"implementation worktree path already exists: {location}")
+    if branch_exists(branch):
+        raise RuntimeError(f"implementation branch already exists: {branch}")
+    fetched = run("git", "fetch", "origin", "develop", check=False)
+    if fetched.returncode:
+        raise RuntimeError("could not update origin/develop before allocating an implementation worktree")
+    base = resolve_ref("origin/develop")
+    if base is None: raise RuntimeError("origin/develop does not resolve after fetch")
+    record = {"bead_id": bead_id, "branch": branch, "created_at": now(),
+              "kind": "implementation", "path": str(location), "state": "allocating", "base_ref": base}
+    write_worktree_record(record_path, record)
+    run("git", "worktree", "add", "-b", branch, str(location), base)
+    record["state"], record["allocated_at"] = "allocated", now()
+    write_worktree_record(record_path, record)
+    print(f"implementation worktree allocated: {location}")
+    print(f"branch: {branch} (from {base}; Bead {bead_id})")
+    print(f"record: {record_path.relative_to(ROOT)}")
+def cleanup_worktree(record_name):
+    """Retire only a clean recorded worktree whose branch reached develop."""
+    path = WORKTREE_STATE / record_name
+    if path.suffix != ".json" or path.parent != WORKTREE_STATE or not path.is_file():
+        raise RuntimeError("cleanup requires one existing .specforge/state/worktrees/*.json record name")
+    try: record = json.loads(path.read_text())
+    except (ValueError, OSError): raise RuntimeError(f"unreadable worktree record: {path.name}")
+    location, branch = record.get("path"), record.get("branch")
+    if not isinstance(location, str) or not isinstance(branch, str):
+        raise RuntimeError(f"incomplete worktree record: {path.name}")
+    target = Path(location)
+    if str(target) not in git_worktree_paths() or not target.is_dir():
+        raise RuntimeError(f"recorded worktree is not available for safe cleanup: {target}")
+    if run("git", "-C", str(target), "status", "--porcelain", check=False).stdout.strip():
+        raise RuntimeError(f"refusing to clean dirty worktree: {target}")
+    develop = resolve_ref("develop") or resolve_ref("origin/develop")
+    if develop is None or run("git", "merge-base", "--is-ancestor", branch, develop, check=False).returncode:
+        raise RuntimeError(f"refusing to clean branch not integrated into develop: {branch}")
+    run("git", "worktree", "remove", str(target))
+    run("git", "branch", "-d", branch)
+    path.unlink()
+    print(f"worktree retired: {target} ({branch})")
 def changes():
     base = ROOT / "openspec/changes"
     return [p for p in base.iterdir() if p.is_dir() and p.name != "archive"] if base.exists() else []
@@ -2090,6 +2146,12 @@ def main():
     wtp.add_argument("planning_id")
     wtp.add_argument("description")
     wtp.add_argument("--path", help="explicit empty destination path (defaults beside the shared checkout)")
+    wti = wtsub.add_parser("implement", help="allocate an implementation worktree for an already claimed Bead")
+    wti.add_argument("bead_id")
+    wti.add_argument("branch")
+    wti.add_argument("--path", help="explicit empty destination path (defaults beside the shared checkout)")
+    wtc = wtsub.add_parser("cleanup", help="retire one clean, develop-integrated recorded worktree")
+    wtc.add_argument("record", help="record filename under .specforge/state/worktrees/")
     orc = sub.add_parser("orchestrator")
     orcsub = orc.add_subparsers(dest="orchestrator_command", required=True)
     orun = orcsub.add_parser("run")
@@ -2139,6 +2201,8 @@ def main():
     elif args.command == "codex-prompts-link": codex_prompts_link(args.unlink)
     elif args.command == "worktree":
         if args.worktree_command == "plan": planning_worktree(args.planning_id, args.description, args.path)
+        elif args.worktree_command == "implement": implementation_worktree(args.bead_id, args.branch, args.path)
+        elif args.worktree_command == "cleanup": cleanup_worktree(args.record)
     elif args.command == "recover": recover()
     elif args.command == "sync": sync_now() if args.now else sync()
     elif args.command == "discoveries": ack_discoveries(args.ack) if args.ack else discoveries()
