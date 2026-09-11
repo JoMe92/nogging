@@ -296,6 +296,9 @@ if grep -qi 'merge' "$GH_CALLS"; then echo "FAIL - pr-handoff: helper invoked me
 [[ -f "$root/.specforge/state/pull-requests/feat-demo.json" ]] \
   && echo "ok   - pr-handoff: durable PR state recorded" \
   || { echo "FAIL - pr-handoff: PR state missing"; fail=1; }
+"$specforge" pr ci >"$out" 2>&1 \
+  || { echo "FAIL - pr-handoff: premature CI inspection errored"; cat "$out"; fail=1; }
+check "pr-handoff: initial CI inspection is durably delayed" "CI initial inspection pending until"
 rm -f "$work/bin/gh"; unset SPECFORGE_ROOT GH_CALLS
 
 # --- Scenario: a closed mapped Bead is mirrored exactly once ----------------
