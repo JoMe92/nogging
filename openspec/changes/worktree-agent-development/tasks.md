@@ -2,7 +2,7 @@
 
 ## 1. Worktree state and branch discipline
 
-- [ ] TASK-WT-001 Add durable worktree allocation records, status/recovery/doctor reporting, and throwaway-repository tests that prove records survive interrupted create or cleanup operations without deleting user work.
+- [ ] TASK-WT-001 Add durable worktree allocation records plus develop-aware recovery/doctor task mapping, and throwaway-repository tests that prove records survive interrupted create or cleanup operations without deleting user work or falsely orphaning Beads whose tasks are present only on `develop`.
 - [ ] TASK-WT-002 Extend `scripts/check-branch-name`, installed hooks, CI invariant coverage, and tests to accept `plan/<planning-id>/<description>` with kebab-case segments while preserving existing valid branch forms and rejecting malformed hierarchy.
 
 ## 2. Planning worktree lifecycle

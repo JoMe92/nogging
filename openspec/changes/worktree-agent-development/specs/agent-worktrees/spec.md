@@ -113,3 +113,21 @@ unintegrated branch without an explicit user-directed recovery decision.
 - **WHEN** cleanup finds uncommitted changes or a branch that is not integrated
 - **THEN** it reports the condition and leaves the worktree and branch intact
 
+### Requirement: Recovery resolves planned tasks from the integration ref
+The system SHALL make recovery and diagnostic task mapping for agent work use
+the current `develop` integration ref when the caller is in a shared checkout
+that does not contain a live planned change. It SHALL not report a Bead mapped
+to a task present on `develop` as orphaned solely because the caller is on
+`main` or another non-execution branch. If `develop` is unavailable or the
+mapping is absent there as well, it SHALL retain the existing actionable orphan
+report.
+
+#### Scenario: Shared main checkout sees a develop-only planned task
+- **WHEN** a Bead maps to a live task on `develop`
+- **AND** `recover` runs from a shared checkout on `main` that lacks that task
+- **THEN** recovery does not report that Bead as orphaned
+
+#### Scenario: No integration-ref mapping exists
+- **WHEN** a Bead's task mapping is absent from both the caller's checkout and
+  `develop`
+- **THEN** recovery reports the Bead as orphaned with its existing recovery guidance

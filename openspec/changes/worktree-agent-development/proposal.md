@@ -17,6 +17,9 @@ branch switches, working-tree collisions, and accidental integration work on
 - Add autonomous post-PR CI inspection and repair: agents wait before the
   first inspection, fix failures in the same worktree, and stop for human
   review only when required checks are green.
+- Make recovery and task-mapping diagnostics resolve planned work from the
+  active integration ref so a shared `main` checkout does not falsely report
+  valid `develop`-only Beads as orphaned.
 - Define how agents classify requested PR follow-ups: small changes become and
   close a Bead on the existing branch; large changes begin a new planning
   cycle.
@@ -41,7 +44,8 @@ branch switches, working-tree collisions, and accidental integration work on
 ## Impact
 
 - Affected systems: `scripts/specforge`, session launch prompts/profiles,
-  branch-name validation and hooks, Codex/Claude/Pi planning instructions,
+  branch-name validation and hooks, recovery/doctor diagnostics,
+  Codex/Claude/Pi planning instructions,
   GitHub PR/Actions integration, and repository operating documentation.
 - No new runtime dependency is required beyond Git and the existing GitHub CLI
   integration used by supervised agent workflows.

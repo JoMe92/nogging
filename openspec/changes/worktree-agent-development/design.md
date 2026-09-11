@@ -55,6 +55,21 @@ Alternative considered: agents running raw `git worktree` commands from prompts.
 It cannot provide durable ownership, collision detection, safe cleanup, or
 consistent behavior across agents, so it is rejected.
 
+### Resolve task mappings against develop for shared-checkout diagnostics
+
+Worktree planning deliberately integrates OpenSpec changes into `develop`
+before implementation, while a shared checkout can remain on `main`. The task
+mapping reader used by `recover`, `doctor`, and the pre-worktree allocation
+path will therefore use the current worktree first and, when it cannot resolve
+a live mapping, read the tracked `develop` integration ref without switching
+branches or changing files. It reports the source ref in diagnostic output.
+Missing or stale `origin/develop` is an actionable state, not a reason to
+silently treat all mappings as valid.
+
+Alternative considered: require every bootstrap command to switch the shared
+checkout to `develop`. That violates worktree isolation and conflicts with an
+operator's stable `main` checkout, so diagnostics must be ref-aware instead.
+
 ### Keep planning integration explicit and sequenced
 
 The generated planning worktree is the only place where `plan-begin` opens the
@@ -130,8 +145,9 @@ agents do not broaden an active implementation branch on their own.
 
 ## Migration Plan
 
-1. Add worktree record/state support, lifecycle commands, recovery/doctor
-   reporting, and unit tests using throwaway repositories.
+1. Add worktree record/state support, develop-aware task mapping in
+   recovery/doctor, lifecycle commands, and unit tests using throwaway
+   repositories.
 2. Extend branch validation and tests for hierarchical planning branches.
 3. Update planning and execution prompts, launch guidance, and operating
    documentation to invoke the lifecycle.
@@ -142,4 +158,3 @@ agents do not broaden an active implementation branch on their own.
 Rollback is a normal revert of this change. Existing manually created worktrees
 remain untouched; records can be inspected and cleaned only by their explicit
 safe-cleanup path.
-
