@@ -36,6 +36,19 @@ def run(*args, check=True, env=None):
         raise ToolError(f"{' '.join(args)}: {result.stderr.strip() or result.stdout.strip()}")
     return result
 def data_dir(path): path.mkdir(parents=True, exist_ok=True); return path
+KEBAB_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+def require_kebab(value, label):
+    if not KEBAB_RE.fullmatch(value or ""):
+        raise RuntimeError(f"{label} must be a non-empty kebab-case value")
+    return value
+def worktree_record_path(kind, identifier, description):
+    return WORKTREE_STATE / f"{kind}--{identifier}--{description}.json"
+def write_worktree_record(path, record):
+    """Atomically persist allocation intent before mutating Git worktrees."""
+    data_dir(path.parent)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
+    os.replace(tmp, path)
 def worktree_records():
     """Read durable worktree records without mutating state.
 
@@ -71,6 +84,49 @@ def recorded_worktree_lines():
             lines.append(f"{path.name}: recorded {branch} at {location} is missing")
             attention.append("missing recorded worktree")
     return lines, attention
+def git_worktree_paths():
+    result = run("git", "worktree", "list", "--porcelain", check=False)
+    if result.returncode:
+        raise RuntimeError("could not inspect existing Git worktrees")
+    return {line[9:] for line in result.stdout.splitlines() if line.startswith("worktree ")}
+def branch_exists(branch):
+    return run("git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch}",
+               check=False).returncode == 0
+def planning_worktree(planning_id, description, location=None):
+    """Allocate an isolated planning worktree from a freshly fetched develop."""
+    planning_id = require_kebab(planning_id, "planning ID")
+    description = require_kebab(description, "planning description")
+    branch = f"plan/{planning_id}/{description}"
+    location = Path(location).expanduser().resolve() if location else (
+        ROOT.parent / f"{ROOT.name}-plan-{planning_id}-{description}")
+    record_path = worktree_record_path("plan", planning_id, description)
+    if record_path.exists():
+        raise RuntimeError(f"planning allocation record already exists: {record_path.relative_to(ROOT)}")
+    if location.exists():
+        raise RuntimeError(f"planning worktree path already exists: {location}")
+    if str(location) in git_worktree_paths():
+        raise RuntimeError(f"planning worktree path is already registered: {location}")
+    if branch_exists(branch):
+        raise RuntimeError(f"planning branch already exists: {branch}")
+    fetched = run("git", "fetch", "origin", "develop", check=False)
+    if fetched.returncode:
+        raise RuntimeError("could not update origin/develop before allocating a planning worktree")
+    base = resolve_ref("origin/develop")
+    if base is None:
+        raise RuntimeError("origin/develop does not resolve after fetch")
+    record = {"branch": branch, "created_at": now(), "description": description,
+              "kind": "planning", "path": str(location), "planning_id": planning_id,
+              "state": "allocating", "base_ref": base}
+    # Persist intent first, so an interruption during `git worktree add` is
+    # diagnosable rather than silently losing the allocation request.
+    write_worktree_record(record_path, record)
+    run("git", "worktree", "add", "-b", branch, str(location), base)
+    record["state"] = "allocated"
+    record["allocated_at"] = now()
+    write_worktree_record(record_path, record)
+    print(f"planning worktree allocated: {location}")
+    print(f"branch: {branch} (from {base})")
+    print(f"record: {record_path.relative_to(ROOT)}")
 def changes():
     base = ROOT / "openspec/changes"
     return [p for p in base.iterdir() if p.is_dir() and p.name != "archive"] if base.exists() else []
@@ -2028,6 +2084,12 @@ def main():
         help="symlink .codex/prompts/*.md into <CODEX_HOME>/prompts/ as specforge-<name>.md")
     cpl.add_argument("--unlink", action="store_true",
         help="remove only the specforge-* prompt symlinks this command created")
+    wt = sub.add_parser("worktree", help="allocate and safely manage isolated agent worktrees")
+    wtsub = wt.add_subparsers(dest="worktree_command", required=True)
+    wtp = wtsub.add_parser("plan", help="allocate a planning worktree from updated origin/develop")
+    wtp.add_argument("planning_id")
+    wtp.add_argument("description")
+    wtp.add_argument("--path", help="explicit empty destination path (defaults beside the shared checkout)")
     orc = sub.add_parser("orchestrator")
     orcsub = orc.add_subparsers(dest="orchestrator_command", required=True)
     orun = orcsub.add_parser("run")
@@ -2075,6 +2137,8 @@ def main():
         print("openspec write boundary closed")
     elif args.command == "materialize": materialize(args.change)
     elif args.command == "codex-prompts-link": codex_prompts_link(args.unlink)
+    elif args.command == "worktree":
+        if args.worktree_command == "plan": planning_worktree(args.planning_id, args.description, args.path)
     elif args.command == "recover": recover()
     elif args.command == "sync": sync_now() if args.now else sync()
     elif args.command == "discoveries": ack_discoveries(args.ack) if args.ack else discoveries()

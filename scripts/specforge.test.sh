@@ -216,6 +216,36 @@ install_bd_stub
 
 count() { grep -cF -- "$2" "$1" || true; }
 
+# --- planning worktree allocation is isolated and collision-safe -----------
+root="$work/wt-plan"; make_root "$root"
+remote="$work/wt-plan-origin.git"; git init -q --bare "$remote"
+git -C "$root" branch develop
+git -C "$root" remote add origin "$remote"
+git -C "$root" push -q origin develop
+head_before="$(git -C "$root" rev-parse HEAD)"
+branch_before="$(git -C "$root" branch --show-current)"
+destination="$work/wt-plan-destination"
+export SPECFORGE_ROOT="$root"
+"$specforge" worktree plan agent-runtime parallel-execution --path "$destination" >"$out" 2>&1 \
+  || { echo "FAIL - wt-plan: allocation errored"; cat "$out"; fail=1; }
+[[ "$(git -C "$root" rev-parse HEAD)" == "$head_before" && "$(git -C "$root" branch --show-current)" == "$branch_before" ]] \
+  && echo "ok   - wt-plan: shared checkout HEAD and branch are unchanged" \
+  || { echo "FAIL - wt-plan: shared checkout was modified"; fail=1; }
+[[ "$(git -C "$destination" branch --show-current)" == "plan/agent-runtime/parallel-execution" ]] \
+  && echo "ok   - wt-plan: dedicated hierarchical planning branch created" \
+  || { echo "FAIL - wt-plan: planning branch missing"; git -C "$destination" branch --show-current 2>/dev/null || true; fail=1; }
+record="$root/.specforge/state/worktrees/plan--agent-runtime--parallel-execution.json"
+grep -qF '"state": "allocated"' "$record" \
+  && echo "ok   - wt-plan: durable allocated record written" \
+  || { echo "FAIL - wt-plan: durable record missing or incomplete"; cat "$record" 2>/dev/null || true; fail=1; }
+rc=0; "$specforge" worktree plan agent-runtime parallel-execution --path "$destination" >"$out" 2>&1 || rc=$?
+[[ "$rc" -ne 0 ]] \
+  && echo "ok   - wt-plan: duplicate allocation is refused before overwrite" \
+  || { echo "FAIL - wt-plan: duplicate allocation should fail"; fail=1; }
+check "wt-plan: duplicate reports durable collision" "planning allocation record already exists"
+git -C "$root" worktree remove --force "$destination"
+unset SPECFORGE_ROOT
+
 # --- Scenario: a closed mapped Bead is mirrored exactly once ----------------
 root="$work/sync-once"; make_root "$root"
 git -C "$root" commit -q --allow-empty -m "feat(demo): first demo thing [SPEC-d01]"
