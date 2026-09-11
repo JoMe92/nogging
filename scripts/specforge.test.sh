@@ -977,6 +977,48 @@ export BD_STUB_DIR="$root"
 check "rec-clean: says nothing is in flight" "nothing in flight"
 unset SPECFORGE_ROOT BD_FIXTURE BD_STUB_DIR
 
+# --- develop mappings remain valid from a shared main checkout -----------
+root="$work/rec-develop-fallback"; make_root "$root"
+git -C "$root" branch -M main
+git -C "$root" checkout -q -b develop
+cat >"$root/openspec/changes/demo/tasks.md" <<'MD'
+# Tasks
+
+- [ ] TASK-DEVELOP-001 Planned only on develop
+MD
+git -C "$root" add openspec/changes/demo/tasks.md
+git -C "$root" commit -q -m "docs: add develop-only task"
+git -C "$root" checkout -q main
+export SPECFORGE_ROOT="$root"
+export BD_FIXTURE="$work/rec-develop-fallback-beads.json"
+export BD_STUB_DIR="$root"
+cat >"$BD_FIXTURE" <<'JSON'
+[
+  {"id": "SPEC-dev", "status": "open",
+   "labels": ["openspec:change:demo", "openspec:task:TASK-DEVELOP-001"]}
+]
+JSON
+"$specforge" recover >"$out" 2>&1 \
+  && echo "ok   - rec-develop: develop-only task is not orphaned from main" \
+  || { echo "FAIL - rec-develop: develop-only task was orphaned"; cat "$out"; fail=1; }
+refute "rec-develop: no missing-task diagnostic" "maps missing task TASK-DEVELOP-001"
+unset SPECFORGE_ROOT BD_FIXTURE BD_STUB_DIR
+
+# --- interrupted worktree allocations remain visible --------------------
+root="$work/rec-worktree-record"; make_root "$root"
+mkdir -p "$root/.specforge/state/worktrees"
+cat >"$root/.specforge/state/worktrees/impl.json" <<'JSON'
+{"branch":"feat/demo","path":"/missing/specforge-worktree"}
+JSON
+export SPECFORGE_ROOT="$root"
+export BD_FIXTURE="$work/rec-worktree-record-beads.json"; printf '[]\n' >"$BD_FIXTURE"
+export BD_STUB_DIR="$root"
+"$specforge" recover >"$out" 2>&1 \
+  && { echo "FAIL - rec-worktree: missing record must need attention"; cat "$out"; fail=1; } \
+  || echo "ok   - rec-worktree: missing recorded worktree needs attention"
+check "rec-worktree: names missing worktree record" "recorded feat/demo at /missing/specforge-worktree is missing"
+unset SPECFORGE_ROOT BD_FIXTURE BD_STUB_DIR
+
 # --- a committed-but-open Bead is LIMBO and exits non-zero ---------------
 root="$work/rec-limbo"; make_root "$root"
 git -C "$root" commit -q --allow-empty -m "feat(demo): limbo work [SPEC-lim]"

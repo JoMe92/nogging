@@ -14,6 +14,7 @@ from pathlib import Path
 ROOT = Path(os.environ.get("SPECFORGE_ROOT") or Path(__file__).resolve().parents[1]).resolve()
 CFG = json.loads((ROOT / ".specforge/config.json").read_text())
 LOCKS, STATE, REPORTS = (ROOT / ".specforge/locks", ROOT / ".specforge/state", ROOT / ".specforge/reports")
+WORKTREE_STATE = STATE / "worktrees"
 TASK_RE = re.compile(r"^- \[[ x]\] (TASK-[A-Z0-9-]+)\s+(.+)$", re.M)
 # Beads scopes `bd list` to non-closed issues by default. The mechanical sync
 # must see closed mapped Beads too (a closed Bead is exactly what gets mirrored),
@@ -35,6 +36,41 @@ def run(*args, check=True, env=None):
         raise ToolError(f"{' '.join(args)}: {result.stderr.strip() or result.stdout.strip()}")
     return result
 def data_dir(path): path.mkdir(parents=True, exist_ok=True); return path
+def worktree_records():
+    """Read durable worktree records without mutating state.
+
+    Allocation commands create these records in a later lifecycle task; recovery
+    already understands them so an interrupted allocation remains visible.
+    """
+    out = []
+    if not WORKTREE_STATE.is_dir(): return out
+    for path in sorted(WORKTREE_STATE.glob("*.json")):
+        try:
+            record = json.loads(path.read_text())
+        except (ValueError, OSError):
+            out.append((path, None)); continue
+        out.append((path, record if isinstance(record, dict) else None))
+    return out
+def recorded_worktree_lines():
+    """Read-only reconciliation of durable records with Git's worktree list."""
+    known = set()
+    result = run("git", "worktree", "list", "--porcelain", check=False)
+    if result.returncode == 0:
+        known = {line[9:] for line in result.stdout.splitlines() if line.startswith("worktree ")}
+    lines, attention = [], []
+    for path, record in worktree_records():
+        if record is None:
+            lines.append(f"{path.name}: unreadable worktree record")
+            attention.append("unreadable worktree record")
+            continue
+        location, branch = record.get("path"), record.get("branch")
+        if not isinstance(location, str) or not isinstance(branch, str):
+            lines.append(f"{path.name}: incomplete worktree record")
+            attention.append("incomplete worktree record")
+        elif location not in known:
+            lines.append(f"{path.name}: recorded {branch} at {location} is missing")
+            attention.append("missing recorded worktree")
+    return lines, attention
 def changes():
     base = ROOT / "openspec/changes"
     return [p for p in base.iterdir() if p.is_dir() and p.name != "archive"] if base.exists() else []
@@ -64,6 +100,19 @@ def task_map(include_archived=False):
                     # duplicate, so it never touches `duplicates`.
                     if task in found: continue
                     found[task] = {"change": name, "file": file, "title": title, "archived": True}
+    return found, duplicates
+def task_map_at_ref(ref, include_archived=False):
+    """Read task mappings from a committed ref without switching worktrees."""
+    listing = run("git", "ls-tree", "-r", "--name-only", ref, "--", "openspec/changes", check=False)
+    if listing.returncode: return {}, []
+    found, duplicates = {}, []
+    for name in listing.stdout.splitlines():
+        if not name.endswith("/tasks.md") or "/archive/" in name: continue
+        text = run("git", "show", f"{ref}:{name}", check=False).stdout
+        change = Path(name).parent.name
+        for task, title in TASK_RE.findall(text):
+            if task in found: duplicates.append(task)
+            found[task] = {"change": change, "file": None, "title": title, "ref": ref}
     return found, duplicates
 def beads():
     out = run(CFG["beads_command"], "list", "--status", BEAD_STATUSES, "--limit", "0", "--json").stdout.strip()
@@ -387,7 +436,7 @@ def limbo_warnings(issues, commit_tokens=None):
         if status != "closed":
             out.append(f"LIMBO: {bid} committed in {sha[:12]} but status={status}")
     return out
-def validate():
+def validate(fallback_ref=None):
     # include_archived=True so a closed Bead still labelled for a change that
     # has since been archived resolves cleanly instead of tripping "maps missing
     # task" / "change label disagrees". materialize() and sync() keep using the
@@ -399,6 +448,7 @@ def validate():
     # committed-but-open Bead and the like, surfaced by `doctor` / `recover`
     # but never blocking the mirror (a warning must not redden `sync`).
     tasks, duplicates = task_map(include_archived=True); issues = beads()
+    fallback, fallback_duplicates = task_map_at_ref(fallback_ref, include_archived=True) if fallback_ref else ({}, [])
     problems = []; warnings = []
     if duplicates: problems.append("duplicate task IDs: " + ", ".join(sorted(set(duplicates))))
     seen = {}
@@ -406,6 +456,8 @@ def validate():
         change, task = mapping(issue)
         if bool(change) != bool(task): problems.append(f"{issue_id(issue)} has incomplete OpenSpec labels")
         if task:
+            if task not in tasks and task in fallback:
+                tasks[task] = fallback[task]
             if task not in tasks: problems.append(f"{issue_id(issue)} maps missing task {task}")
             elif tasks[task]["change"] != change: problems.append(f"{issue_id(issue)} change label disagrees with {task}")
             if task in seen: problems.append(f"multiple Beads map {task}: {seen[task]}, {issue_id(issue)}")
@@ -414,7 +466,7 @@ def validate():
         # An archived tasks.md is frozen — its checked lines were already
         # backed by a closed Bead when the change was archived and nothing can
         # change them now, so skip the reverse check for archived files.
-        if info.get("archived"): continue
+        if info.get("archived") or info.get("file") is None: continue
         if re.search(rf"^- \[x\] {re.escape(task)}\b", info["file"].read_text(), re.M):
             issue = next((i for i in issues if mapping(i)[1] == task), None)
             if not issue or issue.get("status") != "closed": problems.append(f"checked task {task} has no closed Bead")
@@ -1766,7 +1818,7 @@ def recover_scan():
     # --- Orphan Beads ------------------------------------------------
     orphan_lines = []
     try:
-        _, _, problems, _ = validate()
+        _, _, problems, _ = validate(fallback_ref=resolve_ref("develop"))
     except Exception as exc:
         problems = [f"validate() failed: {exc}"]
     for p in problems:
@@ -1774,6 +1826,11 @@ def recover_scan():
             orphan_lines.append(p)
             attention.append("orphan Bead")
     section("Orphan Beads", orphan_lines)
+
+    # --- Durable worktree records -------------------------------------
+    worktree_lines, worktree_attention = recorded_worktree_lines()
+    attention.extend(worktree_attention)
+    section("Worktrees", worktree_lines)
 
     # --- Crashed sessions -----------------------------------------
     crashed_lines = []
