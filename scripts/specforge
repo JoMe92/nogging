@@ -15,6 +15,7 @@ ROOT = Path(os.environ.get("SPECFORGE_ROOT") or Path(__file__).resolve().parents
 CFG = json.loads((ROOT / ".specforge/config.json").read_text())
 LOCKS, STATE, REPORTS = (ROOT / ".specforge/locks", ROOT / ".specforge/state", ROOT / ".specforge/reports")
 WORKTREE_STATE = STATE / "worktrees"
+PR_STATE = STATE / "pull-requests"
 TASK_RE = re.compile(r"^- \[[ x]\] (TASK-[A-Z0-9-]+)\s+(.+)$", re.M)
 # Beads scopes `bd list` to non-closed issues by default. The mechanical sync
 # must see closed mapped Beads too (a closed Bead is exactly what gets mirrored),
@@ -183,6 +184,36 @@ def cleanup_worktree(record_name):
     run("git", "branch", "-d", branch)
     path.unlink()
     print(f"worktree retired: {target} ({branch})")
+def current_branch():
+    out = run("git", "branch", "--show-current", check=False).stdout.strip()
+    if not out or out == "develop":
+        raise RuntimeError("pull requests must be created from an implementation branch, not develop")
+    return out
+def pull_request(plan, tasks, decisions, validations, limitations):
+    """Create or find an open implementation PR; intentionally never merges."""
+    branch = current_branch()
+    found = run("gh", "pr", "list", "--head", branch, "--base", "develop", "--state", "open",
+                "--json", "url", check=False)
+    if found.returncode: raise RuntimeError("could not query pull requests with gh")
+    try: existing = json.loads(found.stdout or "[]")
+    except ValueError: existing = []
+    url = existing[0].get("url") if existing and isinstance(existing[0], dict) else None
+    body = "\n".join(["## Plan and tasks", f"Plan: {plan}", "Tasks: " + (", ".join(tasks) or "not specified"),
+                      "## Implemented", "Describe the implemented behavior.",
+                      "## Technical decisions", "\n".join(f"- {x}" for x in decisions) or "- None recorded.",
+                      "## Validation", "\n".join(f"- {x}" for x in validations) or "- Not recorded.",
+                      "## Limitations / follow-up", "\n".join(f"- {x}" for x in limitations) or "- None."]) + "\n"
+    if not url:
+        title = f"{plan}: implementation"
+        created = run("gh", "pr", "create", "--base", "develop", "--head", branch,
+                      "--title", title, "--body", body, check=False)
+        if created.returncode: raise RuntimeError("could not create pull request with gh")
+        url = created.stdout.strip().splitlines()[-1] if created.stdout.strip() else None
+    if not url: raise RuntimeError("GitHub CLI did not return a pull request URL")
+    record = {"base": "develop", "branch": branch, "created_at": now(), "plan": plan,
+              "tasks": tasks, "url": url, "state": "open"}
+    write_worktree_record(PR_STATE / (re.sub(r"[^a-z0-9-]", "-", branch) + ".json"), record)
+    print(f"pull request: {url}")
 def changes():
     base = ROOT / "openspec/changes"
     return [p for p in base.iterdir() if p.is_dir() and p.name != "archive"] if base.exists() else []
@@ -2152,6 +2183,12 @@ def main():
     wti.add_argument("--path", help="explicit empty destination path (defaults beside the shared checkout)")
     wtc = wtsub.add_parser("cleanup", help="retire one clean, develop-integrated recorded worktree")
     wtc.add_argument("record", help="record filename under .specforge/state/worktrees/")
+    pr = sub.add_parser("pr", help="create or locate an implementation pull request")
+    prsub = pr.add_subparsers(dest="pr_command", required=True)
+    pro = prsub.add_parser("open", help="create or locate an open PR targeting develop")
+    pro.add_argument("--plan", required=True); pro.add_argument("--task", action="append", default=[])
+    pro.add_argument("--decision", action="append", default=[]); pro.add_argument("--validation", action="append", default=[])
+    pro.add_argument("--limitation", action="append", default=[])
     orc = sub.add_parser("orchestrator")
     orcsub = orc.add_subparsers(dest="orchestrator_command", required=True)
     orun = orcsub.add_parser("run")
@@ -2203,6 +2240,8 @@ def main():
         if args.worktree_command == "plan": planning_worktree(args.planning_id, args.description, args.path)
         elif args.worktree_command == "implement": implementation_worktree(args.bead_id, args.branch, args.path)
         elif args.worktree_command == "cleanup": cleanup_worktree(args.record)
+    elif args.command == "pr":
+        if args.pr_command == "open": pull_request(args.plan, args.task, args.decision, args.validation, args.limitation)
     elif args.command == "recover": recover()
     elif args.command == "sync": sync_now() if args.now else sync()
     elif args.command == "discoveries": ack_discoveries(args.ack) if args.ack else discoveries()
