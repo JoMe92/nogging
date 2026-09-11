@@ -94,6 +94,11 @@ grep -q 'plan-end' "$cmd_dir/plan.md" \
   && ok "plan.md releases the lock with plan-end" \
   || bad "plan.md lost its plan-end step"
 
+grep -q 'worktree implement <bead> <branch>' .specforge/launch-prompts/autonomous.md \
+  && grep -q 'never merge that pull request yourself' .specforge/launch-prompts/autonomous.md \
+  && ok "autonomous Lead guidance requires an implementation worktree and review handoff" \
+  || bad "autonomous Lead guidance is missing worktree or no-self-merge rules"
+
 # --- 3b. planning is allocated before the write boundary opens -----------
 for path in .claude/commands/plan.md .codex/prompts/plan.md .pi/prompts/plan.md; do
   if python3 - "$path" <<'PY'

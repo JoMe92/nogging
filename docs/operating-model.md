@@ -18,31 +18,35 @@ that holds the loop the Product Owner would otherwise hold by hand.
 
 The Main Worker session runs as the **Lead Agent** persona. It has full
 read/write on Beads but **read-only** access to OpenSpec — only the Planning
-Agent writes there. For each Bead the Lead Agent follows this path (section 7 of
-the concept conversation):
+Agent writes there. It never implements in the shared `develop` checkout: after
+claiming a Bead it allocates a dedicated worktree from updated `develop`, on a
+conventional implementation branch, and performs all edits, checks, and commits
+there. For each Bead the Lead Agent follows this path:
 
 1. `bd ready` — find available work.
 2. `bd update <id> --claim` — claim one Bead.
 3. `bd show <id>` — this returns the Bead's `openspec:task:<TASK-ID>` label (and
    `openspec:change:<name>`).
-4. **Targeted context** — read only the one task line that
+4. **Allocate the implementation worktree** — update `develop`, create a
+   conventional branch, and use no other agent's worktree.
+5. **Targeted context** — read only the one task line that
    `openspec:task:<TASK-ID>` resolves to in
    `openspec/changes/<name>/tasks.md`, plus the referenced spec excerpt under
    `specs/`. The Lead Agent does not read the whole `proposal.md` / `design.md`.
-5. Read the code context from the repo itself.
-6. **Decide: implement directly or delegate.** For genuinely isolated work the
+6. Read the code context from the repo itself.
+7. **Decide: implement directly or delegate.** For genuinely isolated work the
    Lead Agent delegates to exactly one of the six specialists in
    `.claude/agents/` via the Task tool, passing the Bead ID, the task slice, and
    the spec excerpt. Delegating trivial work loses context, so it is the
    exception. `architect` and `code-reviewer` are advisory; `ui-ux-designer`
    produces a specification; `backend-engineer` / `frontend-engineer` implement;
    `test-runner` runs and extends tests.
-7. Request tests and a review pass (`test-runner`, `code-reviewer`) as needed.
-8. If a specialist surfaces a plan-relevant finding, the Lead Agent records the
+8. Request tests and a review pass (`test-runner`, `code-reviewer`) as needed.
+9. If a specialist surfaces a plan-relevant finding, the Lead Agent records the
    discovery (`bd update <id> --add-label discovery --append-notes "<prose>"`;
    `--status blocked` and move to the next independent Bead if it blocks). A
    specialist never labels or re-statuses the Bead itself.
-9. Validate, write the evidence note with the commit SHA, commit with the
+10. Validate, write the evidence note with the commit SHA, commit with the
    `[<ID>]` token, and `bd close <id>`. The sync timer then mirrors the closure
    into `execution-log.md`.
 
