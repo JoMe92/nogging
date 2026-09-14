@@ -6,7 +6,7 @@ After=default.target
 Type=simple
 WorkingDirectory={{WORKDIR}}
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart={{WORKDIR}}/scripts/specforge orchestrator run
+ExecStart={{WORKDIR}}/scripts/nogg orchestrator run
 Restart=always
 RestartSec=10
 

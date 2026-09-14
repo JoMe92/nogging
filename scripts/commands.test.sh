@@ -88,18 +88,18 @@ done
 
 # --- 3. plan.md still drives the planning lock ---------------------------
 grep -q 'plan-begin' "$cmd_dir/plan.md" \
-  && ok "plan.md drives scripts/specforge plan-begin" \
+  && ok "plan.md drives scripts/nogg plan-begin" \
   || bad "plan.md lost its plan-begin step"
 grep -q 'plan-end' "$cmd_dir/plan.md" \
   && ok "plan.md releases the lock with plan-end" \
   || bad "plan.md lost its plan-end step"
 
-grep -q 'worktree implement <bead> <branch>' .specforge/launch-prompts/autonomous.md \
-  && grep -q 'never merge that pull request yourself' .specforge/launch-prompts/autonomous.md \
+grep -q 'worktree implement <bead> <branch>' .nogging/launch-prompts/autonomous.md \
+  && grep -q 'never merge that pull request yourself' .nogging/launch-prompts/autonomous.md \
   && ok "autonomous Lead guidance requires an implementation worktree and review handoff" \
   || bad "autonomous Lead guidance is missing worktree or no-self-merge rules"
-grep -q 'create a Bead' .specforge/launch-prompts/autonomous.md \
-  && grep -q 'new planning session' .specforge/launch-prompts/autonomous.md \
+grep -q 'create a Bead' .nogging/launch-prompts/autonomous.md \
+  && grep -q 'new planning session' .nogging/launch-prompts/autonomous.md \
   && ok "review changes route small work to Beads and large work to planning" \
   || bad "review-change routing policy is missing"
 
@@ -191,7 +191,7 @@ if not m:
 else:
     body = agents[m.start():m.start()+1200]
     if "specforge recover" not in body:
-        print("AGENTS.md 'Resuming a run' does not run scripts/specforge recover"); bad = 1
+        print("AGENTS.md 'Resuming a run' does not run scripts/nogg recover"); bad = 1
     if not re.search(r"before[^.]*bd ready", body):
         print("AGENTS.md 'Resuming a run' must place recover before bd ready"); bad = 1
 fr = open("docs/failure-recovery.md").read()

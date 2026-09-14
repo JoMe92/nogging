@@ -1,7 +1,7 @@
 # Using Agentsembli SpecForge with OpenAI Codex
 
 Agentsembli SpecForge is tool-neutral. `AGENTS.md` is the canonical instruction file for
-every agent runtime, and the mechanical bridge (`scripts/specforge`) is the same
+every agent runtime, and the mechanical bridge (`scripts/nogg`) is the same
 whichever agent runs it. This page covers what is specific to running the
 Agentsembli SpecForge loop from **OpenAI Codex** instead of Claude Code.
 
@@ -13,12 +13,12 @@ fast; where a detail is version-dependent it is called out so you can re-check.
 In addition to the usual target-repo prerequisites (`bd`/Beads, `python3`,
 `git`, and a reachable Dolt for sync):
 
-- **The `codex` CLI on `PATH`.** `scripts/specforge doctor` reports it as
+- **The `codex` CLI on `PATH`.** `scripts/nogg doctor` reports it as
   `NOTE  codex available` / `NOTE  codex not installed; only needed for the
   Codex agent path` — its absence never fails `doctor`, because a Claude-only
   repo is perfectly valid.
 - **A Codex login.** Run `codex login` once. `codex` must be able to start a
-  session non-interactively for `scripts/specforge session launch --agent
+  session non-interactively for `scripts/nogg session launch --agent
   codex` to work.
 - **Trust the repo's `.codex/` layer.** Codex only loads project-local
   `.codex/` configuration — hooks and the execpolicy rules floor — once you
@@ -39,9 +39,9 @@ A user's own `.codex/AGENTS.md` or `.codex/config.toml` is never touched.
 
 ### Launch authority levels
 
-`scripts/specforge session launch --agent codex` maps a SpecForge authority
+`scripts/nogg session launch --agent codex` maps a SpecForge authority
 level onto Codex's sandbox / approval / network model via
-`.specforge/launch-profiles/*.codex.toml`. It mirrors the Claude trusted /
+`.nogging/launch-profiles/*.codex.toml`. It mirrors the Claude trusted /
 restricted split:
 
 | Level | Selected by | Sandbox / approval | Outbound network | Can `git push` |
@@ -101,7 +101,7 @@ requirement is behavioural — the file can be rewritten without a spec change.
 | `/sync-now` | `.claude/commands/sync-now.md` | `.codex/prompts/sync-now.md` |
 
 The persona and step text are identical; only the invocation surface differs.
-Each is a thin wrapper over `scripts/specforge` — the mechanical steps
+Each is a thin wrapper over `scripts/nogg` — the mechanical steps
 (`plan-begin` → discovery review → author → `validate` → `materialize` →
 commit as the `planning` writer → `plan-end`; `discoveries` / `--ack`;
 `sync --now`) are agent-neutral.
@@ -117,16 +117,16 @@ either:
 - link them into your user prompts dir with the repo helper —
 
   ```bash
-  ./scripts/specforge codex-prompts-link          # link (idempotent)
-  ./scripts/specforge codex-prompts-link --unlink # remove the specforge-* links
+  ./scripts/nogg codex-prompts-link          # link (idempotent)
+  ./scripts/nogg codex-prompts-link --unlink # remove the specforge-* links
   ```
 
   It symlinks each `.codex/prompts/*.md` to
   `${CODEX_HOME:-~/.codex}/prompts/specforge-<name>.md`, repoints a stale link,
   and reports (without clobbering) a real file that is in the way. It is
-  **opt-in** — `npx … init`/`update` never writes into `$HOME`. `scripts/specforge
+  **opt-in** — `npx … init`/`update` never writes into `$HOME`. `scripts/nogg
   doctor` prints a NOTE when the prompts are present but unlinked. or
-- run the `scripts/specforge` steps directly (the prompt files are just the
+- run the `scripts/nogg` steps directly (the prompt files are just the
   script sequence plus a persona); or
 - use the auto-loaded `.agents/skills/` OpenSpec skills (see *Skills*) — the
   upstream-aligned way to run the same flows, and unaffected by the prompt-scope
@@ -135,10 +135,10 @@ either:
 ## Resuming a run after a tool switch
 
 Switching between Claude Code and Codex mid-run is a supported interruption. The
-durable state — `git`, `bd` / Dolt, `openspec/`, `.specforge/state/` — is not
+durable state — `git`, `bd` / Dolt, `openspec/`, `.nogging/state/` — is not
 Claude-specific, and Codex's `SessionStart` hook (`bd codex-hook SessionStart`)
 primes Beads context the same way. So on the next start, before touching
-`bd ready`, a resumed or switched session runs `./scripts/specforge recover`
+`bd ready`, a resumed or switched session runs `./scripts/nogg recover`
 and resolves what it reports with the
 [`failure-recovery.md`](failure-recovery.md) § "Resuming an interrupted run"
 playbook — exactly as `AGENTS.md` § "Resuming a run" describes. The protocol is
@@ -155,7 +155,7 @@ ported, and there is no MCP bridge. A Codex Lead Agent therefore either:
 - when the operator wants a separate observable process, starts one with:
 
   ```bash
-  scripts/specforge session launch --agent codex \
+  scripts/nogg session launch --agent codex \
     --role specialist:<type> --bead <id>
   ```
 
@@ -184,7 +184,7 @@ discovered automatically or invoked by name (`$openspec-propose`).
   `Edit`/`Write` under `openspec/`. Codex has no equivalent. For Codex the
   OpenSpec write boundary is held by:
   1. the **filesystem write guard** (`tool-agnostic-write-boundary`) — the
-     `.specforge/locks/openspec.readonly` sentinel that `plan-begin`/`plan-end`
+     `.nogging/locks/openspec.readonly` sentinel that `plan-begin`/`plan-end`
      toggle;
   2. the **execpolicy floor** (`.codex/rules/specforge.rules`);
   3. the **commit hooks** (`pre-commit` refuses an `openspec/` change from a

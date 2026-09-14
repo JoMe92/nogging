@@ -51,8 +51,8 @@ the rest applies to every runtime — Claude Code, Codex, or another.
 OpenSpec owns approved product intent, Beads owns executable work, Git owns the
 implementation. `openspec/` is **read-only** for every execution agent and is
 writable only during a planning session that holds
-`.specforge/locks/planning.lock` (`./scripts/specforge plan-begin` …
-`plan-end`). The lock toggles a `.specforge/locks/openspec.readonly` sentinel;
+`.nogging/locks/planning.lock` (`./scripts/nogg plan-begin` …
+`plan-end`). The lock toggles a `.nogging/locks/openspec.readonly` sentinel;
 the write guard consults it. Each tool also enforces this in its own way — see
 *Tool notes*.
 
@@ -64,7 +64,7 @@ fresh, resumed, or after a tool switch — **before selecting work with
 `bd ready`**:
 
 1. Let the `SessionStart` hook prime Beads context (or run `bd prime`).
-2. Run `./scripts/specforge recover`.
+2. Run `./scripts/nogg recover`.
 3. Resolve every item it reports, using the playbook in
    `docs/failure-recovery.md` § "Resuming an interrupted run". A `LIMBO` /
    `resumable` Bead's work is **already done** — verify it (`scripts/test`), add
@@ -89,8 +89,8 @@ session or inline work under the same constraints.
 
 Lead Agent and specialist sessions that SpecForge starts run inside a named
 tmux session on the delivery host, tracked by a durable record under
-`.specforge/state/sessions/` and an append-only log. Operators use
-`scripts/specforge session list | attach | log | stop | cleanup` from a plain
+`.nogging/state/sessions/` and an append-only log. Operators use
+`scripts/nogg session list | attach | log | stop | cleanup` from a plain
 SSH shell; see `docs/operating-model.md`. `session launch --agent
 {claude|codex}` chooses the agent; the `restricted` / `trusted` authority
 levels are tool-neutral and resolve per agent.
@@ -123,14 +123,14 @@ crash and reboot; it is reachable from a phone via Remote Control). It is
 **Claude Code only** in this version.
 
 - **Default scope is orchestrate-only.** It reads the whole state and drives
-  Planning and Lead sessions through `scripts/specforge` (`session
+  Planning and Lead sessions through `scripts/nogg` (`session
   launch|attach|log|stop`, `sync --now`, `recover`, `discoveries`), `bd`, and
   `git` (read + local fast-forward integration). It writes **no** file under
   `openspec/` and edits **no** implementation code.
 - **The command floor and the `openspec/` boundary are lifted for it** — the
   one documented exception, keyed to `--role orchestrator` under the
   `orchestrator` profile. Nothing mechanical enforces the limits above; the
-  discipline lives in `.specforge/launch-prompts/orchestrator.md`. `session
+  discipline lives in `.nogging/launch-prompts/orchestrator.md`. `session
   list` / `doctor` show the session as `FULL-ACCESS`.
 - **Explicit takeover only.** On an explicit `/orchestrate takeover
   {plan|code} <description>` it does one task directly — a planning task
@@ -145,23 +145,23 @@ See `docs/operating-model.md` *Orchestration* and `docs/architecture.md`.
 
 The operator entry points are `/plan`, `/discovery-review` and `/sync-now`
 (see the *Commands* table in `docs/operating-model.md`). Each is a thin wrapper
-over `scripts/specforge`; a tool without a command mechanism runs the same
+over `scripts/nogg`; a tool without a command mechanism runs the same
 steps by hand:
 
-- `/plan` — allocate `scripts/specforge worktree plan <planning-id>
+- `/plan` — allocate `scripts/nogg worktree plan <planning-id>
   <description>` from updated `origin/develop`, then in that worktree run
   `plan-begin` → discovery review → author → `validate` → commit as the `planning` writer
   → `materialize <change>` → integrate into `develop` → safe
   cleanup → `plan-end`. The spec is committed **before** `materialize`, so a
   crash between the two never leaves Beads without a committed spec.
-- `/discovery-review` — `scripts/specforge discoveries` (+ `--ack`).
-- `/sync-now` — `scripts/specforge sync --now`.
+- `/discovery-review` — `scripts/nogg discoveries` (+ `--ack`).
+- `/sync-now` — `scripts/nogg sync --now`.
 
 Where each tool reads those command files is in *Tool notes*.
 
 ## Planning only
 
-The Planning Agent first allocates `./scripts/specforge worktree plan
+The Planning Agent first allocates `./scripts/nogg worktree plan
 <planning-id> <description>` from updated `origin/develop` and works only in
 that dedicated worktree. It then runs `plan-begin`, writes or revises OpenSpec,
 runs validation, commits the change as the `planning` writer, and materializes
@@ -193,13 +193,13 @@ the subsection for the tool you are running as, and ignore the others.
 ### Codex
 
 - **Write boundary.** Codex has no per-tool hook. `openspec/` stays read-only
-  through the filesystem write guard (the `.specforge/locks/openspec.readonly`
+  through the filesystem write guard (the `.nogging/locks/openspec.readonly`
   sentinel + the commit hooks); `plan-begin` / `plan-end` toggle it. The
   command floor is `.codex/rules/specforge.rules` (execpolicy `prefix_rule`
   lines), loaded once the project's `.codex/` layer is trusted.
 - **Specialists.** Codex has no in-process subagent mechanism. A specialist run
   is a **separate supervised session**:
-  `scripts/specforge session launch --agent codex --role specialist:<type>
+  `scripts/nogg session launch --agent codex --role specialist:<type>
   --bead <id>`, under every specialist boundary rule above. The six
   `.claude/agents/*.md` are Claude-Code-only and are not ported to Codex; there
   is no MCP bridge. Where a separate session is overkill, the Lead Agent does
@@ -207,7 +207,7 @@ the subsection for the tool you are running as, and ignore the others.
 - **Operator entry points.** `.codex/prompts/{plan,discovery-review,sync-now}.md`
   (same persona and steps as the Claude commands). On a Codex build that reads
   custom prompts only from `~/.codex/prompts/`, symlink or copy them there, or
-  run the `scripts/specforge` steps directly. Codex auto-loads the repo's
+  run the `scripts/nogg` steps directly. Codex auto-loads the repo's
   `.agents/skills/**/SKILL.md`, so the OpenSpec skills are available as-is.
 
 ### Pi
@@ -216,7 +216,7 @@ the subsection for the tool you are running as, and ignore the others.
   `openspec/` writes are blocked by the project-local guard extension
   (`.pi/extensions/specforge-guard.ts`), which intercepts the `tool_call`
   event and rejects a write/edit under `openspec/` unless the
-  `.specforge/locks/openspec.readonly` sentinel is absent (a planning session
+  `.nogging/locks/openspec.readonly` sentinel is absent (a planning session
   is active); `plan-begin` / `plan-end` toggle it. The same extension
   enforces the SpecForge command floor on the shell tool. Pi's `restricted`
   authority level is **floor-only**: unlike Claude and Codex, there is no
@@ -224,7 +224,7 @@ the subsection for the tool you are running as, and ignore the others.
   extension and the `openspec/` write boundary are the only enforcement.
 - **Specialists.** Pi has no in-process subagent mechanism. A specialist run
   is a **separate supervised session**:
-  `scripts/specforge session launch --agent pi --role specialist:<type>
+  `scripts/nogg session launch --agent pi --role specialist:<type>
   --bead <id>`, under every specialist boundary rule above. The six
   `.claude/agents/*.md` are Claude-Code-only and are not ported to Pi. Where a
   separate session is overkill, the Lead Agent does the work inline under the

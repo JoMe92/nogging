@@ -14,13 +14,13 @@ the safeguards for its lifted authority.
 ## Reaching the session
 
 ```bash
-scripts/specforge orchestrator status   # unit + linger state, the lock, the live session, last log lines
-scripts/specforge orchestrator restart  # bounce the service
-scripts/specforge orchestrator stop      # stop + disable it and end the session
+scripts/nogg orchestrator status   # unit + linger state, the lock, the live session, last log lines
+scripts/nogg orchestrator restart  # bounce the service
+scripts/nogg orchestrator stop      # stop + disable it and end the session
 ```
 
-- **From the delivery host:** `scripts/specforge session attach sf-orchestrator-<slug>`
-  (read-only: add `--read-only`), or `scripts/specforge session log
+- **From the delivery host:** `scripts/nogg session attach sf-orchestrator-<slug>`
+  (read-only: add `--read-only`), or `scripts/nogg session log
   sf-orchestrator-<slug> --follow`.
 - **From a phone, no SSH:** the session registers with **Remote Control**
   automatically — open it from the Claude app and type into it there.
@@ -33,7 +33,7 @@ and accept the trust prompt.
 ## Giving the orchestrator a takeover task
 
 By default the orchestrator is **orchestrate-only**: it reads state and drives
-Planning and Lead sessions through `scripts/specforge`, and writes no
+Planning and Lead sessions through `scripts/nogg`, and writes no
 `openspec/` file and no code itself. To have it do one task directly, type — in
 the orchestrator session — exactly one of:
 

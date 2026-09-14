@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Regression checks for `scripts/specforge session ...` (TASK-SESSION-013).
+# Regression checks for `scripts/nogg session ...` (TASK-SESSION-013).
 #
 # tmux is STUBBED (PATH-injected, same technique as the `bd` stub and the
-# SPECFORGE_ROOT seam in scripts/specforge.test.sh): no real tmux server is
+# SPECFORGE_ROOT seam in scripts/nogg.test.sh): no real tmux server is
 # ever started. The stub is stateful — `new-session` creates a marker file,
 # `kill-session` / a C-c `send-keys` removes it, `has-session` / `list-sessions`
 # read it — so lifecycle transitions are observable without a tty.
@@ -19,7 +19,7 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-specforge="$here/specforge"
+specforge="$here/nogg"
 repo_root="$(cd "$here/.." && pwd)"
 work=$(mktemp -d)
 out=$(mktemp)
@@ -59,9 +59,9 @@ case "$cmd" in
   new-session)
     name="$(arg_after -s "$@")"
     # metadata AND log must already exist on disk before the child is exec'd
-    ls "$SPECFORGE_ROOT"/.specforge/state/sessions/*.json >/dev/null 2>&1 \
+    ls "$SPECFORGE_ROOT"/.nogging/state/sessions/*.json >/dev/null 2>&1 \
       || { echo "tmux stub: no metadata record before exec" >&2; exit 90; }
-    ls "$SPECFORGE_ROOT"/.specforge/state/sessions/*.log  >/dev/null 2>&1 \
+    ls "$SPECFORGE_ROOT"/.nogging/state/sessions/*.log  >/dev/null 2>&1 \
       || { echo "tmux stub: no log file before exec" >&2; exit 91; }
     touch "$d/sess-$name" ;;
   has-session)
@@ -90,13 +90,13 @@ refute() { if grep -qF -- "$2" "$out"; then echo "FAIL - $1 (present: $2)"; cat 
 # make_root <dir> [grace] — minimal SpecForge checkout for the session layer.
 make_root() {
   local r="$1" grace="${2:-10}"
-  mkdir -p "$r/.specforge/state"
+  mkdir -p "$r/.nogging/state"
   # the launch profile / prompt files the bridge resolves and now reads
-  cp "$repo_root/.specforge/session-launch-profile.json" "$r/.specforge/" 2>/dev/null || true
-  cp "$repo_root/.specforge/session-launch-prompt.md" "$r/.specforge/" 2>/dev/null || true
-  cp -r "$repo_root/.specforge/launch-profiles" "$r/.specforge/" 2>/dev/null || true
-  cp -r "$repo_root/.specforge/launch-prompts" "$r/.specforge/" 2>/dev/null || true
-  python3 - "$repo_root/.specforge/config.json" "$r/.specforge/config.json" "$grace" <<'PY'
+  cp "$repo_root/.nogging/session-launch-profile.json" "$r/.nogging/" 2>/dev/null || true
+  cp "$repo_root/.nogging/session-launch-prompt.md" "$r/.nogging/" 2>/dev/null || true
+  cp -r "$repo_root/.nogging/launch-profiles" "$r/.nogging/" 2>/dev/null || true
+  cp -r "$repo_root/.nogging/launch-prompts" "$r/.nogging/" 2>/dev/null || true
+  python3 - "$repo_root/.nogging/config.json" "$r/.nogging/config.json" "$grace" <<'PY'
 import json, sys
 cfg = json.load(open(sys.argv[1]))
 cfg["session_stop_grace_seconds"] = float(sys.argv[3])
@@ -117,11 +117,11 @@ export BD_MUTATION_LOG="$work/launch-bd-mutations.log"; : >"$BD_MUTATION_LOG"
 "$specforge" session launch --role lead --bead SPEC-aaa >"$out" 2>&1 \
   || { echo "FAIL - launch: errored"; cat "$out"; fail=1; }
 check "launch: reports the created session" "launched sf-lead-spec-aaa-"
-name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
-[[ -f "$root/.specforge/state/sessions/$name.json" ]] \
+name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
+[[ -f "$root/.nogging/state/sessions/$name.json" ]] \
   && echo "ok   - launch: metadata record written" \
   || { echo "FAIL - launch: no metadata record"; fail=1; }
-[[ -f "$root/.specforge/state/sessions/$name.log" ]] \
+[[ -f "$root/.nogging/state/sessions/$name.log" ]] \
   && echo "ok   - launch: append-only log written" \
   || { echo "FAIL - launch: no log file"; fail=1; }
 # the tmux stub's new-session aborts (exit 90/91) if either is missing at exec
@@ -131,7 +131,7 @@ grep -qF "new-session " "$TMUX_STUB_DIR/calls.log" \
 grep -qF "pipe-pane " "$TMUX_STUB_DIR/calls.log" \
   && echo "ok   - launch: pipe-pane log stream started" \
   || { echo "FAIL - launch: pipe-pane not called"; fail=1; }
-[[ "$(record "$root/.specforge/state/sessions/$name.json" state)" == "running" ]] \
+[[ "$(record "$root/.nogging/state/sessions/$name.json" state)" == "running" ]] \
   && echo "ok   - launch: record ends in running state" \
   || { echo "FAIL - launch: state not running"; fail=1; }
 [[ -s "$BD_MUTATION_LOG" ]] \
@@ -146,20 +146,20 @@ root="$work/collide"; make_root "$root"
 export SPECFORGE_ROOT="$root"
 export TMUX_STUB_DIR="$work/collide-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-bbb"
-mkdir -p "$root/.specforge/state/sessions"
+mkdir -p "$root/.nogging/state/sessions"
 printf '{"name":"pre-existing","state":"running","bead_id":"SPEC-bbb"}\n' \
-  >"$root/.specforge/state/sessions/keeper.json"
-sum_before="$(cksum <"$root/.specforge/state/sessions/keeper.json")"
+  >"$root/.nogging/state/sessions/keeper.json"
+sum_before="$(cksum <"$root/.nogging/state/sessions/keeper.json")"
 TMUX_STUB_ALL_COLLIDE=1 "$specforge" session launch --role lead --bead SPEC-bbb >"$out" 2>&1 \
   && { echo "FAIL - collide: launch should have failed"; fail=1; } \
   || echo "ok   - collide: launch refused when every candidate name collides"
 check "collide: message says nothing was reused or overwritten" "reused or overwritten"
-[[ "$(cksum <"$root/.specforge/state/sessions/keeper.json")" == "$sum_before" ]] \
+[[ "$(cksum <"$root/.nogging/state/sessions/keeper.json")" == "$sum_before" ]] \
   && echo "ok   - collide: the pre-existing record was not overwritten" \
   || { echo "FAIL - collide: pre-existing record changed"; fail=1; }
-[[ "$(ls "$root/.specforge/state/sessions" | wc -l)" == "1" ]] \
+[[ "$(ls "$root/.nogging/state/sessions" | wc -l)" == "1" ]] \
   && echo "ok   - collide: no new record was created" \
-  || { echo "FAIL - collide: extra records created"; ls "$root/.specforge/state/sessions"; fail=1; }
+  || { echo "FAIL - collide: extra records created"; ls "$root/.nogging/state/sessions"; fail=1; }
 unset SPECFORGE_ROOT
 
 # ===========================================================================
@@ -170,7 +170,7 @@ export SPECFORGE_ROOT="$root"
 export TMUX_STUB_DIR="$work/list-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-ccc"
 "$specforge" session launch --role specialist:backend-engineer --bead SPEC-ccc >/dev/null 2>&1
-name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
+name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
 "$specforge" session list >"$out" 2>&1
 check "list: a live session shows its real state" "running"
 check "list: shows the Bead id" "SPEC-ccc"
@@ -179,7 +179,7 @@ rm -f "$TMUX_STUB_DIR"/sess-*        # the tmux session vanishes behind specforg
 env -u TERM "$specforge" session list >"$out" 2>&1
 check "list: vanished active session reported as failed" "failed"
 refute "list: vanished session no longer reported as running" "running"
-[[ "$(record "$root/.specforge/state/sessions/$name.json" state)" == "running" ]] \
+[[ "$(record "$root/.nogging/state/sessions/$name.json" state)" == "running" ]] \
   && echo "ok   - list: reconciliation did not rewrite the on-disk record" \
   || { echo "FAIL - list: list mutated the record"; fail=1; }
 unset SPECFORGE_ROOT
@@ -192,8 +192,8 @@ export SPECFORGE_ROOT="$root"
 export TMUX_STUB_DIR="$work/stop-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-ddd"
 "$specforge" session launch --role lead --bead SPEC-ddd >/dev/null 2>&1
-name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
-rec="$root/.specforge/state/sessions/$name.json"
+name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
+rec="$root/.nogging/state/sessions/$name.json"
 
 "$specforge" session stop "$name" --reason "operator asked" >"$out" 2>&1 \
   || { echo "FAIL - stop: errored"; cat "$out"; fail=1; }
@@ -217,12 +217,12 @@ root2="$work/stop-kill"; make_root "$root2" 0.2
 export SPECFORGE_ROOT="$root2"
 export TMUX_STUB_DIR="$work/stop-kill-tmux"; mkdir -p "$TMUX_STUB_DIR"
 "$specforge" session launch --role lead --bead SPEC-ddd >/dev/null 2>&1
-name2="$(ls "$root2/.specforge/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
+name2="$(ls "$root2/.nogging/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
 TMUX_STUB_IGNORE_SIGINT=1 "$specforge" session stop "$name2" >"$out" 2>&1
 grep -qF "kill-session " "$TMUX_STUB_DIR/calls.log" \
   && echo "ok   - stop: escalates to kill-session after the grace period" \
   || { echo "FAIL - stop: no kill-session escalation"; cat "$TMUX_STUB_DIR/calls.log"; fail=1; }
-[[ "$(record "$root2/.specforge/state/sessions/$name2.json" state)" == "stopped" ]] \
+[[ "$(record "$root2/.nogging/state/sessions/$name2.json" state)" == "stopped" ]] \
   && echo "ok   - stop: terminal state recorded even when the child ignored C-c" \
   || { echo "FAIL - stop: state not stopped after kill"; fail=1; }
 unset SPECFORGE_ROOT
@@ -235,8 +235,8 @@ export SPECFORGE_ROOT="$root"
 export TMUX_STUB_DIR="$work/cleanup-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-eee"
 "$specforge" session launch --role lead --bead SPEC-eee >/dev/null 2>&1
-name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
-rec="$root/.specforge/state/sessions/$name.json"
+name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
+rec="$root/.nogging/state/sessions/$name.json"
 
 "$specforge" session cleanup "$name" >"$out" 2>&1 \
   && { echo "FAIL - cleanup: should refuse a running record"; fail=1; } \
@@ -252,10 +252,10 @@ check "cleanup: tells the operator to stop it first" "stop"
 check "cleanup: retires the stopped record" "retired $name"
 [[ "$(record "$rec" state)" == "retired" ]] \
   && echo "ok   - cleanup: record marked retired" || { echo "FAIL - cleanup: not retired"; fail=1; }
-ls "$root/.specforge/state/sessions/$name.log" >/dev/null 2>&1 \
+ls "$root/.nogging/state/sessions/$name.log" >/dev/null 2>&1 \
   && { echo "FAIL - cleanup: active log not archived"; fail=1; } \
   || echo "ok   - cleanup: active log archive-rotated away"
-ls "$root/.specforge/state/sessions/$name.log".archived-* >/dev/null 2>&1 \
+ls "$root/.nogging/state/sessions/$name.log".archived-* >/dev/null 2>&1 \
   && echo "ok   - cleanup: archived log kept under an archived name" \
   || { echo "FAIL - cleanup: no archived log"; fail=1; }
 unset SPECFORGE_ROOT
@@ -268,8 +268,8 @@ export SPECFORGE_ROOT="$root"
 export TMUX_STUB_DIR="$work/reap-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-rp1"
 "$specforge" session launch --role lead --bead SPEC-rp1 >/dev/null 2>&1
-name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
-rec="$root/.specforge/state/sessions/$name.json"
+name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
+rec="$root/.nogging/state/sessions/$name.json"
 rm -f "$TMUX_STUB_DIR"/sess-*        # the tmux session vanishes behind specforge's back
 "$specforge" session reap >"$out" 2>&1 \
   || { echo "FAIL - reap: errored"; cat "$out"; fail=1; }
@@ -294,11 +294,11 @@ export TMUX_STUB_DIR="$work/reapclean-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-rc1 SPEC-rc2"
 "$specforge" session launch --role lead --bead SPEC-rc1 >/dev/null 2>&1
 "$specforge" session launch --role lead --bead SPEC-rc2 >/dev/null 2>&1
-pick() { ls "$root/.specforge/state/sessions" | grep "^sf-lead-spec-$1-" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//'; }
+pick() { ls "$root/.nogging/state/sessions" | grep "^sf-lead-spec-$1-" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//'; }
 dead="$(pick rc1)"
 live="$(pick rc2)"
-deadrec="$root/.specforge/state/sessions/$dead.json"
-liverec="$root/.specforge/state/sessions/$live.json"
+deadrec="$root/.nogging/state/sessions/$dead.json"
+liverec="$root/.nogging/state/sessions/$live.json"
 
 rm -f "$TMUX_STUB_DIR/sess-$dead"        # only the first session's tmux vanishes
 "$specforge" session reap >"$out" 2>&1 || { echo "FAIL - reapclean: reap errored"; cat "$out"; fail=1; }
@@ -321,7 +321,7 @@ check "reapclean: cleanup retires the reaped record" "retired $dead"
 [[ -f "$TMUX_STUB_DIR/sess-$live" ]] \
   && echo "ok   - reapclean: the live tmux session was not touched" \
   || { echo "FAIL - reapclean: live tmux session killed"; fail=1; }
-ls "$root/.specforge/state/sessions/$live.log" >/dev/null 2>&1 \
+ls "$root/.nogging/state/sessions/$live.log" >/dev/null 2>&1 \
   && echo "ok   - reapclean: the live session's active log is intact" \
   || { echo "FAIL - reapclean: live log archived away"; fail=1; }
 unset SPECFORGE_ROOT
@@ -336,15 +336,15 @@ export BD_KNOWN="SPEC-fff"
 export ANTHROPIC_API_KEY="sk-secret-DO-NOT-LEAK-12345"
 export GH_TOKEN="ghp-secret-DO-NOT-LEAK-67890"
 "$specforge" session launch --role lead --bead SPEC-fff >/dev/null 2>&1
-name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
-cp "$root/.specforge/state/sessions/$name.json" "$out"
+name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
+cp "$root/.nogging/state/sessions/$name.json" "$out"
 refute "secret: ANTHROPIC_API_KEY value absent from the recorded command" "sk-secret-DO-NOT-LEAK-12345"
 refute "secret: GH_TOKEN value absent from the recorded command" "ghp-secret-DO-NOT-LEAK-67890"
-cp "$root/.specforge/state/sessions/$name.log" "$out"
+cp "$root/.nogging/state/sessions/$name.log" "$out"
 refute "secret: ANTHROPIC_API_KEY value absent from the log" "sk-secret-DO-NOT-LEAK-12345"
 refute "secret: GH_TOKEN value absent from the log" "ghp-secret-DO-NOT-LEAK-67890"
 # the redactor genuinely scrubs a secret value that does land in the argv
-out2=$(python3 - "$repo_root/scripts/specforge" <<'PY'
+out2=$(python3 - "$repo_root/scripts/nogg" <<'PY'
 import os, sys
 from importlib.machinery import SourceFileLoader
 os.environ["EVIL_TOKEN"] = "zzz-super-secret-value"
@@ -380,8 +380,8 @@ export TMUX_STUB_DIR="$work/lp-default-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-lp1"
 "$specforge" session launch --role lead --bead SPEC-lp1 >"$out" 2>&1 \
   || { echo "FAIL - lp-default: launch errored"; cat "$out"; fail=1; }
-name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
-rec="$root/.specforge/state/sessions/$name.json"
+name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
+rec="$root/.nogging/state/sessions/$name.json"
 eff="$(record "$rec" effective_settings_path)"
 [[ -f "$eff" ]] \
   && echo "ok   - lp-default: per-session effective-settings file written" \
@@ -398,8 +398,8 @@ grep -qE -- "--prompt [^ ]*/no-autonomous-claim\.md" "$TMUX_STUB_DIR/calls.log" 
 cp "$eff" "$out"
 check "lp-default: keeps the restricted defaultMode" '"defaultMode": "default"'
 refute "lp-default: grants nothing extra (no allow list)" '"allow"'
-diff -q "$root/.specforge/launch-profiles/restricted.json" \
-        "$repo_root/.specforge/launch-profiles/restricted.json" >/dev/null \
+diff -q "$root/.nogging/launch-profiles/restricted.json" \
+        "$repo_root/.nogging/launch-profiles/restricted.json" >/dev/null \
   && echo "ok   - lp-default: source profile left unmutated" \
   || { echo "FAIL - lp-default: source profile changed"; fail=1; }
 # TASK-TWB-004: a non-planning launch with no fresh planning lock gets openspec/
@@ -420,13 +420,13 @@ root="$work/twb-planning"; make_root "$root"
 export SPECFORGE_ROOT="$root"
 export TMUX_STUB_DIR="$work/twb-planning-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-twp"
-mkdir -p "$root/.specforge/locks"
+mkdir -p "$root/.nogging/locks"
 printf '{"pid":1,"host":"h","created_at":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%S+00:00)" \
-  >"$root/.specforge/locks/planning.lock"
+  >"$root/.nogging/locks/planning.lock"
 "$specforge" session launch --role lead --bead SPEC-twp >"$out" 2>&1 \
   || { echo "FAIL - twb-planning: launch errored"; cat "$out"; fail=1; }
-name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
-rec="$root/.specforge/state/sessions/$name.json"
+name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
+rec="$root/.nogging/state/sessions/$name.json"
 cp "$(record "$rec" effective_settings_path)" "$out"
 refute "twb-planning: no openspec deny while a fresh planning lock is held" 'Edit(openspec/**)'
 [[ "$(record "$rec" openspec_readonly)" == "False" ]] \
@@ -443,8 +443,8 @@ export TMUX_STUB_DIR="$work/lp-named-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-lp2"
 "$specforge" session launch --role lead --bead SPEC-lp2 --profile trusted --prompt autonomous >"$out" 2>&1 \
   || { echo "FAIL - lp-named: launch errored"; cat "$out"; fail=1; }
-name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
-rec="$root/.specforge/state/sessions/$name.json"
+name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
+rec="$root/.nogging/state/sessions/$name.json"
 eff="$(record "$rec" effective_settings_path)"
 cp "$eff" "$out"
 check "lp-named: trusted defaultMode carried through" '"defaultMode": "acceptEdits"'
@@ -460,8 +460,8 @@ grep -qE -- "--prompt [^ ]*/autonomous\.md" "$TMUX_STUB_DIR/calls.log" \
   || { echo "FAIL - lp-named: record profile is $(record "$rec" profile)"; fail=1; }
 "$specforge" session list >"$out" 2>&1
 check "lp-named: session list shows the profile" "trusted"
-diff -q "$root/.specforge/launch-profiles/trusted.json" \
-        "$repo_root/.specforge/launch-profiles/trusted.json" >/dev/null \
+diff -q "$root/.nogging/launch-profiles/trusted.json" \
+        "$repo_root/.nogging/launch-profiles/trusted.json" >/dev/null \
   && echo "ok   - lp-named: source trusted profile left unmutated" \
   || { echo "FAIL - lp-named: source profile changed"; fail=1; }
 unset SPECFORGE_ROOT
@@ -476,9 +476,9 @@ export SPECFORGE_ROOT="$root"
 export TMUX_STUB_DIR="$work/floor-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-fl1"
 "$specforge" session launch --role lead --bead SPEC-fl1 --profile trusted >/dev/null 2>&1
-name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
-eff="$(record "$root/.specforge/state/sessions/$name.json" effective_settings_path)"
-floor_out=$(python3 - "$repo_root/scripts/specforge" "$eff" <<'PY'
+name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
+eff="$(record "$root/.nogging/state/sessions/$name.json" effective_settings_path)"
+floor_out=$(python3 - "$repo_root/scripts/nogg" "$eff" <<'PY'
 import json, re, sys
 from importlib.machinery import SourceFileLoader
 m = SourceFileLoader("sf_floor", sys.argv[1]).load_module()
@@ -501,7 +501,7 @@ unset SPECFORGE_ROOT
 # Every deny entry in every shipped launch-profile is a syntactically valid rule
 # (SPEC-3m8 / SPEC-js9: trusted.json shipped an invalid fork-bomb string that
 # Claude Code rejected and that tripped a settings-warning dialog at launch).
-prof_out=$(python3 - "$repo_root/.specforge/launch-profiles" <<'PY'
+prof_out=$(python3 - "$repo_root/.nogging/launch-profiles" <<'PY'
 import json, re, sys, pathlib
 valid = re.compile(r'^(Bash\([^()]*\S[^()]*\)|Bash|WebFetch)$')
 bad = {}
@@ -528,8 +528,8 @@ export TMUX_STUB_DIR="$work/lp-full-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-lp3"
 "$specforge" session launch --role lead --bead SPEC-lp3 --full-access >"$out" 2>&1 \
   || { echo "FAIL - lp-full: launch errored"; cat "$out"; fail=1; }
-name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
-rec="$root/.specforge/state/sessions/$name.json"
+name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
+rec="$root/.nogging/state/sessions/$name.json"
 [[ "$(record "$rec" profile)" == "trusted" ]] \
   && echo "ok   - lp-full: selects the trusted profile" \
   || { echo "FAIL - lp-full: profile is $(record "$rec" profile)"; fail=1; }
@@ -553,8 +553,8 @@ cat >"$permissive" <<'JSON'
 JSON
 "$specforge" session launch --role lead --bead SPEC-lp4 --profile "$permissive" >"$out" 2>&1 \
   || { echo "FAIL - lp-path: launch errored"; cat "$out"; fail=1; }
-name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
-rec="$root/.specforge/state/sessions/$name.json"
+name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
+rec="$root/.nogging/state/sessions/$name.json"
 [[ "$(record "$rec" profile)" == "permissive-profile.json" ]] \
   && echo "ok   - lp-path: record profile is the supplied basename" \
   || { echo "FAIL - lp-path: profile is $(record "$rec" profile)"; fail=1; }
@@ -579,9 +579,9 @@ export BD_KNOWN="SPEC-lp5"
   && { echo "FAIL - lp-unknown: launch should have failed"; fail=1; } \
   || echo "ok   - lp-unknown: launch refused for an unresolvable profile"
 check "lp-unknown: message explains the resolution failure" "did not resolve"
-[[ -z "$(ls -A "$root/.specforge/state/sessions" 2>/dev/null)" ]] \
+[[ -z "$(ls -A "$root/.nogging/state/sessions" 2>/dev/null)" ]] \
   && echo "ok   - lp-unknown: no session record or settings file was created" \
-  || { echo "FAIL - lp-unknown: session state left behind"; ls -A "$root/.specforge/state/sessions"; fail=1; }
+  || { echo "FAIL - lp-unknown: session state left behind"; ls -A "$root/.nogging/state/sessions"; fail=1; }
 [[ ! -f "$TMUX_STUB_DIR/calls.log" ]] || ! grep -qF "new-session " "$TMUX_STUB_DIR/calls.log" \
   && echo "ok   - lp-unknown: no tmux session was created" \
   || { echo "FAIL - lp-unknown: tmux new-session was called"; cat "$TMUX_STUB_DIR/calls.log"; fail=1; }
@@ -595,8 +595,8 @@ export SPECFORGE_ROOT="$root"
 export TMUX_STUB_DIR="$work/lp-cleanup-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-lp6"
 "$specforge" session launch --role lead --bead SPEC-lp6 --profile trusted >/dev/null 2>&1
-name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
-rec="$root/.specforge/state/sessions/$name.json"
+name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
+rec="$root/.nogging/state/sessions/$name.json"
 eff="$(record "$rec" effective_settings_path)"
 [[ -f "$eff" ]] || { echo "FAIL - lp-cleanup: no effective-settings file to begin with"; fail=1; }
 "$specforge" session stop "$name" >/dev/null 2>&1
@@ -618,8 +618,8 @@ export SPECFORGE_ROOT="$root"
 export TMUX_STUB_DIR="$work/set-file-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-sf1"
 "$specforge" session launch --role lead --bead SPEC-sf1 >/dev/null 2>&1
-name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
-[[ -f "$root/.specforge/state/sessions/$name.settings.json" ]] \
+name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
+[[ -f "$root/.nogging/state/sessions/$name.settings.json" ]] \
   && echo "ok   - set-file: launch left a <name>.settings.json beside the record" \
   || { echo "FAIL - set-file: no settings file to test against"; fail=1; }
 
@@ -662,15 +662,15 @@ export BD_KNOWN="SPEC-cdx"
 "$specforge" session launch --role lead --bead SPEC-cdx --agent codex --full-access >"$out" 2>&1 \
   || { echo "FAIL - codex-full: launch errored"; cat "$out"; fail=1; }
 check "codex-full: missing-floor warning names the execpolicy file" "specforge.rules"
-name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
-rec="$root/.specforge/state/sessions/$name.json"
+name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
+rec="$root/.nogging/state/sessions/$name.json"
 [[ "$(record "$rec" agent)" == "codex" ]] \
   && echo "ok   - codex-full: record shows agent codex" \
   || { echo "FAIL - codex-full: agent is $(record "$rec" agent)"; fail=1; }
 [[ "$(record "$rec" effective_settings_path)" == "None" ]] \
   && echo "ok   - codex-full: no per-session effective-settings file for Codex" \
   || { echo "FAIL - codex-full: effective_settings_path is $(record "$rec" effective_settings_path)"; fail=1; }
-[[ ! -f "$root/.specforge/state/sessions/$name.settings.json" ]] \
+[[ ! -f "$root/.nogging/state/sessions/$name.settings.json" ]] \
   && echo "ok   - codex-full: no <name>.settings.json written" \
   || { echo "FAIL - codex-full: a settings file was written for Codex"; fail=1; }
 cp "$TMUX_STUB_DIR/calls.log" "$out"
@@ -693,7 +693,7 @@ unset SPECFORGE_ROOT
 # ===========================================================================
 export CODEX_ARGV_LOG="$work/codex-argv.log"; : >"$CODEX_ARGV_LOG"
 "$here/session-launch" --agent codex --sandbox read-only --approval on-request \
-  --network on --prompt "$work/codex-full/.specforge/launch-prompts/autonomous.md" \
+  --network on --prompt "$work/codex-full/.nogging/launch-prompts/autonomous.md" \
   --cwd "$work/codex-full" --bead SPEC-cdx >"$out" 2>&1 \
   || { echo "FAIL - codex-wrap: wrapper errored"; cat "$out"; fail=1; }
 cp "$CODEX_ARGV_LOG" "$out"
@@ -708,7 +708,7 @@ refute "codex-wrap: never bypasses approvals/sandbox"  "dangerously-bypass"
 # ... and --network off emits the =false override (restricted path)
 : >"$CODEX_ARGV_LOG"
 "$here/session-launch" --agent codex --sandbox read-only --approval on-request \
-  --network off --prompt "$work/codex-full/.specforge/launch-prompts/autonomous.md" \
+  --network off --prompt "$work/codex-full/.nogging/launch-prompts/autonomous.md" \
   --cwd "$work/codex-full" --bead SPEC-cdx >"$out" 2>&1 \
   || { echo "FAIL - codex-wrap-off: wrapper errored"; cat "$out"; fail=1; }
 cp "$CODEX_ARGV_LOG" "$out"
@@ -737,13 +737,13 @@ export SPECFORGE_ROOT="$root"
 export TMUX_STUB_DIR="$work/codex-reject-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-rej"
 "$specforge" session launch --role lead --bead SPEC-rej --agent codex \
-  --profile "$root/.specforge/launch-profiles/restricted.json" >"$out" 2>&1 \
+  --profile "$root/.nogging/launch-profiles/restricted.json" >"$out" 2>&1 \
   && { echo "FAIL - codex-reject: launch should have failed"; fail=1; } \
   || echo "ok   - codex-reject: a .json profile with --agent codex is refused"
 check "codex-reject: message says it is a Claude settings file" "Claude settings file"
-[[ -z "$(ls -A "$root/.specforge/state/sessions" 2>/dev/null)" ]] \
+[[ -z "$(ls -A "$root/.nogging/state/sessions" 2>/dev/null)" ]] \
   && echo "ok   - codex-reject: no session record was created" \
-  || { echo "FAIL - codex-reject: session state left behind"; ls -A "$root/.specforge/state/sessions"; fail=1; }
+  || { echo "FAIL - codex-reject: session state left behind"; ls -A "$root/.nogging/state/sessions"; fail=1; }
 [[ ! -f "$TMUX_STUB_DIR/calls.log" ]] || ! grep -qF "new-session " "$TMUX_STUB_DIR/calls.log" \
   && echo "ok   - codex-reject: no tmux session was created" \
   || { echo "FAIL - codex-reject: tmux new-session was called"; fail=1; }
@@ -768,15 +768,15 @@ export BD_KNOWN="SPEC-pia"
 "$specforge" session launch --role lead --bead SPEC-pia --agent pi --full-access >"$out" 2>&1 \
   || { echo "FAIL - pi-full: launch errored"; cat "$out"; fail=1; }
 check "pi-full: missing-floor warning names the guard extension" ".pi/extensions/specforge-guard.ts"
-name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
-rec="$root/.specforge/state/sessions/$name.json"
+name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
+rec="$root/.nogging/state/sessions/$name.json"
 [[ "$(record "$rec" agent)" == "pi" ]] \
   && echo "ok   - pi-full: record shows agent pi" \
   || { echo "FAIL - pi-full: agent is $(record "$rec" agent)"; fail=1; }
 [[ "$(record "$rec" effective_settings_path)" == "None" ]] \
   && echo "ok   - pi-full: no per-session effective-settings file for Pi" \
   || { echo "FAIL - pi-full: effective_settings_path is $(record "$rec" effective_settings_path)"; fail=1; }
-[[ ! -f "$root/.specforge/state/sessions/$name.settings.json" ]] \
+[[ ! -f "$root/.nogging/state/sessions/$name.settings.json" ]] \
   && echo "ok   - pi-full: no <name>.settings.json written" \
   || { echo "FAIL - pi-full: a settings file was written for Pi"; fail=1; }
 cp "$TMUX_STUB_DIR/calls.log" "$out"
@@ -800,8 +800,8 @@ export TMUX_STUB_DIR="$work/pi-restricted-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-pir"
 "$specforge" session launch --role lead --bead SPEC-pir --agent pi >"$out" 2>&1 \
   || { echo "FAIL - pi-restricted: launch errored"; cat "$out"; fail=1; }
-name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
-rec="$root/.specforge/state/sessions/$name.json"
+name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
+rec="$root/.nogging/state/sessions/$name.json"
 [[ "$(record "$rec" agent)" == "pi" ]] \
   && echo "ok   - pi-restricted: record shows agent pi" \
   || { echo "FAIL - pi-restricted: agent is $(record "$rec" agent)"; fail=1; }
@@ -821,7 +821,7 @@ unset SPECFORGE_ROOT
 # ===========================================================================
 export PI_ARGV_LOG="$work/pi-argv.log"; : >"$PI_ARGV_LOG"
 "$here/session-launch" --agent pi --provider anthropic --model claude-x \
-  --prompt "$work/pi-full/.specforge/launch-prompts/autonomous.md" \
+  --prompt "$work/pi-full/.nogging/launch-prompts/autonomous.md" \
   --cwd "$work/pi-full" --bead SPEC-pia >"$out" 2>&1 \
   || { echo "FAIL - pi-wrap: wrapper errored"; cat "$out"; fail=1; }
 cp "$PI_ARGV_LOG" "$out"
@@ -840,13 +840,13 @@ export SPECFORGE_ROOT="$root"
 export TMUX_STUB_DIR="$work/pi-reject-json-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-prc"
 "$specforge" session launch --role lead --bead SPEC-prc --agent pi \
-  --profile "$root/.specforge/launch-profiles/restricted.json" >"$out" 2>&1 \
+  --profile "$root/.nogging/launch-profiles/restricted.json" >"$out" 2>&1 \
   && { echo "FAIL - pi-reject-json: launch should have failed"; fail=1; } \
   || echo "ok   - pi-reject-json: a .json profile with --agent pi is refused"
 check "pi-reject-json: message says it is a Claude settings file" "Claude settings file"
-[[ -z "$(ls -A "$root/.specforge/state/sessions" 2>/dev/null)" ]] \
+[[ -z "$(ls -A "$root/.nogging/state/sessions" 2>/dev/null)" ]] \
   && echo "ok   - pi-reject-json: no session record was created" \
-  || { echo "FAIL - pi-reject-json: session state left behind"; ls -A "$root/.specforge/state/sessions"; fail=1; }
+  || { echo "FAIL - pi-reject-json: session state left behind"; ls -A "$root/.nogging/state/sessions"; fail=1; }
 [[ ! -f "$TMUX_STUB_DIR/calls.log" ]] || ! grep -qF "new-session " "$TMUX_STUB_DIR/calls.log" \
   && echo "ok   - pi-reject-json: no tmux session was created" \
   || { echo "FAIL - pi-reject-json: tmux new-session was called"; fail=1; }
@@ -862,13 +862,13 @@ export SPECFORGE_ROOT="$root"
 export TMUX_STUB_DIR="$work/pi-reject-codex-toml-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-prt"
 "$specforge" session launch --role lead --bead SPEC-prt --agent pi \
-  --profile "$root/.specforge/launch-profiles/restricted.codex.toml" >"$out" 2>&1 \
+  --profile "$root/.nogging/launch-profiles/restricted.codex.toml" >"$out" 2>&1 \
   && { echo "FAIL - pi-reject-codex-toml: launch should have failed"; fail=1; } \
   || echo "ok   - pi-reject-codex-toml: a .codex.toml profile with --agent pi is refused"
 check "pi-reject-codex-toml: message says it is a Codex launch spec" "Codex launch spec"
-[[ -z "$(ls -A "$root/.specforge/state/sessions" 2>/dev/null)" ]] \
+[[ -z "$(ls -A "$root/.nogging/state/sessions" 2>/dev/null)" ]] \
   && echo "ok   - pi-reject-codex-toml: no session record was created" \
-  || { echo "FAIL - pi-reject-codex-toml: session state left behind"; ls -A "$root/.specforge/state/sessions"; fail=1; }
+  || { echo "FAIL - pi-reject-codex-toml: session state left behind"; ls -A "$root/.nogging/state/sessions"; fail=1; }
 [[ ! -f "$TMUX_STUB_DIR/calls.log" ]] || ! grep -qF "new-session " "$TMUX_STUB_DIR/calls.log" \
   && echo "ok   - pi-reject-codex-toml: no tmux session was created" \
   || { echo "FAIL - pi-reject-codex-toml: tmux new-session was called"; fail=1; }
@@ -883,10 +883,10 @@ export TMUX_STUB_DIR="$work/codex-default-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-dfl"
 "$specforge" session launch --role lead --bead SPEC-dfl >"$out" 2>&1 \
   || { echo "FAIL - codex-default: launch errored"; cat "$out"; fail=1; }
-name="$(ls "$root/.specforge/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
-[[ "$(record "$root/.specforge/state/sessions/$name.json" agent)" == "claude" ]] \
+name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
+[[ "$(record "$root/.nogging/state/sessions/$name.json" agent)" == "claude" ]] \
   && echo "ok   - codex-default: record agent is claude" \
-  || { echo "FAIL - codex-default: agent is $(record "$root/.specforge/state/sessions/$name.json" agent)"; fail=1; }
+  || { echo "FAIL - codex-default: agent is $(record "$root/.nogging/state/sessions/$name.json" agent)"; fail=1; }
 cp "$TMUX_STUB_DIR/calls.log" "$out"
 check   "codex-default: still a claude wrapper call with --settings" "--settings "
 refute  "codex-default: no --agent argument on the default path"     "--agent"
@@ -895,7 +895,7 @@ unset SPECFORGE_ROOT
 # ===========================================================================
 # Scenario: redact() scrubs a secret-named value in a `-c key=value` override
 # ===========================================================================
-red_out=$(python3 - "$repo_root/scripts/specforge" <<'PY'
+red_out=$(python3 - "$repo_root/scripts/nogg" <<'PY'
 import sys
 from importlib.machinery import SourceFileLoader
 m = SourceFileLoader("sf_redact", sys.argv[1]).load_module()
@@ -921,7 +921,7 @@ export BD_KNOWN=""
 "$specforge" session launch --role orchestrator --profile orchestrator >"$out" 2>&1 \
   || { echo "FAIL - orc: launch errored"; cat "$out"; fail=1; }
 check "orc: launch reports the singleton name" "launched sf-orchestrator-orc"
-orcrec="$root/.specforge/state/sessions/sf-orchestrator-orc.json"
+orcrec="$root/.nogging/state/sessions/sf-orchestrator-orc.json"
 [[ -f "$orcrec" ]] \
   && echo "ok   - orc: record written under the fixed name" \
   || { echo "FAIL - orc: no record at the fixed name"; fail=1; }
@@ -976,8 +976,8 @@ export TMUX_STUB_DIR="$work/orc-lead-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-ol1"
 "$specforge" session launch --role lead --bead SPEC-ol1 --profile orchestrator >"$out" 2>&1 \
   || { echo "FAIL - orc-lead: launch errored"; cat "$out"; fail=1; }
-name="$(ls "$root/.specforge/state/sessions" | grep '^sf-lead' | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
-rec="$root/.specforge/state/sessions/$name.json"
+name="$(ls "$root/.nogging/state/sessions" | grep '^sf-lead' | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
+rec="$root/.nogging/state/sessions/$name.json"
 [[ "$(record "$rec" floor_lifted)" == "False" ]] \
   && echo "ok   - orc-lead: floor NOT lifted for a lead on the orchestrator profile" \
   || { echo "FAIL - orc-lead: floor_lifted is $(record "$rec" floor_lifted)"; fail=1; }

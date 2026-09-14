@@ -6,7 +6,7 @@
 # Pi comes entirely from the always-on guard extension
 # (`.pi/extensions/specforge-guard.ts`, ships with this same change,
 # TASK-PIA-004): it enforces the SpecForge command floor and the
-# `openspec/` write boundary by reading `.specforge/locks/openspec.readonly`
+# `openspec/` write boundary by reading `.nogging/locks/openspec.readonly`
 # directly at tool-call time. That guard is active at BOTH the `restricted`
 # and `trusted` levels — `session_launch()` never constructs a flag that
 # would disable or bypass it.

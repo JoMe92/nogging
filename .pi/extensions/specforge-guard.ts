@@ -72,10 +72,10 @@ export function isUnderOpenspec(inputPath: string, cwd: string): boolean {
 }
 
 export function openspecBoundaryOpen(cwd: string): boolean {
-	// Mirrors scripts/specforge's SENTINEL: presence of
-	// .specforge/locks/openspec.readonly means CLOSED (read-only); absence
+	// Mirrors scripts/nogg's SENTINEL: presence of
+	// .nogging/locks/openspec.readonly means CLOSED (read-only); absence
 	// means a planning session is active and the boundary is OPEN.
-	return !existsSync(resolve(cwd, ".specforge/locks/openspec.readonly"));
+	return !existsSync(resolve(cwd, ".nogging/locks/openspec.readonly"));
 }
 
 export default function (pi: ExtensionAPI) {

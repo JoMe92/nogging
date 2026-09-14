@@ -19,7 +19,7 @@ Commands:
   update    Refresh Nogging tool files and re-apply merges (keeps your
             openspec/changes, openspec/project.md and config name)
   remove    Remove managed payload while preserving project-owned state
-  doctor    Run the installed ./scripts/specforge doctor
+  doctor    Run the installed ./scripts/nogg doctor
 
 Options:
   --dry-run      Show what would change, write nothing
@@ -68,7 +68,7 @@ function report(ctx) {
 
 function cmdInit(args) {
   const ctx = install.makeContext(args);
-  const reinstall = fs.existsSync(path.join(ctx.targetRoot, '.specforge/config.json'));
+  const reinstall = fs.existsSync(path.join(ctx.targetRoot, '.nogging/config.json'));
   if (reinstall && !ctx.dryRun) {
     process.stdout.write(
       'Nogging is already installed here; re-running init idempotently ' +
@@ -90,8 +90,8 @@ function cmdInit(args) {
 
 function cmdUpdate(args) {
   const ctx = install.makeContext(args);
-  if (!fs.existsSync(path.join(ctx.targetRoot, '.specforge/config.json'))) {
-    throw Object.assign(new Error('no .specforge/config.json — run `init` first'), { userFacing: true });
+  if (!fs.existsSync(path.join(ctx.targetRoot, '.nogging/config.json'))) {
+    throw Object.assign(new Error('no .nogging/config.json — run `init` first'), { userFacing: true });
   }
   install.copyVerbatim(ctx);
   install.copyDocs(ctx);
@@ -111,10 +111,10 @@ function cmdRemove(args) {
 
 function cmdDoctor() {
   const { spawnSync } = require('child_process');
-  if (!fs.existsSync('scripts/specforge')) {
-    throw Object.assign(new Error('scripts/specforge not found — run `init` first'), { userFacing: true });
+  if (!fs.existsSync('scripts/nogg')) {
+    throw Object.assign(new Error('scripts/nogg not found — run `init` first'), { userFacing: true });
   }
-  const r = spawnSync('scripts/specforge', ['doctor'], { stdio: 'inherit' });
+  const r = spawnSync('scripts/nogg', ['doctor'], { stdio: 'inherit' });
   process.exit(r.status == null ? 1 : r.status);
 }
 

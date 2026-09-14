@@ -51,13 +51,13 @@ reverses is distribution (see *Concept vs. implementation*).
 
 | Plane | Who | Writes | Mechanism |
 | --- | --- | --- | --- |
-| Semantic | Planning Agent (persona), Product Owner | `openspec/**` | a deliberate planning session holding `.specforge/locks/planning.lock` |
-| Mechanical | the sync timer | task checkboxes, `execution-log.md`, `.specforge/state/**` | `scripts/specforge sync`, every 30 s, facts only |
+| Semantic | Planning Agent (persona), Product Owner | `openspec/**` | a deliberate planning session holding `.nogging/locks/planning.lock` |
+| Mechanical | the sync timer | task checkboxes, `execution-log.md`, `.nogging/state/**` | `scripts/nogg sync`, every 30 s, facts only |
 
 Execution — the Main Worker persona and the specialists it delegates to — writes
 only Beads and code, never `openspec/**`.
 
-### The bridge: `scripts/specforge`
+### The bridge: `scripts/nogg`
 
 A single dependency-light Python script. It contains no LLM call and makes no
 product decision. Subcommands:
@@ -91,8 +91,8 @@ class:
 
 | Class | Examples | `init` | `update` |
 | --- | --- | --- | --- |
-| verbatim | `scripts/specforge`, the hooks, `.agents/skills/**` | overwrite | overwrite |
-| scaffold | `openspec/project.md`, `.specforge/config.json` | write if absent | skip |
+| verbatim | `scripts/nogg`, the hooks, `.agents/skills/**` | overwrite | overwrite |
+| scaffold | `openspec/project.md`, `.nogging/config.json` | write if absent | skip |
 | merge | `.claude/settings.json`, `.gitignore`, `CLAUDE.md`, `AGENTS.md` | idempotent merge | idempotent merge |
 | rendered | `systemd/specforge-sync-<slug>.{service,timer}` | render with the target's path | render |
 
@@ -112,7 +112,7 @@ ready` or the list of missing prerequisites. Target-owned content
   `backend-engineer`, `frontend-engineer`, `code-reviewer`, `test-runner`)
   invoked through the Task tool, each scoped to one claimed Bead. *(Planned —
   see the roadmap.)*
-- **Sync timer** — a systemd user timer firing `scripts/specforge sync` every
+- **Sync timer** — a systemd user timer firing `scripts/nogg sync` every
   30 s. It mirrors facts and makes local commits only; it never pushes, closes
   Beads, or archives.
 
@@ -123,25 +123,25 @@ ready` or the list of missing prerequisites. Target-owned content
 | Concept | In the repo |
 | --- | --- |
 | Two-phase parallel model, personas not a daemon | `operating-model.md`; personas connected only through shared state |
-| Mechanical sync, no LLM | `scripts/specforge sync` |
+| Mechanical sync, no LLM | `scripts/nogg sync` |
 | Three change states, acceptance as a flag | `architecture.md` — `open` / `done` / `archived` |
-| Discovery via native Beads labels + notes | `bd list --label discovery`; `scripts/specforge discoveries` |
+| Discovery via native Beads labels + notes | `bd list --label discovery`; `scripts/nogg discoveries` |
 | Source-of-truth direction | enforced by the write boundary and the mirror-only sync |
-| Session lock instead of merge handling | `.specforge/locks/planning.lock` |
+| Session lock instead of merge handling | `.nogging/locks/planning.lock` |
 | `PreToolUse` hook, exit 2 | `scripts/hooks/pre-tool-use-openspec-guard` (+ two more layers) |
 | `commit-msg` rule requiring a work-item token | `scripts/hooks/commit-msg` |
 | `execution-log.md` written by the mechanical part | generated in `sync()` |
 | Minimal CI invariants | `.github/workflows/specforge-validate.yml` |
-| Update mechanism planned from the start | `update` command + `specforge_version` tracking |
-| `doctor` health check | `scripts/specforge doctor` + `bin/cli.js doctor` + readiness verdict |
+| Update mechanism planned from the start | `update` command + `nogging_version` tracking |
+| `doctor` health check | `scripts/nogg doctor` + `bin/cli.js doctor` + readiness verdict |
 | Toolkit version scheme | `package.json` version, pinnable as `#v1.0.0` |
 
 ### Deliberately changed
 
 | Concept | As built | Why |
 | --- | --- | --- |
-| Distribution: a central **pipx** Python package; the engine is **not** copied into the target; the target stays free of the engine's language | a **zero-dependency Node CLI** that **copies** `scripts/specforge` (Python), the hooks (bash) and `.agents/skills` **into** the target | Product Owner chose `npx github:` over the existing `gh` credential: no registry publish, no pipx runtime to manage, the target is self-contained. Trade-off: target repos now carry the bridge and need `python3`. |
-| `.agentic/config.yml`; `.agentic/systemd/sync-engine.service` via Pixi | `.specforge/config.json`; `systemd/specforge-sync-<slug>.{service,timer}` rendered per repo, no Pixi | one namespace under `.specforge/`; a per-repo slug lets several target repos run timers side by side; no Pixi dependency |
+| Distribution: a central **pipx** Python package; the engine is **not** copied into the target; the target stays free of the engine's language | a **zero-dependency Node CLI** that **copies** `scripts/nogg` (Python), the hooks (bash) and `.agents/skills` **into** the target | Product Owner chose `npx github:` over the existing `gh` credential: no registry publish, no pipx runtime to manage, the target is self-contained. Trade-off: target repos now carry the bridge and need `python3`. |
+| `.agentic/config.yml`; `.agentic/systemd/sync-engine.service` via Pixi | `.nogging/config.json`; `systemd/specforge-sync-<slug>.{service,timer}` rendered per repo, no Pixi | one namespace under `.nogging/`; a per-repo slug lets several target repos run timers side by side; no Pixi dependency |
 | `[BEAD-XXX]` commit token | `[SPEC-xxx]` — the real Bead-ID shape | matches the actual Bead prefix; a literal `[BEAD-XXX]` placeholder is explicitly rejected |
 | Long-lived sync **daemon** with a PID file, `SIGUSR1` "sync-now", and a 5-minute poll | a systemd **oneshot** timer every 30 s, no resident process | no daemon lifecycle to supervise; 30 s is cheap; "sync-now" becomes a direct `sync` run |
 | Repo name `agentic-workflow-toolkit` | `specforge` | rename |
@@ -168,7 +168,7 @@ Beads (`reliable-beads-sync` carries the fix).
 | Full agent prompts and slash commands | planned — `planning-and-discovery-commands`, `specialist-agents-and-skills` |
 | `execution-log.md` as a fixed part of `sync_task()` | done; note + SHA enrichment planned in `reliable-beads-sync` |
 | Concrete systemd deployment | done — the installer renders the unit and prints the `systemctl --user enable` line |
-| `.agentic/config.yml` format | done as `.specforge/config.json` |
+| `.agentic/config.yml` format | done as `.nogging/config.json` |
 | `doctor` check logic | done |
 | Toolkit version scheme | done — `v1.0.0` tagged |
 
@@ -214,7 +214,7 @@ Within a change, work the tasks in `tasks.md` order.
 
 ### Known gaps not yet on the roadmap
 
-- **`SPEC-fc4`** — `openspec archive <change>` breaks `scripts/specforge validate`:
+- **`SPEC-fc4`** — `openspec archive <change>` breaks `scripts/nogg validate`:
   the archived change's closed Beads still carry `openspec:task:` labels that
   `task_map()` no longer resolves. Completed changes therefore stay in
   `openspec/changes/` (unarchived) until `task_map()`/`validate()` also read

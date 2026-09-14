@@ -136,8 +136,8 @@ check(
   openspecBoundaryOpen(fixture) === true,
 );
 
-mkdirSync(path.join(fixture, ".specforge", "locks"), { recursive: true });
-writeFileSync(path.join(fixture, ".specforge", "locks", "openspec.readonly"), "");
+mkdirSync(path.join(fixture, ".nogging", "locks"), { recursive: true });
+writeFileSync(path.join(fixture, ".nogging", "locks", "openspec.readonly"), "");
 
 check(
   "openspecBoundaryOpen: closed once the lock file exists",

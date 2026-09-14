@@ -3,7 +3,7 @@
 #
 # Language-neutral and offline by design. These checks must run with nothing
 # more than bash and coreutils: no Node, no network, and no running Beads/Dolt
-# server. Tests that need `bd` stub it (see scripts/specforge.test.sh).
+# server. Tests that need `bd` stub it (see scripts/nogg.test.sh).
 set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)

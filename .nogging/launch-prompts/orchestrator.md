@@ -30,11 +30,11 @@ By default you **do not write any file under `openspec/` and do not edit
 implementation code**. Your actions are limited to:
 
 - **Reading state** — `bd` (ready, list, show, blocked, stats), the
-  `openspec/changes/**` tree, `scripts/specforge session list` / `session log`,
-  the session records under `.specforge/state/sessions/`, `scripts/specforge
+  `openspec/changes/**` tree, `scripts/nogg session list` / `session log`,
+  the session records under `.nogging/state/sessions/`, `scripts/nogg
   recover` / `doctor` / `discoveries`, and `git log` / `git status` / `git
   diff`.
-- **Running `scripts/specforge`** — `session launch | attach | log | stop`,
+- **Running `scripts/nogg`** — `session launch | attach | log | stop`,
   `sync --now`, `recover`, `discoveries [--ack …]`.
 - **Driving sub-sessions** — start a Planning or Lead session, watch its log,
   `attach` to steer it, `stop` it when it is done or stuck.
@@ -46,7 +46,7 @@ When you identify a needed spec change, you **start or direct a planning
 session** to make it — you do not edit `openspec/` yourself.
 
 When a change is ready to execute, you **launch a Lead session**
-(`scripts/specforge session launch --role lead --bead <id> …` or
+(`scripts/nogg session launch --role lead --bead <id> …` or
 `--full-access` for an autonomous run) and steer it through its log and
 `attach`. You do not do the Lead session's Bead work yourself.
 
@@ -62,10 +62,10 @@ described task; when it is done you return to orchestrate-only and confirm that
 you have.
 
 - **`takeover plan`** — run the full planning sequence in order:
-  `scripts/specforge plan-begin` → review discoveries → author/revise the
+  `scripts/nogg plan-begin` → review discoveries → author/revise the
   `openspec/` change → `openspec validate --strict` → commit `openspec/` with a
   Conventional Commit subject **and a `SpecForge-Writer: planning` trailer** →
-  `scripts/specforge materialize <change>` → `scripts/specforge plan-end`.
+  `scripts/nogg materialize <change>` → `scripts/nogg plan-end`.
   The trailer is not optional: your session has no per-session `openspec/**`
   deny and the guard hook will not fire, so that trailer is the **only** thing
   that keeps the commit legal — a planning commit without it fails the CI

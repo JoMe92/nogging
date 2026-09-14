@@ -33,26 +33,26 @@ git -C "$repo" init -q
 check "dry-run writes nothing" [ -z "$(find "$repo" -type f -not -path '*/.git/*')" ]
 
 ( cd "$repo" && node "$cli" init --no-beads >/dev/null )
-check "tool bridge installed"      test -f "$repo/scripts/specforge"
+check "tool bridge installed"      test -f "$repo/scripts/nogg"
 check "install-hooks installed"    test -f "$repo/scripts/install-hooks"
 check "boundary hook installed"    test -f "$repo/scripts/hooks/pre-tool-use-openspec-guard"
-check "bridge is executable"       test -x "$repo/scripts/specforge"
+check "bridge is executable"       test -x "$repo/scripts/nogg"
 check "skills copied"              test -f "$repo/.agents/skills/openspec-propose/SKILL.md"
 check "all Claude agents installed" diff -qr "$root/.claude/agents" "$repo/.claude/agents"
 check "all Claude commands installed" diff -qr "$root/.claude/commands" "$repo/.claude/commands"
-check "launch profiles shipped"    test -f "$repo/.specforge/launch-profiles/restricted.json"
-check "launch profiles ship trusted" test -f "$repo/.specforge/launch-profiles/trusted.json"
-check "launch profiles ship codex fragments" test -f "$repo/.specforge/launch-profiles/restricted.codex.toml"
-check "launch profiles ship trusted codex fragment" test -f "$repo/.specforge/launch-profiles/trusted.codex.toml"
-check "launch profiles ship pi fragments" test -f "$repo/.specforge/launch-profiles/restricted.pi.toml"
-check "launch profiles ship trusted pi fragment" test -f "$repo/.specforge/launch-profiles/trusted.pi.toml"
+check "launch profiles shipped"    test -f "$repo/.nogging/launch-profiles/restricted.json"
+check "launch profiles ship trusted" test -f "$repo/.nogging/launch-profiles/trusted.json"
+check "launch profiles ship codex fragments" test -f "$repo/.nogging/launch-profiles/restricted.codex.toml"
+check "launch profiles ship trusted codex fragment" test -f "$repo/.nogging/launch-profiles/trusted.codex.toml"
+check "launch profiles ship pi fragments" test -f "$repo/.nogging/launch-profiles/restricted.pi.toml"
+check "launch profiles ship trusted pi fragment" test -f "$repo/.nogging/launch-profiles/trusted.pi.toml"
 check "pi guard extension installed" test -f "$repo/.pi/extensions/specforge-guard.ts"
 check "pi prompt plan.md installed"    test -f "$repo/.pi/prompts/plan.md"
 check "pi prompt discovery-review.md installed" test -f "$repo/.pi/prompts/discovery-review.md"
 check "pi prompt sync-now.md installed" test -f "$repo/.pi/prompts/sync-now.md"
-check "launch prompts shipped"     test -f "$repo/.specforge/launch-prompts/autonomous.md"
-check "reference docs under docs/specforge" test -f "$repo/docs/specforge/architecture.md"
-check "codex guide under docs/specforge" test -f "$repo/docs/specforge/using-with-codex.md"
+check "launch prompts shipped"     test -f "$repo/.nogging/launch-prompts/autonomous.md"
+check "reference docs under docs/nogging" test -f "$repo/docs/nogging/architecture.md"
+check "codex guide under docs/nogging" test -f "$repo/docs/nogging/using-with-codex.md"
 check "codex execpolicy floor installed" test -f "$repo/.codex/rules/specforge.rules"
 check "codex floor keeps the always-on classes" \
   grep -Eq 'pattern=\["sudo"\]' "$repo/.codex/rules/specforge.rules"
@@ -71,11 +71,11 @@ check "AGENTS.md Tool notes labels Codex"        grep -q 'Codex' "$repo/AGENTS.m
 check "AGENTS.md Tool notes labels Pi"  grep -q '.pi/extensions/specforge-guard.ts' "$repo/AGENTS.md"
 check "openspec scaffold written"  test -f "$repo/openspec/config.yaml"
 check "project.md scaffold written" test -f "$repo/openspec/project.md"
-check "config.json written"        test -f "$repo/.specforge/config.json"
+check "config.json written"        test -f "$repo/.nogging/config.json"
 
-name=$(node -e "process.stdout.write(require('$repo/.specforge/config.json').name)")
+name=$(node -e "process.stdout.write(require('$repo/.nogging/config.json').name)")
 check "config name is repo basename" [ "$name" = "fresh" ]
-ver=$(node -e "process.stdout.write(String(require('$repo/.specforge/config.json').specforge_version||''))")
+ver=$(node -e "process.stdout.write(String(require('$repo/.nogging/config.json').nogging_version||''))")
 check "config records a version" [ -n "$ver" ]
 
 # --- bd init bootstrap (only where bd is installed) ----------------------
@@ -155,7 +155,7 @@ check "existing SessionStart hook preserved" [ "$sess_kept" = "1" ]
 check "unrelated setting preserved" node -e "process.exit(require('$merged/.claude/settings.json').model === 'sonnet' ? 0 : 1)"
 
 check "gitignore keeps original line" grep -qx 'node_modules/' "$merged/.gitignore"
-check "gitignore adds locks line once" [ "$(grep -cx '.specforge/locks/' "$merged/.gitignore")" = "1" ]
+check "gitignore adds locks line once" [ "$(grep -cx '.nogging/locks/' "$merged/.gitignore")" = "1" ]
 
 check "CLAUDE.md keeps existing content" grep -q "Existing notes." "$merged/CLAUDE.md"
 check "CLAUDE.md has one begin marker" [ "$(grep -c 'specforge:begin' "$merged/CLAUDE.md")" = "1" ]
@@ -225,7 +225,7 @@ check "existing project.md untouched" grep -q "Kept project doc" "$repo2/openspe
 unit=$(find "$repo/systemd" -name 'specforge-sync-*.service')
 check "systemd service rendered" test -n "$unit"
 check "service targets the repo" grep -qx "WorkingDirectory=$repo" "$unit"
-check "service ExecStart is absolute" grep -qx "ExecStart=$repo/scripts/specforge sync" "$unit"
+check "service ExecStart is absolute" grep -qx "ExecStart=$repo/scripts/nogg sync" "$unit"
 check "unit filename carries the slug" bash -c "[[ '$(basename "$unit")' == specforge-sync-fresh.service ]]"
 tunit=$(find "$repo/systemd" -name 'specforge-sync-*.timer')
 check "timer binds the slugged service" grep -qx "Unit=specforge-sync-fresh.service" "$tunit"
@@ -253,8 +253,8 @@ mkdir -p "$upd/openspec/changes/my-change"
 printf '# Tasks\n\n- [ ] TASK-X-001 do a thing\n' > "$upd/openspec/changes/my-change/tasks.md"
 printf '# My project\n\nCustom purpose.\n' > "$upd/openspec/project.md"
 node -e "
-  const f='$upd/.specforge/config.json'; const d=require(f);
-  d.specforge_version='0.0.1'; d.name='my-custom-name';
+  const f='$upd/.nogging/config.json'; const d=require(f);
+  d.nogging_version='0.0.1'; d.name='my-custom-name';
   require('fs').writeFileSync(f, JSON.stringify(d,null,2)+'\n');
 "
 changes_before=$(cd "$upd" && git -C "$upd" hash-object openspec/changes/my-change/tasks.md 2>/dev/null || md5sum "$upd/openspec/changes/my-change/tasks.md")
@@ -269,9 +269,9 @@ check "update leaves openspec/project.md untouched" grep -q "Custom purpose." "$
 check "update refreshes a stale Claude agent" cmp -s "$root/.claude/agents/architect.md" "$upd/.claude/agents/architect.md"
 check "update refreshes a stale Claude command" cmp -s "$root/.claude/commands/plan.md" "$upd/.claude/commands/plan.md"
 
-new_name=$(node -e "process.stdout.write(require('$upd/.specforge/config.json').name)")
+new_name=$(node -e "process.stdout.write(require('$upd/.nogging/config.json').name)")
 check "update keeps config name" [ "$new_name" = "my-custom-name" ]
-new_ver=$(node -e "process.stdout.write(require('$upd/.specforge/config.json').specforge_version)")
+new_ver=$(node -e "process.stdout.write(require('$upd/.nogging/config.json').nogging_version)")
 check "update bumps recorded version" [ "$new_ver" != "0.0.1" ]
 
 # update before init is refused
@@ -284,7 +284,7 @@ check "update before init is refused" [ "$rc" -ne 0 ]
 rc=0
 ( cd "$upd" && node "$cli" init --no-beads --no-systemd >/dev/null 2>&1 ) || rc=$?
 check "init over an existing install succeeds (idempotent)" [ "$rc" -eq 0 ]
-check "re-init keeps custom config name" [ "$(node -e "process.stdout.write(require('$upd/.specforge/config.json').name)")" = "my-custom-name" ]
+check "re-init keeps custom config name" [ "$(node -e "process.stdout.write(require('$upd/.nogging/config.json').name)")" = "my-custom-name" ]
 
 # --- not a git repo ------------------------------------------------------
 plain="$work/plain"
@@ -307,21 +307,21 @@ if command -v npm >/dev/null 2>&1; then
     rc=0
     ( cd "$packrepo" && node "$pkg/bin/cli.js" init --no-beads --no-systemd >/dev/null 2>&1 ) || rc=$?
     check "packed install succeeds"                 [ "$rc" -eq 0 ]
-    check "packed install ships the tool bridge"    test -f "$packrepo/scripts/specforge"
+    check "packed install ships the tool bridge"    test -f "$packrepo/scripts/nogg"
     check "packed install ships all Claude agents"  diff -qr "$root/.claude/agents" "$packrepo/.claude/agents"
     check "packed install ships all Claude commands" diff -qr "$root/.claude/commands" "$packrepo/.claude/commands"
-    check "packed install ships launch profiles"    test -f "$packrepo/.specforge/launch-profiles/restricted.json"
-    check "packed install ships codex fragments"    test -f "$packrepo/.specforge/launch-profiles/restricted.codex.toml"
-    check "packed install ships trusted codex fragment" test -f "$packrepo/.specforge/launch-profiles/trusted.codex.toml"
-    check "packed install ships pi fragments"    test -f "$packrepo/.specforge/launch-profiles/restricted.pi.toml"
-    check "packed install ships trusted pi fragment" test -f "$packrepo/.specforge/launch-profiles/trusted.pi.toml"
+    check "packed install ships launch profiles"    test -f "$packrepo/.nogging/launch-profiles/restricted.json"
+    check "packed install ships codex fragments"    test -f "$packrepo/.nogging/launch-profiles/restricted.codex.toml"
+    check "packed install ships trusted codex fragment" test -f "$packrepo/.nogging/launch-profiles/trusted.codex.toml"
+    check "packed install ships pi fragments"    test -f "$packrepo/.nogging/launch-profiles/restricted.pi.toml"
+    check "packed install ships trusted pi fragment" test -f "$packrepo/.nogging/launch-profiles/trusted.pi.toml"
     check "packed install ships the pi guard extension" test -f "$packrepo/.pi/extensions/specforge-guard.ts"
     check "packed install ships pi prompt plan.md" test -f "$packrepo/.pi/prompts/plan.md"
     check "packed install ships pi prompt discovery-review.md" test -f "$packrepo/.pi/prompts/discovery-review.md"
     check "packed install ships pi prompt sync-now.md" test -f "$packrepo/.pi/prompts/sync-now.md"
-    check "packed install ships launch prompts"     test -f "$packrepo/.specforge/launch-prompts/no-autonomous-claim.md"
-    check "packed install ships the orchestrator profile" test -f "$packrepo/.specforge/launch-profiles/orchestrator.json"
-    check "packed install ships the orchestrator prompt"  test -f "$packrepo/.specforge/launch-prompts/orchestrator.md"
+    check "packed install ships launch prompts"     test -f "$packrepo/.nogging/launch-prompts/no-autonomous-claim.md"
+    check "packed install ships the orchestrator profile" test -f "$packrepo/.nogging/launch-profiles/orchestrator.json"
+    check "packed install ships the orchestrator prompt"  test -f "$packrepo/.nogging/launch-prompts/orchestrator.md"
     check "packed install ships the orchestrator unit template" \
       test -f "$pkg/templates/systemd/specforge-orchestrator.service.tmpl"
     # A packed install WITH systemd renders the per-repo orchestrator unit.
@@ -330,7 +330,7 @@ if command -v npm >/dev/null 2>&1; then
     orc_unit=$(find "$orcrepo/systemd" -name 'specforge-orchestrator-*.service' 2>/dev/null | head -1)
     check "packed install renders the orchestrator unit" test -n "$orc_unit"
     check "orchestrator unit ExecStart calls orchestrator run" \
-      grep -qx "ExecStart=$orcrepo/scripts/specforge orchestrator run" "$orc_unit"
+      grep -qx "ExecStart=$orcrepo/scripts/nogg orchestrator run" "$orc_unit"
     check "orchestrator unit restarts always"  grep -qx "Restart=always" "$orc_unit"
     check "orchestrator unit targets default.target" grep -qx "WantedBy=default.target" "$orc_unit"
     check "init prints the orchestrator enable line" \

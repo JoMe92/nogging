@@ -62,9 +62,9 @@ where the public display name should replace stable runtime identifiers:
 | --- | --- |
 | npm/GitHub package metadata | `specforge` |
 | Executable and CLI help | `specforge` |
-| Repository-local command | `scripts/specforge` |
-| Configuration and state root | `.specforge/` |
-| Installed reference documentation | `docs/specforge/` |
+| Repository-local command | `scripts/nogg` |
+| Configuration and state root | `.nogging/` |
+| Installed reference documentation | `docs/nogging/` |
 | Generated systemd units | `specforge-sync-<slug>` and `specforge-orchestrator-<slug>` |
 | Dedicated tmux socket and sessions | `specforge` and `sf-<role>-<bead>-<nonce>` |
 | Codex prompt links | `specforge-<prompt>.md` |

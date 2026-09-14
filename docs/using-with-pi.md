@@ -1,7 +1,7 @@
 # Using Agentsembli SpecForge with Pi
 
 Agentsembli SpecForge is tool-neutral. `AGENTS.md` is the canonical instruction file for
-every agent runtime, and the mechanical bridge (`scripts/specforge`) is the same
+every agent runtime, and the mechanical bridge (`scripts/nogg`) is the same
 whichever agent runs it. This page covers what is specific to running the
 Agentsembli SpecForge loop from **Pi** (`https://pi.dev/`, package
 `@earendil-works/pi-coding-agent`) instead of Claude Code or Codex.
@@ -16,7 +16,7 @@ version-dependent it is called out so you can re-check.
 In addition to the usual target-repo prerequisites (`bd`/Beads, `python3`,
 `git`, and a reachable Dolt for sync):
 
-- **The `pi` CLI on `PATH`.** `scripts/specforge doctor` reports it as
+- **The `pi` CLI on `PATH`.** `scripts/nogg doctor` reports it as
   `NOTE  pi available` / `NOTE  pi not installed; only needed for the Pi agent
   path` — its absence never fails `doctor`, because a Claude/Codex-only repo
   is perfectly valid.
@@ -36,11 +36,11 @@ In addition to the usual target-repo prerequisites (`bd`/Beads, `python3`,
 - **Trust `.pi/extensions/` once.** Pi only loads project-local
   `.pi/extensions/`, `.pi/prompts/`, and the other `.pi/*` resource
   directories once the project has a standing trust decision, or `--approve`
-  is passed for that run. `scripts/specforge session launch --agent pi`
+  is passed for that run. `scripts/nogg session launch --agent pi`
   always passes `--approve` itself (see *Launch authority levels* below), so
   a supervised launch works without any manual trust step — but running `pi`
   yourself, interactively, in this repo will still prompt the first time.
-  `scripts/specforge doctor` prints a NOTE naming the fix (`pi --approve` or
+  `scripts/nogg doctor` prints a NOTE naming the fix (`pi --approve` or
   the `/trust` command) when `pi` is present, the guard extension is shipped,
   and no standing trust decision has been recorded yet.
 
@@ -58,9 +58,9 @@ A user's own `.pi/settings.json` or other `.pi/*` content is never touched.
 
 ### Launch authority levels
 
-`scripts/specforge session launch --agent pi` resolves `restricted`
+`scripts/nogg session launch --agent pi` resolves `restricted`
 (default) / `trusted` (`--full-access`) against
-`.specforge/launch-profiles/{restricted,trusted}.pi.toml`. Unlike Claude and
+`.nogging/launch-profiles/{restricted,trusted}.pi.toml`. Unlike Claude and
 Codex, **the two levels are not a sandbox split** — Pi has none to split:
 
 | Level | Selected by | Guard extension | Network / filesystem sandbox | Launch prompt |
@@ -93,7 +93,7 @@ uses since Pi has no execpolicy-style file. `specforge-guard.ts`:
   `git push --force`/`-f`/`--force-with-lease`, `git reset --hard`,
   `git clean -f*`, `git filter-branch`;
 - denies a write or edit (`toolName === "write"`/`"edit"`) under `openspec/`
-  unless `.specforge/locks/openspec.readonly` is absent (a planning session
+  unless `.nogging/locks/openspec.readonly` is absent (a planning session
   is active) — the same sentinel `plan-begin`/`plan-end` toggle for every
   other agent.
 
@@ -115,7 +115,7 @@ The persona and step text are identical across all three; only the invocation
 surface and, in `plan.md`, the description of how the `openspec/` write
 boundary is actually enforced (the guard extension for Pi, versus a
 `PreToolUse` hook for Claude or the filesystem write guard for Codex) differ.
-Each is a thin wrapper over `scripts/specforge` — the mechanical steps
+Each is a thin wrapper over `scripts/nogg` — the mechanical steps
 (`plan-begin` → discovery review → author → `validate` → `materialize` →
 commit as the `planning` writer → `plan-end`; `discoveries` / `--ack`;
 `sync --now`) are agent-neutral.
@@ -124,9 +124,9 @@ commit as the `planning` writer → `plan-end`; `discoveries` / `--ack`;
 
 Switching to or from Pi mid-run is a supported interruption, exactly like
 switching between Claude Code and Codex. The durable state — `git`, `bd` /
-Dolt, `openspec/`, `.specforge/state/` — is not tool-specific. So on the next
+Dolt, `openspec/`, `.nogging/state/` — is not tool-specific. So on the next
 start, before touching `bd ready`, a resumed or switched session runs
-`./scripts/specforge recover` and resolves what it reports with the
+`./scripts/nogg recover` and resolves what it reports with the
 [`failure-recovery.md`](failure-recovery.md) § "Resuming an interrupted run"
 playbook — exactly as `AGENTS.md` § "Resuming a run" describes. The protocol
 is tool-neutral; nothing about it is Pi-specific.
@@ -142,7 +142,7 @@ ported. A Pi Lead Agent therefore either:
 - when the operator wants a separate observable process, starts one with:
 
   ```bash
-  scripts/specforge session launch --agent pi \
+  scripts/nogg session launch --agent pi \
     --role specialist:<type> --bead <id>
   ```
 

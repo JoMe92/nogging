@@ -7,7 +7,7 @@ What this session may do:
 - Claim each Bead the operator named, or — when they name the change rather
   than individual Beads — each Bead the named change scopes, in `tasks.md`
   order. Before implementation, allocate a dedicated worktree from updated
-  `develop` using `scripts/specforge worktree implement <bead> <branch>` and
+  `develop` using `scripts/nogg worktree implement <bead> <branch>` and
   work only there. Work one Bead at a time: claim, implement, validate, commit,
   note, close.
 - Run `scripts/test` (and any narrower suite the task calls for) before
