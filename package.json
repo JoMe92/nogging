@@ -51,6 +51,7 @@
     ".pi/prompts",
     ".pi/extensions",
     "docs/architecture.md",
+    "docs/compatibility.md",
     "docs/failure-recovery.md",
     "docs/installation.md",
     "docs/operating-model.md",
