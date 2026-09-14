@@ -1,22 +1,22 @@
-# Installing Agentsembli SpecForge into another repository
+# Installing Nogging into another repository
 
-Agentsembli SpecForge ships as a small Node CLI. Run it from the root of the git repository
+Nogging ships as a small Node CLI. Run it from the root of the git repository
 you want to adopt the operating model.
 
 ```bash
 cd /path/to/your-repo
-npx github:JoMe92/agentsembli-specforge init
+npx github:JoMe92/nogging init
 ```
 
 Pin a release instead of tracking the default branch:
 
 ```bash
-npx github:JoMe92/agentsembli-specforge#v1.0.0 init
+npx github:JoMe92/nogging#v1.0.0 init
 ```
 
 `npx` clones this (private) repository over your existing Git credential. If the
 clone fails to authenticate, run `gh auth setup-git` once, or use the SSH form
-`npx github:JoMe92/agentsembli-specforge init` after adding an SSH key to GitHub.
+`npx github:JoMe92/nogging init` after adding an SSH key to GitHub.
 
 ## What `init` writes
 
@@ -55,7 +55,7 @@ systemctl --user enable --now "$PWD/systemd/nogg-sync-<slug>.timer"
 ## Updating
 
 ```bash
-npx github:JoMe92/agentsembli-specforge update
+npx github:JoMe92/nogging update
 ```
 
 `update` refreshes the tool files, reference docs and merged files, and bumps
@@ -66,11 +66,11 @@ npx github:JoMe92/agentsembli-specforge update
 ### Updating an installation from the legacy repository
 
 The repository name changed, but the installed identifiers did not. Update an
-installation made from a pinned legacy SpecForge tag by running a pinned
+installation made from a pinned legacy Nogging tag by running a pinned
 successor tag from the target repository root:
 
 ```bash
-npx github:JoMe92/agentsembli-specforge#<new-tag> update
+npx github:JoMe92/nogging#<new-tag> update
 ```
 
 For rollback, run `update` from the exact preceding legacy tag. This restores
@@ -83,7 +83,7 @@ Claude, Codex, and Pi settings. Do not use an unpinned branch for either step.
 Run the pinned successor package that is currently installed:
 
 ```bash
-npx github:JoMe92/agentsembli-specforge#<tag> remove
+npx github:JoMe92/nogging#<tag> remove
 ```
 
 `remove` deletes exact manifest-owned tool, prompt, agent, reference-document,
@@ -97,7 +97,7 @@ the installer cannot prove whether another tool now owns them.
 
 - **Node.js ≥ 18** — only to run the installer.
 - **python3** — the `scripts/nogg` sync bridge runs under it.
-- **bd (Beads)** and, for sync, a reachable **Dolt** — as SpecForge needs anyway.
+- **bd (Beads)** and, for sync, a reachable **Dolt** — as Nogging needs anyway.
 - For the **Codex agent path only**: the `codex` CLI and a Codex login. See
   [`docs/using-with-codex.md`](using-with-codex.md).
 - For the **Pi agent path only**: the `pi` CLI (needs Node.js ≥ 22.19.0 to
@@ -108,7 +108,7 @@ the installer cannot prove whether another tool now owns them.
 
 The two Git hooks (`pre-commit`, `commit-msg`) only run from `.git/hooks`. If
 `core.hooksPath` is set elsewhere — the Beads integration points it at
-`.beads/hooks` — Git ignores `.git/hooks` and those two SpecForge hooks do not
+`.beads/hooks` — Git ignores `.git/hooks` and those two Nogging hooks do not
 fire. `init` detects this and prints a warning; the hook sources stay in
 `scripts/hooks/` for you to wire into the active hooks directory. The
 `PreToolUse` OpenSpec guard in `.claude/settings.json` is unaffected.
