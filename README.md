@@ -12,6 +12,34 @@ OpenSpec owns approved product intent, Beads owns executable work, and Git owns
 the implementation. A deterministic sync process mirrors execution evidence
 back into OpenSpec; it never makes product decisions.
 
+## Project status and audience
+
+Nogging is a **pre-public release candidate**. Its core workflow and Linux
+installation path are exercised in CI, but public-release acceptance is still
+in progress. Keep the repository private and avoid production-critical,
+unattended use until the signed acceptance report and final readiness report
+are complete.
+
+Nogging is for teams and maintainers who want autonomous coding agents to work
+from approved specifications with durable task ownership and auditable Git
+evidence. It is not an agent runtime, hosted service, or replacement for your
+existing Git repository, OpenSpec installation, or Beads tracker.
+
+## Supported environments
+
+- **Platform:** Linux is the supported host. Bash, Git, Python, Node.js,
+  OpenSpec, Beads, and Dolt are required for the complete workflow.
+- **Agents:** payloads and guidance are included for Claude Code, Codex, and
+  Pi. Their permission and sandbox guarantees differ.
+- **Optional host features:** systemd provides background sync and tmux
+  provides supervised sessions. Use `--no-systemd` when neither is wanted.
+- **Other systems:** macOS, Windows, other service managers, and unlisted agent
+  versions are not currently claimed as supported.
+
+The version-by-version compatibility matrix is part of the remaining release
+readiness work. Until it lands, `./scripts/nogg doctor` is the authoritative
+check for the current machine.
+
 ## The two phases
 
 1. **Planning:** a Product Owner and Planning Agent create or amend an OpenSpec
@@ -32,15 +60,22 @@ Sync timer ──mechanically mirrors status and evidence──> execution-log.m
 
 ## Quick start
 
+Start in a new or existing Git repository. The command is pinned because the
+initial distribution is GitHub-only:
+
 ```bash
-git clone git@github.com:JoMe92/nogging.git
-cd nogging
-./scripts/install-hooks
+npx github:JoMe92/nogging#v1.6.0 init --no-systemd
 ./scripts/nogg doctor
 ./scripts/nogg validate
 ```
 
-Create a dedicated planning worktree before changing OpenSpec:
+`init` creates the Beads tracker by default and prints a readiness verdict. It
+does not require a website or Agent Console. Remove `--no-systemd` only after
+reviewing the security and background-service implications below.
+
+Maintainers developing Nogging itself clone the repository and run
+`./scripts/install-hooks`. To create a change, allocate a dedicated planning
+worktree before editing OpenSpec:
 
 ```bash
 ./scripts/nogg worktree plan <planning-id> "Describe the change"
@@ -55,11 +90,22 @@ cd ../nogging-plan-<planning-id>
 The generated timer is enabled with
 `systemctl --user enable --now nogg-sync.timer`; `./scripts/nogg sync --now`
 runs an immediate manual sync.
-See [docs/vision-and-architecture.md](docs/vision-and-architecture.md) for the
-goal and the design, [docs/operating-model.md](docs/operating-model.md) for the
-process, [docs/running-work-in-sessions.md](docs/running-work-in-sessions.md) for
-running work in supervised host sessions, and
-[docs/acceptance.md](docs/acceptance.md) for the end-to-end acceptance runbook.
+
+## Safety warning
+
+Nogging installs repository instructions and Git hooks, can run a persistent
+user service, and can launch coding agents with filesystem, network, and shell
+access. Restricted, trusted, and orchestrator modes do not provide identical
+protection across Claude Code, Codex, and Pi. Review installed changes, protect
+credentials, start with restricted authority, and enable full-access or
+always-on operation only on a host and repository you trust. Disable the user
+services and stop supervised sessions before removing or relocating a checkout.
+
+Detailed threat-model and safe-disable guidance is being completed under the
+public-release-readiness change. Until then, use
+[the operating model](docs/operating-model.md),
+[session guidance](docs/running-work-in-sessions.md), and
+[failure recovery](docs/failure-recovery.md) as the authoritative boundaries.
 
 ## Install into another repo
 
@@ -78,6 +124,34 @@ is missing, merges the `PreToolUse` guard / `.gitignore` / `CLAUDE.md` /
 `AGENTS.md` idempotently, and renders a per-repo systemd sync unit. It never
 touches `openspec/changes/`, `.beads/`, or your `package.json`. Full details in
 [docs/installation.md](docs/installation.md).
+
+## Documentation
+
+| Need | Guide |
+| --- | --- |
+| Concepts and architecture | [Vision and architecture](docs/vision-and-architecture.md) |
+| Install, update, and remove | [Installation](docs/installation.md) |
+| Roles and delivery workflow | [Operating model](docs/operating-model.md) |
+| Isolated Git worktrees | [Worktree workflow](docs/worktree-workflow.md) |
+| Supervised agent sessions | [Running work in sessions](docs/running-work-in-sessions.md) |
+| Codex integration | [Using Nogging with Codex](docs/using-with-codex.md) |
+| Pi integration | [Using Nogging with Pi](docs/using-with-pi.md) |
+| Interrupted-run recovery | [Failure recovery](docs/failure-recovery.md) |
+| Acceptance procedure | [Acceptance runbook](docs/acceptance.md) |
+| Contributions and conduct | [Contributing](CONTRIBUTING.md) and [Code of Conduct](CODE_OF_CONDUCT.md) |
+| Vulnerability reporting | [Security policy](SECURITY.md) |
+
+## Inspiration and related projects
+
+Nogging is conceptually inspired by
+[Gas Town](https://github.com/steveyegge/gastown), but it is an independent
+implementation and is not affiliated with or endorsed by the Gas Town or Beads
+maintainers. [Beads](https://github.com/gastownhall/beads) is the only Gas Town
+ecosystem component currently adopted; Nogging does not include Gas Town
+runtime components.
+
+[Agent Console](https://github.com/JoMe92/agent-console) is an optional sibling
+project for orchestration and UI. Nogging works without it.
 
 ## Non-negotiable boundaries
 
