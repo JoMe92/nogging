@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Exercises .pi/extensions/nogging-guard.ts's matching logic directly,
-# without a live `pi` process: every SpecForge command-floor pattern gets
+# without a live `pi` process: every Nogging command-floor pattern gets
 # both an ALLOW and a BLOCK example, and the openspec/ write-boundary
 # predicates (isUnderOpenspec, openspecBoundaryOpen) get exercised against a
 # throwaway fixture directory.

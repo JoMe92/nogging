@@ -2,7 +2,7 @@
 # Regression checks for `scripts/nogg session ...` (TASK-SESSION-013).
 #
 # tmux is STUBBED (PATH-injected, same technique as the `bd` stub and the
-# SPECFORGE_ROOT seam in scripts/nogg.test.sh): no real tmux server is
+# NOGGING_ROOT seam in scripts/nogg.test.sh): no real tmux server is
 # ever started. The stub is stateful — `new-session` creates a marker file,
 # `kill-session` / a C-c `send-keys` removes it, `has-session` / `list-sessions`
 # read it — so lifecycle transitions are observable without a tty.
@@ -19,7 +19,7 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-specforge="$here/nogg"
+nogg="$here/nogg"
 repo_root="$(cd "$here/.." && pwd)"
 work=$(mktemp -d)
 out=$(mktemp)
@@ -59,9 +59,9 @@ case "$cmd" in
   new-session)
     name="$(arg_after -s "$@")"
     # metadata AND log must already exist on disk before the child is exec'd
-    ls "$SPECFORGE_ROOT"/.nogging/state/sessions/*.json >/dev/null 2>&1 \
+    ls "$NOGGING_ROOT"/.nogging/state/sessions/*.json >/dev/null 2>&1 \
       || { echo "tmux stub: no metadata record before exec" >&2; exit 90; }
-    ls "$SPECFORGE_ROOT"/.nogging/state/sessions/*.log  >/dev/null 2>&1 \
+    ls "$NOGGING_ROOT"/.nogging/state/sessions/*.log  >/dev/null 2>&1 \
       || { echo "tmux stub: no log file before exec" >&2; exit 91; }
     touch "$d/sess-$name" ;;
   has-session)
@@ -87,7 +87,7 @@ fail=0
 check() { if grep -qF -- "$2" "$out"; then echo "ok   - $1"; else echo "FAIL - $1 (missing: $2)"; cat "$out"; fail=1; fi; }
 refute() { if grep -qF -- "$2" "$out"; then echo "FAIL - $1 (present: $2)"; cat "$out"; fail=1; else echo "ok   - $1"; fi; }
 
-# make_root <dir> [grace] — minimal SpecForge checkout for the session layer.
+# make_root <dir> [grace] — minimal Nogging checkout for the session layer.
 make_root() {
   local r="$1" grace="${2:-10}"
   mkdir -p "$r/.nogging/state"
@@ -109,12 +109,12 @@ record() { python3 -c "import json,sys;print(json.load(open(sys.argv[1]))[sys.ar
 # Scenario: launch writes metadata + log before exec, and no bd mutation
 # ===========================================================================
 root="$work/launch"; make_root "$root"
-export SPECFORGE_ROOT="$root"
+export NOGGING_ROOT="$root"
 export TMUX_STUB_DIR="$work/launch-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-aaa"
 export BD_MUTATION_LOG="$work/launch-bd-mutations.log"; : >"$BD_MUTATION_LOG"
 
-"$specforge" session launch --role lead --bead SPEC-aaa >"$out" 2>&1 \
+"$nogg" session launch --role lead --bead SPEC-aaa >"$out" 2>&1 \
   || { echo "FAIL - launch: errored"; cat "$out"; fail=1; }
 check "launch: reports the created session" "launched sf-lead-spec-aaa-"
 name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
@@ -137,20 +137,20 @@ grep -qF "pipe-pane " "$TMUX_STUB_DIR/calls.log" \
 [[ -s "$BD_MUTATION_LOG" ]] \
   && { echo "FAIL - launch: a bd mutation was attempted"; cat "$BD_MUTATION_LOG"; fail=1; } \
   || echo "ok   - launch: no bd mutation (only the read-only bd show)"
-unset SPECFORGE_ROOT
+unset NOGGING_ROOT
 
 # ===========================================================================
 # Scenario: a name collision is rejected without overwriting anything
 # ===========================================================================
 root="$work/collide"; make_root "$root"
-export SPECFORGE_ROOT="$root"
+export NOGGING_ROOT="$root"
 export TMUX_STUB_DIR="$work/collide-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-bbb"
 mkdir -p "$root/.nogging/state/sessions"
 printf '{"name":"pre-existing","state":"running","bead_id":"SPEC-bbb"}\n' \
   >"$root/.nogging/state/sessions/keeper.json"
 sum_before="$(cksum <"$root/.nogging/state/sessions/keeper.json")"
-TMUX_STUB_ALL_COLLIDE=1 "$specforge" session launch --role lead --bead SPEC-bbb >"$out" 2>&1 \
+TMUX_STUB_ALL_COLLIDE=1 "$nogg" session launch --role lead --bead SPEC-bbb >"$out" 2>&1 \
   && { echo "FAIL - collide: launch should have failed"; fail=1; } \
   || echo "ok   - collide: launch refused when every candidate name collides"
 check "collide: message says nothing was reused or overwritten" "reused or overwritten"
@@ -160,42 +160,42 @@ check "collide: message says nothing was reused or overwritten" "reused or overw
 [[ "$(ls "$root/.nogging/state/sessions" | wc -l)" == "1" ]] \
   && echo "ok   - collide: no new record was created" \
   || { echo "FAIL - collide: extra records created"; ls "$root/.nogging/state/sessions"; fail=1; }
-unset SPECFORGE_ROOT
+unset NOGGING_ROOT
 
 # ===========================================================================
 # Scenario: list reports a vanished active session as failed
 # ===========================================================================
 root="$work/list"; make_root "$root"
-export SPECFORGE_ROOT="$root"
+export NOGGING_ROOT="$root"
 export TMUX_STUB_DIR="$work/list-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-ccc"
-"$specforge" session launch --role specialist:backend-engineer --bead SPEC-ccc >/dev/null 2>&1
+"$nogg" session launch --role specialist:backend-engineer --bead SPEC-ccc >/dev/null 2>&1
 name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
-"$specforge" session list >"$out" 2>&1
+"$nogg" session list >"$out" 2>&1
 check "list: a live session shows its real state" "running"
 check "list: shows the Bead id" "SPEC-ccc"
 check "list: shows the role" "specialist:backend-engineer"
-rm -f "$TMUX_STUB_DIR"/sess-*        # the tmux session vanishes behind specforge's back
-env -u TERM "$specforge" session list >"$out" 2>&1
+rm -f "$TMUX_STUB_DIR"/sess-*        # the tmux session vanishes behind nogg's back
+env -u TERM "$nogg" session list >"$out" 2>&1
 check "list: vanished active session reported as failed" "failed"
 refute "list: vanished session no longer reported as running" "running"
 [[ "$(record "$root/.nogging/state/sessions/$name.json" state)" == "running" ]] \
   && echo "ok   - list: reconciliation did not rewrite the on-disk record" \
   || { echo "FAIL - list: list mutated the record"; fail=1; }
-unset SPECFORGE_ROOT
+unset NOGGING_ROOT
 
 # ===========================================================================
 # Scenario: stop records a terminal state and is idempotent
 # ===========================================================================
 root="$work/stop"; make_root "$root" 0.2
-export SPECFORGE_ROOT="$root"
+export NOGGING_ROOT="$root"
 export TMUX_STUB_DIR="$work/stop-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-ddd"
-"$specforge" session launch --role lead --bead SPEC-ddd >/dev/null 2>&1
+"$nogg" session launch --role lead --bead SPEC-ddd >/dev/null 2>&1
 name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
 rec="$root/.nogging/state/sessions/$name.json"
 
-"$specforge" session stop "$name" --reason "operator asked" >"$out" 2>&1 \
+"$nogg" session stop "$name" --reason "operator asked" >"$out" 2>&1 \
   || { echo "FAIL - stop: errored"; cat "$out"; fail=1; }
 [[ "$(record "$rec" state)" == "stopped" ]] \
   && echo "ok   - stop: record is in the stopped terminal state" \
@@ -205,7 +205,7 @@ rec="$root/.nogging/state/sessions/$name.json"
 [[ "$(record "$rec" ended_at)" != "None" ]] \
   && echo "ok   - stop: ended_at recorded" || { echo "FAIL - stop: no ended_at"; fail=1; }
 ended_first="$(record "$rec" ended_at)"
-"$specforge" session stop "$name" >"$out" 2>&1 \
+"$nogg" session stop "$name" >"$out" 2>&1 \
   || { echo "FAIL - stop: second stop errored"; cat "$out"; fail=1; }
 check "stop: second stop is a reported no-op" "nothing to do"
 [[ "$(record "$rec" ended_at)" == "$ended_first" ]] \
@@ -214,31 +214,31 @@ check "stop: second stop is a reported no-op" "nothing to do"
 
 # stop also drives the kill path when the child ignores the interrupt
 root2="$work/stop-kill"; make_root "$root2" 0.2
-export SPECFORGE_ROOT="$root2"
+export NOGGING_ROOT="$root2"
 export TMUX_STUB_DIR="$work/stop-kill-tmux"; mkdir -p "$TMUX_STUB_DIR"
-"$specforge" session launch --role lead --bead SPEC-ddd >/dev/null 2>&1
+"$nogg" session launch --role lead --bead SPEC-ddd >/dev/null 2>&1
 name2="$(ls "$root2/.nogging/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
-TMUX_STUB_IGNORE_SIGINT=1 "$specforge" session stop "$name2" >"$out" 2>&1
+TMUX_STUB_IGNORE_SIGINT=1 "$nogg" session stop "$name2" >"$out" 2>&1
 grep -qF "kill-session " "$TMUX_STUB_DIR/calls.log" \
   && echo "ok   - stop: escalates to kill-session after the grace period" \
   || { echo "FAIL - stop: no kill-session escalation"; cat "$TMUX_STUB_DIR/calls.log"; fail=1; }
 [[ "$(record "$root2/.nogging/state/sessions/$name2.json" state)" == "stopped" ]] \
   && echo "ok   - stop: terminal state recorded even when the child ignored C-c" \
   || { echo "FAIL - stop: state not stopped after kill"; fail=1; }
-unset SPECFORGE_ROOT
+unset NOGGING_ROOT
 
 # ===========================================================================
 # Scenario: cleanup refuses a running record, succeeds on a stopped one
 # ===========================================================================
 root="$work/cleanup"; make_root "$root" 0.2
-export SPECFORGE_ROOT="$root"
+export NOGGING_ROOT="$root"
 export TMUX_STUB_DIR="$work/cleanup-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-eee"
-"$specforge" session launch --role lead --bead SPEC-eee >/dev/null 2>&1
+"$nogg" session launch --role lead --bead SPEC-eee >/dev/null 2>&1
 name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
 rec="$root/.nogging/state/sessions/$name.json"
 
-"$specforge" session cleanup "$name" >"$out" 2>&1 \
+"$nogg" session cleanup "$name" >"$out" 2>&1 \
   && { echo "FAIL - cleanup: should refuse a running record"; fail=1; } \
   || echo "ok   - cleanup: refuses a running record"
 check "cleanup: tells the operator to stop it first" "stop"
@@ -246,8 +246,8 @@ check "cleanup: tells the operator to stop it first" "stop"
   && echo "ok   - cleanup: running record left untouched" \
   || { echo "FAIL - cleanup: running record changed"; fail=1; }
 
-"$specforge" session stop "$name" >/dev/null 2>&1
-"$specforge" session cleanup "$name" >"$out" 2>&1 \
+"$nogg" session stop "$name" >/dev/null 2>&1
+"$nogg" session cleanup "$name" >"$out" 2>&1 \
   || { echo "FAIL - cleanup: errored on a stopped record"; cat "$out"; fail=1; }
 check "cleanup: retires the stopped record" "retired $name"
 [[ "$(record "$rec" state)" == "retired" ]] \
@@ -258,20 +258,20 @@ ls "$root/.nogging/state/sessions/$name.log" >/dev/null 2>&1 \
 ls "$root/.nogging/state/sessions/$name.log".archived-* >/dev/null 2>&1 \
   && echo "ok   - cleanup: archived log kept under an archived name" \
   || { echo "FAIL - cleanup: no archived log"; fail=1; }
-unset SPECFORGE_ROOT
+unset NOGGING_ROOT
 
 # ===========================================================================
 # Scenario: session reap moves a vanished active record to failed (TASK-RIR-011)
 # ===========================================================================
 root="$work/reap"; make_root "$root" 0.2
-export SPECFORGE_ROOT="$root"
+export NOGGING_ROOT="$root"
 export TMUX_STUB_DIR="$work/reap-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-rp1"
-"$specforge" session launch --role lead --bead SPEC-rp1 >/dev/null 2>&1
+"$nogg" session launch --role lead --bead SPEC-rp1 >/dev/null 2>&1
 name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
 rec="$root/.nogging/state/sessions/$name.json"
-rm -f "$TMUX_STUB_DIR"/sess-*        # the tmux session vanishes behind specforge's back
-"$specforge" session reap >"$out" 2>&1 \
+rm -f "$TMUX_STUB_DIR"/sess-*        # the tmux session vanishes behind nogg's back
+"$nogg" session reap >"$out" 2>&1 \
   || { echo "FAIL - reap: errored"; cat "$out"; fail=1; }
 check "reap: reports the vanished session" "reaped 1 vanished session"
 [[ "$(record "$rec" state)" == "failed" ]] \
@@ -280,20 +280,20 @@ check "reap: reports the vanished session" "reaped 1 vanished session"
 [[ "$(record "$rec" exit_reason)" == "tmux session vanished during a reap" ]] \
   && echo "ok   - reap: exit_reason records the reap" \
   || { echo "FAIL - reap: exit_reason is $(record "$rec" exit_reason)"; fail=1; }
-"$specforge" session reap >"$out" 2>&1 || true
+"$nogg" session reap >"$out" 2>&1 || true
 check "reap: a second reap finds nothing" "no vanished active sessions to reap"
-unset SPECFORGE_ROOT
+unset NOGGING_ROOT
 
 # ===========================================================================
 # Scenario: reap -> cleanup retires the crashed record; a live one is untouched
 # (TASK-RIR-014)
 # ===========================================================================
 root="$work/reapclean"; make_root "$root" 0.2
-export SPECFORGE_ROOT="$root"
+export NOGGING_ROOT="$root"
 export TMUX_STUB_DIR="$work/reapclean-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-rc1 SPEC-rc2"
-"$specforge" session launch --role lead --bead SPEC-rc1 >/dev/null 2>&1
-"$specforge" session launch --role lead --bead SPEC-rc2 >/dev/null 2>&1
+"$nogg" session launch --role lead --bead SPEC-rc1 >/dev/null 2>&1
+"$nogg" session launch --role lead --bead SPEC-rc2 >/dev/null 2>&1
 pick() { ls "$root/.nogging/state/sessions" | grep "^sf-lead-spec-$1-" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//'; }
 dead="$(pick rc1)"
 live="$(pick rc2)"
@@ -301,7 +301,7 @@ deadrec="$root/.nogging/state/sessions/$dead.json"
 liverec="$root/.nogging/state/sessions/$live.json"
 
 rm -f "$TMUX_STUB_DIR/sess-$dead"        # only the first session's tmux vanishes
-"$specforge" session reap >"$out" 2>&1 || { echo "FAIL - reapclean: reap errored"; cat "$out"; fail=1; }
+"$nogg" session reap >"$out" 2>&1 || { echo "FAIL - reapclean: reap errored"; cat "$out"; fail=1; }
 check "reapclean: reap names only the vanished session" "reaped 1 vanished session(s): $dead"
 [[ "$(record "$deadrec" state)" == "failed" ]] \
   && echo "ok   - reapclean: the vanished record is failed" \
@@ -310,7 +310,7 @@ check "reapclean: reap names only the vanished session" "reaped 1 vanished sessi
   && echo "ok   - reapclean: the live record is left running by reap" \
   || { echo "FAIL - reapclean: live state is $(record "$liverec" state)"; fail=1; }
 
-"$specforge" session cleanup >"$out" 2>&1 || { echo "FAIL - reapclean: cleanup errored"; cat "$out"; fail=1; }
+"$nogg" session cleanup >"$out" 2>&1 || { echo "FAIL - reapclean: cleanup errored"; cat "$out"; fail=1; }
 check "reapclean: cleanup retires the reaped record" "retired $dead"
 [[ "$(record "$deadrec" state)" == "retired" ]] \
   && echo "ok   - reapclean: reaped record now retired" \
@@ -324,18 +324,18 @@ check "reapclean: cleanup retires the reaped record" "retired $dead"
 ls "$root/.nogging/state/sessions/$live.log" >/dev/null 2>&1 \
   && echo "ok   - reapclean: the live session's active log is intact" \
   || { echo "FAIL - reapclean: live log archived away"; fail=1; }
-unset SPECFORGE_ROOT
+unset NOGGING_ROOT
 
 # ===========================================================================
 # Scenario: a seeded secret reaches neither the recorded command nor the log
 # ===========================================================================
 root="$work/secret"; make_root "$root"
-export SPECFORGE_ROOT="$root"
+export NOGGING_ROOT="$root"
 export TMUX_STUB_DIR="$work/secret-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-fff"
 export ANTHROPIC_API_KEY="sk-secret-DO-NOT-LEAK-12345"
 export GH_TOKEN="ghp-secret-DO-NOT-LEAK-67890"
-"$specforge" session launch --role lead --bead SPEC-fff >/dev/null 2>&1
+"$nogg" session launch --role lead --bead SPEC-fff >/dev/null 2>&1
 name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
 cp "$root/.nogging/state/sessions/$name.json" "$out"
 refute "secret: ANTHROPIC_API_KEY value absent from the recorded command" "sk-secret-DO-NOT-LEAK-12345"
@@ -355,7 +355,7 @@ PY
 [[ "$out2" == "claude --key ***REDACTED*** --go" ]] \
   && echo "ok   - secret: redact() replaces a secret-named env value in argv" \
   || { echo "FAIL - secret: redact() did not scrub ($out2)"; fail=1; }
-unset SPECFORGE_ROOT ANTHROPIC_API_KEY GH_TOKEN
+unset NOGGING_ROOT ANTHROPIC_API_KEY GH_TOKEN
 
 # ===========================================================================
 # Scenario: the append-only log writer rotates by size to the configured depth
@@ -375,10 +375,10 @@ printf 'line-aaaaaaaaaa\nline-bbbbbbbbbb\nline-cccccccccc\nline-dddddddddd\n' \
 # Scenario: no-flag launch stays restricted + the no-autonomous-claim prompt
 # ===========================================================================
 root="$work/lp-default"; make_root "$root"
-export SPECFORGE_ROOT="$root"
+export NOGGING_ROOT="$root"
 export TMUX_STUB_DIR="$work/lp-default-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-lp1"
-"$specforge" session launch --role lead --bead SPEC-lp1 >"$out" 2>&1 \
+"$nogg" session launch --role lead --bead SPEC-lp1 >"$out" 2>&1 \
   || { echo "FAIL - lp-default: launch errored"; cat "$out"; fail=1; }
 name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
 rec="$root/.nogging/state/sessions/$name.json"
@@ -409,7 +409,7 @@ check "twb-launch: effective settings deny a Write under openspec/"  'Write(open
 [[ "$(record "$rec" openspec_readonly)" == "True" ]] \
   && echo "ok   - twb-launch: record marks openspec_readonly true for an execution launch" \
   || { echo "FAIL - twb-launch: openspec_readonly is $(record "$rec" openspec_readonly)"; fail=1; }
-unset SPECFORGE_ROOT
+unset NOGGING_ROOT
 
 # ===========================================================================
 # Scenario: a launch during a fresh planning session keeps openspec/ writable
@@ -417,13 +417,13 @@ unset SPECFORGE_ROOT
 # lock, not the sentinel.
 # ===========================================================================
 root="$work/twb-planning"; make_root "$root"
-export SPECFORGE_ROOT="$root"
+export NOGGING_ROOT="$root"
 export TMUX_STUB_DIR="$work/twb-planning-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-twp"
 mkdir -p "$root/.nogging/locks"
 printf '{"pid":1,"host":"h","created_at":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%S+00:00)" \
   >"$root/.nogging/locks/planning.lock"
-"$specforge" session launch --role lead --bead SPEC-twp >"$out" 2>&1 \
+"$nogg" session launch --role lead --bead SPEC-twp >"$out" 2>&1 \
   || { echo "FAIL - twb-planning: launch errored"; cat "$out"; fail=1; }
 name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
 rec="$root/.nogging/state/sessions/$name.json"
@@ -432,16 +432,16 @@ refute "twb-planning: no openspec deny while a fresh planning lock is held" 'Edi
 [[ "$(record "$rec" openspec_readonly)" == "False" ]] \
   && echo "ok   - twb-planning: record marks openspec_readonly false during planning" \
   || { echo "FAIL - twb-planning: openspec_readonly is $(record "$rec" openspec_readonly)"; fail=1; }
-unset SPECFORGE_ROOT
+unset NOGGING_ROOT
 
 # ===========================================================================
 # Scenario: a named profile resolves; the floor is unioned in; list shows it
 # ===========================================================================
 root="$work/lp-named"; make_root "$root"
-export SPECFORGE_ROOT="$root"
+export NOGGING_ROOT="$root"
 export TMUX_STUB_DIR="$work/lp-named-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-lp2"
-"$specforge" session launch --role lead --bead SPEC-lp2 --profile trusted --prompt autonomous >"$out" 2>&1 \
+"$nogg" session launch --role lead --bead SPEC-lp2 --profile trusted --prompt autonomous >"$out" 2>&1 \
   || { echo "FAIL - lp-named: launch errored"; cat "$out"; fail=1; }
 name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
 rec="$root/.nogging/state/sessions/$name.json"
@@ -458,13 +458,13 @@ grep -qE -- "--prompt [^ ]*/autonomous\.md" "$TMUX_STUB_DIR/calls.log" \
 [[ "$(record "$rec" profile)" == "trusted" ]] \
   && echo "ok   - lp-named: record profile is trusted" \
   || { echo "FAIL - lp-named: record profile is $(record "$rec" profile)"; fail=1; }
-"$specforge" session list >"$out" 2>&1
+"$nogg" session list >"$out" 2>&1
 check "lp-named: session list shows the profile" "trusted"
 diff -q "$root/.nogging/launch-profiles/trusted.json" \
         "$repo_root/.nogging/launch-profiles/trusted.json" >/dev/null \
   && echo "ok   - lp-named: source trusted profile left unmutated" \
   || { echo "FAIL - lp-named: source profile changed"; fail=1; }
-unset SPECFORGE_ROOT
+unset NOGGING_ROOT
 
 # ===========================================================================
 # Scenario: every launch-floor rule is a valid permission rule and reaches the
@@ -472,10 +472,10 @@ unset SPECFORGE_ROOT
 # entry (empty/nested parens, like the removed fork-bomb rule) before it ships.
 # ===========================================================================
 root="$work/floor"; make_root "$root"
-export SPECFORGE_ROOT="$root"
+export NOGGING_ROOT="$root"
 export TMUX_STUB_DIR="$work/floor-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-fl1"
-"$specforge" session launch --role lead --bead SPEC-fl1 --profile trusted >/dev/null 2>&1
+"$nogg" session launch --role lead --bead SPEC-fl1 --profile trusted >/dev/null 2>&1
 name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
 eff="$(record "$root/.nogging/state/sessions/$name.json" effective_settings_path)"
 floor_out=$(python3 - "$repo_root/scripts/nogg" "$eff" <<'PY'
@@ -496,7 +496,7 @@ PY
 [[ "$floor_rc" -eq 0 ]] \
   && echo "ok   - floor: every FLOOR_DENY entry is a valid rule and reaches the effective settings verbatim ($floor_out)" \
   || { echo "FAIL - floor: $floor_out"; fail=1; }
-unset SPECFORGE_ROOT
+unset NOGGING_ROOT
 
 # Every deny entry in every shipped launch-profile is a syntactically valid rule
 # (SPEC-3m8 / SPEC-js9: trusted.json shipped an invalid fork-bomb string that
@@ -523,10 +523,10 @@ PY
 # Scenario: --full-access == --profile trusted --prompt autonomous
 # ===========================================================================
 root="$work/lp-full"; make_root "$root"
-export SPECFORGE_ROOT="$root"
+export NOGGING_ROOT="$root"
 export TMUX_STUB_DIR="$work/lp-full-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-lp3"
-"$specforge" session launch --role lead --bead SPEC-lp3 --full-access >"$out" 2>&1 \
+"$nogg" session launch --role lead --bead SPEC-lp3 --full-access >"$out" 2>&1 \
   || { echo "FAIL - lp-full: launch errored"; cat "$out"; fail=1; }
 name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
 rec="$root/.nogging/state/sessions/$name.json"
@@ -538,20 +538,20 @@ grep -qE -- "--prompt [^ ]*/autonomous\.md" "$TMUX_STUB_DIR/calls.log" \
   || { echo "FAIL - lp-full: autonomous prompt not passed"; fail=1; }
 cp "$(record "$rec" effective_settings_path)" "$out"
 check "lp-full: floored trusted settings written" '"defaultMode": "acceptEdits"'
-unset SPECFORGE_ROOT
+unset NOGGING_ROOT
 
 # ===========================================================================
 # Scenario: a supplied path resolves and the floor survives a permissive file
 # ===========================================================================
 root="$work/lp-path"; make_root "$root"
-export SPECFORGE_ROOT="$root"
+export NOGGING_ROOT="$root"
 export TMUX_STUB_DIR="$work/lp-path-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-lp4"
 permissive="$work/permissive-profile.json"
 cat >"$permissive" <<'JSON'
 { "permissions": { "defaultMode": "bypassPermissions", "allow": ["Bash(sudo:*)"], "deny": [] } }
 JSON
-"$specforge" session launch --role lead --bead SPEC-lp4 --profile "$permissive" >"$out" 2>&1 \
+"$nogg" session launch --role lead --bead SPEC-lp4 --profile "$permissive" >"$out" 2>&1 \
   || { echo "FAIL - lp-path: launch errored"; cat "$out"; fail=1; }
 name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
 rec="$root/.nogging/state/sessions/$name.json"
@@ -566,16 +566,16 @@ check "lp-path: floor forced into a permissive supplied profile (mkfs.*)" 'Bash(
 grep -qF '"deny": []' "$permissive" \
   && echo "ok   - lp-path: the supplied source file itself was not mutated" \
   || { echo "FAIL - lp-path: supplied profile file changed"; fail=1; }
-unset SPECFORGE_ROOT
+unset NOGGING_ROOT
 
 # ===========================================================================
 # Scenario: an unknown profile fails before any session exists
 # ===========================================================================
 root="$work/lp-unknown"; make_root "$root"
-export SPECFORGE_ROOT="$root"
+export NOGGING_ROOT="$root"
 export TMUX_STUB_DIR="$work/lp-unknown-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-lp5"
-"$specforge" session launch --role lead --bead SPEC-lp5 --profile no-such-profile >"$out" 2>&1 \
+"$nogg" session launch --role lead --bead SPEC-lp5 --profile no-such-profile >"$out" 2>&1 \
   && { echo "FAIL - lp-unknown: launch should have failed"; fail=1; } \
   || echo "ok   - lp-unknown: launch refused for an unresolvable profile"
 check "lp-unknown: message explains the resolution failure" "did not resolve"
@@ -585,27 +585,27 @@ check "lp-unknown: message explains the resolution failure" "did not resolve"
 [[ ! -f "$TMUX_STUB_DIR/calls.log" ]] || ! grep -qF "new-session " "$TMUX_STUB_DIR/calls.log" \
   && echo "ok   - lp-unknown: no tmux session was created" \
   || { echo "FAIL - lp-unknown: tmux new-session was called"; cat "$TMUX_STUB_DIR/calls.log"; fail=1; }
-unset SPECFORGE_ROOT
+unset NOGGING_ROOT
 
 # ===========================================================================
 # Scenario: cleanup removes the per-session effective-settings file
 # ===========================================================================
 root="$work/lp-cleanup"; make_root "$root" 0.2
-export SPECFORGE_ROOT="$root"
+export NOGGING_ROOT="$root"
 export TMUX_STUB_DIR="$work/lp-cleanup-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-lp6"
-"$specforge" session launch --role lead --bead SPEC-lp6 --profile trusted >/dev/null 2>&1
+"$nogg" session launch --role lead --bead SPEC-lp6 --profile trusted >/dev/null 2>&1
 name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
 rec="$root/.nogging/state/sessions/$name.json"
 eff="$(record "$rec" effective_settings_path)"
 [[ -f "$eff" ]] || { echo "FAIL - lp-cleanup: no effective-settings file to begin with"; fail=1; }
-"$specforge" session stop "$name" >/dev/null 2>&1
-"$specforge" session cleanup "$name" >"$out" 2>&1 \
+"$nogg" session stop "$name" >/dev/null 2>&1
+"$nogg" session cleanup "$name" >"$out" 2>&1 \
   || { echo "FAIL - lp-cleanup: cleanup errored"; cat "$out"; fail=1; }
 [[ ! -f "$eff" ]] \
   && echo "ok   - lp-cleanup: effective-settings file removed when the record retired" \
   || { echo "FAIL - lp-cleanup: effective-settings file survived cleanup"; fail=1; }
-unset SPECFORGE_ROOT
+unset NOGGING_ROOT
 
 # ===========================================================================
 # Scenario: the per-session <name>.settings.json is not mistaken for a record
@@ -614,16 +614,16 @@ unset SPECFORGE_ROOT
 # `cleanup` server-kill guard.
 # ===========================================================================
 root="$work/set-file"; make_root "$root" 0.2
-export SPECFORGE_ROOT="$root"
+export NOGGING_ROOT="$root"
 export TMUX_STUB_DIR="$work/set-file-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-sf1"
-"$specforge" session launch --role lead --bead SPEC-sf1 >/dev/null 2>&1
+"$nogg" session launch --role lead --bead SPEC-sf1 >/dev/null 2>&1
 name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
 [[ -f "$root/.nogging/state/sessions/$name.settings.json" ]] \
   && echo "ok   - set-file: launch left a <name>.settings.json beside the record" \
   || { echo "FAIL - set-file: no settings file to test against"; fail=1; }
 
-env -u TERM "$specforge" session list >"$out" 2>&1
+env -u TERM "$nogg" session list >"$out" 2>&1
 check "set-file: list shows the real session" "$name"
 check "set-file: list shows the real Bead" "SPEC-sf1"
 refute "set-file: no spurious unknown-state row" "unknown"
@@ -632,17 +632,17 @@ refute "set-file: no spurious unknown-state row" "unknown"
   || { echo "FAIL - set-file: unexpected row count"; cat "$out"; fail=1; }
 
 # No real record left active, but a tmux session lingers on the dedicated server.
-"$specforge" session stop "$name" >/dev/null 2>&1
+"$nogg" session stop "$name" >/dev/null 2>&1
 touch "$TMUX_STUB_DIR/sess-lingering"
-"$specforge" session cleanup >"$out" 2>&1 \
+"$nogg" session cleanup >"$out" 2>&1 \
   || { echo "FAIL - set-file: cleanup errored"; cat "$out"; fail=1; }
 check "set-file: the stopped record is retired" "retired $name"
 check "set-file: no-name cleanup stops the tmux server once nothing real is active" \
-  "SpecForge tmux server stopped"
+  "Nogging tmux server stopped"
 [[ -z "$(ls "$TMUX_STUB_DIR"/sess-* 2>/dev/null)" ]] \
   && echo "ok   - set-file: the lingering tmux session was torn down" \
   || { echo "FAIL - set-file: tmux session survived the server stop"; fail=1; }
-unset SPECFORGE_ROOT
+unset NOGGING_ROOT
 
 # ===========================================================================
 # Scenario: --agent codex maps the level onto Codex's sandbox/approval model
@@ -656,10 +656,10 @@ STUB
 chmod +x "$work/bin/codex"
 
 root="$work/codex-full"; make_root "$root"
-export SPECFORGE_ROOT="$root"
+export NOGGING_ROOT="$root"
 export TMUX_STUB_DIR="$work/codex-full-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-cdx"
-"$specforge" session launch --role lead --bead SPEC-cdx --agent codex --full-access >"$out" 2>&1 \
+"$nogg" session launch --role lead --bead SPEC-cdx --agent codex --full-access >"$out" 2>&1 \
   || { echo "FAIL - codex-full: launch errored"; cat "$out"; fail=1; }
 check "codex-full: missing-floor warning names the execpolicy file" "nogging.rules"
 name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
@@ -682,10 +682,10 @@ check "codex-full: openspec/ requested as a read-only root (TASK-TWB-004)" "--re
 grep -qE -- "--readonly-root [^ ]*/openspec" "$out" \
   && echo "ok   - codex-full: the read-only root is the session's openspec/ dir" \
   || { echo "FAIL - codex-full: --readonly-root path is not openspec/"; cat "$out"; fail=1; }
-"$specforge" session list >"$out" 2>&1
+"$nogg" session list >"$out" 2>&1
 check "codex-full: session list has an AGENT column"            "AGENT"
 check "codex-full: session list shows codex for the session"    "codex"
-unset SPECFORGE_ROOT
+unset NOGGING_ROOT
 
 # ===========================================================================
 # Scenario: the wrapper execs `codex` with the mapped flags, and never a
@@ -719,24 +719,24 @@ refute "codex-wrap-off: --network off does not emit the =true override" "network
 # Scenario: --read-only forces the Codex sandbox to read-only at launch
 # ===========================================================================
 root="$work/codex-ro"; make_root "$root"
-export SPECFORGE_ROOT="$root"
+export NOGGING_ROOT="$root"
 export TMUX_STUB_DIR="$work/codex-ro-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-cro"
-"$specforge" session launch --role lead --bead SPEC-cro --agent codex --read-only >"$out" 2>&1 \
+"$nogg" session launch --role lead --bead SPEC-cro --agent codex --read-only >"$out" 2>&1 \
   || { echo "FAIL - codex-ro: launch errored"; cat "$out"; fail=1; }
 cp "$TMUX_STUB_DIR/calls.log" "$out"
 check "codex-ro: --read-only forces --sandbox read-only" "--sandbox read-only"
 check "codex-ro: restricted level keeps outbound network off" "--network off"
-unset SPECFORGE_ROOT
+unset NOGGING_ROOT
 
 # ===========================================================================
 # Scenario: a Claude settings file with --agent codex fails before any session
 # ===========================================================================
 root="$work/codex-reject"; make_root "$root"
-export SPECFORGE_ROOT="$root"
+export NOGGING_ROOT="$root"
 export TMUX_STUB_DIR="$work/codex-reject-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-rej"
-"$specforge" session launch --role lead --bead SPEC-rej --agent codex \
+"$nogg" session launch --role lead --bead SPEC-rej --agent codex \
   --profile "$root/.nogging/launch-profiles/restricted.json" >"$out" 2>&1 \
   && { echo "FAIL - codex-reject: launch should have failed"; fail=1; } \
   || echo "ok   - codex-reject: a .json profile with --agent codex is refused"
@@ -747,7 +747,7 @@ check "codex-reject: message says it is a Claude settings file" "Claude settings
 [[ ! -f "$TMUX_STUB_DIR/calls.log" ]] || ! grep -qF "new-session " "$TMUX_STUB_DIR/calls.log" \
   && echo "ok   - codex-reject: no tmux session was created" \
   || { echo "FAIL - codex-reject: tmux new-session was called"; fail=1; }
-unset SPECFORGE_ROOT
+unset NOGGING_ROOT
 
 # ===========================================================================
 # Scenario: --agent pi --full-access (trusted) maps onto the always-on guard
@@ -762,10 +762,10 @@ STUB
 chmod +x "$work/bin/pi"
 
 root="$work/pi-full"; make_root "$root"
-export SPECFORGE_ROOT="$root"
+export NOGGING_ROOT="$root"
 export TMUX_STUB_DIR="$work/pi-full-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-pia"
-"$specforge" session launch --role lead --bead SPEC-pia --agent pi --full-access >"$out" 2>&1 \
+"$nogg" session launch --role lead --bead SPEC-pia --agent pi --full-access >"$out" 2>&1 \
   || { echo "FAIL - pi-full: launch errored"; cat "$out"; fail=1; }
 check "pi-full: missing-floor warning names the guard extension" ".pi/extensions/nogging-guard.ts"
 name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
@@ -781,12 +781,12 @@ rec="$root/.nogging/state/sessions/$name.json"
   || { echo "FAIL - pi-full: a settings file was written for Pi"; fail=1; }
 cp "$TMUX_STUB_DIR/calls.log" "$out"
 check "pi-full: wrapper call carries --agent pi" "--agent pi"
-"$specforge" session list >"$out" 2>&1
+"$nogg" session list >"$out" 2>&1
 check "pi-full: session list has an AGENT column"         "AGENT"
 # a bare "pi" substring would spuriously match "SPEC-pia" itself, so anchor on
 # the padded AGENT cell (2+ spaces on both sides — see _agent_display()).
 check "pi-full: session list shows pi in the AGENT column" "  pi  "
-unset SPECFORGE_ROOT
+unset NOGGING_ROOT
 
 # ===========================================================================
 # Scenario: --agent pi with no --full-access stays on the restricted profile
@@ -795,10 +795,10 @@ unset SPECFORGE_ROOT
 # is never suppressed at either level, by design)
 # ===========================================================================
 root="$work/pi-restricted"; make_root "$root"
-export SPECFORGE_ROOT="$root"
+export NOGGING_ROOT="$root"
 export TMUX_STUB_DIR="$work/pi-restricted-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-pir"
-"$specforge" session launch --role lead --bead SPEC-pir --agent pi >"$out" 2>&1 \
+"$nogg" session launch --role lead --bead SPEC-pir --agent pi >"$out" 2>&1 \
   || { echo "FAIL - pi-restricted: launch errored"; cat "$out"; fail=1; }
 name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
 rec="$root/.nogging/state/sessions/$name.json"
@@ -813,7 +813,7 @@ grep -qE -- "--prompt [^ ]*/no-autonomous-claim\.md" "$out" \
   && echo "ok   - pi-restricted: no-autonomous-claim prompt resolved (vs. autonomous for trusted)" \
   || { echo "FAIL - pi-restricted: default prompt not passed"; cat "$out"; fail=1; }
 refute "pi-restricted: no guard-suppressing flag is ever emitted" "no-approve"
-unset SPECFORGE_ROOT
+unset NOGGING_ROOT
 
 # ===========================================================================
 # Scenario: the wrapper execs `pi` with the mapped flags, and never a flag
@@ -836,10 +836,10 @@ refute "pi-wrap: never passes --no-extensions"  "no-extensions"
 # Scenario: a Claude settings file with --agent pi fails before any session
 # ===========================================================================
 root="$work/pi-reject-json"; make_root "$root"
-export SPECFORGE_ROOT="$root"
+export NOGGING_ROOT="$root"
 export TMUX_STUB_DIR="$work/pi-reject-json-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-prc"
-"$specforge" session launch --role lead --bead SPEC-prc --agent pi \
+"$nogg" session launch --role lead --bead SPEC-prc --agent pi \
   --profile "$root/.nogging/launch-profiles/restricted.json" >"$out" 2>&1 \
   && { echo "FAIL - pi-reject-json: launch should have failed"; fail=1; } \
   || echo "ok   - pi-reject-json: a .json profile with --agent pi is refused"
@@ -850,7 +850,7 @@ check "pi-reject-json: message says it is a Claude settings file" "Claude settin
 [[ ! -f "$TMUX_STUB_DIR/calls.log" ]] || ! grep -qF "new-session " "$TMUX_STUB_DIR/calls.log" \
   && echo "ok   - pi-reject-json: no tmux session was created" \
   || { echo "FAIL - pi-reject-json: tmux new-session was called"; fail=1; }
-unset SPECFORGE_ROOT
+unset NOGGING_ROOT
 
 # ===========================================================================
 # Scenario: a Codex .codex.toml profile with --agent pi is also refused (the
@@ -858,10 +858,10 @@ unset SPECFORGE_ROOT
 # would not catch this, since it only returns the LAST suffix, ".toml")
 # ===========================================================================
 root="$work/pi-reject-codex-toml"; make_root "$root"
-export SPECFORGE_ROOT="$root"
+export NOGGING_ROOT="$root"
 export TMUX_STUB_DIR="$work/pi-reject-codex-toml-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-prt"
-"$specforge" session launch --role lead --bead SPEC-prt --agent pi \
+"$nogg" session launch --role lead --bead SPEC-prt --agent pi \
   --profile "$root/.nogging/launch-profiles/restricted.codex.toml" >"$out" 2>&1 \
   && { echo "FAIL - pi-reject-codex-toml: launch should have failed"; fail=1; } \
   || echo "ok   - pi-reject-codex-toml: a .codex.toml profile with --agent pi is refused"
@@ -872,16 +872,16 @@ check "pi-reject-codex-toml: message says it is a Codex launch spec" "Codex laun
 [[ ! -f "$TMUX_STUB_DIR/calls.log" ]] || ! grep -qF "new-session " "$TMUX_STUB_DIR/calls.log" \
   && echo "ok   - pi-reject-codex-toml: no tmux session was created" \
   || { echo "FAIL - pi-reject-codex-toml: tmux new-session was called"; fail=1; }
-unset SPECFORGE_ROOT
+unset NOGGING_ROOT
 
 # ===========================================================================
 # Scenario: the default launch still execs `claude` — no --agent argument
 # ===========================================================================
 root="$work/codex-default"; make_root "$root"
-export SPECFORGE_ROOT="$root"
+export NOGGING_ROOT="$root"
 export TMUX_STUB_DIR="$work/codex-default-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-dfl"
-"$specforge" session launch --role lead --bead SPEC-dfl >"$out" 2>&1 \
+"$nogg" session launch --role lead --bead SPEC-dfl >"$out" 2>&1 \
   || { echo "FAIL - codex-default: launch errored"; cat "$out"; fail=1; }
 name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
 [[ "$(record "$root/.nogging/state/sessions/$name.json" agent)" == "claude" ]] \
@@ -890,7 +890,7 @@ name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.setting
 cp "$TMUX_STUB_DIR/calls.log" "$out"
 check   "codex-default: still a claude wrapper call with --settings" "--settings "
 refute  "codex-default: no --agent argument on the default path"     "--agent"
-unset SPECFORGE_ROOT
+unset NOGGING_ROOT
 
 # ===========================================================================
 # Scenario: redact() scrubs a secret-named value in a `-c key=value` override
@@ -915,10 +915,10 @@ PY
 # (TASK-ORC-003 / TASK-ORC-004)
 # ===========================================================================
 root="$work/orc"; make_root "$root"
-export SPECFORGE_ROOT="$root"
+export NOGGING_ROOT="$root"
 export TMUX_STUB_DIR="$work/orc-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN=""
-"$specforge" session launch --role orchestrator --profile orchestrator >"$out" 2>&1 \
+"$nogg" session launch --role orchestrator --profile orchestrator >"$out" 2>&1 \
   || { echo "FAIL - orc: launch errored"; cat "$out"; fail=1; }
 check "orc: launch reports the singleton name" "launched nogg-orchestrator-orc"
 orcrec="$root/.nogging/state/sessions/nogg-orchestrator-orc.json"
@@ -943,27 +943,27 @@ check "orc: effective settings keep the accepted-disclaimer key" '"skipDangerous
 refute "orc: no floor deny in the effective settings (sudo)"  'Bash(sudo:*)'
 refute "orc: no floor deny in the effective settings (rm -rf)" 'Bash(rm -rf:*)'
 refute "orc: no openspec/ deny in the effective settings" 'Edit(openspec/**)'
-refute "orc: the SpecForge-only keys never reach Claude" 'nogging_floor'
-env -u TERM "$specforge" session list >"$out" 2>&1
+refute "orc: the Nogging-only keys never reach Claude" 'nogging_floor'
+env -u TERM "$nogg" session list >"$out" 2>&1
 check "orc: session list shows the orchestrator row" "nogg-orchestrator-orc"
 check "orc: session list marks it FULL-ACCESS" "FULL-ACCESS"
-"$specforge" session launch --role orchestrator --profile orchestrator >"$out" 2>&1 \
+"$nogg" session launch --role orchestrator --profile orchestrator >"$out" 2>&1 \
   && { echo "FAIL - orc: a second orchestrator launch should be refused"; fail=1; } \
   || echo "ok   - orc: a second live orchestrator launch is refused"
 check "orc: the refusal points at orchestrator run" "orchestrator run"
-unset SPECFORGE_ROOT
+unset NOGGING_ROOT
 
 # ===========================================================================
 # Scenario: --bead is still required for every non-orchestrator role
 # ===========================================================================
 root="$work/orc-bead"; make_root "$root"
-export SPECFORGE_ROOT="$root"
+export NOGGING_ROOT="$root"
 export TMUX_STUB_DIR="$work/orc-bead-tmux"; mkdir -p "$TMUX_STUB_DIR"
-"$specforge" session launch --role lead >"$out" 2>&1 \
+"$nogg" session launch --role lead >"$out" 2>&1 \
   && { echo "FAIL - orc-bead: lead without --bead should fail"; fail=1; } \
   || echo "ok   - orc-bead: lead without --bead is refused"
 check "orc-bead: the message names the orchestrator exception" "except 'orchestrator'"
-unset SPECFORGE_ROOT
+unset NOGGING_ROOT
 
 # ===========================================================================
 # Scenario: the orchestrator profile's floor keys are ignored for other roles —
@@ -971,10 +971,10 @@ unset SPECFORGE_ROOT
 # (TASK-ORC-004)
 # ===========================================================================
 root="$work/orc-lead"; make_root "$root"
-export SPECFORGE_ROOT="$root"
+export NOGGING_ROOT="$root"
 export TMUX_STUB_DIR="$work/orc-lead-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-ol1"
-"$specforge" session launch --role lead --bead SPEC-ol1 --profile orchestrator >"$out" 2>&1 \
+"$nogg" session launch --role lead --bead SPEC-ol1 --profile orchestrator >"$out" 2>&1 \
   || { echo "FAIL - orc-lead: launch errored"; cat "$out"; fail=1; }
 name="$(ls "$root/.nogging/state/sessions" | grep '^sf-lead' | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
 rec="$root/.nogging/state/sessions/$name.json"
@@ -988,18 +988,18 @@ check "orc-lead: openspec/ is still fenced" 'Edit(openspec/**)'
 [[ "$(record "$rec" openspec_readonly)" == "True" ]] \
   && echo "ok   - orc-lead: openspec/ read-only root still applied" \
   || { echo "FAIL - orc-lead: openspec_readonly is $(record "$rec" openspec_readonly)"; fail=1; }
-unset SPECFORGE_ROOT
+unset NOGGING_ROOT
 
 # ===========================================================================
 # Scenario: --role orchestrator is refused for a non-Claude agent (Claude-only)
 # ===========================================================================
 root="$work/orc-codex"; make_root "$root"
-export SPECFORGE_ROOT="$root"
+export NOGGING_ROOT="$root"
 export TMUX_STUB_DIR="$work/orc-codex-tmux"; mkdir -p "$TMUX_STUB_DIR"
-"$specforge" session launch --role orchestrator --agent codex --profile orchestrator >"$out" 2>&1 \
+"$nogg" session launch --role orchestrator --agent codex --profile orchestrator >"$out" 2>&1 \
   && { echo "FAIL - orc-codex: should be refused"; fail=1; } \
   || echo "ok   - orc-codex: --role orchestrator --agent codex is refused"
-unset SPECFORGE_ROOT
+unset NOGGING_ROOT
 
 if [[ $fail -ne 0 ]]; then echo "session checks failed" >&2; exit 1; fi
 echo "all session checks passed"

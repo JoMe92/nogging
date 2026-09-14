@@ -158,9 +158,9 @@ check "gitignore keeps original line" grep -qx 'node_modules/' "$merged/.gitigno
 check "gitignore adds locks line once" [ "$(grep -cx '.nogging/locks/' "$merged/.gitignore")" = "1" ]
 
 check "CLAUDE.md keeps existing content" grep -q "Existing notes." "$merged/CLAUDE.md"
-check "CLAUDE.md has one begin marker" [ "$(grep -c 'specforge:begin' "$merged/CLAUDE.md")" = "1" ]
-check "CLAUDE.md has one end marker" [ "$(grep -c 'specforge:end' "$merged/CLAUDE.md")" = "1" ]
-check "AGENTS.md created with block" grep -q "specforge:begin" "$merged/AGENTS.md"
+check "CLAUDE.md has one begin marker" [ "$(grep -c 'nogging:begin' "$merged/CLAUDE.md")" = "1" ]
+check "CLAUDE.md has one end marker" [ "$(grep -c 'nogging:end' "$merged/CLAUDE.md")" = "1" ]
+check "AGENTS.md created with block" grep -q "nogging:begin" "$merged/AGENTS.md"
 
 # --- mergeCodex preserves a bd-written .codex/hooks.json ------------------
 codexrepo="$work/codexmerge"
@@ -206,7 +206,7 @@ git -C "$idem" config user.email t@example.com
 git -C "$idem" config user.name test
 ( cd "$idem" && node "$cli" init --no-beads >/dev/null )
 git -C "$idem" add -A
-git -C "$idem" -c core.hooksPath=/dev/null commit -q -m "install specforge"
+git -C "$idem" -c core.hooksPath=/dev/null commit -q -m "install nogg"
 ( cd "$idem" && node "$cli" init --no-beads >/dev/null )
 ( cd "$idem" && node "$cli" update >/dev/null )
 check "re-init + update produce no tracked diff" git -C "$idem" diff --quiet

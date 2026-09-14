@@ -2,7 +2,7 @@
 
 ## Purpose
 
-<!-- One or two sentences on what this project is for. SpecForge does not
+<!-- One or two sentences on what this project is for. Nogging does not
      manage this text after the first install — edit it freely. -->
 
 ## Conventions

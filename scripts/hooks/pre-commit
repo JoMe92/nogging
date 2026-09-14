@@ -2,7 +2,7 @@
 set -euo pipefail
 changed=$(git diff --cached --name-only)
 if [[ "${NOGGING_WRITER:-}" != "planning" && "${NOGGING_WRITER:-}" != "sync" ]] && grep -q '^openspec/' <<<"$changed"; then
-  echo "SpecForge: only planning or sync commits may modify openspec/." >&2
+  echo "Nogging: only planning or sync commits may modify openspec/." >&2
   echo "Set NOGGING_WRITER=planning only inside an approved planning session." >&2
   exit 1
 fi

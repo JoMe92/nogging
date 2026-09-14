@@ -6,7 +6,7 @@ hooks="$root/.git/hooks"
 install -m 0755 "$root/scripts/hooks/commit-msg" "$hooks/commit-msg"
 install -m 0755 "$root/scripts/hooks/pre-commit" "$hooks/pre-commit"
 install -m 0755 "$root/scripts/hooks/pre-push" "$hooks/pre-push"
-echo "SpecForge hooks installed."
+echo "Nogging hooks installed."
 
 # A fresh install starts with the OpenSpec write boundary closed: openspec/ is
 # read-only to an execution agent until the first `plan-begin`. Only create the

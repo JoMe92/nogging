@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo=${1:-${SPECFORGE_SUCCESSOR_REPO:-}}
-expected_identity=${SPECFORGE_PUBLIC_GIT_IDENTITY:-54026322+JoMe92@users.noreply.github.com}
+repo=${1:-${NOGGING_SUCCESSOR_REPO:-}}
+expected_identity=${NOGGING_PUBLIC_GIT_IDENTITY:-54026322+JoMe92@users.noreply.github.com}
 
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
@@ -16,10 +16,10 @@ test -n "$repo" || fail "pass the owner/repository successor name as argument 1"
 visibility=$(gh repo view "$repo" --json isPrivate --jq '.isPrivate')
 test "$visibility" = true || fail "successor must remain private during pre-launch audit"
 
-audit_root=$(mktemp -d /tmp/specforge-successor-audit.XXXXXX)
+audit_root=$(mktemp -d /tmp/nogg-successor-audit.XXXXXX)
 cleanup() {
   case "$audit_root" in
-    /tmp/specforge-successor-audit.*) rm -r -- "$audit_root" ;;
+    /tmp/nogg-successor-audit.*) rm -r -- "$audit_root" ;;
   esac
 }
 trap cleanup EXIT

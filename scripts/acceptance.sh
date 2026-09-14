@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SpecForge end-to-end acceptance harness — the [M] (mechanical) subset of
+# Nogging end-to-end acceptance harness — the [M] (mechanical) subset of
 # docs/acceptance.md, in the same order, printing each step tag as it runs.
 #
 #   scripts/acceptance.sh              full run — needs a real bd + dolt backend
@@ -8,7 +8,7 @@
 #                                     materialize-create per task, the sync
 #                                     round-trip and its idempotency)
 #
-# It creates a throwaway git repo, installs SpecForge from this checkout
+# It creates a throwaway git repo, installs Nogging from this checkout
 # (node bin/cli.js init), opens a planning session, drops in the canned example
 # change (scripts/fixtures/acceptance/), validates, materializes, ends the
 # planning session, then on a change branch simulates the closure of the first
@@ -83,14 +83,14 @@ fi
 step "[M] step 1: create a throwaway target repository"
 git -C "$target" init -q
 git -C "$target" config user.email acceptance@example.invalid
-git -C "$target" config user.name "SpecForge Acceptance"
+git -C "$target" config user.name "Nogging Acceptance"
 [[ -d "$target/.git" ]] || die "step 1: git repo not created"
 note "initialised empty repo at $target"
 
 # ===========================================================================
-# 2 [M] — install SpecForge from the local checkout
+# 2 [M] — install Nogging from the local checkout
 # ===========================================================================
-step "[M] step 2: install SpecForge from the local checkout"
+step "[M] step 2: install Nogging from the local checkout"
 install_args=(init --no-systemd)
 [[ $mechanical -eq 1 ]] && install_args+=(--no-beads)
 install_out="$work/install.out"
@@ -162,9 +162,9 @@ for f in proposal.md design.md tasks.md specs/acceptance-example/spec.md; do
   [[ -f "$target/openspec/changes/acceptance-example/$f" ]] || die "step 7: fixture missing $f"
 done
 # Commit the install + fixture so the tree is clean before sync. Bookkeeping
-# only, so the SpecForge boundary hooks are bypassed for this one commit.
+# only, so the Nogging boundary hooks are bypassed for this one commit.
 git -C "$target" -c core.hooksPath=/dev/null add -A
-git -C "$target" -c core.hooksPath=/dev/null commit -q -m "chore: install SpecForge and the acceptance fixture"
+git -C "$target" -c core.hooksPath=/dev/null commit -q -m "chore: install Nogging and the acceptance fixture"
 note "fixture at openspec/changes/acceptance-example/"
 
 # ===========================================================================
@@ -252,10 +252,10 @@ grep -q '^- \[x\] TASK-ACCEPTX-001 ' "$tasks_md" || die "step 12: TASK-ACCEPTX-0
 grep -q '^- \[ \] TASK-ACCEPTX-002 ' "$tasks_md" || die "step 12: TASK-ACCEPTX-002 must stay unchecked"
 # ... and appends exactly one execution-log.md entry for the closed Bead.
 [[ -f "$log_md" ]] || die "step 12: execution-log.md was not written"
-entries=$(grep -c '^<!-- specforge:' "$log_md" || true)
+entries=$(grep -c '^<!-- nogg:' "$log_md" || true)
 [[ "$entries" == "1" ]] || die "step 12: expected exactly one execution-log entry, got $entries"
 if [[ $mechanical -eq 1 ]]; then
-  grep -q '<!-- specforge:SPEC-ax1:' "$log_md" || die "step 12: log entry is not keyed to the closed Bead SPEC-ax1"
+  grep -q '<!-- nogg:SPEC-ax1:' "$log_md" || die "step 12: log entry is not keyed to the closed Bead SPEC-ax1"
 fi
 grep -q 'closed for TASK-ACCEPTX-001' "$log_md" || die "step 12: log entry does not name TASK-ACCEPTX-001"
 # The mirror is a single commit.
@@ -273,7 +273,7 @@ if ( cd "$target" && "$sf" sync ) >"$work/sync2.out" 2>&1; then
   # no further modification" is about.
   git -C "$target" diff --quiet -- openspec/changes/acceptance-example \
     || die "step 13: second sync modified the example change files"
-  [[ "$(grep -c '^<!-- specforge:' "$log_md" || true)" == "1" ]] \
+  [[ "$(grep -c '^<!-- nogg:' "$log_md" || true)" == "1" ]] \
     || die "step 13: execution-log entry count changed on the second sync"
   [[ "$(grep -c '^- \[x\] ' "$tasks_md" || true)" == "1" ]] \
     || die "step 13: checked-task count changed on the second sync"

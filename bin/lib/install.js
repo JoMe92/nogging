@@ -96,7 +96,7 @@ function writeScaffold(ctx) {
   }
 }
 
-// Bump the recorded SpecForge version in an existing .nogging/config.json.
+// Bump the recorded Nogging version in an existing .nogging/config.json.
 function recordVersion(ctx) {
   const rel = '.nogging/config.json';
   const cur = fsops.readTarget(rel, ctx);

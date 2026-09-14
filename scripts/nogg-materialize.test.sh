@@ -12,7 +12,7 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-specforge="$here/nogg"
+nogg="$here/nogg"
 repo_root="$(cd "$here/.." && pwd)"
 work=$(mktemp -d)
 out=$(mktemp)
@@ -22,7 +22,7 @@ fail=0
 ok()  { echo "ok   - $1"; }
 bad() { echo "FAIL - $1"; fail=1; }
 
-# --- a scratch SpecForge checkout with one change and a git repo -----------
+# --- a scratch Nogging checkout with one change and a git repo -----------
 root="$work/root"
 mkdir -p "$root/.nogging/state" "$root/.nogging/locks" "$root/openspec/changes/demo"
 cp "$repo_root/.nogging/config.json" "$root/.nogging/config.json"
@@ -36,7 +36,7 @@ MD
 printf '# Execution log\n' >"$root/openspec/changes/demo/execution-log.md"
 git -C "$root" init -q
 git -C "$root" config user.email test@example.com
-git -C "$root" config user.name "SpecForge Test"
+git -C "$root" config user.name "Nogging Test"
 git -C "$root" add -A
 git -C "$root" commit -q -m "chore: scratch root [SPEC-000]"
 
@@ -55,7 +55,7 @@ STUB
 chmod +x "$work/bin/bd"
 export PATH="$work/bin:$PATH"
 
-export SPECFORGE_ROOT="$root"
+export NOGGING_ROOT="$root"
 export BD_FIXTURE="$work/beads.json"
 export BD_CREATE_LOG="$work/create.log"
 : >"$BD_CREATE_LOG"
@@ -69,7 +69,7 @@ cat >"$BD_FIXTURE" <<'JSON'
 ]
 JSON
 
-"$specforge" materialize demo >"$out" 2>&1 \
+"$nogg" materialize demo >"$out" 2>&1 \
   || { bad "materialize demo errored"; cat "$out"; }
 
 # --- 1. one create call per unmaterialized task ---------------------------
@@ -122,7 +122,7 @@ cat >"$BD_FIXTURE" <<'JSON'
    "labels": ["openspec:change:demo", "openspec:task:TASK-DEMO-404"]}
 ]
 JSON
-if "$specforge" validate >"$out" 2>&1; then
+if "$nogg" validate >"$out" 2>&1; then
   bad "validate accepted an unresolvable openspec:task label"
 else
   grep -qF 'maps missing task TASK-DEMO-404' "$out" \
@@ -130,7 +130,7 @@ else
     || { bad "validate failed but not with the expected message"; cat "$out"; }
 fi
 
-unset SPECFORGE_ROOT BD_FIXTURE BD_CREATE_LOG
+unset NOGGING_ROOT BD_FIXTURE BD_CREATE_LOG
 
 if [[ $fail -ne 0 ]]; then echo "materialize label-contract checks failed" >&2; exit 1; fi
 echo "all materialize label-contract checks passed"

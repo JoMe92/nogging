@@ -1,4 +1,4 @@
-# SpecForge Codex launch spec — the `trusted` authority level for a
+# Nogging Codex launch spec — the `trusted` authority level for a
 # `session launch --agent codex` session. The Codex-side sibling of
 # trusted.json: it runs without approval prompts (`never`) so a session can
 # execute one named change end to end, while still keeping the workspace-write

@@ -1,6 +1,6 @@
-## Agentsembli SpecForge
+## Nogging
 
-This repository uses the Agentsembli SpecForge operating model. **`AGENTS.md` is the
+This repository uses the Nogging operating model. **`AGENTS.md` is the
 canonical instruction file** — read it (and `docs/nogging/`) for the hard
 rules, the write boundary, and the workflow. This block carries only the one
 detail specific to Claude Code.
@@ -18,4 +18,4 @@ detail specific to Claude Code.
   and its scope; `scripts/nogg orchestrator {run,status,stop,restart}` and
   `.claude/commands/orchestrate.md` drive it.
 
-Update SpecForge with `npx github:JoMe92/agentsembli-specforge update`.
+Update Nogging with `npx github:JoMe92/nogging update`.

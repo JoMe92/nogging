@@ -86,7 +86,7 @@ module.exports = {
     'scripts/hooks/pre-tool-use-openspec-guard',
   ],
 
-  // Lines ensured present in the target .gitignore (under a SpecForge comment).
+  // Lines ensured present in the target .gitignore (under a Nogging comment).
   gitignore: [
     '.nogging/locks/',
     '.nogging/state/',
@@ -96,8 +96,8 @@ module.exports = {
   ],
 
   // Marker block maintained inside CLAUDE.md and AGENTS.md.
-  markerBegin: '<!-- specforge:begin -->',
-  markerEnd: '<!-- specforge:end -->',
+  markerBegin: '<!-- nogging:begin -->',
+  markerEnd: '<!-- nogging:end -->',
 
   // Rendered systemd units: template -> target basename pattern ({slug} filled in).
   systemd: [

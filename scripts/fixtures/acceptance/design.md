@@ -2,7 +2,7 @@
 
 ## Context
 
-This is a fixture change for the SpecForge acceptance runbook. It must be a
+This is a fixture change for the Nogging acceptance runbook. It must be a
 structurally complete OpenSpec change (`proposal` / `design` / `tasks` /
 `specs`) with stable task IDs so `scripts/nogg validate` and
 `scripts/nogg materialize` act on it exactly as they would a real change.
@@ -11,7 +11,7 @@ structurally complete OpenSpec change (`proposal` / `design` / `tasks` /
 
 - Goal: two tasks with stable IDs (`TASK-ACCEPTX-001`, `TASK-ACCEPTX-002`) that
   materialize to exactly two Beads.
-- Goal: nothing here resembles real SpecForge product intent.
+- Goal: nothing here resembles real Nogging product intent.
 - Non-goal: shipping an `echo-note` feature. The tasks are placeholders an
   acceptance run satisfies with a stub closure, not real implementation.
 

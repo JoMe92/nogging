@@ -1,8 +1,8 @@
-# Agentsembli SpecForge
+# Nogging
 
-Agentsembli SpecForge is a lean, local-first operating model for agentic
+Nogging is a lean, local-first operating model for agentic
 software delivery. The compatible command and installed state remain named
-`specforge`.
+`nogg`.
 OpenSpec owns approved product intent, Beads owns executable work, and Git owns
 the implementation. A deterministic sync process mirrors execution evidence
 back into OpenSpec; it never makes product decisions.
@@ -28,7 +28,7 @@ Sync timer ──mechanically mirrors status and evidence──> execution-log.m
 ## Quick start
 
 ```bash
-cd /path/to/specforge
+cd /path/to/nogging
 git switch develop
 ./scripts/install-hooks
 ./scripts/nogg doctor
@@ -50,13 +50,13 @@ running work in supervised host sessions, and
 ## Install into another repo
 
 The first public distribution is GitHub-only. The unscoped npm name
-`specforge` belongs to another project, so this package is marked private and
+`nogg` belongs to another project, so this package is marked private and
 must not be published to the npm registry. Install an exact Agentsembli
-SpecForge GitHub tag instead:
+Nogging GitHub tag instead:
 
 ```bash
 cd /path/to/your-repo
-npx github:JoMe92/agentsembli-specforge#v1.4.0 init      # then: update, doctor
+npx github:JoMe92/nogging#v1.6.0 init      # then: update, doctor
 ```
 
 `init` copies the tool files verbatim, writes an OpenSpec scaffold only where one
@@ -72,7 +72,7 @@ touches `openspec/changes/`, `.beads/`, or your `package.json`. Full details in
 | Intent, requirements, decomposition | OpenSpec | Product Owner / Planning Agent during a planning session |
 | Claims, dependencies, status, discoveries | Beads | Main Worker and specialists |
 | Code and tests | Git worktree | Main Worker and specialists |
-| Execution mirror | OpenSpec execution log | SpecForge sync process only |
+| Execution mirror | OpenSpec execution log | Nogging sync process only |
 
 `open → done → archived` is the entire change lifecycle. Product acceptance is
 an explicit `accepted: true` record, not another workflow state: a change is not
