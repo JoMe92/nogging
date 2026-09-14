@@ -83,3 +83,10 @@
   - Bead note:
     progress: security guide, entry-point links, regression test, and full scripts/test are complete; next commit, record evidence, close, integrate, and sync.
     Implemented in commit 41ec41ffd1bf0e8542a6da0d019afb8dafc9a099. Evidence: scripts/security-docs.test.sh passed; full scripts/test passed, including acceptance, installer, guards, sessions, package, and worktree suites; git diff --check passed.
+
+<!-- nogg:SPEC-r0m3:2026-09-14T18:54:35Z -->
+- 2026-09-14T18:54:43+00:00 — SPEC-r0m3 closed for TASK-PUB-009 (Bead closed at 2026-09-14T18:54:35Z).
+  - implementation commits: 51eeb5ee67ad
+  - Bead note:
+    progress: explicit package allowlist, Pi/security installed docs, clean-index package manifest gate, installer assertions, and full scripts/test are complete; next commit, verify committed clean snapshot, record evidence, close, integrate, and sync.
+    Implemented in commit 51eeb5ee67ad49abb1d070c8f5e1a57f4a095929. Evidence: committed clean-index scripts/package-manifest.test.sh passed; full scripts/test passed; packed installer tests prove Pi and security guides install; forbidden internal/acceptance/cache/generated paths are absent; git diff --check passed.

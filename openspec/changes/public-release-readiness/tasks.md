@@ -16,7 +16,7 @@
 ## 3. Distribution and usability
 
 - [x] TASK-PUB-008 Make the first public distribution explicitly GitHub-only by preventing accidental npm publication and documenting the occupied unscoped npm name; complete package repository/homepage/bugs/author/keywords metadata and verify `npm publish --dry-run` cannot publish while tagged `npx github:` installation still works.
-- [ ] TASK-PUB-009 Replace broad package inclusion with an explicit minimal runtime/user-doc payload, include the missing Pi guide, exclude caches/bytecode/internal research/acceptance history/generated local units, and add a clean-checkout package manifest test that proves every required file and no forbidden file is packed.
+- [x] TASK-PUB-009 Replace broad package inclusion with an explicit minimal runtime/user-doc payload, include the missing Pi guide, exclude caches/bytecode/internal research/acceptance history/generated local units, and add a clean-checkout package manifest test that proves every required file and no forbidden file is packed.
 - [ ] TASK-PUB-010 Add a CLI version command or flag plus tested update-to-tag, rollback-to-tag, and uninstall/removal behavior that preserves target-owned OpenSpec, Beads, config, and unrelated agent settings; verify all lifecycle scenarios in throwaway repositories.
 
 ## 4. Compatibility, CI, and releases
