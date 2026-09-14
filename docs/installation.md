@@ -18,7 +18,7 @@ no private-repository credential.
 | Class | Paths | Behaviour |
 | --- | --- | --- |
 | Tool files | `scripts/nogg`, `scripts/install-hooks`, `scripts/test`, `scripts/*.test.sh`, `scripts/hooks/*`, `.agents/skills/**` | copied verbatim, overwritten on every `init` / `update` |
-| Reference docs | `docs/nogging/{operating-model,architecture,failure-recovery,using-with-codex,worktree-workflow}.md` | copied verbatim; the Pi guide is scheduled for inclusion by TASK-PUB-009 |
+| Reference docs | `docs/nogging/{operating-model,architecture,failure-recovery,security-model,using-with-codex,using-with-pi,worktree-workflow}.md` | copied verbatim |
 | Scaffold | `openspec/config.yaml`, `openspec/project.md`, `.nogging/config.json` | written **only when absent** — never overwritten |
 | Merged | `.claude/settings.json`, `.gitignore`, `CLAUDE.md`, `AGENTS.md`, `.codex/hooks.json` | edited idempotently; your other content is preserved (a `bd`-written `.codex/hooks.json` is never clobbered) |
 | Codex payload | `.codex/rules/nogging.rules`, `.codex/prompts/{plan,discovery-review,sync-now}.md` | copied verbatim; only relevant if you run the loop from Codex — see [`docs/using-with-codex.md`](using-with-codex.md) |
@@ -56,6 +56,15 @@ systemctl --user enable --now "$PWD/systemd/nogg-sync-<slug>.timer"
 `<slug>` with the filenames printed by the installer. Enabling the timer is an
 explicit opt-in; review the generated unit before doing so.
 
+Confirm the pinned package version before changing an installation:
+
+```bash
+npx github:JoMe92/nogging#<tag> --version
+```
+
+The output must equal that tag's semantic version. `version` is an equivalent
+subcommand.
+
 ### Without systemd
 
 Install with `--no-systemd` and run `./scripts/nogg sync --now` when you want
@@ -87,6 +96,8 @@ For rollback, run `update` from the exact preceding supported tag. This restores
 that tag's managed payload while retaining OpenSpec changes, Beads data,
 `.nogging/` state, the configuration name, service filenames, and unrelated
 Claude, Codex, and Pi settings. Do not use an unpinned branch for either step.
+Run the pinned package's `--version` first and record both the version being
+left and the version selected for update or rollback.
 
 ## Removing the installed payload
 
