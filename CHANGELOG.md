@@ -9,6 +9,12 @@ and GitHub Releases for that history.
 
 ## [Unreleased]
 
+## [2.0.0-rc.1] - 2026-09-14
+
+A major version bump: the Nogging rename changes technical identifiers
+(CLI command, state root, commit trailer) that a `v1.x` installation
+relied on — see the compatibility note under Changed.
+
 ### Changed
 
 - **BREAKING**: renamed the project from Agentsembli SpecForge to
