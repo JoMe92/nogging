@@ -30,7 +30,7 @@ function makeContext(opts) {
   const targetRoot = opts.targetRoot || process.cwd();
   if (!fs.existsSync(path.join(targetRoot, '.git'))) {
     const err = new Error(
-      'not a git repository root — run this from the top of the repo you want SpecForge in',
+      'not a git repository root — run this from the top of the repo you want Nogging in',
     );
     err.userFacing = true;
     throw err;
@@ -127,7 +127,7 @@ function installGitHooks(ctx) {
   const configured = (hp.stdout || '').trim();
   if (configured && path.resolve(ctx.targetRoot, configured) !== path.join(ctx.targetRoot, '.git', 'hooks')) {
     ctx.warnings.push(
-      `core.hooksPath is set to "${configured}", so Git will not run the SpecForge\n` +
+      `core.hooksPath is set to "${configured}", so Git will not run the Nogging\n` +
         '  pre-commit and commit-msg boundary hooks from .git/hooks. Install them into\n' +
         `  that directory yourself, or clear core.hooksPath. (scripts/hooks/ hold the sources.)`,
     );
@@ -179,9 +179,9 @@ function readinessVerdict(ctx) {
   const uniq = [...new Set(gaps)];
   process.stdout.write('\n');
   if (uniq.length === 0) {
-    process.stdout.write('Agentsembli SpecForge is ready — run ./scripts/specforge plan-begin to start.\n');
+    process.stdout.write('Nogging is ready — run ./scripts/specforge plan-begin to start.\n');
   } else {
-    process.stdout.write(`Agentsembli SpecForge is installed but not ready: ${uniq.join('; ')}\n`);
+    process.stdout.write(`Nogging is installed but not ready: ${uniq.join('; ')}\n`);
   }
 }
 

@@ -1,11 +1,11 @@
 {
-  "name": "specforge",
+  "name": "nogg",
   "version": "1.6.0",
   "private": true,
-  "description": "Agentsembli SpecForge — a local-first operating model for agentic software delivery",
+  "description": "Nogging — the structural layer for agentic software development",
   "main": "bin/cli.js",
   "bin": {
-    "specforge": "bin/cli.js"
+    "nogg": "bin/cli.js"
   },
   "files": [
     "LICENSE",
@@ -35,15 +35,15 @@
   },
   "scripts": {
     "test": "scripts/test",
-    "prepublishOnly": "node -e \"console.error('SpecForge is distributed from tagged GitHub releases, not the npm registry.'); process.exit(1)\""
+    "prepublishOnly": "node -e \"console.error('Nogging is distributed from tagged GitHub releases, not the npm registry.'); process.exit(1)\""
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/JoMe92/agentsembli-specforge.git"
+    "url": "git+https://github.com/JoMe92/nogging.git"
   },
-  "homepage": "https://github.com/JoMe92/agentsembli-specforge#readme",
+  "homepage": "https://github.com/JoMe92/nogging#readme",
   "bugs": {
-    "url": "https://github.com/JoMe92/agentsembli-specforge/issues"
+    "url": "https://github.com/JoMe92/nogging/issues"
   },
   "keywords": [
     "agentic-development",

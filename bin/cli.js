@@ -9,14 +9,14 @@ const { applyMerges } = require('./lib/merge');
 const { renderSystemd } = require('./lib/systemd');
 const { removeInstallation } = require('./lib/remove');
 
-const USAGE = `specforge — install the Agentsembli SpecForge operating structure into a repo
+const USAGE = `nogg — install the Nogging operating structure into a repo
 
 Usage:
-  npx github:JoMe92/agentsembli-specforge <command> [options]
+  npx github:JoMe92/nogging <command> [options]
 
 Commands:
-  init      Install Agentsembli SpecForge into the current git repository
-  update    Refresh Agentsembli SpecForge tool files and re-apply merges (keeps your
+  init      Install Nogging into the current git repository
+  update    Refresh Nogging tool files and re-apply merges (keeps your
             openspec/changes, openspec/project.md and config name)
   remove    Remove managed payload while preserving project-owned state
   doctor    Run the installed ./scripts/specforge doctor
@@ -71,7 +71,7 @@ function cmdInit(args) {
   const reinstall = fs.existsSync(path.join(ctx.targetRoot, '.specforge/config.json'));
   if (reinstall && !ctx.dryRun) {
     process.stdout.write(
-      'Agentsembli SpecForge is already installed here; re-running init idempotently ' +
+      'Nogging is already installed here; re-running init idempotently ' +
         '(use `update` for routine refreshes).\n',
     );
   }
@@ -123,7 +123,7 @@ function main() {
   try {
     args = parseArgs(process.argv.slice(2));
   } catch (e) {
-    process.stderr.write(`specforge: ${e.message}\n`);
+    process.stderr.write(`nogg: ${e.message}\n`);
     process.exit(2);
   }
 
@@ -139,11 +139,11 @@ function main() {
       case 'remove': cmdRemove(args); break;
       case 'doctor': cmdDoctor(args); break;
       default:
-        process.stderr.write(`specforge: unknown command: ${args.command}\n`);
+        process.stderr.write(`nogg: unknown command: ${args.command}\n`);
         process.exit(2);
     }
   } catch (e) {
-    process.stderr.write(`specforge: ${e.userFacing ? e.message : e.stack || e.message}\n`);
+    process.stderr.write(`nogg: ${e.userFacing ? e.message : e.stack || e.message}\n`);
     process.exit(1);
   }
 }

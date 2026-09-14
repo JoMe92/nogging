@@ -51,10 +51,10 @@ function mergeClaudeSettings(ctx) {
   fsops.writeFile(rel, JSON.stringify(data, null, 2) + '\n', ctx);
 }
 
-// Codex hook entries SpecForge wants wired into `.codex/hooks.json`, keyed by
+// Codex hook entries Nogging wants wired into `.codex/hooks.json`, keyed by
 // event. Empty today: `bd init` already writes a `bd codex-hook SessionStart`
 // entry that primes Beads context — the same job the Claude `SessionStart:
-// bd prime` hook does — so SpecForge adds nothing of its own. The constant and
+// bd prime` hook does — so Nogging adds nothing of its own. The constant and
 // the merge loop below are the seam: a later need appends its desired entries
 // here and they are wired in by matching on `hooks.<event>[].command`, exactly
 // as mergeClaudeSettings matches the guard entry. The merge only ever appends —
@@ -117,7 +117,7 @@ function mergeCodex(ctx) {
   }
 }
 
-// Ensure the SpecForge ignore lines are present, once, under a comment header.
+// Ensure the Nogging ignore lines are present, once, under a comment header.
 function mergeGitignore(ctx) {
   const rel = '.gitignore';
   const cur = fsops.readTarget(rel, ctx) || '';
@@ -132,11 +132,11 @@ function mergeGitignore(ctx) {
   let next = cur;
   if (next !== '' && !next.endsWith('\n')) next += '\n';
   if (next !== '' && !next.endsWith('\n\n')) next += '\n';
-  next += '# SpecForge\n' + missing.join('\n') + '\n';
+  next += '# Nogging\n' + missing.join('\n') + '\n';
   fsops.writeFile(rel, next, ctx);
 }
 
-// Insert or replace the SpecForge block delimited by the manifest markers.
+// Insert or replace the Nogging block delimited by the manifest markers.
 // Content outside the markers is never touched.
 function mergeMarkerBlock(ctx, rel, body) {
   const begin = manifest.markerBegin;
