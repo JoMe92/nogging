@@ -57,3 +57,22 @@
   - Bead note:
     progress: paused before file edits; next step is governance/community files after the owner-facing product-name research and follow-up planning session resolve whether public metadata should use a new name
     Public project metadata cannot be finalized coherently until the product identity decision is made. Preliminary search found the current unscoped npm name occupied by an unrelated hardware product; owner requested a separately documented concept and claimability research. Resume after the product-identity planning decision.
+
+<!-- nogg:SPEC-exvr:2026-09-14T18:37:43Z -->
+- 2026-09-14T18:42:49+00:00 — SPEC-exvr closed for TASK-PUB-005 (Bead closed at 2026-09-14T18:37:43Z).
+  - implementation commits: c7c028c34971, 80088fc
+  - Bead note:
+    Plan revision 80088fc: keep SpecForge as the standalone public project name; Agentsembli is only a provisional ecosystem working name; Agent Console is optional; README must directly link Gas Town and Beads, credit Gas Town as conceptual inspiration, and state independent implementation, non-affiliation, and that only Beads is currently adopted. No website, repository rename, or Agent Console install may be required.
+    Retitled during OpenSpec reconciliation after rename-to-nogging: README base is now written by TASK-NOG-010, this task covers only the remaining readiness sections.
+    progress: Context and dependencies reviewed; next allocate the implementation worktree, extend README with the remaining public-readiness sections, and verify the standalone quick start in a fresh repository.
+    Non-blocking discovery for TASK-PUB-006: docs/project-identity.md still says Agentsembli qualifies Nogging and lists sf-<role>-<bead>-<nonce> session identifiers, although the rename established the Nogging identity and nogg-prefixed runtime surface. Reconcile that document under the installation/operations documentation task; PUB-005 remains scoped to README and its verification.
+    Completed in commit c7c028c34971e89245ecee7c861ab354e101f62a. README now states maturity and audience, honest Linux/agent support boundaries, a pinned standalone quick start, safety warning, documentation index, Gas Town/Beads provenance and non-affiliation, and optional Agent Console. Verification: local fresh Git repository installed with default Beads initialization using the checkout equivalent of the pinned command; ./scripts/nogg doctor and validate passed; README relative links and required statements are enforced by scripts/nogging-identity.test.sh; full scripts/test passed.
+
+<!-- nogg:SPEC-wkiz:2026-09-14T18:41:54Z -->
+- 2026-09-14T18:42:49+00:00 — SPEC-wkiz closed for TASK-PUB-006 (Bead closed at 2026-09-14T18:41:54Z).
+  - implementation commits: d850b951d992
+  - Bead note:
+    progress: PUB-005 is integrated and green; next reconcile installation and operations docs against current CLI/manifest behavior in an isolated task worktree, then verify help and a fresh install.
+    Non-blocking dependency discovery for TASK-PUB-009: bin/lib/manifest.js installs operating-model, architecture, failure-recovery, using-with-codex, and worktree-workflow under docs/nogging, but not docs/using-with-pi.md. Installed operating-model prose links to using-with-pi.md, so the installed link is currently absent. PUB-006 will document the current payload accurately; PUB-009 already explicitly owns adding the missing Pi guide and package-manifest enforcement.
+    Correction to the discovery note after source verification: sf-<role>-<bead>-<nonce> remains the intentional ordinary supervised-session shape in scripts/nogg; only the singleton orchestrator was renamed to nogg-orchestrator-<slug>. No session-name documentation change is needed. The stale Agentsembli qualifier wording remains a valid PUB-006 documentation correction.
+    Completed in commit d850b951d9925cf15480773a2fbc1bdd688439c8. Reconciled installation and identity docs with pinned GitHub installation, automatic Beads init/--no-beads, Claude/Codex/Pi payloads and prerequisites, slugged sync/orchestrator units, three-hook core.hooksPath collision, pinned update/rollback/remove, and non-systemd operation. Added scripts/installation-docs.test.sh, which compares flags to CLI help and verifies fresh installs with rendered units and --no-systemd. Focused test and full scripts/test pass.
