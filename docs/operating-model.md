@@ -18,31 +18,35 @@ that holds the loop the Product Owner would otherwise hold by hand.
 
 The Main Worker session runs as the **Lead Agent** persona. It has full
 read/write on Beads but **read-only** access to OpenSpec — only the Planning
-Agent writes there. For each Bead the Lead Agent follows this path (section 7 of
-the concept conversation):
+Agent writes there. It never implements in the shared `develop` checkout: after
+claiming a Bead it allocates a dedicated worktree from updated `develop`, on a
+conventional implementation branch, and performs all edits, checks, and commits
+there. For each Bead the Lead Agent follows this path:
 
 1. `bd ready` — find available work.
 2. `bd update <id> --claim` — claim one Bead.
 3. `bd show <id>` — this returns the Bead's `openspec:task:<TASK-ID>` label (and
    `openspec:change:<name>`).
-4. **Targeted context** — read only the one task line that
+4. **Allocate the implementation worktree** — update `develop`, create a
+   conventional branch, and use no other agent's worktree.
+5. **Targeted context** — read only the one task line that
    `openspec:task:<TASK-ID>` resolves to in
    `openspec/changes/<name>/tasks.md`, plus the referenced spec excerpt under
    `specs/`. The Lead Agent does not read the whole `proposal.md` / `design.md`.
-5. Read the code context from the repo itself.
-6. **Decide: implement directly or delegate.** For genuinely isolated work the
+6. Read the code context from the repo itself.
+7. **Decide: implement directly or delegate.** For genuinely isolated work the
    Lead Agent delegates to exactly one of the six specialists in
    `.claude/agents/` via the Task tool, passing the Bead ID, the task slice, and
    the spec excerpt. Delegating trivial work loses context, so it is the
    exception. `architect` and `code-reviewer` are advisory; `ui-ux-designer`
    produces a specification; `backend-engineer` / `frontend-engineer` implement;
    `test-runner` runs and extends tests.
-7. Request tests and a review pass (`test-runner`, `code-reviewer`) as needed.
-8. If a specialist surfaces a plan-relevant finding, the Lead Agent records the
+8. Request tests and a review pass (`test-runner`, `code-reviewer`) as needed.
+9. If a specialist surfaces a plan-relevant finding, the Lead Agent records the
    discovery (`bd update <id> --add-label discovery --append-notes "<prose>"`;
    `--status blocked` and move to the next independent Bead if it blocks). A
    specialist never labels or re-statuses the Bead itself.
-9. Validate, write the evidence note with the commit SHA, commit with the
+10. Validate, write the evidence note with the commit SHA, commit with the
    `[<ID>]` token, and `bd close <id>`. The sync timer then mirrors the closure
    into `execution-log.md`.
 
@@ -70,7 +74,7 @@ reimplement the planning lock, discovery sorting, or sync.
 
 | Command | May do | May **not** do |
 | --- | --- | --- |
-| `/plan` (`plan.md`) | Enter the Planning Agent persona and run one planning session in the fixed order: `plan-begin` → discovery review → design dialogue → author/revise the change → `validate` → commit `openspec/` as the `planning` writer → `materialize <change>` → `plan-end`. The commit precedes `materialize` so a crash between them never leaves Beads without a committed spec (`materialize` is idempotent). Consult the `architect` specialist for architecture questions. | Force a planning lock another session holds (report the holder and stop). Do any execution work. Auto-delete an orphaned Bead — stop and ask the Product Owner. |
+| `/plan` (`plan.md`) | Allocate `plan/<planning-id>/<description>` from updated `origin/develop`, then in that isolated worktree run `plan-begin` → discovery review → design dialogue → author/revise → `validate` → commit `openspec/` as the `planning` writer → `materialize <change>` → fast-forward integrate into `develop` → safe cleanup → `plan-end`. The commit precedes `materialize`, so a crash between them never leaves Beads without a committed spec (`materialize` is idempotent). Consult the `architect` specialist for architecture questions. | Write planning artifacts in the shared checkout; force a planning lock another session holds; clean a dirty or unintegrated planning worktree; do execution work; or auto-delete an orphaned Bead. |
 | `/discovery-review` (`discovery-review.md`) | Run `scripts/specforge discoveries` and render it unchanged (blocking first). Per discovery, offer: carry into a `/plan` session, acknowledge via `scripts/specforge discoveries --ack <id>`, or leave pending. | Acquire the planning lock. Create or modify any file under `openspec/`. |
 | `/sync-now` (`sync-now.md`) | Run `scripts/specforge sync --now`: signal a resident sync daemon if one exists, else run one reconciliation pass directly. | Retry, loop, or `--force` when the 30-second timer holds the sync lock — report the contention and stop. |
 
@@ -155,11 +159,11 @@ the protocol tool-neutrally; `doctor` also prints a one-line `recover` summary.
 branch. `main` and `develop` are protected and exempt from the branch-naming
 convention below.
 
-Every other working branch is named `<type>/<slug>`:
+Every implementation branch is named `<type>/<slug>`; every planning branch is
+named `plan/<planning-id>/<description>`:
 
-- `<type>` is one of `feat`, `fix`, `chore`, `docs`, `refactor`, `perf`,
-  `test`, or `plan`. All but `plan` are Conventional Commit types; `plan` is
-  reserved for a planning-session branch.
+- `<type>` is one of `feat`, `fix`, `chore`, `docs`, `refactor`, `perf`, or
+  `test`.
 - A **change branch** — one that advances an OpenSpec change — MUST use that
   change's directory name as its `<slug>`, matching a live
   `openspec/changes/<slug>/` or an archived
@@ -167,9 +171,10 @@ Every other working branch is named `<type>/<slug>`:
   change was archived does not start failing; never the literal `archive`).
   This is what makes the branch traceable to agreed intent. Any of the `<type>`
   values may front a change branch, e.g. `feat/dark-mode-toggle`.
-- `chore/<topic>` and `plan/<topic>` cover work not scoped to a single change —
-  tooling, multi-change planning. `<topic>` is a free kebab slug and needs no
-  `openspec/changes/` match.
+- `chore/<topic>` covers work not scoped to a single change. `<topic>` is a
+  free kebab slug and needs no `openspec/changes/` match. `plan` is reserved
+  for an isolated planning worktree: both `<planning-id>` and `<description>`
+  are kebab-case, such as `plan/agent-runtime/parallel-execution`.
 
 `scripts/check-branch-name <ref>` is the one implementation of this rule; the
 `pre-push` hook and the CI `invariants` job both call it and neither re-encodes
@@ -194,6 +199,14 @@ update; it never pushes. Its mirror commit is
 trailer.
 
 ## Acceptance
+
+## Requested review changes
+
+The Lead Agent classifies post-review requests autonomously. A small change
+that does not materially alter architecture, interfaces, or scope creates and
+resolves a Bead on the existing implementation branch and restores green CI.
+A large or uncertain change starts a new planning session in a dedicated
+planning worktree; it is not implemented directly on the existing PR branch.
 
 A change is not **accepted** just because its Beads are closed and CI is green.
 Acceptance is an explicit, human act recorded in a signed report.

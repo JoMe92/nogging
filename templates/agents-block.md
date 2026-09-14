@@ -37,10 +37,12 @@ with the Main Worker, and no delegated context may write `openspec/`.
 
 ### Planning only
 
-The Planning Agent runs `./scripts/specforge plan-begin`, writes or revises
-OpenSpec, runs `./scripts/specforge validate`, commits with
-`SPECFORGE_WRITER=planning`, materializes Beads
-(`./scripts/specforge materialize <change>`), then runs
+The Planning Agent first allocates `./scripts/specforge worktree plan
+<planning-id> <description>` from updated `origin/develop` and works only in
+that worktree. It runs `plan-begin`, writes or revises OpenSpec, validates,
+commits with `SPECFORGE_WRITER=planning`, materializes Beads
+(`./scripts/specforge materialize <change>`), fast-forward integrates the plan
+into `develop`, safely retires only a clean integrated worktree, then runs
 `./scripts/specforge plan-end`. The commit precedes `materialize` so a crash
 between them never leaves Beads without a committed spec.
 

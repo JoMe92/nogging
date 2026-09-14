@@ -10,16 +10,19 @@
 #
 # Convention:
 #   - `main` and `develop` are protected and always valid.
-#   - Every other branch is `<type>/<slug>` with <type> in
-#     {feat, fix, chore, docs, refactor, perf, test, plan}.
-#   - `chore/<topic>` and `plan/<topic>` take a free kebab <topic>.
+#   - A planning branch is `plan/<planning-id>/<description>`, where both
+#     components are kebab-case. This makes its planning purpose and isolated
+#     worktree intent visible without coupling it to an OpenSpec change name.
+#   - Every non-planning branch is `<type>/<slug>` with <type> in
+#     {feat, fix, chore, docs, refactor, perf, test}.
+#   - `chore/<topic>` takes a free kebab <topic>.
 #   - Every other <type> is a change branch: <slug> MUST match a live
 #     openspec/changes/<slug>/ or an archived openspec/changes/archive/*-<slug>/
 #     directory (never `archive` itself).
 #   - An unresolvable ref (detached HEAD, empty head_ref) fails closed.
 set -euo pipefail
 
-types='feat|fix|chore|docs|refactor|perf|test|plan'
+types='feat|fix|chore|docs|refactor|perf|test'
 
 ref="${1-}"
 ref="${ref#refs/heads/}"
@@ -28,10 +31,10 @@ root=$(git rev-parse --show-toplevel 2>/dev/null) || root=$(cd "$(dirname "${BAS
 
 usage() {
   {
-    echo "SpecForge: branch name must be <type>/<slug>."
-    echo "  <type> is one of: feat, fix, chore, docs, refactor, perf, test, plan"
+    echo "SpecForge: branch name must be <type>/<slug>, or plan/<planning-id>/<description>."
+    echo "  <type> is one of: feat, fix, chore, docs, refactor, perf, test"
     echo "  a change branch's <slug> must equal an openspec/changes/<slug>/ directory name"
-    echo "  chore/<topic> and plan/<topic> take a free kebab <topic>"
+    echo "  chore/<topic> takes a free kebab topic; planning IDs and descriptions are kebab-case"
     echo "  main and develop are exempt"
   } >&2
 }
@@ -46,6 +49,10 @@ if [[ "$ref" == "main" || "$ref" == "develop" ]]; then
   exit 0
 fi
 
+if [[ "$ref" =~ ^plan/([a-z0-9]+(-[a-z0-9]+)*)/([a-z0-9]+(-[a-z0-9]+)*)$ ]]; then
+  exit 0
+fi
+
 if ! [[ "$ref" =~ ^($types)/([a-z0-9]+(-[a-z0-9]+)*)$ ]]; then
   echo "SpecForge: branch '$ref' does not match <type>/<slug>." >&2
   usage
@@ -55,7 +62,7 @@ fi
 type="${BASH_REMATCH[1]}"
 slug="${BASH_REMATCH[2]}"
 
-if [[ "$type" == "chore" || "$type" == "plan" ]]; then
+if [[ "$type" == "chore" ]]; then
   exit 0
 fi
 
@@ -76,6 +83,6 @@ for d in "$root"/openspec/changes/archive/*-"$slug"; do
 done
 
 echo "SpecForge: branch '$ref' is a change branch but no openspec/changes/$slug/ (live or archived) exists." >&2
-echo "  Rename the branch to match its change directory, or use chore/<topic> / plan/<topic>." >&2
+echo "  Rename the branch to match its change directory, use chore/<topic>, or use plan/<planning-id>/<description>." >&2
 usage
 exit 1

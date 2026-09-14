@@ -18,6 +18,7 @@ module.exports = {
     'scripts/install-hooks',
     'scripts/test',
     'scripts/specforge.test.sh',
+    'scripts/worktree-workflow.test.sh',
     'scripts/check-branch-name',
     'scripts/hooks/commit-msg',
     'scripts/hooks/pre-commit',
@@ -59,6 +60,7 @@ module.exports = {
     { from: 'docs/architecture.md', to: 'docs/specforge/architecture.md' },
     { from: 'docs/failure-recovery.md', to: 'docs/specforge/failure-recovery.md' },
     { from: 'docs/using-with-codex.md', to: 'docs/specforge/using-with-codex.md' },
+    { from: 'docs/worktree-workflow.md', to: 'docs/specforge/worktree-workflow.md' },
   ],
 
   // Written only when the destination does not already exist.

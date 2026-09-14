@@ -216,6 +216,91 @@ install_bd_stub
 
 count() { grep -cF -- "$2" "$1" || true; }
 
+# --- planning worktree allocation is isolated and collision-safe -----------
+root="$work/wt-plan"; make_root "$root"
+remote="$work/wt-plan-origin.git"; git init -q --bare "$remote"
+git -C "$root" branch develop
+git -C "$root" remote add origin "$remote"
+git -C "$root" push -q origin develop
+head_before="$(git -C "$root" rev-parse HEAD)"
+branch_before="$(git -C "$root" branch --show-current)"
+destination="$work/wt-plan-destination"
+export SPECFORGE_ROOT="$root"
+"$specforge" worktree plan agent-runtime parallel-execution --path "$destination" >"$out" 2>&1 \
+  || { echo "FAIL - wt-plan: allocation errored"; cat "$out"; fail=1; }
+[[ "$(git -C "$root" rev-parse HEAD)" == "$head_before" && "$(git -C "$root" branch --show-current)" == "$branch_before" ]] \
+  && echo "ok   - wt-plan: shared checkout HEAD and branch are unchanged" \
+  || { echo "FAIL - wt-plan: shared checkout was modified"; fail=1; }
+[[ "$(git -C "$destination" branch --show-current)" == "plan/agent-runtime/parallel-execution" ]] \
+  && echo "ok   - wt-plan: dedicated hierarchical planning branch created" \
+  || { echo "FAIL - wt-plan: planning branch missing"; git -C "$destination" branch --show-current 2>/dev/null || true; fail=1; }
+record="$root/.specforge/state/worktrees/plan--agent-runtime--parallel-execution.json"
+grep -qF '"state": "allocated"' "$record" \
+  && echo "ok   - wt-plan: durable allocated record written" \
+  || { echo "FAIL - wt-plan: durable record missing or incomplete"; cat "$record" 2>/dev/null || true; fail=1; }
+rc=0; "$specforge" worktree plan agent-runtime parallel-execution --path "$destination" >"$out" 2>&1 || rc=$?
+[[ "$rc" -ne 0 ]] \
+  && echo "ok   - wt-plan: duplicate allocation is refused before overwrite" \
+  || { echo "FAIL - wt-plan: duplicate allocation should fail"; fail=1; }
+check "wt-plan: duplicate reports durable collision" "planning allocation record already exists"
+git -C "$root" worktree remove --force "$destination"
+unset SPECFORGE_ROOT
+
+# --- implementation worktrees require a claimed Bead and clean safe cleanup -
+root="$work/wt-implementation"; make_root "$root"
+remote="$work/wt-implementation-origin.git"; git init -q --bare "$remote"
+git -C "$root" branch develop
+git -C "$root" remote add origin "$remote"
+git -C "$root" push -q origin develop
+export SPECFORGE_ROOT="$root"
+export BD_FIXTURE="$work/wt-implementation-beads.json"
+printf '[{"id":"SPEC-impl","status":"in_progress","labels":[]}]\n' >"$BD_FIXTURE"
+destination="$work/wt-implementation-destination"
+"$specforge" worktree implement SPEC-impl feat/demo --path "$destination" >"$out" 2>&1 \
+  || { echo "FAIL - wt-implementation: allocation errored"; cat "$out"; fail=1; }
+[[ "$(git -C "$destination" branch --show-current)" == "feat/demo" ]] \
+  && echo "ok   - wt-implementation: claimed Bead receives its own conventional branch" \
+  || { echo "FAIL - wt-implementation: branch missing"; fail=1; }
+other="$work/wt-implementation-other"
+rc=0; "$specforge" worktree implement SPEC-other feat/other --path "$destination" >"$out" 2>&1 || rc=$?
+[[ "$rc" -ne 0 ]] && echo "ok   - wt-implementation: concurrent allocation cannot reuse another path" \
+  || { echo "FAIL - wt-implementation: concurrent path reuse should fail"; fail=1; }
+record="implementation--spec-impl.json"
+"$specforge" worktree cleanup "$record" >"$out" 2>&1 \
+  && echo "ok   - wt-implementation: clean develop-integrated branch is retired" \
+  || { echo "FAIL - wt-implementation: safe cleanup errored"; cat "$out"; fail=1; }
+[[ ! -e "$destination" && ! -e "$root/.specforge/state/worktrees/$record" ]] \
+  && echo "ok   - wt-implementation: cleanup removes only the recorded clean worktree" \
+  || { echo "FAIL - wt-implementation: cleanup left recorded artifacts"; fail=1; }
+unset SPECFORGE_ROOT BD_FIXTURE
+
+# --- PR handoff uses gh and never invokes a merge command ------------------
+root="$work/pr-handoff"; make_root "$root"
+git -C "$root" checkout -q -b feat/demo
+export SPECFORGE_ROOT="$root"
+cat >"$work/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"$GH_CALLS"
+if [[ "$*" == "pr list"* ]]; then echo '[]'; else echo 'https://github.example/pr/42'; fi
+STUB
+chmod +x "$work/bin/gh"
+export GH_CALLS="$work/pr-calls"
+"$specforge" pr open --plan demo --task TASK-DEMO-001 --decision "isolated state" --validation "scripts/test" >"$out" 2>&1 \
+  || { echo "FAIL - pr-handoff: PR helper errored"; cat "$out"; fail=1; }
+check "pr-handoff: prints the created PR URL" "https://github.example/pr/42"
+grep -qF 'pr create --base develop --head feat/demo' "$GH_CALLS" \
+  && echo "ok   - pr-handoff: creates a PR targeting develop" \
+  || { echo "FAIL - pr-handoff: create arguments missing"; cat "$GH_CALLS"; fail=1; }
+if grep -qi 'merge' "$GH_CALLS"; then echo "FAIL - pr-handoff: helper invoked merge"; fail=1; else echo "ok   - pr-handoff: helper never invokes merge"; fi
+[[ -f "$root/.specforge/state/pull-requests/feat-demo.json" ]] \
+  && echo "ok   - pr-handoff: durable PR state recorded" \
+  || { echo "FAIL - pr-handoff: PR state missing"; fail=1; }
+"$specforge" pr ci >"$out" 2>&1 \
+  || { echo "FAIL - pr-handoff: premature CI inspection errored"; cat "$out"; fail=1; }
+check "pr-handoff: initial CI inspection is durably delayed" "CI initial inspection pending until"
+rm -f "$work/bin/gh"; unset SPECFORGE_ROOT GH_CALLS
+
 # --- Scenario: a closed mapped Bead is mirrored exactly once ----------------
 root="$work/sync-once"; make_root "$root"
 git -C "$root" commit -q --allow-empty -m "feat(demo): first demo thing [SPEC-d01]"
@@ -975,6 +1060,48 @@ export BD_STUB_DIR="$root"
   && echo "ok   - rec-clean: recover exits zero on a clean repo" \
   || { echo "FAIL - rec-clean: recover exited non-zero on a clean repo"; cat "$out"; fail=1; }
 check "rec-clean: says nothing is in flight" "nothing in flight"
+unset SPECFORGE_ROOT BD_FIXTURE BD_STUB_DIR
+
+# --- develop mappings remain valid from a shared main checkout -----------
+root="$work/rec-develop-fallback"; make_root "$root"
+git -C "$root" branch -M main
+git -C "$root" checkout -q -b develop
+cat >"$root/openspec/changes/demo/tasks.md" <<'MD'
+# Tasks
+
+- [ ] TASK-DEVELOP-001 Planned only on develop
+MD
+git -C "$root" add openspec/changes/demo/tasks.md
+git -C "$root" commit -q -m "docs: add develop-only task"
+git -C "$root" checkout -q main
+export SPECFORGE_ROOT="$root"
+export BD_FIXTURE="$work/rec-develop-fallback-beads.json"
+export BD_STUB_DIR="$root"
+cat >"$BD_FIXTURE" <<'JSON'
+[
+  {"id": "SPEC-dev", "status": "open",
+   "labels": ["openspec:change:demo", "openspec:task:TASK-DEVELOP-001"]}
+]
+JSON
+"$specforge" recover >"$out" 2>&1 \
+  && echo "ok   - rec-develop: develop-only task is not orphaned from main" \
+  || { echo "FAIL - rec-develop: develop-only task was orphaned"; cat "$out"; fail=1; }
+refute "rec-develop: no missing-task diagnostic" "maps missing task TASK-DEVELOP-001"
+unset SPECFORGE_ROOT BD_FIXTURE BD_STUB_DIR
+
+# --- interrupted worktree allocations remain visible --------------------
+root="$work/rec-worktree-record"; make_root "$root"
+mkdir -p "$root/.specforge/state/worktrees"
+cat >"$root/.specforge/state/worktrees/impl.json" <<'JSON'
+{"branch":"feat/demo","path":"/missing/specforge-worktree"}
+JSON
+export SPECFORGE_ROOT="$root"
+export BD_FIXTURE="$work/rec-worktree-record-beads.json"; printf '[]\n' >"$BD_FIXTURE"
+export BD_STUB_DIR="$root"
+"$specforge" recover >"$out" 2>&1 \
+  && { echo "FAIL - rec-worktree: missing record must need attention"; cat "$out"; fail=1; } \
+  || echo "ok   - rec-worktree: missing recorded worktree needs attention"
+check "rec-worktree: names missing worktree record" "recorded feat/demo at /missing/specforge-worktree is missing"
 unset SPECFORGE_ROOT BD_FIXTURE BD_STUB_DIR
 
 # --- a committed-but-open Bead is LIMBO and exits non-zero ---------------

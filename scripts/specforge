@@ -14,6 +14,8 @@ from pathlib import Path
 ROOT = Path(os.environ.get("SPECFORGE_ROOT") or Path(__file__).resolve().parents[1]).resolve()
 CFG = json.loads((ROOT / ".specforge/config.json").read_text())
 LOCKS, STATE, REPORTS = (ROOT / ".specforge/locks", ROOT / ".specforge/state", ROOT / ".specforge/reports")
+WORKTREE_STATE = STATE / "worktrees"
+PR_STATE = STATE / "pull-requests"
 TASK_RE = re.compile(r"^- \[[ x]\] (TASK-[A-Z0-9-]+)\s+(.+)$", re.M)
 # Beads scopes `bd list` to non-closed issues by default. The mechanical sync
 # must see closed mapped Beads too (a closed Bead is exactly what gets mirrored),
@@ -35,6 +37,220 @@ def run(*args, check=True, env=None):
         raise ToolError(f"{' '.join(args)}: {result.stderr.strip() or result.stdout.strip()}")
     return result
 def data_dir(path): path.mkdir(parents=True, exist_ok=True); return path
+KEBAB_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+def require_kebab(value, label):
+    if not KEBAB_RE.fullmatch(value or ""):
+        raise RuntimeError(f"{label} must be a non-empty kebab-case value")
+    return value
+def worktree_record_path(kind, identifier, description):
+    return WORKTREE_STATE / f"{kind}--{identifier}--{description}.json"
+def write_worktree_record(path, record):
+    """Atomically persist allocation intent before mutating Git worktrees."""
+    data_dir(path.parent)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
+    os.replace(tmp, path)
+def worktree_records():
+    """Read durable worktree records without mutating state.
+
+    Allocation commands create these records in a later lifecycle task; recovery
+    already understands them so an interrupted allocation remains visible.
+    """
+    out = []
+    if not WORKTREE_STATE.is_dir(): return out
+    for path in sorted(WORKTREE_STATE.glob("*.json")):
+        try:
+            record = json.loads(path.read_text())
+        except (ValueError, OSError):
+            out.append((path, None)); continue
+        out.append((path, record if isinstance(record, dict) else None))
+    return out
+def recorded_worktree_lines():
+    """Read-only reconciliation of durable records with Git's worktree list."""
+    known = set()
+    result = run("git", "worktree", "list", "--porcelain", check=False)
+    if result.returncode == 0:
+        known = {line[9:] for line in result.stdout.splitlines() if line.startswith("worktree ")}
+    lines, attention = [], []
+    for path, record in worktree_records():
+        if record is None:
+            lines.append(f"{path.name}: unreadable worktree record")
+            attention.append("unreadable worktree record")
+            continue
+        location, branch = record.get("path"), record.get("branch")
+        if not isinstance(location, str) or not isinstance(branch, str):
+            lines.append(f"{path.name}: incomplete worktree record")
+            attention.append("incomplete worktree record")
+        elif location not in known:
+            lines.append(f"{path.name}: recorded {branch} at {location} is missing")
+            attention.append("missing recorded worktree")
+    return lines, attention
+def git_worktree_paths():
+    result = run("git", "worktree", "list", "--porcelain", check=False)
+    if result.returncode:
+        raise RuntimeError("could not inspect existing Git worktrees")
+    return {line[9:] for line in result.stdout.splitlines() if line.startswith("worktree ")}
+def branch_exists(branch):
+    return run("git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch}",
+               check=False).returncode == 0
+def planning_worktree(planning_id, description, location=None):
+    """Allocate an isolated planning worktree from a freshly fetched develop."""
+    planning_id = require_kebab(planning_id, "planning ID")
+    description = require_kebab(description, "planning description")
+    branch = f"plan/{planning_id}/{description}"
+    location = Path(location).expanduser().resolve() if location else (
+        ROOT.parent / f"{ROOT.name}-plan-{planning_id}-{description}")
+    record_path = worktree_record_path("plan", planning_id, description)
+    if record_path.exists():
+        raise RuntimeError(f"planning allocation record already exists: {record_path.relative_to(ROOT)}")
+    if location.exists():
+        raise RuntimeError(f"planning worktree path already exists: {location}")
+    if str(location) in git_worktree_paths():
+        raise RuntimeError(f"planning worktree path is already registered: {location}")
+    if branch_exists(branch):
+        raise RuntimeError(f"planning branch already exists: {branch}")
+    fetched = run("git", "fetch", "origin", "develop", check=False)
+    if fetched.returncode:
+        raise RuntimeError("could not update origin/develop before allocating a planning worktree")
+    base = resolve_ref("origin/develop")
+    if base is None:
+        raise RuntimeError("origin/develop does not resolve after fetch")
+    record = {"branch": branch, "created_at": now(), "description": description,
+              "kind": "planning", "path": str(location), "planning_id": planning_id,
+              "state": "allocating", "base_ref": base}
+    # Persist intent first, so an interruption during `git worktree add` is
+    # diagnosable rather than silently losing the allocation request.
+    write_worktree_record(record_path, record)
+    run("git", "worktree", "add", "-b", branch, str(location), base)
+    record["state"] = "allocated"
+    record["allocated_at"] = now()
+    write_worktree_record(record_path, record)
+    print(f"planning worktree allocated: {location}")
+    print(f"branch: {branch} (from {base})")
+    print(f"record: {record_path.relative_to(ROOT)}")
+IMPLEMENT_BRANCH_RE = re.compile(r"^(feat|fix|chore|docs|refactor|perf|test)/[a-z0-9]+(?:-[a-z0-9]+)*$")
+def claimed_bead(bead_id):
+    matches = [issue for issue in beads() if str(issue_id(issue)) == bead_id]
+    if not matches or matches[0].get("status") != "in_progress":
+        raise RuntimeError(f"implementation worktree requires an in_progress claimed Bead: {bead_id}")
+    return matches[0]
+def implementation_worktree(bead_id, branch, location=None):
+    """Allocate a per-Bead implementation checkout without touching develop."""
+    if not IMPLEMENT_BRANCH_RE.fullmatch(branch or ""):
+        raise RuntimeError("implementation branch must use a conventional <type>/<kebab-slug> form")
+    claimed_bead(bead_id)
+    safe_id = re.sub(r"[^a-z0-9-]", "-", bead_id.lower())
+    location = Path(location).expanduser().resolve() if location else ROOT.parent / f"{ROOT.name}-{safe_id}"
+    record_path = WORKTREE_STATE / f"implementation--{safe_id}.json"
+    if record_path.exists():
+        raise RuntimeError(f"implementation allocation record already exists: {record_path.relative_to(ROOT)}")
+    if location.exists() or str(location) in git_worktree_paths():
+        raise RuntimeError(f"implementation worktree path already exists: {location}")
+    if branch_exists(branch):
+        raise RuntimeError(f"implementation branch already exists: {branch}")
+    fetched = run("git", "fetch", "origin", "develop", check=False)
+    if fetched.returncode:
+        raise RuntimeError("could not update origin/develop before allocating an implementation worktree")
+    base = resolve_ref("origin/develop")
+    if base is None: raise RuntimeError("origin/develop does not resolve after fetch")
+    record = {"bead_id": bead_id, "branch": branch, "created_at": now(),
+              "kind": "implementation", "path": str(location), "state": "allocating", "base_ref": base}
+    write_worktree_record(record_path, record)
+    run("git", "worktree", "add", "-b", branch, str(location), base)
+    record["state"], record["allocated_at"] = "allocated", now()
+    write_worktree_record(record_path, record)
+    print(f"implementation worktree allocated: {location}")
+    print(f"branch: {branch} (from {base}; Bead {bead_id})")
+    print(f"record: {record_path.relative_to(ROOT)}")
+def cleanup_worktree(record_name):
+    """Retire only a clean recorded worktree whose branch reached develop."""
+    path = WORKTREE_STATE / record_name
+    if path.suffix != ".json" or path.parent != WORKTREE_STATE or not path.is_file():
+        raise RuntimeError("cleanup requires one existing .specforge/state/worktrees/*.json record name")
+    try: record = json.loads(path.read_text())
+    except (ValueError, OSError): raise RuntimeError(f"unreadable worktree record: {path.name}")
+    location, branch = record.get("path"), record.get("branch")
+    if not isinstance(location, str) or not isinstance(branch, str):
+        raise RuntimeError(f"incomplete worktree record: {path.name}")
+    target = Path(location)
+    if str(target) not in git_worktree_paths() or not target.is_dir():
+        raise RuntimeError(f"recorded worktree is not available for safe cleanup: {target}")
+    if run("git", "-C", str(target), "status", "--porcelain", check=False).stdout.strip():
+        raise RuntimeError(f"refusing to clean dirty worktree: {target}")
+    develop = resolve_ref("develop") or resolve_ref("origin/develop")
+    if develop is None or run("git", "merge-base", "--is-ancestor", branch, develop, check=False).returncode:
+        raise RuntimeError(f"refusing to clean branch not integrated into develop: {branch}")
+    run("git", "worktree", "remove", str(target))
+    # The explicit merge-base check above is authoritative. `branch -d` may
+    # still reject a safely integrated branch when its upstream is the older
+    # origin/develop, so delete the exact verified local ref without consulting
+    # that stale upstream relationship.
+    run("git", "branch", "-D", branch)
+    path.unlink()
+    print(f"worktree retired: {target} ({branch})")
+def current_branch():
+    out = run("git", "branch", "--show-current", check=False).stdout.strip()
+    if not out or out == "develop":
+        raise RuntimeError("pull requests must be created from an implementation branch, not develop")
+    return out
+def pull_request(plan, tasks, decisions, validations, limitations):
+    """Create or find an open implementation PR; intentionally never merges."""
+    branch = current_branch()
+    found = run("gh", "pr", "list", "--head", branch, "--base", "develop", "--state", "open",
+                "--json", "url", check=False)
+    if found.returncode: raise RuntimeError("could not query pull requests with gh")
+    try: existing = json.loads(found.stdout or "[]")
+    except ValueError: existing = []
+    url = existing[0].get("url") if existing and isinstance(existing[0], dict) else None
+    body = "\n".join(["## Plan and tasks", f"Plan: {plan}", "Tasks: " + (", ".join(tasks) or "not specified"),
+                      "## Implemented", "Describe the implemented behavior.",
+                      "## Technical decisions", "\n".join(f"- {x}" for x in decisions) or "- None recorded.",
+                      "## Validation", "\n".join(f"- {x}" for x in validations) or "- Not recorded.",
+                      "## Limitations / follow-up", "\n".join(f"- {x}" for x in limitations) or "- None."]) + "\n"
+    if not url:
+        title = f"{plan}: implementation"
+        created = run("gh", "pr", "create", "--base", "develop", "--head", branch,
+                      "--title", title, "--body", body, check=False)
+        if created.returncode: raise RuntimeError("could not create pull request with gh")
+        url = created.stdout.strip().splitlines()[-1] if created.stdout.strip() else None
+    if not url: raise RuntimeError("GitHub CLI did not return a pull request URL")
+    record = {"base": "develop", "branch": branch, "created_at": now(), "plan": plan,
+              "tasks": tasks, "url": url, "state": "open",
+              "initial_check_after": (dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=5)).replace(microsecond=0).isoformat()}
+    write_worktree_record(PR_STATE / (re.sub(r"[^a-z0-9-]", "-", branch) + ".json"), record)
+    print(f"pull request: {url}")
+def pull_request_ci():
+    branch = current_branch(); path = PR_STATE / (re.sub(r"[^a-z0-9-]", "-", branch) + ".json")
+    if not path.is_file(): raise RuntimeError("no persisted pull request record for this branch")
+    rec = json.loads(path.read_text()); due = dt.datetime.fromisoformat(rec["initial_check_after"])
+    if dt.datetime.now(dt.timezone.utc) < due:
+        print(f"CI initial inspection pending until {due.isoformat()}"); return
+    out = run("gh", "pr", "checks", rec["url"], "--required", "--json", "name,state,bucket", check=False)
+    try: checks = json.loads(out.stdout or "[]")
+    except ValueError: raise RuntimeError("could not parse required pull request checks")
+    scope = "required"
+    if not checks:
+        out = run("gh", "pr", "checks", rec["url"], "--json", "name,state,bucket", check=False)
+        try: checks = json.loads(out.stdout or "[]")
+        except ValueError: raise RuntimeError("could not parse pull request checks")
+        scope = "all"
+    if not checks:
+        rec["state"] = "ci_pending"
+        rec["last_checked_at"] = now(); rec["check_scope"] = scope
+        write_worktree_record(path, rec)
+        print(f"CI state: ci_pending ({scope} checks; no runs reported yet)")
+        return
+    # `gh pr checks` deliberately exits non-zero for failed/pending checks, so
+    # valid JSON output is authoritative. A non-zero exit with no checks is a
+    # genuine query failure.
+    if out.returncode and not checks: raise RuntimeError("could not inspect required pull request checks")
+    failed = [c.get("name", "unnamed") for c in checks if str(c.get("bucket", "")).lower() in ("fail", "cancel")]
+    if failed: rec["state"] = "ci_failed"; rec["failed_checks"] = failed
+    elif checks and all(str(c.get("bucket", "")).lower() in ("pass", "skipping") for c in checks): rec["state"] = "ready_for_user_review"
+    else: rec["state"] = "ci_pending"
+    rec["last_checked_at"] = now(); rec["check_scope"] = scope; write_worktree_record(path, rec)
+    print(f"CI state: {rec['state']} ({scope} checks)")
+    if failed: print("failed required checks: " + ", ".join(failed))
 def changes():
     base = ROOT / "openspec/changes"
     return [p for p in base.iterdir() if p.is_dir() and p.name != "archive"] if base.exists() else []
@@ -64,6 +280,19 @@ def task_map(include_archived=False):
                     # duplicate, so it never touches `duplicates`.
                     if task in found: continue
                     found[task] = {"change": name, "file": file, "title": title, "archived": True}
+    return found, duplicates
+def task_map_at_ref(ref, include_archived=False):
+    """Read task mappings from a committed ref without switching worktrees."""
+    listing = run("git", "ls-tree", "-r", "--name-only", ref, "--", "openspec/changes", check=False)
+    if listing.returncode: return {}, []
+    found, duplicates = {}, []
+    for name in listing.stdout.splitlines():
+        if not name.endswith("/tasks.md") or "/archive/" in name: continue
+        text = run("git", "show", f"{ref}:{name}", check=False).stdout
+        change = Path(name).parent.name
+        for task, title in TASK_RE.findall(text):
+            if task in found: duplicates.append(task)
+            found[task] = {"change": change, "file": None, "title": title, "ref": ref}
     return found, duplicates
 def beads():
     out = run(CFG["beads_command"], "list", "--status", BEAD_STATUSES, "--limit", "0", "--json").stdout.strip()
@@ -387,7 +616,7 @@ def limbo_warnings(issues, commit_tokens=None):
         if status != "closed":
             out.append(f"LIMBO: {bid} committed in {sha[:12]} but status={status}")
     return out
-def validate():
+def validate(fallback_ref=None):
     # include_archived=True so a closed Bead still labelled for a change that
     # has since been archived resolves cleanly instead of tripping "maps missing
     # task" / "change label disagrees". materialize() and sync() keep using the
@@ -399,6 +628,7 @@ def validate():
     # committed-but-open Bead and the like, surfaced by `doctor` / `recover`
     # but never blocking the mirror (a warning must not redden `sync`).
     tasks, duplicates = task_map(include_archived=True); issues = beads()
+    fallback, fallback_duplicates = task_map_at_ref(fallback_ref, include_archived=True) if fallback_ref else ({}, [])
     problems = []; warnings = []
     if duplicates: problems.append("duplicate task IDs: " + ", ".join(sorted(set(duplicates))))
     seen = {}
@@ -406,6 +636,8 @@ def validate():
         change, task = mapping(issue)
         if bool(change) != bool(task): problems.append(f"{issue_id(issue)} has incomplete OpenSpec labels")
         if task:
+            if task not in tasks and task in fallback:
+                tasks[task] = fallback[task]
             if task not in tasks: problems.append(f"{issue_id(issue)} maps missing task {task}")
             elif tasks[task]["change"] != change: problems.append(f"{issue_id(issue)} change label disagrees with {task}")
             if task in seen: problems.append(f"multiple Beads map {task}: {seen[task]}, {issue_id(issue)}")
@@ -414,7 +646,7 @@ def validate():
         # An archived tasks.md is frozen — its checked lines were already
         # backed by a closed Bead when the change was archived and nothing can
         # change them now, so skip the reverse check for archived files.
-        if info.get("archived"): continue
+        if info.get("archived") or info.get("file") is None: continue
         if re.search(rf"^- \[x\] {re.escape(task)}\b", info["file"].read_text(), re.M):
             issue = next((i for i in issues if mapping(i)[1] == task), None)
             if not issue or issue.get("status") != "closed": problems.append(f"checked task {task} has no closed Bead")
@@ -1766,7 +1998,7 @@ def recover_scan():
     # --- Orphan Beads ------------------------------------------------
     orphan_lines = []
     try:
-        _, _, problems, _ = validate()
+        _, _, problems, _ = validate(fallback_ref=resolve_ref("develop"))
     except Exception as exc:
         problems = [f"validate() failed: {exc}"]
     for p in problems:
@@ -1774,6 +2006,11 @@ def recover_scan():
             orphan_lines.append(p)
             attention.append("orphan Bead")
     section("Orphan Beads", orphan_lines)
+
+    # --- Durable worktree records -------------------------------------
+    worktree_lines, worktree_attention = recorded_worktree_lines()
+    attention.extend(worktree_attention)
+    section("Worktrees", worktree_lines)
 
     # --- Crashed sessions -----------------------------------------
     crashed_lines = []
@@ -1971,6 +2208,25 @@ def main():
         help="symlink .codex/prompts/*.md into <CODEX_HOME>/prompts/ as specforge-<name>.md")
     cpl.add_argument("--unlink", action="store_true",
         help="remove only the specforge-* prompt symlinks this command created")
+    wt = sub.add_parser("worktree", help="allocate and safely manage isolated agent worktrees")
+    wtsub = wt.add_subparsers(dest="worktree_command", required=True)
+    wtp = wtsub.add_parser("plan", help="allocate a planning worktree from updated origin/develop")
+    wtp.add_argument("planning_id")
+    wtp.add_argument("description")
+    wtp.add_argument("--path", help="explicit empty destination path (defaults beside the shared checkout)")
+    wti = wtsub.add_parser("implement", help="allocate an implementation worktree for an already claimed Bead")
+    wti.add_argument("bead_id")
+    wti.add_argument("branch")
+    wti.add_argument("--path", help="explicit empty destination path (defaults beside the shared checkout)")
+    wtc = wtsub.add_parser("cleanup", help="retire one clean, develop-integrated recorded worktree")
+    wtc.add_argument("record", help="record filename under .specforge/state/worktrees/")
+    pr = sub.add_parser("pr", help="create or locate an implementation pull request")
+    prsub = pr.add_subparsers(dest="pr_command", required=True)
+    pro = prsub.add_parser("open", help="create or locate an open PR targeting develop")
+    pro.add_argument("--plan", required=True); pro.add_argument("--task", action="append", default=[])
+    pro.add_argument("--decision", action="append", default=[]); pro.add_argument("--validation", action="append", default=[])
+    pro.add_argument("--limitation", action="append", default=[])
+    prsub.add_parser("ci", help="inspect required PR checks after the durable initial wait")
     orc = sub.add_parser("orchestrator")
     orcsub = orc.add_subparsers(dest="orchestrator_command", required=True)
     orun = orcsub.add_parser("run")
@@ -2018,6 +2274,13 @@ def main():
         print("openspec write boundary closed")
     elif args.command == "materialize": materialize(args.change)
     elif args.command == "codex-prompts-link": codex_prompts_link(args.unlink)
+    elif args.command == "worktree":
+        if args.worktree_command == "plan": planning_worktree(args.planning_id, args.description, args.path)
+        elif args.worktree_command == "implement": implementation_worktree(args.bead_id, args.branch, args.path)
+        elif args.worktree_command == "cleanup": cleanup_worktree(args.record)
+    elif args.command == "pr":
+        if args.pr_command == "open": pull_request(args.plan, args.task, args.decision, args.validation, args.limitation)
+        elif args.pr_command == "ci": pull_request_ci()
     elif args.command == "recover": recover()
     elif args.command == "sync": sync_now() if args.now else sync()
     elif args.command == "discoveries": ack_discoveries(args.ack) if args.ack else discoveries()

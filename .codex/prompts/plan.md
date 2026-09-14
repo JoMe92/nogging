@@ -14,7 +14,15 @@ discovery sorting, validation, or materialization.
 Run the following fixed sequence in order. Do not skip a step and do not
 reorder.
 
-1. **Acquire the planning lock.** Run `scripts/specforge plan-begin`. This
+1. **Allocate an isolated planning worktree.** From the shared checkout, choose
+   a unique kebab-case planning ID and description, then run
+   `scripts/specforge worktree plan <planning-id> <description>`. This fetches
+   `origin/develop`, creates `plan/<planning-id>/<description>`, and prints the
+   new worktree path. Change into that path. Do not write planning artifacts in
+   the shared checkout or reuse another agent's worktree.
+
+2. **Acquire the planning lock.** From that planning worktree, run
+   `scripts/specforge plan-begin`. This
    opens the OpenSpec write boundary for this session (it removes the
    `.specforge/locks/openspec.readonly` sentinel and takes
    `.specforge/locks/planning.lock`). Under Codex the boundary is enforced by
@@ -22,24 +30,24 @@ reorder.
    `openspec/` writable. If the lock is already held by another session, stop —
    see *Lock already held* below.
 
-2. **Review pending discoveries.** Run `scripts/specforge discoveries` and work
+3. **Review pending discoveries.** Run `scripts/specforge discoveries` and work
    through the output exactly as `/discovery-review` does (blocking discoveries
    first, each with its human-readable note). Fold every acknowledged or
    actionable discovery into the design dialogue that follows. Acknowledge the
    ones that need no spec change with
    `scripts/specforge discoveries --ack <bead-id>...` so they stop resurfacing.
 
-3. **Hold the design dialogue** with the Product Owner. Resolve every ambiguity
+4. **Hold the design dialogue** with the Product Owner. Resolve every ambiguity
    before writing anything under `openspec/`.
 
-4. **Author or revise the change folder** — `proposal.md`, `design.md`,
+5. **Author or revise the change folder** — `proposal.md`, `design.md`,
    `tasks.md`, and `specs/<capability>/spec.md` — under
    `openspec/changes/<change>/`.
 
-5. **Validate.** Run `scripts/specforge validate` and resolve every problem it
+6. **Validate.** Run `scripts/specforge validate` and resolve every problem it
    reports before continuing.
 
-6. **Commit the `openspec/` changes as the `planning` writer.** Use a
+7. **Commit the `openspec/` changes as the `planning` writer.** Use a
    Conventional subject (`docs(openspec): …` or `chore(openspec): …`) and set
    the writer, either way works:
 
@@ -51,12 +59,19 @@ reorder.
    A planning commit needs no Beads ID token but still needs the Conventional
    subject and the `SpecForge-Writer: planning` trailer (or the env var).
 
-7. **Materialize the Beads.** Run `scripts/specforge materialize <change>`.
+8. **Materialize the Beads.** Run `scripts/specforge materialize <change>`.
    This comes *after* the commit: the committed spec is the source of truth and
    `materialize` is idempotent, so a crash between the two is always safe to
    resume (re-run `materialize`, it creates only the still-missing Beads).
 
-8. **Release the planning lock.** Run `scripts/specforge plan-end`.
+9. **Integrate and clean up safely.** From a clean, unclaimed integration
+   checkout on `develop`, fast-forward merge the planning branch. Only after
+   that succeeds, and only when the planning worktree is clean, remove that
+   worktree and delete its retired branch. If it is dirty or not integrated,
+   stop and leave it intact for recovery.
+
+10. **Release the planning lock.** Run `scripts/specforge plan-end` from the
+    planning worktree once the session is complete.
 
 ## Lock already held
 
