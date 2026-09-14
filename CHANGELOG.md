@@ -9,11 +9,13 @@ and GitHub Releases for that history.
 
 ## [Unreleased]
 
-## [2.0.0-rc.1] - 2026-09-14
+## [2.0.0-rc.2] - 2026-09-14
 
 A major version bump: the Nogging rename changes technical identifiers
 (CLI command, state root, commit trailer) that a `v1.x` installation
-relied on — see the compatibility note under Changed.
+relied on — see the compatibility note under Changed. Supersedes
+`v2.0.0-rc.1`, which shipped without the `update` migration added below
+and could not upgrade a real v1.x install.
 
 ### Changed
 
@@ -51,6 +53,11 @@ relied on — see the compatibility note under Changed.
   timestamps on Python 3.9/3.10 (`datetime.fromisoformat` only accepted the
   `Z` suffix from Python 3.11), so an old claim was silently never reported
   as stale on those versions.
+- `update` refused outright against a real v1.x install (`no .nogging/config.json
+  — run init first`) because it never recognized the legacy `.specforge/`
+  state root. `init`/`update` now migrate `.specforge/` to `.nogging/` in
+  place (config, launch-profiles, launch-prompts, locks, state) the first
+  time either runs against a legacy install.
 
 ### Removed
 
