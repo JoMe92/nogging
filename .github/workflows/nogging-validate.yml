@@ -1,4 +1,4 @@
-name: Agentsembli SpecForge validation
+name: Nogging validation
 on: [push, pull_request]
 jobs:
   script-tests:
