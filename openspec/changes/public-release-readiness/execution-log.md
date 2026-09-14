@@ -90,3 +90,11 @@
   - Bead note:
     progress: explicit package allowlist, Pi/security installed docs, clean-index package manifest gate, installer assertions, and full scripts/test are complete; next commit, verify committed clean snapshot, record evidence, close, integrate, and sync.
     Implemented in commit 51eeb5ee67ad49abb1d070c8f5e1a57f4a095929. Evidence: committed clean-index scripts/package-manifest.test.sh passed; full scripts/test passed; packed installer tests prove Pi and security guides install; forbidden internal/acceptance/cache/generated paths are absent; git diff --check passed.
+
+<!-- nogg:SPEC-xhuy:2026-09-14T18:58:13Z -->
+- 2026-09-14T18:58:21+00:00 — SPEC-xhuy closed for TASK-PUB-010 (Bead closed at 2026-09-14T18:58:13Z).
+  - implementation commits: f555caabc30e
+  - Bead note:
+    The installation payload table still described the Pi guide as future work after PUB-009 had already shipped it, and omitted the newly installed security guide. The stale statement was found while reconciling lifecycle documentation and is corrected in this task; planning should review whether any release-readiness artifact needs an explicit documentation-consistency note.
+    progress: version command/flag, pinned update/rollback/remove documentation, throwaway two-release lifecycle test, and full scripts/test are complete; next commit, record evidence, close, integrate, and sync.
+    Implemented in commit f555caabc30ea7a7e624ce49e291782839d40b61. Evidence: scripts/release-lifecycle.test.sh passed version, pinned update, rollback, remove, and preservation scenarios; CLI and installation documentation tests passed; full scripts/test passed; git diff --check passed.
