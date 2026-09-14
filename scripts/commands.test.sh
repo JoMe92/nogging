@@ -94,6 +94,36 @@ grep -q 'plan-end' "$cmd_dir/plan.md" \
   && ok "plan.md releases the lock with plan-end" \
   || bad "plan.md lost its plan-end step"
 
+grep -q 'worktree implement <bead> <branch>' .specforge/launch-prompts/autonomous.md \
+  && grep -q 'never merge that pull request yourself' .specforge/launch-prompts/autonomous.md \
+  && ok "autonomous Lead guidance requires an implementation worktree and review handoff" \
+  || bad "autonomous Lead guidance is missing worktree or no-self-merge rules"
+grep -q 'create a Bead' .specforge/launch-prompts/autonomous.md \
+  && grep -q 'new planning session' .specforge/launch-prompts/autonomous.md \
+  && ok "review changes route small work to Beads and large work to planning" \
+  || bad "review-change routing policy is missing"
+
+# --- 3b. planning is allocated before the write boundary opens -----------
+for path in .claude/commands/plan.md .codex/prompts/plan.md .pi/prompts/plan.md; do
+  if python3 - "$path" <<'PY'
+import sys
+t = open(sys.argv[1]).read()
+allocation = t.find("worktree plan <planning-id> <description>")
+begin = t.find("plan-begin")
+integration = t.find("fast-forward merge")
+cleanup = t.find("remove that\n   worktree")
+sys.exit(0 if 0 <= allocation < begin and begin < integration < cleanup else 1)
+PY
+  then
+    ok "$path allocates, integrates, and safely cleans a planning worktree in order"
+  else
+    bad "$path does not describe the isolated planning-worktree lifecycle"
+  fi
+done
+grep -q 'Allocate `plan/<planning-id>/<description>` from updated `origin/develop`' docs/operating-model.md \
+  && ok "operating model names the planning-worktree lifecycle" \
+  || bad "operating model does not name planning-worktree allocation"
+
 # --- 4. the canonical planning flow commits the spec before materialize --
 #     (TASK-RIR-005) and the /plan step list matches docs/operating-model.md.
 if python3 - <<'PY'
