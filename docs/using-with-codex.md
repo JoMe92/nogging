@@ -32,7 +32,7 @@ In addition to the usual target-repo prerequisites (`bd`/Beads, `python3`,
 | Path | Behaviour |
 | --- | --- |
 | `.codex/hooks.json` | **Preserved, never clobbered.** If `bd init` wrote it (the `SessionStart` / `UserPromptSubmit` / `PreCompact` / `PostCompact` → `bd codex-hook` entries), those entries are kept exactly. SpecForge adds no hook of its own; `mergeCodex` is an append-only merge seam for a future need. |
-| `.codex/rules/specforge.rules` | The **execpolicy command floor** (shipped verbatim, refreshed on every `init`/`update`). |
+| `.codex/rules/nogging.rules` | The **execpolicy command floor** (shipped verbatim, refreshed on every `init`/`update`). |
 | `.codex/prompts/{plan,discovery-review,sync-now}.md` | The **workflow prompts** — Codex-format equivalents of the Claude `.claude/commands/` files. |
 
 A user's own `.codex/AGENTS.md` or `.codex/config.toml` is never touched.
@@ -55,7 +55,7 @@ the Claude trusted path: it pushes the feature branch, fast-forward-merges into
 session has no network, so `git push`, `bd sync`, and `dolt push|pull` all fail;
 it stops and reports instead.
 
-### The execpolicy floor — `.codex/rules/specforge.rules`
+### The execpolicy floor — `.codex/rules/nogging.rules`
 
 Codex loads every `*.rules` file under `<repo>/.codex/rules/` (once the
 `.codex/` layer is trusted) and evaluates model-generated shell commands
@@ -80,9 +80,9 @@ the level boundary is the sandbox.
 Check any command against the floor:
 
 ```bash
-codex execpolicy check --rules .codex/rules/specforge.rules -- sudo apt
+codex execpolicy check --rules .codex/rules/nogging.rules -- sudo apt
 # => {"decision":"forbidden"}
-codex execpolicy check --rules .codex/rules/specforge.rules -- git push
+codex execpolicy check --rules .codex/rules/nogging.rules -- git push
 # => {"matchedRules":[]}   (unmatched — the sandbox, not the floor, gates this)
 ```
 
@@ -118,11 +118,11 @@ either:
 
   ```bash
   ./scripts/nogg codex-prompts-link          # link (idempotent)
-  ./scripts/nogg codex-prompts-link --unlink # remove the specforge-* links
+  ./scripts/nogg codex-prompts-link --unlink # remove the nogging-* links
   ```
 
   It symlinks each `.codex/prompts/*.md` to
-  `${CODEX_HOME:-~/.codex}/prompts/specforge-<name>.md`, repoints a stale link,
+  `${CODEX_HOME:-~/.codex}/prompts/nogging-<name>.md`, repoints a stale link,
   and reports (without clobbering) a real file that is in the way. It is
   **opt-in** — `npx … init`/`update` never writes into `$HOME`. `scripts/nogg
   doctor` prints a NOTE when the prompts are present but unlinked. or
@@ -186,7 +186,7 @@ discovered automatically or invoked by name (`$openspec-propose`).
   1. the **filesystem write guard** (`tool-agnostic-write-boundary`) — the
      `.nogging/locks/openspec.readonly` sentinel that `plan-begin`/`plan-end`
      toggle;
-  2. the **execpolicy floor** (`.codex/rules/specforge.rules`);
+  2. the **execpolicy floor** (`.codex/rules/nogging.rules`);
   3. the **commit hooks** (`pre-commit` refuses an `openspec/` change from a
      non-planning writer; `commit-msg` requires the Beads ID token).
 - **Repo-scoped custom prompts** — see *How the commands map* above.

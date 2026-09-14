@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Exercises .pi/extensions/specforge-guard.ts's matching logic directly,
+# Exercises .pi/extensions/nogging-guard.ts's matching logic directly,
 # without a live `pi` process: every SpecForge command-floor pattern gets
 # both an ALLOW and a BLOCK example, and the openspec/ write-boundary
 # predicates (isUnderOpenspec, openspecBoundaryOpen) get exercised against a
@@ -9,13 +9,13 @@
 # modern type-stripping support (Node 22.6+ default-on, 22.18+ stable) to do
 # so directly. This repo's test suite is otherwise bash + coreutils only,
 # offline (see scripts/test's own header). When node is absent, or present
-# but unable to load specforge-guard.ts directly (e.g. too old for
+# but unable to load nogging-guard.ts directly (e.g. too old for
 # TypeScript type-stripping), this test skips with a PASS rather than
 # failing the suite, matching scripts/cli.test.sh.
 set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-guard="$root/.pi/extensions/specforge-guard.ts"
+guard="$root/.pi/extensions/nogging-guard.ts"
 
 if ! command -v node >/dev/null 2>&1; then
   echo "ok   - skipped (node not installed)"
@@ -155,7 +155,7 @@ rc=$?
 set -e
 
 if [[ $rc -eq 2 ]]; then
-  echo "ok   - skipped (node present but cannot load specforge-guard.ts directly, e.g. too old for TypeScript type-stripping)"
+  echo "ok   - skipped (node present but cannot load nogging-guard.ts directly, e.g. too old for TypeScript type-stripping)"
   echo "all pi-guard checks passed"
   exit 0
 fi

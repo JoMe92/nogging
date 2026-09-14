@@ -661,7 +661,7 @@ export TMUX_STUB_DIR="$work/codex-full-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-cdx"
 "$specforge" session launch --role lead --bead SPEC-cdx --agent codex --full-access >"$out" 2>&1 \
   || { echo "FAIL - codex-full: launch errored"; cat "$out"; fail=1; }
-check "codex-full: missing-floor warning names the execpolicy file" "specforge.rules"
+check "codex-full: missing-floor warning names the execpolicy file" "nogging.rules"
 name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
 rec="$root/.nogging/state/sessions/$name.json"
 [[ "$(record "$rec" agent)" == "codex" ]] \
@@ -767,7 +767,7 @@ export TMUX_STUB_DIR="$work/pi-full-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-pia"
 "$specforge" session launch --role lead --bead SPEC-pia --agent pi --full-access >"$out" 2>&1 \
   || { echo "FAIL - pi-full: launch errored"; cat "$out"; fail=1; }
-check "pi-full: missing-floor warning names the guard extension" ".pi/extensions/specforge-guard.ts"
+check "pi-full: missing-floor warning names the guard extension" ".pi/extensions/nogging-guard.ts"
 name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
 rec="$root/.nogging/state/sessions/$name.json"
 [[ "$(record "$rec" agent)" == "pi" ]] \
@@ -943,7 +943,7 @@ check "orc: effective settings keep the accepted-disclaimer key" '"skipDangerous
 refute "orc: no floor deny in the effective settings (sudo)"  'Bash(sudo:*)'
 refute "orc: no floor deny in the effective settings (rm -rf)" 'Bash(rm -rf:*)'
 refute "orc: no openspec/ deny in the effective settings" 'Edit(openspec/**)'
-refute "orc: the SpecForge-only keys never reach Claude" 'specforge_floor'
+refute "orc: the SpecForge-only keys never reach Claude" 'nogging_floor'
 env -u TERM "$specforge" session list >"$out" 2>&1
 check "orc: session list shows the orchestrator row" "nogg-orchestrator-orc"
 check "orc: session list marks it FULL-ACCESS" "FULL-ACCESS"

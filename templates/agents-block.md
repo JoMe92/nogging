@@ -69,14 +69,14 @@ never signs an acceptance report. See `docs/nogging/operating-model.md`.
   Operator entry points: `.claude/commands/{plan,discovery-review,sync-now}.md`.
 - **Codex.** No per-tool hook — `openspec/` stays read-only through the
   filesystem write guard plus the commit hooks; the command floor is
-  `.codex/rules/specforge.rules` (execpolicy). Codex has no in-process subagent
+  `.codex/rules/nogging.rules` (execpolicy). Codex has no in-process subagent
   mechanism: a specialist run is a separate supervised session,
   `scripts/nogg session launch --agent codex --role specialist:<type>
   --bead <id>`, under every specialist boundary rule. Operator entry points:
   `.codex/prompts/{plan,discovery-review,sync-now}.md`.
 - **Pi.** No per-tool hook and no execpolicy file — `openspec/` writes are
   blocked by the project-local guard extension
-  (`.pi/extensions/specforge-guard.ts`), which also enforces the command
+  (`.pi/extensions/nogging-guard.ts`), which also enforces the command
   floor; `restricted` is floor-only (no network or filesystem sandbox at
   either authority level, unlike Claude Code or Codex). Pi has no in-process
   subagent mechanism: a specialist run is a separate supervised session,

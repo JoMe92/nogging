@@ -6,7 +6,7 @@
     "this version (Remote Control, the 'reachable from a phone' requirement, is",
     "Claude-only).",
     "",
-    "The `specforge_floor` / `specforge_openspec_readonly` keys are honoured ONLY",
+    "The `nogging_floor` / `nogging_openspec_readonly` keys are honoured ONLY",
     "for `--role orchestrator`. Any other role (`lead`, `specialist:*`) that",
     "selects this profile still gets the fixed command floor unioned in and the",
     "per-session openspec/** read-only rules added, exactly as with any other",
@@ -27,6 +27,6 @@
     "additionalDirectories": ["/"]
   },
   "skipDangerousModePermissionPrompt": true,
-  "specforge_floor": false,
-  "specforge_openspec_readonly": false
+  "nogging_floor": false,
+  "nogging_openspec_readonly": false
 }

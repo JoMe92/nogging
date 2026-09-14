@@ -46,29 +46,29 @@ check "launch profiles ship codex fragments" test -f "$repo/.nogging/launch-prof
 check "launch profiles ship trusted codex fragment" test -f "$repo/.nogging/launch-profiles/trusted.codex.toml"
 check "launch profiles ship pi fragments" test -f "$repo/.nogging/launch-profiles/restricted.pi.toml"
 check "launch profiles ship trusted pi fragment" test -f "$repo/.nogging/launch-profiles/trusted.pi.toml"
-check "pi guard extension installed" test -f "$repo/.pi/extensions/specforge-guard.ts"
+check "pi guard extension installed" test -f "$repo/.pi/extensions/nogging-guard.ts"
 check "pi prompt plan.md installed"    test -f "$repo/.pi/prompts/plan.md"
 check "pi prompt discovery-review.md installed" test -f "$repo/.pi/prompts/discovery-review.md"
 check "pi prompt sync-now.md installed" test -f "$repo/.pi/prompts/sync-now.md"
 check "launch prompts shipped"     test -f "$repo/.nogging/launch-prompts/autonomous.md"
 check "reference docs under docs/nogging" test -f "$repo/docs/nogging/architecture.md"
 check "codex guide under docs/nogging" test -f "$repo/docs/nogging/using-with-codex.md"
-check "codex execpolicy floor installed" test -f "$repo/.codex/rules/specforge.rules"
+check "codex execpolicy floor installed" test -f "$repo/.codex/rules/nogging.rules"
 check "codex floor keeps the always-on classes" \
-  grep -Eq 'pattern=\["sudo"\]' "$repo/.codex/rules/specforge.rules"
+  grep -Eq 'pattern=\["sudo"\]' "$repo/.codex/rules/nogging.rules"
 check "codex floor keeps mkfs + variants" \
-  grep -q 'mkfs.ext4' "$repo/.codex/rules/specforge.rules"
+  grep -q 'mkfs.ext4' "$repo/.codex/rules/nogging.rules"
 check "codex floor keeps the network-fetch classes" \
-  grep -Eq 'pattern=\["curl"\]' "$repo/.codex/rules/specforge.rules"
+  grep -Eq 'pattern=\["curl"\]' "$repo/.codex/rules/nogging.rules"
 check "codex floor no longer carries a git push rule (restricted-profile / sandbox concern)" \
-  bash -c "! grep -Eq '^[[:space:]]*(prefix|regex)_rule.*push' '$repo/.codex/rules/specforge.rules'"
+  bash -c "! grep -Eq '^[[:space:]]*(prefix|regex)_rule.*push' '$repo/.codex/rules/nogging.rules'"
 check "codex prompt plan.md installed"    test -f "$repo/.codex/prompts/plan.md"
 check "codex prompt discovery-review.md installed" test -f "$repo/.codex/prompts/discovery-review.md"
 check "codex prompt sync-now.md installed" test -f "$repo/.codex/prompts/sync-now.md"
 check "AGENTS.md carries a Tool notes section" grep -q 'Tool notes' "$repo/AGENTS.md"
 check "AGENTS.md Tool notes labels Claude Code"  grep -q 'Claude Code' "$repo/AGENTS.md"
 check "AGENTS.md Tool notes labels Codex"        grep -q 'Codex' "$repo/AGENTS.md"
-check "AGENTS.md Tool notes labels Pi"  grep -q '.pi/extensions/specforge-guard.ts' "$repo/AGENTS.md"
+check "AGENTS.md Tool notes labels Pi"  grep -q '.pi/extensions/nogging-guard.ts' "$repo/AGENTS.md"
 check "openspec scaffold written"  test -f "$repo/openspec/config.yaml"
 check "project.md scaffold written" test -f "$repo/openspec/project.md"
 check "config.json written"        test -f "$repo/.nogging/config.json"
@@ -196,7 +196,7 @@ check "mergeCodex does not rewrite a valid .codex/hooks.json" \
 check "mergeCodex never touches .codex/config.toml" \
   [ "$toml_before" = "$(md5sum < "$codexrepo/.codex/config.toml")" ]
 check "mergeCodex still installs the rules floor alongside" \
-  test -f "$codexrepo/.codex/rules/specforge.rules"
+  test -f "$codexrepo/.codex/rules/nogging.rules"
 
 # --- strict idempotency: commit, re-run, expect no tracked diff ----------
 idem="$work/idempotent"
@@ -315,7 +315,7 @@ if command -v npm >/dev/null 2>&1; then
     check "packed install ships trusted codex fragment" test -f "$packrepo/.nogging/launch-profiles/trusted.codex.toml"
     check "packed install ships pi fragments"    test -f "$packrepo/.nogging/launch-profiles/restricted.pi.toml"
     check "packed install ships trusted pi fragment" test -f "$packrepo/.nogging/launch-profiles/trusted.pi.toml"
-    check "packed install ships the pi guard extension" test -f "$packrepo/.pi/extensions/specforge-guard.ts"
+    check "packed install ships the pi guard extension" test -f "$packrepo/.pi/extensions/nogging-guard.ts"
     check "packed install ships pi prompt plan.md" test -f "$packrepo/.pi/prompts/plan.md"
     check "packed install ships pi prompt discovery-review.md" test -f "$packrepo/.pi/prompts/discovery-review.md"
     check "packed install ships pi prompt sync-now.md" test -f "$packrepo/.pi/prompts/sync-now.md"
@@ -338,12 +338,12 @@ if command -v npm >/dev/null 2>&1; then
     check "init prints the loginctl enable-linger hint" \
       bash -c "printf '%s' \"\$1\" | grep -q 'loginctl enable-linger'" _ "$orc_out"
     check "packed install ships the skills"         test -f "$packrepo/.agents/skills/openspec-propose/SKILL.md"
-    check "packed install ships the codex rules floor" test -f "$packrepo/.codex/rules/specforge.rules"
+    check "packed install ships the codex rules floor" test -f "$packrepo/.codex/rules/nogging.rules"
     check "packed install ships codex prompt plan.md" test -f "$packrepo/.codex/prompts/plan.md"
     check "packed install ships codex prompt discovery-review.md" test -f "$packrepo/.codex/prompts/discovery-review.md"
     check "packed install ships codex prompt sync-now.md" test -f "$packrepo/.codex/prompts/sync-now.md"
     check "packed install AGENTS.md has Tool notes"  grep -q 'Tool notes' "$packrepo/AGENTS.md"
-    check "packed install AGENTS.md labels Pi"       grep -q '.pi/extensions/specforge-guard.ts' "$packrepo/AGENTS.md"
+    check "packed install AGENTS.md labels Pi"       grep -q '.pi/extensions/nogging-guard.ts' "$packrepo/AGENTS.md"
   else
     echo "ok   - packed-install check skipped (npm pack failed)"
   fi

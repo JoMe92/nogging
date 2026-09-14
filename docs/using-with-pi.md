@@ -52,7 +52,7 @@ copied verbatim on every `init`/`update`:
 | Path | Behaviour |
 | --- | --- |
 | `.pi/prompts/{plan,discovery-review,sync-now}.md` | The **workflow prompts** — Pi reads `.pi/prompts/*.md` directly from the repository (confirmed from source: `resource-loader.js` resolves `<repo>/.pi/prompts` literally), so — unlike Codex — **no symlink helper is needed**. |
-| `.pi/extensions/specforge-guard.ts` | The **guard extension**: Pi's project-local floor, since Pi ships no native sandbox or execution-policy mechanism of its own. See *The guard extension* below. |
+| `.pi/extensions/nogging-guard.ts` | The **guard extension**: Pi's project-local floor, since Pi ships no native sandbox or execution-policy mechanism of its own. See *The guard extension* below. |
 
 A user's own `.pi/settings.json` or other `.pi/*` content is never touched.
 
@@ -81,11 +81,11 @@ otherwise need — left to the operator, not managed by SpecForge). Treat a Pi
 session's `restricted` level as weaker than the same word for Claude or
 Codex.
 
-## The guard extension — `.pi/extensions/specforge-guard.ts`
+## The guard extension — `.pi/extensions/nogging-guard.ts`
 
 Pi extensions can intercept the `tool_call` event before a tool runs — the
 direct analogue of Claude's `PreToolUse` hook, and the mechanism this bridge
-uses since Pi has no execpolicy-style file. `specforge-guard.ts`:
+uses since Pi has no execpolicy-style file. `nogging-guard.ts`:
 
 - denies a shell command (`toolName === "bash"`) matching the SpecForge
   command floor: `sudo`, `rm -rf`/`rm -fr`, `dd`, `mkfs` and its variants,

@@ -1,10 +1,10 @@
-# SpecForge Codex execution-policy floor.
+# Nogging Codex execution-policy floor.
 #
 # Codex loads this file (every `*.rules` under `<repo>/.codex/rules/`) once the
 # project's `.codex/` layer is trusted. It is the Codex-side sibling of the
 # Claude launch floor (`FLOOR_DENY` in `scripts/nogg` + the `deny` list in
 # `.nogging/launch-profiles/*.json`): the always-on command classes that are
-# refused for *every* SpecForge-supervised Codex session, trusted or restricted.
+# refused for *every* Nogging-supervised Codex session, trusted or restricted.
 #
 # It carries the floor and nothing else. Remote/network operations
 # (`git push`, `bd sync`, `bd dolt push|pull|clone`, `dolt push|pull|remote`)
@@ -21,7 +21,7 @@
 #   prefix_rule(pattern=[<tokens>], decision="forbidden" | "prompt" | "allow")
 # `decision="deny"` is NOT valid on this version — it raises `invalid decision`.
 # `forbidden` refuses the command outright. Check a command against this file
-# with:  codex execpolicy check --rules .codex/rules/specforge.rules -- <cmd...>
+# with:  codex execpolicy check --rules .codex/rules/nogging.rules -- <cmd...>
 #
 # `session-launch` never passes `--ignore-rules`; this floor always applies.
 

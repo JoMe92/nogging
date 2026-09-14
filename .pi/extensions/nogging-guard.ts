@@ -1,11 +1,11 @@
 /**
- * SpecForge command-floor and openspec/ write-boundary guard for Pi.
+ * Nogging command-floor and openspec/ write-boundary guard for Pi.
  *
  * Pi ships no native sandbox or execution-policy mechanism (unlike Codex's
  * execpolicy directory or Claude's PreToolUse hook), so this project-local
- * extension IS the floor for a Pi-supervised SpecForge session: it
+ * extension IS the floor for a Pi-supervised Nogging session: it
  * intercepts every `tool_call` event and denies a shell command matching
- * the SpecForge command-floor patterns, or a write/edit under `openspec/`
+ * the Nogging command-floor patterns, or a write/edit under `openspec/`
  * while the write boundary is closed. Loads only once this project is
  * trusted (`--approve` or `/trust`), since `.pi/extensions/` is one of the
  * trust-gated resource directories.
@@ -83,8 +83,8 @@ export default function (pi: ExtensionAPI) {
 		if (event.toolName === "bash") {
 			const hit = matchesFloor(event.input.command as string);
 			if (hit) {
-				if (ctx.hasUI) ctx.ui.notify(`SpecForge floor blocked: ${hit}`, "warning");
-				return { block: true, reason: `SpecForge floor: command matches "${hit}"` };
+				if (ctx.hasUI) ctx.ui.notify(`Nogging floor blocked: ${hit}`, "warning");
+				return { block: true, reason: `Nogging floor: command matches "${hit}"` };
 			}
 			return undefined;
 		}
@@ -92,7 +92,7 @@ export default function (pi: ExtensionAPI) {
 			const path = event.input.path as string;
 			if (isUnderOpenspec(path, ctx.cwd) && !openspecBoundaryOpen(ctx.cwd)) {
 				if (ctx.hasUI) ctx.ui.notify(`Blocked ${event.toolName} under openspec/: ${path}`, "warning");
-				return { block: true, reason: "openspec/ is read-only outside a planning session (SpecForge write boundary)" };
+				return { block: true, reason: "openspec/ is read-only outside a planning session (Nogging write boundary)" };
 			}
 			return undefined;
 		}

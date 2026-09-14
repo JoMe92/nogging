@@ -64,7 +64,7 @@ const CODEX_HOOKS = Object.create(null);
 // The `.codex/` payload the installer ships (verbatimDirs copies it before
 // applyMerges runs). mergeCodex asserts it landed and logs each file.
 const CODEX_PAYLOAD = [
-  '.codex/rules/specforge.rules',
+  '.codex/rules/nogging.rules',
   '.codex/prompts/plan.md',
   '.codex/prompts/discovery-review.md',
   '.codex/prompts/sync-now.md',

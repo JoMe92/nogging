@@ -313,7 +313,7 @@ against a hostile agent.
 
 The **single exception** is the `orchestrator` profile combined with
 `--role orchestrator`. That profile runs `bypassPermissions` with an empty deny
-list and carries `specforge_floor: false` / `specforge_openspec_readonly:
+list and carries `nogging_floor: false` / `nogging_openspec_readonly:
 false`; those two keys are read **only** for `--role orchestrator`, and for that
 role only the floor merge and the per-session `openspec/**` deny are skipped —
 so the Orchestration Agent runs with full command access and `openspec/`

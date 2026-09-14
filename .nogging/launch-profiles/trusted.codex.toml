@@ -8,7 +8,7 @@
 # level enables outbound network (`network_access = true`) so a trusted Codex
 # Lead session can push a branch and push `develop` to complete an integration
 # itself, no PR — exactly like the Claude trusted path. `curl` / `wget` stay
-# refused by the always-on `.codex/rules/specforge.rules` floor. The
+# refused by the always-on `.codex/rules/nogging.rules` floor. The
 # `restricted` level keeps `network_access = false`.
 #
 # Keys (all three are required; `session_launch()` reads exactly these):

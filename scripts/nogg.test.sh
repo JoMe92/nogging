@@ -1093,7 +1093,7 @@ unset SPECFORGE_ROOT BD_FIXTURE BD_STUB_DIR
 root="$work/rec-worktree-record"; make_root "$root"
 mkdir -p "$root/.nogging/state/worktrees"
 cat >"$root/.nogging/state/worktrees/impl.json" <<'JSON'
-{"branch":"feat/demo","path":"/missing/specforge-worktree"}
+{"branch":"feat/demo","path":"/missing/nogging-worktree"}
 JSON
 export SPECFORGE_ROOT="$root"
 export BD_FIXTURE="$work/rec-worktree-record-beads.json"; printf '[]\n' >"$BD_FIXTURE"
@@ -1101,7 +1101,7 @@ export BD_STUB_DIR="$root"
 "$specforge" recover >"$out" 2>&1 \
   && { echo "FAIL - rec-worktree: missing record must need attention"; cat "$out"; fail=1; } \
   || echo "ok   - rec-worktree: missing recorded worktree needs attention"
-check "rec-worktree: names missing worktree record" "recorded feat/demo at /missing/specforge-worktree is missing"
+check "rec-worktree: names missing worktree record" "recorded feat/demo at /missing/nogging-worktree is missing"
 unset SPECFORGE_ROOT BD_FIXTURE BD_STUB_DIR
 
 # --- a committed-but-open Bead is LIMBO and exits non-zero ---------------
@@ -1290,7 +1290,7 @@ unset SPECFORGE_ROOT BD_FIXTURE
 # Scenario: codex-prompts-link + the doctor prompt-link NOTE (TASK-CXF-005/006)
 # CODEX_HOME is stubbed under SPECFORGE_ROOT so nothing touches the real
 # ~/.codex. codex 0.148 only loads user-scoped prompts, so the helper links
-# each repo .codex/prompts/*.md to <CODEX_HOME>/prompts/specforge-<name>.md.
+# each repo .codex/prompts/*.md to <CODEX_HOME>/prompts/nogging-<name>.md.
 # ===========================================================================
 root="$work/cxf-prompts"; make_root "$root"
 export SPECFORGE_ROOT="$root"
@@ -1301,14 +1301,14 @@ printf 'plan prompt\n' >"$root/.codex/prompts/plan.md"
 printf 'sync prompt\n' >"$root/.codex/prompts/sync-now.md"
 export CODEX_HOME="$root/.codex-home"
 
-# --- link: creates the specforge-<name>.md symlinks ---------------------
+# --- link: creates the nogging-<name>.md symlinks ---------------------
 "$specforge" codex-prompts-link >"$out" 2>&1 \
   || { echo "FAIL - cxf-link: helper errored"; cat "$out"; fail=1; }
-[[ -L "$CODEX_HOME/prompts/specforge-plan.md" && -L "$CODEX_HOME/prompts/nogg-sync-now.md" ]] \
-  && echo "ok   - cxf-link: both prompts linked as specforge-<name>.md" \
+[[ -L "$CODEX_HOME/prompts/nogging-plan.md" && -L "$CODEX_HOME/prompts/nogg-sync-now.md" ]] \
+  && echo "ok   - cxf-link: both prompts linked as nogging-<name>.md" \
   || { echo "FAIL - cxf-link: symlinks not created"; ls -la "$CODEX_HOME/prompts" 2>&1; fail=1; }
-[[ "$(readlink -f "$CODEX_HOME/prompts/specforge-plan.md")" == "$(readlink -f "$root/.codex/prompts/plan.md")" ]] \
-  && echo "ok   - cxf-link: specforge-plan.md points at the repo prompt" \
+[[ "$(readlink -f "$CODEX_HOME/prompts/nogging-plan.md")" == "$(readlink -f "$root/.codex/prompts/plan.md")" ]] \
+  && echo "ok   - cxf-link: nogging-plan.md points at the repo prompt" \
   || { echo "FAIL - cxf-link: wrong link target"; fail=1; }
 
 # --- idempotent: a correct link is left, nothing relinked --------------
@@ -1319,10 +1319,10 @@ grep -qE '^ok +' "$out" \
   || { echo "FAIL - cxf-link: no ok line on the idempotent run"; cat "$out"; fail=1; }
 
 # --- a wrong target is repointed -------------------------------------
-ln -sfn /etc/hostname "$CODEX_HOME/prompts/specforge-plan.md"
+ln -sfn /etc/hostname "$CODEX_HOME/prompts/nogging-plan.md"
 "$specforge" codex-prompts-link >"$out" 2>&1 || true
 check "cxf-link: a wrong target is repointed" "relinked"
-[[ "$(readlink -f "$CODEX_HOME/prompts/specforge-plan.md")" == "$(readlink -f "$root/.codex/prompts/plan.md")" ]] \
+[[ "$(readlink -f "$CODEX_HOME/prompts/nogging-plan.md")" == "$(readlink -f "$root/.codex/prompts/plan.md")" ]] \
   && echo "ok   - cxf-link: the stale link now points back at the repo prompt" \
   || { echo "FAIL - cxf-link: stale link not repaired"; fail=1; }
 
@@ -1330,19 +1330,19 @@ check "cxf-link: a wrong target is repointed" "relinked"
 rm -f "$CODEX_HOME/prompts/nogg-sync-now.md"
 printf 'HAND WRITTEN\n' >"$CODEX_HOME/prompts/nogg-sync-now.md"
 "$specforge" codex-prompts-link >"$out" 2>&1 || true
-check "cxf-link: a real file in the way is reported" "exists and is not a specforge symlink"
+check "cxf-link: a real file in the way is reported" "exists and is not a nogging symlink"
 [[ "$(cat "$CODEX_HOME/prompts/nogg-sync-now.md")" == "HAND WRITTEN" ]] \
   && echo "ok   - cxf-link: the colliding real file is left untouched" \
   || { echo "FAIL - cxf-link: colliding file was clobbered"; fail=1; }
 
-# --- --unlink removes only the specforge-* symlinks -------------------
+# --- --unlink removes only the nogging-* symlinks -------------------
 "$specforge" codex-prompts-link --unlink >"$out" 2>&1 || true
-[[ ! -e "$CODEX_HOME/prompts/specforge-plan.md" ]] \
-  && echo "ok   - cxf-unlink: the specforge-plan.md symlink is removed" \
+[[ ! -e "$CODEX_HOME/prompts/nogging-plan.md" ]] \
+  && echo "ok   - cxf-unlink: the nogging-plan.md symlink is removed" \
   || { echo "FAIL - cxf-unlink: symlink survived --unlink"; fail=1; }
 [[ -f "$CODEX_HOME/prompts/nogg-sync-now.md" \
    && "$(cat "$CODEX_HOME/prompts/nogg-sync-now.md")" == "HAND WRITTEN" ]] \
-  && echo "ok   - cxf-unlink: a real file named specforge-* is left in place" \
+  && echo "ok   - cxf-unlink: a real file named nogging-* is left in place" \
   || { echo "FAIL - cxf-unlink: --unlink removed a non-symlink"; fail=1; }
 rm -f "$CODEX_HOME/prompts/nogg-sync-now.md"
 
