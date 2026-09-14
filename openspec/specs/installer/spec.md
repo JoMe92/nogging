@@ -214,3 +214,54 @@ SHALL produce a NOTE naming the fix.
 - **WHEN** the orchestrator service is enabled but `loginctl` shows lingering off for the user
 - **THEN** `doctor` prints a NOTE naming `loginctl enable-linger`
 - **AND** it does not exit non-zero because of that NOTE
+
+### Requirement: Installer advertises the canonical Agentsembli SpecForge source
+
+CLI help, readiness output, documentation templates, update instructions, and
+package metadata SHALL use `JoMe92/agentsembli-specforge` as the canonical
+repository source while retaining `specforge` as the compatible command name.
+
+#### Scenario: User requests CLI help
+
+- **WHEN** the packaged CLI prints installation or update guidance
+- **THEN** every maintained GitHub command names `JoMe92/agentsembli-specforge` and the invoked binary remains `specforge`
+
+### Requirement: Cross-repository update preserves target-owned state
+
+Updating an installation originally obtained from `JoMe92/specforge` with a
+tagged `JoMe92/agentsembli-specforge` release SHALL preserve the same target-owned
+files and settings as an ordinary update.
+
+#### Scenario: Legacy source installation updates from successor
+
+- **WHEN** a throwaway repository installed from the preceding legacy tag updates using the renamed release
+- **THEN** OpenSpec changes, Beads data, project configuration, custom documentation, and unrelated Claude, Codex, and Pi settings remain unchanged
+
+### Requirement: The complete Claude Code payload is installed and refreshed
+
+The installer SHALL deliver every repository-owned Claude Code specialist
+definition under `.claude/agents/` and every repository-owned workflow command
+under `.claude/commands/`. These files SHALL be present in the packaged
+distribution and SHALL be copied verbatim on both `init` and `update`.
+
+#### Scenario: Fresh install delivers Claude agents and commands
+
+- **WHEN** `init` runs in a fresh target repository
+- **THEN** every source file under `.claude/agents/` is present at the same path in the target repository
+- **AND** every source file under `.claude/commands/` is present at the same path in the target repository
+
+#### Scenario: Update refreshes the Claude payload
+
+- **WHEN** `update` runs after a released Claude agent or command definition changed
+- **THEN** the corresponding target file is replaced with the released version
+- **AND** unrelated target-owned `.claude/settings.json` content remains preserved
+
+#### Scenario: Packed install contains the Claude payload
+
+- **WHEN** the package used by `npx github:` is built
+- **THEN** it contains every file under `.claude/agents/` and `.claude/commands/`
+
+#### Scenario: Repeated installation is idempotent
+
+- **WHEN** `init` or `update` is repeated without a source payload change
+- **THEN** the tracked Claude agent and command files do not change
