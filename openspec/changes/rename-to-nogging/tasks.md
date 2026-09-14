@@ -17,7 +17,7 @@
 
 ## 4. Systemd
 
-- [ ] TASK-NOG-007 Rename the systemd templates (`templates/systemd/specforge-*.tmpl` → `nogg-*`) and the orchestrator singleton session name (`sf-orchestrator-<slug>` → `nogg-orchestrator-<slug>`) everywhere it is referenced; on this machine, install and enable the new `nogg-sync.timer`/`.service` from the renamed templates and verify it ticks (a fresh `chore(sync)` commit appears) before removing the old unit files.
+- [x] TASK-NOG-007 Rename the systemd templates (`templates/systemd/specforge-*.tmpl` → `nogg-*`) and the orchestrator singleton session name (`sf-orchestrator-<slug>` → `nogg-orchestrator-<slug>`) everywhere it is referenced; on this machine, install and enable the new `nogg-sync.timer`/`.service` from the renamed templates and verify it ticks (a fresh `chore(sync)` commit appears) before removing the old unit files.
 
 ## 5. Agent configs and documentation
 
