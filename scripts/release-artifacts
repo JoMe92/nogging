@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Generates release checksums and, where possible, an SBOM for the current
+# package.json version.
+#
+# Usage: scripts/release-artifacts [<output-dir>]
+#   <output-dir> defaults to dist/release/<version> (git-ignored; nothing
+#   this script writes is committed).
+#
+# Writes:
+#   <name>-<version>.tgz         (npm pack output)
+#   <name>-<version>.tgz.sha256  (its SHA-256 checksum)
+#   sbom.cdx.json                (CycloneDX SBOM), or
+#   sbom-not-applicable.txt      (explicit reason, if generation fails)
+set -euo pipefail
+
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+cd "$root"
+
+version=$(node -e "process.stdout.write(require('./package.json').version)")
+out="${1:-dist/release/$version}"
+mkdir -p "$out"
+
+tarball=$(npm pack --silent --pack-destination "$out")
+( cd "$out" && sha256sum "$tarball" > "$tarball.sha256" )
+printf 'checksum written: %s\n' "$out/$tarball.sha256"
+
+if npm sbom --sbom-format cyclonedx --package-lock-only --omit=dev \
+    >"$out/sbom.cdx.json" 2>"$out/.sbom-error.log"; then
+  rm -f "$out/.sbom-error.log"
+  printf 'SBOM written: %s\n' "$out/sbom.cdx.json"
+else
+  rm -f "$out/sbom.cdx.json"
+  {
+    printf 'SBOM generation was not applicable for %s.\n' "$version"
+    printf 'npm sbom reported:\n'
+    cat "$out/.sbom-error.log"
+  } >"$out/sbom-not-applicable.txt"
+  rm -f "$out/.sbom-error.log"
+  printf 'SBOM not applicable, reason recorded: %s\n' "$out/sbom-not-applicable.txt"
+fi

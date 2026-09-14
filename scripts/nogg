@@ -809,13 +809,18 @@ def record_skip(reason):
         json.dumps({"at": now(), "reason": reason}, indent=2) + "\n")
 def clear_skip():
     SKIP_RECORD.unlink(missing_ok=True)
+def parse_iso(iso):
+    """Parse an ISO 8601 timestamp, accepting a trailing 'Z' (as Beads emits)
+    on every supported Python version — `datetime.fromisoformat` only started
+    accepting 'Z' directly in Python 3.11."""
+    return dt.datetime.fromisoformat(iso.replace("Z", "+00:00"))
 def humanize_age(iso):
     """A compact age string (`45s`, `12m`, `3h`, `2d`) for an ISO timestamp, or
     `age unknown` when it will not parse."""
     try:
         secs = int((dt.datetime.now(dt.timezone.utc)
-                    - dt.datetime.fromisoformat(iso)).total_seconds())
-    except (ValueError, TypeError):
+                    - parse_iso(iso)).total_seconds())
+    except (ValueError, TypeError, AttributeError):
         return "age unknown"
     for unit, size in (("d", 86400), ("h", 3600), ("m", 60)):
         if secs >= size:
@@ -1940,8 +1945,8 @@ def recover_scan():
         _, task = mapping(iss)
         updated = iss.get("updated_at")
         try:
-            age_s = int((now_dt - dt.datetime.fromisoformat(updated)).total_seconds())
-        except (ValueError, TypeError):
+            age_s = int((now_dt - parse_iso(updated)).total_seconds())
+        except (ValueError, TypeError, AttributeError):
             age_s = None
         if bid in head_tokens:
             # A commit carries its token but the Bead is not closed — the same

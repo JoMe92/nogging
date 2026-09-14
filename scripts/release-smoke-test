@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Installs Nogging from an exact npm install spec into a scratch git
+# repository and verifies it reports ready. Intended for a real release's
+# post-tag check (`github:JoMe92/nogging#<tag>`) and for a local dry run
+# against a filesystem path before tagging.
+#
+# Usage: scripts/release-smoke-test <npm-install-spec> [<target-dir>] [-- <init-args>...]
+#   <npm-install-spec>  e.g. github:JoMe92/nogging#v1.7.0, or a local path
+#                        (for an offline dry run) such as .
+#   <target-dir>         defaults to a fresh scratch directory, kept for
+#                         inspection on failure and removed on success
+#   <init-args>           extra arguments forwarded to `init` (e.g. --no-systemd)
+set -euo pipefail
+
+spec="${1:?usage: release-smoke-test <npm-install-spec> [<target-dir>] [-- <init-args>...]}"
+shift
+
+target=""
+if [[ $# -gt 0 && "$1" != "--" ]]; then
+  target="$1"; shift
+fi
+[[ "${1:-}" == "--" ]] && shift
+
+owns_target=0
+if [[ -z "$target" ]]; then
+  target=$(mktemp -d)
+  owns_target=1
+fi
+mkdir -p "$target"
+git -C "$target" rev-parse --git-dir >/dev/null 2>&1 || git -C "$target" init -q
+
+out="$target/.release-smoke-test.log"
+if ( cd "$target" && npx --yes "$spec" init "$@" ) >"$out" 2>&1; then
+  if grep -q "Nogging is ready" "$out"; then
+    printf 'ok   - %s installs into %s and reports ready\n' "$spec" "$target"
+    [[ "$owns_target" -eq 1 ]] && rm -rf "$target"
+    exit 0
+  fi
+  printf 'FAIL - %s installed into %s but did not report ready:\n' "$spec" "$target" >&2
+  cat "$out" >&2
+  exit 1
+fi
+printf 'FAIL - %s failed to install into %s:\n' "$spec" "$target" >&2
+cat "$out" >&2
+exit 1

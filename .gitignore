@@ -4,3 +4,4 @@ node_modules/
 .nogging/reports/
 __pycache__/
 *.py[cod]
+/dist/
