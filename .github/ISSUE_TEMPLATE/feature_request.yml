@@ -1,0 +1,26 @@
+name: Feature request
+description: Propose a user-visible outcome for Nogging
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or outcome
+      description: What outcome is difficult today, and for whom?
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence and constraints
+      description: Describe examples, safety boundaries, compatibility needs, and alternatives considered.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Observable acceptance
+      description: What would demonstrate that the outcome is achieved?
+    validations:
+      required: true

@@ -15,6 +15,14 @@ Nogging release.
 - Installer entry point: `npx github:JoMe92/nogging#<tag>`
 - Generated service prefix: `nogg-`
 
+### GitHub metadata for the owner
+
+- Description: `Nogging — the structural layer for agentic software development.`
+- Topics: `agentic-development`, `ai-agents`, `beads`, `developer-tools`,
+  `openspec`
+- Visibility: remain private until the separate release-readiness and human
+  acceptance process authorizes a change
+
 Nogging is **a local-first delivery system that carries approved intent
 through executable work to verifiable Git evidence**. It connects OpenSpec
 intent, Beads execution state, and Git implementation evidence without replacing
