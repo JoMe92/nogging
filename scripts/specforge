@@ -181,7 +181,11 @@ def cleanup_worktree(record_name):
     if develop is None or run("git", "merge-base", "--is-ancestor", branch, develop, check=False).returncode:
         raise RuntimeError(f"refusing to clean branch not integrated into develop: {branch}")
     run("git", "worktree", "remove", str(target))
-    run("git", "branch", "-d", branch)
+    # The explicit merge-base check above is authoritative. `branch -d` may
+    # still reject a safely integrated branch when its upstream is the older
+    # origin/develop, so delete the exact verified local ref without consulting
+    # that stale upstream relationship.
+    run("git", "branch", "-D", branch)
     path.unlink()
     print(f"worktree retired: {target} ({branch})")
 def current_branch():

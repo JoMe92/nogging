@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+scratch=$(mktemp -d)
+trap 'git -C "$repo" worktree remove --force "$plan_tree" 2>/dev/null || true; git -C "$repo" worktree remove --force "$impl_tree" 2>/dev/null || true; rm -rf "$scratch"' EXIT
+repo="$scratch/repo"; remote="$scratch/origin.git"
+plan_tree="$scratch/plan"; impl_tree="$scratch/implementation"
+mkdir -p "$repo/.specforge/locks" "$repo/.specforge/state" "$repo/openspec/changes/demo" "$scratch/bin"
+cp "$source_root/.specforge/config.json" "$repo/.specforge/config.json"
+cp "$source_root/scripts/specforge" "$repo/specforge"
+chmod +x "$repo/specforge"
+printf '%s\n' '# Tasks' '' '- [ ] TASK-DEMO-001 Implement demo' >"$repo/openspec/changes/demo/tasks.md"
+printf '%s\n' '.specforge/locks/' '.specforge/state/' >"$repo/.gitignore"
+git -C "$repo" init -q
+git -C "$repo" config user.email workflow@example.invalid
+git -C "$repo" config user.name 'Workflow Test'
+git -C "$repo" add -A
+git -C "$repo" commit -q -m 'chore: seed workflow [SPEC-seed]'
+git -C "$repo" branch -M develop
+git init -q --bare "$remote"
+git -C "$repo" remote add origin "$remote"
+git -C "$repo" push -q -u origin develop
+
+cat >"$scratch/bin/bd" <<'STUB'
+#!/usr/bin/env bash
+if [[ "${1:-}" == list ]]; then
+  printf '%s\n' '[{"id":"SPEC-e2e","status":"in_progress","labels":["openspec:change:demo","openspec:task:TASK-DEMO-001"]}]'
+  exit 0
+fi
+exit 1
+STUB
+cat >"$scratch/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+if [[ "$*" == 'pr list'* ]]; then printf '%s\n' '[]'; exit 0; fi
+if [[ "$*" == 'pr create'* ]]; then printf '%s\n' 'https://example.invalid/pr/1'; exit 0; fi
+if [[ "$*" == 'pr checks'* ]]; then printf '%s\n' '[{"name":"tests","state":"COMPLETED","conclusion":"SUCCESS"}]'; exit 0; fi
+exit 1
+STUB
+chmod +x "$scratch/bin/bd" "$scratch/bin/gh"
+export PATH="$scratch/bin:$PATH" SPECFORGE_ROOT="$repo"
+
+"$repo/specforge" worktree plan demo auth-flow --path "$plan_tree" >/dev/null
+git -C "$plan_tree" config user.email workflow@example.invalid
+git -C "$plan_tree" config user.name 'Workflow Test'
+printf '%s\n' 'planned' >"$plan_tree/plan-evidence.txt"
+git -C "$plan_tree" add plan-evidence.txt
+git -C "$plan_tree" commit -q -m 'docs: validated plan' -m 'SpecForge-Writer: planning'
+export SPECFORGE_ROOT="$plan_tree"
+"$plan_tree/specforge" validate >/dev/null
+export SPECFORGE_ROOT="$repo"
+git -C "$repo" merge -q --ff-only plan/demo/auth-flow
+git -C "$repo" push -q origin develop
+"$repo/specforge" worktree cleanup plan--demo--auth-flow.json >/dev/null
+
+"$repo/specforge" worktree implement SPEC-e2e feat/demo --path "$impl_tree" >/dev/null
+git -C "$impl_tree" config user.email workflow@example.invalid
+git -C "$impl_tree" config user.name 'Workflow Test'
+printf '%s\n' 'implemented' >"$impl_tree/implementation.txt"
+git -C "$impl_tree" add implementation.txt
+git -C "$impl_tree" commit -q -m 'feat: implement demo [SPEC-e2e]'
+export SPECFORGE_ROOT="$impl_tree"
+mkdir -p "$impl_tree/.specforge/state"
+"$impl_tree/specforge" pr open --plan demo --task TASK-DEMO-001 --validation scripts/test >/dev/null
+sed -i 's/"initial_check_after": "[^"]*"/"initial_check_after": "2000-01-01T00:00:00+00:00"/' \
+  "$impl_tree/.specforge/state/pull-requests/feat-demo.json"
+"$impl_tree/specforge" pr ci | grep -q 'ready_for_user_review'
+
+export SPECFORGE_ROOT="$repo"
+git -C "$repo" merge -q --ff-only feat/demo
+"$repo/specforge" worktree cleanup implementation--spec-e2e.json >/dev/null
+[[ ! -e "$plan_tree" && ! -e "$impl_tree" ]]
+echo 'worktree workflow end-to-end: ok'
