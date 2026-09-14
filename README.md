@@ -36,9 +36,9 @@ existing Git repository, OpenSpec installation, or Beads tracker.
 - **Other systems:** macOS, Windows, other service managers, and unlisted agent
   versions are not currently claimed as supported.
 
-The version-by-version compatibility matrix is part of the remaining release
-readiness work. Until it lands, `./scripts/nogg doctor` is the authoritative
-check for the current machine.
+See the [compatibility policy and matrix](docs/compatibility.md) for minimum
+versions, supported combinations, and evidence. `./scripts/nogg doctor` checks
+the current machine against the required tool set.
 
 ## The two phases
 
@@ -135,6 +135,7 @@ touches `openspec/changes/`, `.beads/`, or your `package.json`. Full details in
 | Isolated Git worktrees | [Worktree workflow](docs/worktree-workflow.md) |
 | Supervised agent sessions | [Running work in sessions](docs/running-work-in-sessions.md) |
 | Security boundaries and safe disable | [Security and threat model](docs/security-model.md) |
+| Supported versions and platforms | [Compatibility matrix](docs/compatibility.md) |
 | Codex integration | [Using Nogging with Codex](docs/using-with-codex.md) |
 | Pi integration | [Using Nogging with Pi](docs/using-with-pi.md) |
 | Interrupted-run recovery | [Failure recovery](docs/failure-recovery.md) |

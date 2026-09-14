@@ -58,6 +58,7 @@ module.exports = {
   docs: [
     { from: 'docs/operating-model.md', to: 'docs/nogging/operating-model.md' },
     { from: 'docs/architecture.md', to: 'docs/nogging/architecture.md' },
+    { from: 'docs/compatibility.md', to: 'docs/nogging/compatibility.md' },
     { from: 'docs/failure-recovery.md', to: 'docs/nogging/failure-recovery.md' },
     { from: 'docs/using-with-codex.md', to: 'docs/nogging/using-with-codex.md' },
     { from: 'docs/using-with-pi.md', to: 'docs/nogging/using-with-pi.md' },

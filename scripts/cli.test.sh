@@ -61,6 +61,7 @@ check "reference docs under docs/nogging" test -f "$repo/docs/nogging/architectu
 check "codex guide under docs/nogging" test -f "$repo/docs/nogging/using-with-codex.md"
 check "pi guide under docs/nogging" test -f "$repo/docs/nogging/using-with-pi.md"
 check "security guide under docs/nogging" test -f "$repo/docs/nogging/security-model.md"
+check "compatibility guide under docs/nogging" test -f "$repo/docs/nogging/compatibility.md"
 check "codex execpolicy floor installed" test -f "$repo/.codex/rules/nogging.rules"
 check "codex floor keeps the always-on classes" \
   grep -Eq 'pattern=\["sudo"\]' "$repo/.codex/rules/nogging.rules"
@@ -330,6 +331,7 @@ if command -v npm >/dev/null 2>&1; then
     check "packed install ships launch prompts"     test -f "$packrepo/.nogging/launch-prompts/no-autonomous-claim.md"
     check "packed install ships the Pi guide"       test -f "$packrepo/docs/nogging/using-with-pi.md"
     check "packed install ships the security guide" test -f "$packrepo/docs/nogging/security-model.md"
+    check "packed install ships the compatibility guide" test -f "$packrepo/docs/nogging/compatibility.md"
     check "packed install ships the orchestrator profile" test -f "$packrepo/.nogging/launch-profiles/orchestrator.json"
     check "packed install ships the orchestrator prompt"  test -f "$packrepo/.nogging/launch-prompts/orchestrator.md"
     check "packed install ships the orchestrator unit template" \

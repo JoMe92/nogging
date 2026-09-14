@@ -18,7 +18,7 @@ no private-repository credential.
 | Class | Paths | Behaviour |
 | --- | --- | --- |
 | Tool files | `scripts/nogg`, `scripts/install-hooks`, `scripts/test`, `scripts/*.test.sh`, `scripts/hooks/*`, `.agents/skills/**` | copied verbatim, overwritten on every `init` / `update` |
-| Reference docs | `docs/nogging/{operating-model,architecture,failure-recovery,security-model,using-with-codex,using-with-pi,worktree-workflow}.md` | copied verbatim |
+| Reference docs | `docs/nogging/{operating-model,architecture,compatibility,failure-recovery,security-model,using-with-codex,using-with-pi,worktree-workflow}.md` | copied verbatim |
 | Scaffold | `openspec/config.yaml`, `openspec/project.md`, `.nogging/config.json` | written **only when absent** — never overwritten |
 | Merged | `.claude/settings.json`, `.gitignore`, `CLAUDE.md`, `AGENTS.md`, `.codex/hooks.json` | edited idempotently; your other content is preserved (a `bd`-written `.codex/hooks.json` is never clobbered) |
 | Codex payload | `.codex/rules/nogging.rules`, `.codex/prompts/{plan,discovery-review,sync-now}.md` | copied verbatim; only relevant if you run the loop from Codex — see [`docs/using-with-codex.md`](using-with-codex.md) |
@@ -118,9 +118,9 @@ the installer cannot prove whether another tool now owns them.
 
 - **Linux**, **Git**, and **Bash** — the supported host and script environment.
 - **Node.js ≥ 18** — to run the installer and package checks.
-- **Python 3** — the `scripts/nogg` bridge runs under it.
-- **OpenSpec CLI** — required for planning-artifact validation.
-- **bd (Beads)** and a reachable **Dolt** — required for executable work and
+- **Python ≥ 3.9**, **Git ≥ 2.30**, and **GNU Bash ≥ 4.4**.
+- **OpenSpec CLI 1.11.x** — required for planning-artifact validation.
+- **bd (Beads) 1.2.x** and a reachable **Dolt 2.3.x** — required for executable work and
   synchronization. `init` initializes Beads by default.
 - **systemd user services** are optional; install with `--no-systemd` otherwise.
 - **tmux** is optional unless supervised sessions or the orchestrator are used.
@@ -130,6 +130,9 @@ the installer cannot prove whether another tool now owns them.
 - For the **Pi agent path only**: the `pi` CLI (needs Node.js ≥ 22.19.0 to
   run, separate from the installer's own Node ≥ 18) and a configured model
   provider. See [`docs/using-with-pi.md`](using-with-pi.md).
+
+The complete support classification and evidence links are in the
+[compatibility matrix](compatibility.md).
 
 ## Caveat: `core.hooksPath`
 

@@ -2106,7 +2106,10 @@ def doctor(audit=False, with_recover=False):
     for w in warnings: print(f"WARN  {w}")
     # Optional tools: reported as a note, never a checked failure — a missing
     # one does not redden `doctor` or change its exit code.
-    notes = [boundary_state_line()]
+    notes = [boundary_state_line(),
+             "compatibility baseline: Node 18/20/22, Python 3.9-3.13, "
+             "Git 2.30+, Bash 4.4+, OpenSpec 1.11.x, Beads 1.2.x, Dolt 2.3.x "
+             "(docs/nogging/compatibility.md)"]
     if SKIP_RECORD.exists():
         try: srec = json.loads(SKIP_RECORD.read_text())
         except (ValueError, OSError): srec = {}
