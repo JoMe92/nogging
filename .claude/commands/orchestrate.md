@@ -5,7 +5,7 @@ description: Reach the always-on Orchestration Agent, or scope it to one takeove
 # /orchestrate — the always-on Orchestration Agent
 
 The **Orchestration Agent** is not a persona you enter here. It is a single
-always-on session (`sf-orchestrator-<slug>`) that a systemd user service keeps
+always-on session (`nogg-orchestrator-<slug>`) that a systemd user service keeps
 alive on the delivery host, above the Planning Agent and the Main Worker. See
 the *Orchestration* section of `docs/operating-model.md` for the role, the
 hierarchy (Product Owner → Orchestrator → {Planning, Lead} → Specialists), and
@@ -19,9 +19,9 @@ scripts/nogg orchestrator restart  # bounce the service
 scripts/nogg orchestrator stop      # stop + disable it and end the session
 ```
 
-- **From the delivery host:** `scripts/nogg session attach sf-orchestrator-<slug>`
+- **From the delivery host:** `scripts/nogg session attach nogg-orchestrator-<slug>`
   (read-only: add `--read-only`), or `scripts/nogg session log
-  sf-orchestrator-<slug> --follow`.
+  nogg-orchestrator-<slug> --follow`.
 - **From a phone, no SSH:** the session registers with **Remote Control**
   automatically — open it from the Claude app and type into it there.
 

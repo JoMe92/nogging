@@ -11,7 +11,7 @@ detail specific to Claude Code.
   tool-neutral write boundary described in `AGENTS.md`; the boundary holds
   without it.
 - **Claude-only:** the **Orchestration Agent** — the always-on
-  `sf-orchestrator-<slug>` session above Planning and the Main Worker,
+  `nogg-orchestrator-<slug>` session above Planning and the Main Worker,
   orchestrate-only by default, floor- and boundary-lifted for `--role
   orchestrator`, reachable from a phone via Remote Control. `AGENTS.md` *The
   Orchestration Agent* and `docs/nogging/operating-model.md` have the persona

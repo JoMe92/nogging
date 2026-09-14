@@ -185,7 +185,7 @@ an ordinary supervised session — a durable record, an append-only log, listed 
 
 - **No Bead.** `--role orchestrator` is launched without `--bead`; the record
   carries `bead_id: null` and `floor_lifted: true`. The session name is the
-  fixed singleton `sf-orchestrator-<slug>` (no nonce); `orchestrator run`
+  fixed singleton `nogg-orchestrator-<slug>` (no nonce); `orchestrator run`
   adopts an existing live one rather than failing on the name.
 - **The command floor is lifted — for this role only.** The `orchestrator`
   profile (`bypassPermissions`, empty deny, `specforge_floor: false`,
@@ -204,7 +204,7 @@ an ordinary supervised session — a durable record, an append-only log, listed 
   it is mitigated by delivery-host-only blast radius, full visibility, and the
   single instance, not eliminated.
 - **Always-on.** A rendered systemd user service
-  (`specforge-orchestrator-<slug>.service`, `Restart=always`,
+  (`nogg-orchestrator-<slug>.service`, `Restart=always`,
   `WantedBy=default.target`) runs `scripts/nogg orchestrator run`, an
   idempotent supervisor that keeps the one session alive and resumes its
   conversation with `claude --continue` after a crash or a reboot (with

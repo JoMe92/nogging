@@ -1090,7 +1090,7 @@ def slugify(name):
     return s or "repo"
 def repo_slug():
     """The per-repository slug — `slugify(<repo dir basename>)`. Used for the
-    singleton orchestrator session name `sf-orchestrator-<slug>`."""
+    singleton orchestrator session name `nogg-orchestrator-<slug>`."""
     return slugify(ROOT.name)
 def normalize_role(role):
     """Return (metadata_role, name_slug). Accepts `lead`, `specialist:<type>`
@@ -1403,10 +1403,10 @@ def session_launch(role, bead, cwd, read_only, owner,
                 and rec.get("state") in SESSION_ACTIVE_STATES and rec.get("name") in live):
             raise RuntimeError(
                 f"a live {role_meta} session already covers {bead}: {rec['name']}")
-    # The orchestrator is a singleton: a fixed, nonce-free `sf-orchestrator-<slug>`
+    # The orchestrator is a singleton: a fixed, nonce-free `nogg-orchestrator-<slug>`
     # name (a stale terminal record of the same name is reused in place). Every
     # other role gets the deterministic `sf-<role>-<bead>-<nonce>` shape.
-    name = f"sf-orchestrator-{repo_slug()}" if is_orchestrator else gen_session_name(role_slug, bead)
+    name = f"nogg-orchestrator-{repo_slug()}" if is_orchestrator else gen_session_name(role_slug, bead)
     workdir = str(Path(cwd or ROOT).resolve())
     sdir = sessions_dir()
     rec_path, log_path = sdir / f"{name}.json", sdir / f"{name}.log"
@@ -1658,8 +1658,8 @@ def session_log(name, follow):
 # / `stop` / `restart` drive the service so the operator does not fight the
 # generic `session` commands.
 def orchestrator_slug(): return repo_slug()
-def orchestrator_session_name(): return f"sf-orchestrator-{orchestrator_slug()}"
-def orchestrator_unit(): return f"specforge-orchestrator-{orchestrator_slug()}.service"
+def orchestrator_session_name(): return f"nogg-orchestrator-{orchestrator_slug()}"
+def orchestrator_unit(): return f"nogg-orchestrator-{orchestrator_slug()}.service"
 def _claude_project_dir(workdir):
     return Path.home() / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(workdir))
 def claude_conversation_exists(workdir):
