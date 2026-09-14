@@ -1,9 +1,9 @@
-# Using Agentsembli SpecForge with OpenAI Codex
+# Using Nogging with OpenAI Codex
 
-Agentsembli SpecForge is tool-neutral. `AGENTS.md` is the canonical instruction file for
+Nogging is tool-neutral. `AGENTS.md` is the canonical instruction file for
 every agent runtime, and the mechanical bridge (`scripts/nogg`) is the same
 whichever agent runs it. This page covers what is specific to running the
-Agentsembli SpecForge loop from **OpenAI Codex** instead of Claude Code.
+Nogging loop from **OpenAI Codex** instead of Claude Code.
 
 Everything verified below was checked against **codex-cli 0.148.0**. Codex moves
 fast; where a detail is version-dependent it is called out so you can re-check.
@@ -27,11 +27,11 @@ In addition to the usual target-repo prerequisites (`bd`/Beads, `python3`,
 
 ## What the installer places under `.codex/`
 
-`npx github:JoMe92/agentsembli-specforge init` (or `update`) runs a `mergeCodex` step that:
+`npx github:JoMe92/nogging init` (or `update`) runs a `mergeCodex` step that:
 
 | Path | Behaviour |
 | --- | --- |
-| `.codex/hooks.json` | **Preserved, never clobbered.** If `bd init` wrote it (the `SessionStart` / `UserPromptSubmit` / `PreCompact` / `PostCompact` → `bd codex-hook` entries), those entries are kept exactly. SpecForge adds no hook of its own; `mergeCodex` is an append-only merge seam for a future need. |
+| `.codex/hooks.json` | **Preserved, never clobbered.** If `bd init` wrote it (the `SessionStart` / `UserPromptSubmit` / `PreCompact` / `PostCompact` → `bd codex-hook` entries), those entries are kept exactly. Nogging adds no hook of its own; `mergeCodex` is an append-only merge seam for a future need. |
 | `.codex/rules/nogging.rules` | The **execpolicy command floor** (shipped verbatim, refreshed on every `init`/`update`). |
 | `.codex/prompts/{plan,discovery-review,sync-now}.md` | The **workflow prompts** — Codex-format equivalents of the Claude `.claude/commands/` files. |
 
@@ -39,7 +39,7 @@ A user's own `.codex/AGENTS.md` or `.codex/config.toml` is never touched.
 
 ### Launch authority levels
 
-`scripts/nogg session launch --agent codex` maps a SpecForge authority
+`scripts/nogg session launch --agent codex` maps a Nogging authority
 level onto Codex's sandbox / approval / network model via
 `.nogging/launch-profiles/*.codex.toml`. It mirrors the Claude trusted /
 restricted split:
@@ -59,7 +59,7 @@ it stops and reports instead.
 
 Codex loads every `*.rules` file under `<repo>/.codex/rules/` (once the
 `.codex/` layer is trusted) and evaluates model-generated shell commands
-against them. SpecForge's floor is the Codex-side mirror of the Claude
+against them. Nogging's floor is the Codex-side mirror of the Claude
 `FLOOR_DENY` set — the classes denied in *every* session regardless of level.
 It forbids only:
 
@@ -94,7 +94,7 @@ requirement is behavioural — the file can be rewritten without a spec change.
 
 ## How the commands map
 
-| SpecForge command | Claude Code | Codex |
+| Nogging command | Claude Code | Codex |
 | --- | --- | --- |
 | `/plan` | `.claude/commands/plan.md` | `.codex/prompts/plan.md` |
 | `/discovery-review` | `.claude/commands/discovery-review.md` | `.codex/prompts/discovery-review.md` |
@@ -110,7 +110,7 @@ commit as the `planning` writer → `plan-end`; `discoveries` / `--ack`;
 prompts only from `${CODEX_HOME:-~/.codex}/prompts/` (user-scoped); repo-scoped
 `<repo>/.codex/prompts/` is a pending upstream feature
 ([openai/codex#4734](https://github.com/openai/codex/issues/4734),
-[#9848](https://github.com/openai/codex/issues/9848)). SpecForge ships the files
+[#9848](https://github.com/openai/codex/issues/9848)). Nogging ships the files
 repo-scoped and version-controlled anyway. Until Codex reads them from the repo,
 either:
 
@@ -170,7 +170,7 @@ scans **`.agents/skills/**/SKILL.md` from the working directory up to the repo
 root** (as well as `.codex/skills/`, `$CODEX_HOME/skills/`, `/etc/codex/skills`,
 and its bundled system skills).
 
-SpecForge already ships its skills under `.agents/skills/` — the same directory
+Nogging already ships its skills under `.agents/skills/` — the same directory
 Claude Code reads — so **nothing extra is installed for Codex and no
 `.codex/skills/` mirror is needed**. The OpenSpec helper skills
 (`openspec-propose`, `openspec-apply-change`, `openspec-explore`,

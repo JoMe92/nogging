@@ -87,7 +87,7 @@ table working set stays clean while `dolt_log` grows one commit per write.
 
 So the in-scope interruptions — a process crash, token exhaustion, an SSH drop —
 never lose a recorded Bead change: whatever `bd` reported is already committed.
-SpecForge adds no `bd dolt commit` checkpoint of its own in `sync` or
+Nogging adds no `bd dolt commit` checkpoint of its own in `sync` or
 `materialize`; there is nothing uncommitted for it to flush. (Cross-machine
 propagation is a separate concern — that is `bd dolt push` to a remote, which
 the mechanical layer never does.)
@@ -103,7 +103,7 @@ it stops resurfacing. The ledger
 
 ## A crashed or stuck supervised session
 
-`scripts/nogg session list` shows every SpecForge-managed session and
+`scripts/nogg session list` shows every Nogging-managed session and
 reconciles each record against live tmux — a record still in an active state
 whose tmux session is gone is shown as `failed`.
 
@@ -113,7 +113,7 @@ which is what lets `session cleanup` retire it. `session cleanup --reap` does
 the reap and the cleanup in one step.
 
 - **Reported `failed`** — the metadata record is still active but the tmux
-  session is gone (the process crashed or was killed outside SpecForge). Read
+  session is gone (the process crashed or was killed outside Nogging). Read
   `session log <name>` for the last output, then `session reap` followed by
   `session cleanup` (or `session cleanup --reap`) to archive the log and retire
   the record.
@@ -123,14 +123,14 @@ the reap and the cleanup in one step.
   idempotent and records `ended_at`/`exit_reason`.
 - **`cleanup` refuses** — the record is still `starting`, `running` or `idle`.
   Run `session stop <name>` first; cleanup never acts on a live session.
-- **Lingering tmux server** — the dedicated `-L specforge` server persists
+- **Lingering tmux server** — the dedicated `-L nogg` server persists
   after its last session. `session cleanup` kills it once no non-retired
-  record remains; otherwise `tmux -L specforge kill-server` by hand is safe
+  record remains; otherwise `tmux -L nogg kill-server` by hand is safe
   when `session list` shows nothing active.
 - **Lost metadata** — the records under `.nogging/state/sessions/` are local
   and safe to delete; deleting one only drops history for an already-finished
   session. A live tmux session with no record can be inspected directly with
-  `tmux -L specforge attach -t <name>` and killed with `tmux -L specforge
+  `tmux -L nogg attach -t <name>` and killed with `tmux -L nogg
   kill-session -t <name>`.
 
 ## `openspec/` stuck read-only or stuck writable

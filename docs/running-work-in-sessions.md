@@ -12,7 +12,7 @@ see `failure-recovery.md`.
 `scripts/nogg session launch` starts a **separate agent process inside a
 tmux session** on the host — Claude Code by default, or Codex with `--agent
 codex` (see *Choosing the agent*) — on a dedicated tmux server socket (`tmux -L
-specforge`). Compared with running the agent in your terminal:
+nogg`). Compared with running the agent in your terminal:
 
 - **It keeps running when you leave.** Close the SSH connection, shut the
   laptop — the session keeps working on the host.
@@ -87,7 +87,7 @@ settings file for a Codex launch. `--read-only` forces `--sandbox read-only`.
 `--full-access` still means `trusted` + the `autonomous` prompt, mapped to
 whichever agent is in use.
 
-The SpecForge command floor (`rm -rf`, `sudo`, …) is, for Codex, the repo's
+The Nogging command floor (`rm -rf`, `sudo`, …) is, for Codex, the repo's
 `.codex/rules/` execpolicy directory — `session launch` never passes
 `--ignore-rules` or `--dangerously-bypass-approvals-and-sandbox`. That floor
 file ships with the `codex-onboarding` change; until it is present `session
@@ -206,9 +206,9 @@ For genuinely parallel work, give each session its own checkout with a Git
 worktree:
 
 ```bash
-git worktree add ../specforge-cmd feat/planning-and-discovery-commands
+git worktree add ../nogg-cmd feat/planning-and-discovery-commands
 ./scripts/nogg session launch --role lead --bead SPEC-yyy \
-  --cwd "$(cd ../specforge-cmd && pwd)"
+  --cwd "$(cd ../nogg-cmd && pwd)"
 ```
 
 Otherwise: **one session at a time against the repo root.**

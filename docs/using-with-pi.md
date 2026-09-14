@@ -1,9 +1,9 @@
-# Using Agentsembli SpecForge with Pi
+# Using Nogging with Pi
 
-Agentsembli SpecForge is tool-neutral. `AGENTS.md` is the canonical instruction file for
+Nogging is tool-neutral. `AGENTS.md` is the canonical instruction file for
 every agent runtime, and the mechanical bridge (`scripts/nogg`) is the same
 whichever agent runs it. This page covers what is specific to running the
-Agentsembli SpecForge loop from **Pi** (`https://pi.dev/`, package
+Nogging loop from **Pi** (`https://pi.dev/`, package
 `@earendil-works/pi-coding-agent`) instead of Claude Code or Codex.
 
 Everything verified below was checked hands-on against the installed
@@ -21,7 +21,7 @@ In addition to the usual target-repo prerequisites (`bd`/Beads, `python3`,
   path` — its absence never fails `doctor`, because a Claude/Codex-only repo
   is perfectly valid.
 - **Node.js ≥ 22.19.0 to *run* `pi` itself.** This is separate from — and
-  newer than — the `Node.js ≥ 18` the SpecForge installer needs; a host can
+  newer than — the `Node.js ≥ 18` the Nogging installer needs; a host can
   satisfy the installer's requirement while still being too old to run `pi`.
   `pi` fails immediately on an older Node with a `SyntaxError` (a built-in
   module export it needs, `node:fs`'s `globSync`, only exists from Node
@@ -32,7 +32,7 @@ In addition to the usual target-repo prerequisites (`bd`/Beads, `python3`,
   (`pi auth …`) before a non-interactive launch can do any real work — with
   none configured, `session launch --agent pi` starts the process but it fails
   immediately with "No API key found for the selected model". This is a
-  provider/auth concern, not something SpecForge manages.
+  provider/auth concern, not something Nogging manages.
 - **Trust `.pi/extensions/` once.** Pi only loads project-local
   `.pi/extensions/`, `.pi/prompts/`, and the other `.pi/*` resource
   directories once the project has a standing trust decision, or `--approve`
@@ -46,7 +46,7 @@ In addition to the usual target-repo prerequisites (`bd`/Beads, `python3`,
 
 ## What the installer places under `.pi/`
 
-`npx github:JoMe92/agentsembli-specforge init` (or `update`) ships two directories,
+`npx github:JoMe92/nogging init` (or `update`) ships two directories,
 copied verbatim on every `init`/`update`:
 
 | Path | Behaviour |
@@ -77,7 +77,7 @@ filesystem isolation at either level, because Pi's own built-in tools run
 shell commands and file writes with the full permissions of the `pi` process,
 and nothing in this bridge can restrict that further short of an external
 container (a genuine option, but a new infra dependency this repo does not
-otherwise need — left to the operator, not managed by SpecForge). Treat a Pi
+otherwise need — left to the operator, not managed by Nogging). Treat a Pi
 session's `restricted` level as weaker than the same word for Claude or
 Codex.
 
@@ -87,7 +87,7 @@ Pi extensions can intercept the `tool_call` event before a tool runs — the
 direct analogue of Claude's `PreToolUse` hook, and the mechanism this bridge
 uses since Pi has no execpolicy-style file. `nogging-guard.ts`:
 
-- denies a shell command (`toolName === "bash"`) matching the SpecForge
+- denies a shell command (`toolName === "bash"`) matching the Nogging
   command floor: `sudo`, `rm -rf`/`rm -fr`, `dd`, `mkfs` and its variants,
   `shutdown`, `reboot`, `systemctl`, `chown`, `curl`, `wget`,
   `git push --force`/`-f`/`--force-with-lease`, `git reset --hard`,
@@ -105,7 +105,7 @@ directly, without a live `pi` process, by `scripts/pi-guard.test.sh`.
 
 ## How the commands map
 
-| SpecForge command | Claude Code | Codex | Pi |
+| Nogging command | Claude Code | Codex | Pi |
 | --- | --- | --- | --- |
 | `/plan` | `.claude/commands/plan.md` | `.codex/prompts/plan.md` | `.pi/prompts/plan.md` |
 | `/discovery-review` | `.claude/commands/discovery-review.md` | `.codex/prompts/discovery-review.md` | `.pi/prompts/discovery-review.md` |
@@ -153,7 +153,7 @@ are reported back to the Lead Agent as discoveries.
 ## Known limitations
 
 - **No native sandbox, at either authority level.** See *Launch authority
-  levels* above — this is the load-bearing limitation of running SpecForge
+  levels* above — this is the load-bearing limitation of running Nogging
   under Pi and is stated here plainly rather than assumed away: `restricted`
   for Pi is floor-only, not network- or filesystem-isolated.
 - **No Pi CI job** — there is none, and none is needed: the mechanical CI

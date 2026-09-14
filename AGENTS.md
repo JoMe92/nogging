@@ -1,4 +1,4 @@
-# Agentsembli SpecForge agent instructions
+# Nogging agent instructions
 
 Read `README.md`, `docs/operating-model.md`, and the active Bead before work.
 This file is the single canonical instruction file for every agent tool.
@@ -87,7 +87,7 @@ session or inline work under the same constraints.
 
 ## Supervised sessions
 
-Lead Agent and specialist sessions that SpecForge starts run inside a named
+Lead Agent and specialist sessions that Nogging starts run inside a named
 tmux session on the delivery host, tracked by a durable record under
 `.nogging/state/sessions/` and an append-only log. Operators use
 `scripts/nogg session list | attach | log | stop | cleanup` from a plain
@@ -218,7 +218,7 @@ the subsection for the tool you are running as, and ignore the others.
   event and rejects a write/edit under `openspec/` unless the
   `.nogging/locks/openspec.readonly` sentinel is absent (a planning session
   is active); `plan-begin` / `plan-end` toggle it. The same extension
-  enforces the SpecForge command floor on the shell tool. Pi's `restricted`
+  enforces the Nogging command floor on the shell tool. Pi's `restricted`
   authority level is **floor-only**: unlike Claude and Codex, there is no
   network or filesystem sandbox at either authority level — the guard
   extension and the `openspec/` write boundary are the only enforcement.

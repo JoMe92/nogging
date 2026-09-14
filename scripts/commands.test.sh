@@ -190,7 +190,7 @@ if not m:
     print("AGENTS.md has no 'Resuming a run' section"); bad = 1
 else:
     body = agents[m.start():m.start()+1200]
-    if "specforge recover" not in body:
+    if "nogg recover" not in body:
         print("AGENTS.md 'Resuming a run' does not run scripts/nogg recover"); bad = 1
     if not re.search(r"before[^.]*bd ready", body):
         print("AGENTS.md 'Resuming a run' must place recover before bd ready"); bad = 1
@@ -218,12 +218,12 @@ for f in AGENTS.md templates/agents-block.md; do
 done
 
 # --- 7. the docs point at recover / the resume protocol (TASK-RIR-009) ---
-grep -q 'specforge recover' docs/operating-model.md \
+grep -q 'nogg recover' docs/operating-model.md \
   && grep -qi 'Resuming an interrupted run' docs/operating-model.md \
   && ok "operating-model.md points at recover / the resume protocol" \
   || bad "operating-model.md is missing the recover pointer"
 for f in docs/using-with-codex.md docs/running-work-in-sessions.md; do
-  grep -q 'specforge recover' "$f" && grep -qi 'resum' "$f" \
+  grep -q 'nogg recover' "$f" && grep -qi 'resum' "$f" \
     && ok "$f references the resumption protocol" \
     || bad "$f does not reference the resumption protocol"
 done

@@ -246,9 +246,9 @@ and the audit stays clean.
 
 ## Session supervision
 
-Every agent session SpecForge starts for Lead Agent or specialist work runs
+Every agent session Nogging starts for Lead Agent or specialist work runs
 inside a **named tmux session on the Pi**, under a dedicated tmux server socket
-(`tmux -L specforge`) that is isolated from the operator's own tmux. The session
+(`tmux -L nogg`) that is isolated from the operator's own tmux. The session
 is started with `scripts/nogg session launch --role <lead |
 specialist:<type>> --bead <id> [--cwd <path>] [--read-only]
 [--agent <claude|codex>] [--profile <name-or-path>] [--prompt <name-or-path>]

@@ -1,6 +1,6 @@
 # Architecture
 
-Agentsembli SpecForge deliberately separates semantic decisions from mechanical state
+Nogging deliberately separates semantic decisions from mechanical state
 reconciliation. It is not a general-purpose ALM system.
 
 ## Data contracts
@@ -57,7 +57,7 @@ never write the spec itself: the Bead ID and mapped task, the closure timestamp
 scanning `git log` subjects for the enforced `[<bead-id>]` token and by reading
 SHAs out of the Bead note (or an explicit "none found"), and the Bead's
 human-readable note preserved verbatim as an indented block. Entries stay
-idempotent across re-runs through a stable `<!-- specforge:<id>:<closed_at> -->`
+idempotent across re-runs through a stable `<!-- nogg:<id>:<closed_at> -->`
 event key; a later note amendment moves the timestamp and appends a fresh entry
 rather than rewriting history.
 
@@ -122,16 +122,16 @@ is retained and reported as orphaned; nothing is deleted or silently closed.
 
 ## Session supervision
 
-Claude Code sessions that SpecForge starts for Lead Agent or specialist work
+Claude Code sessions that Nogging starts for Lead Agent or specialist work
 are supervised, not ephemeral foreground processes. `scripts/nogg session`
 is a mechanical layer over tmux: it starts and tracks processes and makes no
 product decision.
 
-- **Substrate.** A dedicated tmux server socket (`tmux -L specforge`,
+- **Substrate.** A dedicated tmux server socket (`tmux -L nogg`,
   `session_tmux_socket`) isolates managed sessions from the operator's own
   tmux and makes them enumerable. The server and the Claude process run as the
   same non-privileged user; no `sudo`.
-- **Naming.** `sf-<role>-<bead>-<nonce>`. Before creating a session SpecForge
+- **Naming.** `sf-<role>-<bead>-<nonce>`. Before creating a session Nogging
   checks the metadata store, any leftover log, and `tmux has-session`; on a
   collision it regenerates the nonce and then fails rather than reusing or
   overwriting an existing session.
@@ -315,7 +315,7 @@ place requirement-to-code fidelity already lives.
 Because `core.hooksPath` points Git at `.beads/hooks` in this repository (and
 may in a fresh install once Beads diverts it), `.git/hooks/commit-msg` and
 `.git/hooks/pre-push` do not run here. The `invariants` job in
-`.github/workflows/specforge-validate.yml` is the enforced backstop: on every
+`.github/workflows/nogg-validate.yml` is the enforced backstop: on every
 `pull_request` it runs `scripts/check-branch-name` against the head branch and
 re-runs `scripts/hooks/commit-msg` over every non-merge commit the PR
 introduces (`git rev-list --no-merges origin/<base>..HEAD`, each
@@ -329,7 +329,7 @@ the branch, or the commit by SHA and subject.
 - **Delivery.** The Git hooks run only where `scripts/install-hooks` has put
   them *and* Git actually reads them. When `core.hooksPath` is set — as the
   Beads integration does, pointing it at `.beads/hooks` — Git ignores
-  `.git/hooks/` and no SpecForge hook runs (observed 2026-08-31). The CI
+  `.git/hooks/` and no Nogging hook runs (observed 2026-08-31). The CI
   `invariants` job is the authoritative backstop for branch and commit
   discipline in that case. Reconciling the two hook paths is tracked as a
   discovery on SPEC-7ec.

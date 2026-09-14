@@ -1,4 +1,4 @@
-# Agentsembli SpecForge acceptance report — <YYYY-MM-DD> — <hostname>
+# Nogging acceptance report — <YYYY-MM-DD> — <hostname>
 
 Copy this template to `docs/acceptance/<YYYY-MM-DD>-<hostname>.md` for each run
 (date the run started, short hostname of the delivery host, e.g.
@@ -14,9 +14,9 @@ line in a separate commit (see `docs/acceptance.md` step 18).
 | Host | <hostname> |
 | Operator | <name> |
 | Toolkit version | <`.nogging/config.json` `nogging_version`> |
-| Git commit | <`git rev-parse HEAD` of the SpecForge checkout> |
+| Git commit | <`git rev-parse HEAD` of the Nogging checkout> |
 | Runbook revision | <`git log -1 --format=%h -- docs/acceptance.md`> |
-| Install path exercised | <`node bin/cli.js init` and/or `npx github:JoMe92/agentsembli-specforge#<tag> init`> |
+| Install path exercised | <`node bin/cli.js init` and/or `npx github:JoMe92/nogging#<tag> init`> |
 | Backend | <real `bd` + `dolt` / mechanical stub only> |
 
 ## Step results
@@ -27,7 +27,7 @@ Every row needs a note; a `fail` or `skipped` note must say why.
 | # | Tag | Step | Result | Note |
 | --- | --- | --- | --- | --- |
 | 1 | [M] | Create a throwaway target repository | | |
-| 2 | [M] | Install SpecForge from the local checkout | | |
+| 2 | [M] | Install Nogging from the local checkout | | |
 | 3 | [M] | Assert the readiness verdict | | |
 | 4 | [A] | Real-distribution install check (`npx github:`) | | |
 | 5 | [M] | Open a planning session | | |

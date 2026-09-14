@@ -1,6 +1,6 @@
 # Vision and architecture
 
-This document states what Agentsembli SpecForge is for and describes the
+This document states what Nogging is for and describes the
 architecture as it is built today.
 
 For the day-to-day process see `operating-model.md`; for the data contracts and
@@ -8,7 +8,7 @@ the write-boundary enforcement see `architecture.md`.
 
 ## Goal
 
-Agentsembli SpecForge lets one person run a spec-driven development loop with AI agents
+Nogging lets one person run a spec-driven development loop with AI agents
 without an enterprise ALM stack. It keeps three authorities separate and lets a
 mechanical process — no LLM, no judgement — keep them consistent:
 
@@ -42,7 +42,7 @@ metadata layer. The concept conversation cut that down:
   state — scriptable) and a **discovery part** (is this finding plan-relevant? —
   stays manual).
 
-SpecForge implements that simplified model. The one part of the concept it
+Nogging implements that simplified model. The one part of the concept it
 reverses is distribution (see *Concept vs. implementation*).
 
 ## Architecture as built
@@ -83,7 +83,7 @@ layers cover Bash writes and non–Claude-Code editors.
 
 ### Distribution: the installer
 
-`npx github:JoMe92/agentsembli-specforge init` installs the whole structure into a target
+`npx github:JoMe92/nogging init` installs the whole structure into a target
 git repository in one command; `update` refreshes it; `doctor` reports
 readiness. The CLI is a zero-dependency Node program (`bin/`), published from
 this repository — no npm-registry release, no build step. It writes files by
@@ -96,7 +96,7 @@ class:
 | merge | `.claude/settings.json`, `.gitignore`, `CLAUDE.md`, `AGENTS.md` | idempotent merge | idempotent merge |
 | rendered | `systemd/nogg-sync-<slug>.{service,timer}` | render with the target's path | render |
 
-`init` also runs `bd init`, then ends with a readiness verdict — `SpecForge is
+`init` also runs `bd init`, then ends with a readiness verdict — `Nogging is
 ready` or the list of missing prerequisites. Target-owned content
 (`openspec/changes/**`, planning state, the config `name`) is never touched by
 `update`.
@@ -131,7 +131,7 @@ ready` or the list of missing prerequisites. Target-owned content
 | `PreToolUse` hook, exit 2 | `scripts/hooks/pre-tool-use-openspec-guard` (+ two more layers) |
 | `commit-msg` rule requiring a work-item token | `scripts/hooks/commit-msg` |
 | `execution-log.md` written by the mechanical part | generated in `sync()` |
-| Minimal CI invariants | `.github/workflows/specforge-validate.yml` |
+| Minimal CI invariants | `.github/workflows/nogg-validate.yml` |
 | Update mechanism planned from the start | `update` command + `nogging_version` tracking |
 | `doctor` health check | `scripts/nogg doctor` + `bin/cli.js doctor` + readiness verdict |
 | Toolkit version scheme | `package.json` version, pinnable as `#v1.0.0` |
@@ -144,7 +144,7 @@ ready` or the list of missing prerequisites. Target-owned content
 | `.agentic/config.yml`; `.agentic/systemd/sync-engine.service` via Pixi | `.nogging/config.json`; `systemd/nogg-sync-<slug>.{service,timer}` rendered per repo, no Pixi | one namespace under `.nogging/`; a per-repo slug lets several target repos run timers side by side; no Pixi dependency |
 | `[BEAD-XXX]` commit token | `[SPEC-xxx]` — the real Bead-ID shape | matches the actual Bead prefix; a literal `[BEAD-XXX]` placeholder is explicitly rejected |
 | Long-lived sync **daemon** with a PID file, `SIGUSR1` "sync-now", and a 5-minute poll | a systemd **oneshot** timer every 30 s, no resident process | no daemon lifecycle to supervise; 30 s is cheap; "sync-now" becomes a direct `sync` run |
-| Repo name `agentic-workflow-toolkit` | `specforge` | rename |
+| Repo name `agentic-workflow-toolkit` | `nogg` | rename |
 
 ### Not yet built (on the roadmap)
 
@@ -175,7 +175,7 @@ Beads (`reliable-beads-sync` carries the fix).
 ## Status
 
 `v1.0.0` is the installer plus the base structure: a target repo can run
-`npx github:JoMe92/agentsembli-specforge init` and reach a ready-to-plan state. The six
+`npx github:JoMe92/nogging init` and reach a ready-to-plan state. The six
 roadmap changes above are planned in `openspec/changes/` and materialised as
 Beads; they harden the sync, add the operator commands, and bring the specialist
 execution model online.
