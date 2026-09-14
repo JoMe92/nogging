@@ -34,10 +34,14 @@ cat >"$scratch/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 if [[ "$*" == 'pr list'* ]]; then printf '%s\n' '[]'; exit 0; fi
 if [[ "$*" == 'pr create'* ]]; then printf '%s\n' 'https://example.invalid/pr/1'; exit 0; fi
-if [[ "$*" == 'pr checks'* ]]; then printf '%s\n' '[{"name":"tests","state":"COMPLETED","conclusion":"SUCCESS"}]'; exit 0; fi
+if [[ "$*" == 'pr checks'* ]]; then printf '%s\n' '[{"name":"tests","state":"COMPLETED","bucket":"pass"}]'; exit 0; fi
 exit 1
 STUB
-chmod +x "$scratch/bin/bd" "$scratch/bin/gh"
+cat >"$scratch/bin/dolt" <<'STUB'
+#!/usr/bin/env bash
+exit 0
+STUB
+chmod +x "$scratch/bin/bd" "$scratch/bin/gh" "$scratch/bin/dolt"
 export PATH="$scratch/bin:$PATH" SPECFORGE_ROOT="$repo"
 
 "$repo/specforge" worktree plan demo auth-flow --path "$plan_tree" >/dev/null

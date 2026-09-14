@@ -225,12 +225,16 @@ def pull_request_ci():
     rec = json.loads(path.read_text()); due = dt.datetime.fromisoformat(rec["initial_check_after"])
     if dt.datetime.now(dt.timezone.utc) < due:
         print(f"CI initial inspection pending until {due.isoformat()}"); return
-    out = run("gh", "pr", "checks", rec["url"], "--required", "--json", "name,state,conclusion", check=False)
-    if out.returncode: raise RuntimeError("could not inspect required pull request checks")
-    checks = json.loads(out.stdout or "[]")
-    failed = [c.get("name", "unnamed") for c in checks if c.get("conclusion") in ("FAILURE", "failure", "cancelled", "timed_out")]
+    out = run("gh", "pr", "checks", rec["url"], "--required", "--json", "name,state,bucket", check=False)
+    try: checks = json.loads(out.stdout or "[]")
+    except ValueError: raise RuntimeError("could not parse required pull request checks")
+    # `gh pr checks` deliberately exits non-zero for failed/pending checks, so
+    # valid JSON output is authoritative. A non-zero exit with no checks is a
+    # genuine query failure.
+    if out.returncode and not checks: raise RuntimeError("could not inspect required pull request checks")
+    failed = [c.get("name", "unnamed") for c in checks if str(c.get("bucket", "")).lower() in ("fail", "cancel")]
     if failed: rec["state"] = "ci_failed"; rec["failed_checks"] = failed
-    elif checks and all(c.get("conclusion") in ("SUCCESS", "success", "skipped", "neutral") for c in checks): rec["state"] = "ready_for_user_review"
+    elif checks and all(str(c.get("bucket", "")).lower() in ("pass", "skipping") for c in checks): rec["state"] = "ready_for_user_review"
     else: rec["state"] = "ci_pending"
     rec["last_checked_at"] = now(); write_worktree_record(path, rec)
     print(f"CI state: {rec['state']}")
