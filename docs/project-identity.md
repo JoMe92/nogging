@@ -30,9 +30,9 @@ those systems.
 
 ## Product and ecosystem name
 
-**Nogging** is the public product name. `Agentsembli` qualifies
-the established Nogging name; it does not introduce a separate runtime,
-package, account, website, or installation dependency.
+**Nogging** is the public product name. `Agentsembli SpecForge` is a historical
+pre-release identity, not a current qualifier, runtime, package, account,
+website, or installation dependency.
 
 [Agent Console](https://github.com/JoMe92/agent-console) is an optional sibling
 project for orchestration and UI. Nogging works without Agent Console.
@@ -50,7 +50,7 @@ endorsed by the Gas Town or Beads maintainers.
 
 ## Stability boundary
 
-The first renamed release retains the established `nogg` command,
+The first Nogging release establishes the `nogg` command,
 installer, configuration, service, and package identifiers. The
 unscoped npm package named `nogg` belongs to another project; this project
 uses tagged GitHub installation and does not publish to that npm name.
@@ -62,9 +62,7 @@ identifiers would change.
 
 ## Technical identifier inventory
 
-The first public release deliberately keeps the identifiers already used by
-installed repositories. They are part of the compatibility surface, not places
-where the public display name should replace stable runtime identifiers:
+The first public release uses these identifiers as its compatibility surface:
 
 | Surface | Stable identifier |
 | --- | --- |
