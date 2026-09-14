@@ -1,5 +1,5 @@
 ---
-description: Force an immediate SpecForge reconciliation instead of waiting for the timer.
+description: Force an immediate Nogging reconciliation instead of waiting for the timer.
 ---
 
 # /sync-now — reconcile now

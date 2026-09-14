@@ -195,7 +195,7 @@ the subsection for the tool you are running as, and ignore the others.
 - **Write boundary.** Codex has no per-tool hook. `openspec/` stays read-only
   through the filesystem write guard (the `.nogging/locks/openspec.readonly`
   sentinel + the commit hooks); `plan-begin` / `plan-end` toggle it. The
-  command floor is `.codex/rules/specforge.rules` (execpolicy `prefix_rule`
+  command floor is `.codex/rules/nogging.rules` (execpolicy `prefix_rule`
   lines), loaded once the project's `.codex/` layer is trusted.
 - **Specialists.** Codex has no in-process subagent mechanism. A specialist run
   is a **separate supervised session**:
@@ -214,7 +214,7 @@ the subsection for the tool you are running as, and ignore the others.
 
 - **Write boundary.** Pi has no per-tool hook and no execution-policy file.
   `openspec/` writes are blocked by the project-local guard extension
-  (`.pi/extensions/specforge-guard.ts`), which intercepts the `tool_call`
+  (`.pi/extensions/nogging-guard.ts`), which intercepts the `tool_call`
   event and rejects a write/edit under `openspec/` unless the
   `.nogging/locks/openspec.readonly` sentinel is absent (a planning session
   is active); `plan-begin` / `plan-end` toggle it. The same extension

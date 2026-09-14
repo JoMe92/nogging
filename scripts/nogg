@@ -480,7 +480,7 @@ def _codex_repo_prompts():
     return sorted(p for p in d.glob("*.md") if p.is_file()) if d.is_dir() else []
 def codex_prompt_link_plan():
     """For each `.codex/prompts/*.md` in the repo, a `(src, target, state)` row
-    where `target` is `<CODEX_HOME>/prompts/specforge-<basename>.md` and `state`
+    where `target` is `<CODEX_HOME>/prompts/nogging-<basename>.md` and `state`
     is one of:
       linked     — `target` is our symlink, pointing at `src`
       wrong      — `target` is a symlink, but to something else
@@ -490,7 +490,7 @@ def codex_prompt_link_plan():
     dest_dir = codex_home() / "prompts"
     plan = []
     for src in _codex_repo_prompts():
-        target = dest_dir / f"specforge-{src.name}"
+        target = dest_dir / f"nogging-{src.name}"
         if target.is_symlink():
             try:
                 resolved = target.resolve()
@@ -505,15 +505,15 @@ def codex_prompt_link_plan():
     return plan
 def codex_prompts_link(unlink=False):
     """Symlink every repo `.codex/prompts/*.md` into `<CODEX_HOME>/prompts/` as
-    `specforge-<basename>.md` (Codex 0.148 only reads user-scoped prompts).
+    `nogging-<basename>.md` (Codex 0.148 only reads user-scoped prompts).
     Idempotent: a correct link is left, a wrong target is repointed, a real file
     that is not our symlink is reported and left. `--unlink` removes only the
-    `specforge-*` symlinks."""
+    `nogging-*` symlinks."""
     dest_dir = codex_home() / "prompts"
     if unlink:
         removed = []
         if dest_dir.is_dir():
-            for p in sorted(dest_dir.glob("specforge-*")):
+            for p in sorted(dest_dir.glob("nogging-*")):
                 if p.is_symlink():
                     p.unlink()
                     removed.append(p)
@@ -533,7 +533,7 @@ def codex_prompts_link(unlink=False):
             print(f"ok         {target} -> {src}")
         elif state == "collision":
             unresolved += 1
-            print(f"SKIP       {target} exists and is not a specforge symlink — "
+            print(f"SKIP       {target} exists and is not a nogging symlink — "
                   f"resolve it by hand, then re-run")
         else:  # missing or wrong: (re)point at src
             if target.is_symlink():
@@ -1306,7 +1306,7 @@ def load_pi_spec(path):
     `load_codex_spec`, no `tomllib` dependency): one `key = value` per line,
     `#` comments and blanks ignored, values are a double-quoted string. Unlike
     Codex, Pi's authority floor comes unconditionally from the guard
-    extension (`.pi/extensions/specforge-guard.ts`), not from this spec, so
+    extension (`.pi/extensions/nogging-guard.ts`), not from this spec, so
     neither key is required — a file with none of them, or no keys at all, is
     valid and resolves to `{}`. A malformed line still fails loudly."""
     try:
@@ -1379,15 +1379,15 @@ def session_launch(role, bead, cwd, read_only, owner,
     codex_spec = load_codex_spec(profile_path) if agent == "codex" else None
     pi_spec = load_pi_spec(profile_path) if agent == "pi" else None
     # The command-floor / openspec-boundary lift is the orchestrator's alone: the
-    # `specforge_floor` / `specforge_openspec_readonly` profile keys are honoured
+    # `nogging_floor` / `nogging_openspec_readonly` profile keys are honoured
     # ONLY for --role orchestrator. For every other role they are ignored — the
     # floor is unioned and openspec/ fenced exactly as before — so a lead or
     # specialist session pointed at the `orchestrator` profile still runs floored
     # and openspec/-fenced.
     floor_lifted = False
     if is_orchestrator and isinstance(source_settings, dict):
-        floor_lifted = source_settings.get("specforge_floor") is False
-        if source_settings.get("specforge_openspec_readonly") is False:
+        floor_lifted = source_settings.get("nogging_floor") is False
+        if source_settings.get("nogging_openspec_readonly") is False:
             openspec_readonly = False
     if not is_orchestrator and not bead_exists(bead):
         raise RuntimeError(f"Bead {bead} does not exist; launch refused")
@@ -1434,7 +1434,7 @@ def session_launch(role, bead, cwd, read_only, owner,
         effective_path = sdir / f"{name}.settings.json"
         # The SpecForge-only keys never reach Claude; strip them from the copy.
         base_settings = {k: v for k, v in source_settings.items()
-                         if k not in ("//", "specforge_floor", "specforge_openspec_readonly")}
+                         if k not in ("//", "nogging_floor", "nogging_openspec_readonly")}
         settings_out = base_settings if floor_lifted else merge_floor(base_settings)
         if openspec_readonly:
             settings_out = deny_openspec_writes(settings_out)
@@ -1445,7 +1445,7 @@ def session_launch(role, bead, cwd, read_only, owner,
            # the repo's `.codex/rules/` execpolicy directory, which Codex loads
            # from the working tree. That floor file ships with `codex-onboarding`;
            # warn (do not fail) when it is not present yet.
-        floor_file = Path(workdir) / ".codex/rules/specforge.rules"
+        floor_file = Path(workdir) / ".codex/rules/nogging.rules"
         if not floor_file.is_file():
             print(f"warning: {floor_file} is absent — the SpecForge command floor for "
                   f"Codex is not in place for this session (it ships with the "
@@ -1464,7 +1464,7 @@ def session_launch(role, bead, cwd, read_only, owner,
             inner += ["--readonly-root", str(Path(workdir) / "openspec")]
     else:  # pi: no per-session permissions file and no sandbox/approval/
            # network spec — the floor is the always-on guard extension
-           # (`.pi/extensions/specforge-guard.ts`), which reads
+           # (`.pi/extensions/nogging-guard.ts`), which reads
            # `.nogging/locks/openspec.readonly` directly at tool-call time.
            # That means, unlike Codex, this branch passes nothing extra for
            # the openspec/ write boundary (openspec_readonly is not consulted
@@ -1472,7 +1472,7 @@ def session_launch(role, bead, cwd, read_only, owner,
            # the guard for either authority level. That floor file ships with
            # this same change (TASK-PIA-004); warn (do not fail) when it is
            # not present yet.
-        floor_file = Path(workdir) / ".pi/extensions/specforge-guard.ts"
+        floor_file = Path(workdir) / ".pi/extensions/nogging-guard.ts"
         if not floor_file.is_file():
             print(f"warning: {floor_file} is absent — the SpecForge command floor for "
                   f"Pi is not in place for this session (it ships with this same "
@@ -2130,7 +2130,7 @@ def doctor(audit=False, with_recover=False):
     # Informational nudge (never a failure): the repo ships a Pi guard
     # extension, but Pi won't load it until the project has standing trust.
     if pi_present:
-        guard_file = ROOT / ".pi/extensions/specforge-guard.ts"
+        guard_file = ROOT / ".pi/extensions/nogging-guard.ts"
         if guard_file.is_file() and pi_project_trusted(ROOT) is not True:
             notes.append(
                 "pi is present but this project is not yet trusted for .pi/extensions/ "
@@ -2205,9 +2205,9 @@ def main():
     e = sub.add_parser("plan-end"); e.add_argument("--force", action="store_true")
     m = sub.add_parser("materialize"); m.add_argument("change")
     cpl = sub.add_parser("codex-prompts-link",
-        help="symlink .codex/prompts/*.md into <CODEX_HOME>/prompts/ as specforge-<name>.md")
+        help="symlink .codex/prompts/*.md into <CODEX_HOME>/prompts/ as nogging-<name>.md")
     cpl.add_argument("--unlink", action="store_true",
-        help="remove only the specforge-* prompt symlinks this command created")
+        help="remove only the nogging-* prompt symlinks this command created")
     wt = sub.add_parser("worktree", help="allocate and safely manage isolated agent worktrees")
     wtsub = wt.add_subparsers(dest="worktree_command", required=True)
     wtp = wtsub.add_parser("plan", help="allocate a planning worktree from updated origin/develop")

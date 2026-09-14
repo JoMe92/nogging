@@ -26,7 +26,7 @@ reorder.
    opens the OpenSpec write boundary for this session (it removes the
    `.nogging/locks/openspec.readonly` sentinel and takes
    `.nogging/locks/planning.lock`). Under Pi the boundary is enforced by the
-   `.pi/extensions/specforge-guard.ts` guard extension (a `tool_call`
+   `.pi/extensions/nogging-guard.ts` guard extension (a `tool_call`
    interceptor), not a per-tool hook or a filesystem write guard —
    `plan-begin` is what makes `openspec/` writable by removing the sentinel
    the guard extension checks. If the lock is already held by another

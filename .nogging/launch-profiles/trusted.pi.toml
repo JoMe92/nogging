@@ -4,7 +4,7 @@
 # `trusted` for Pi selects the autonomous launch prompt — handled by the
 # existing agent-neutral prompt logic in `resolved_launch_pair()`, not by
 # this file — while the guard extension
-# (`.pi/extensions/specforge-guard.ts`, ships with this same change,
+# (`.pi/extensions/nogging-guard.ts`, ships with this same change,
 # TASK-PIA-004) remains active exactly as under `restricted`. `trusted`
 # never disables the command floor or the `openspec/` write boundary for
 # Pi: there is no flag this bridge passes that would suppress or bypass the

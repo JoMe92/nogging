@@ -4,7 +4,7 @@
 # Unlike Claude and Codex, Pi has no native sandbox and no first-party
 # permissions/approval model this bridge can drive. The command floor for
 # Pi comes entirely from the always-on guard extension
-# (`.pi/extensions/specforge-guard.ts`, ships with this same change,
+# (`.pi/extensions/nogging-guard.ts`, ships with this same change,
 # TASK-PIA-004): it enforces the SpecForge command floor and the
 # `openspec/` write boundary by reading `.nogging/locks/openspec.readonly`
 # directly at tool-call time. That guard is active at BOTH the `restricted`

@@ -188,8 +188,8 @@ an ordinary supervised session — a durable record, an append-only log, listed 
   fixed singleton `nogg-orchestrator-<slug>` (no nonce); `orchestrator run`
   adopts an existing live one rather than failing on the name.
 - **The command floor is lifted — for this role only.** The `orchestrator`
-  profile (`bypassPermissions`, empty deny, `specforge_floor: false`,
-  `specforge_openspec_readonly: false`) is the *single* documented exception to
+  profile (`bypassPermissions`, empty deny, `nogging_floor: false`,
+  `nogging_openspec_readonly: false`) is the *single* documented exception to
   "a fixed command floor cannot be lifted by any profile". `session launch`
   reads those two keys **only** when the role is `orchestrator`; for every other
   role they are ignored and the floor is unioned in and `openspec/` fenced
