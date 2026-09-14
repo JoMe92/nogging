@@ -114,7 +114,7 @@ consults `classification` and `next_retry_after` before re-invoking; `sync`
 itself stays single-shot and never sleeps or loops. Retry is safe because
 execution-log entries have stable event keys.
 
-The sync process sets its own narrowly scoped `SPECFORGE_WRITER=sync` commit
+The sync process sets its own narrowly scoped `NOGGING_WRITER=sync` commit
 environment, allowing the repository hook to accept only its execution mirror.
 
 If a planner removes a task whose Bead is active, audit fails closed. The Bead
@@ -258,7 +258,7 @@ lock present — run plan-end --force)`.
 
 **2. `pre-commit` (result invariant, Git).**
 `scripts/hooks/pre-commit` rejects a commit (exit `1`) whose staged paths match
-`^openspec/` unless `SPECFORGE_WRITER` is `planning` or `sync` — the two writers
+`^openspec/` unless `NOGGING_WRITER` is `planning` or `sync` — the two writers
 the boundary already trusts. This catches `openspec/` edits that bypassed
 layer 1. It is path-based, not content-based; it is local only, not run in CI;
 and `git commit --no-verify` skips it.
@@ -268,9 +268,9 @@ and `git commit --no-verify` skips it.
 (every commit, planning and sync included), and — unless the commit is a writer
 commit — a real Beads issue-ID token
 (`\[[A-Z][A-Z0-9]*-[0-9a-z]+\]`, e.g. `[SPEC-7ec]`; a bare `[]` or `[BEAD-XXX]`
-fails). A commit is a writer commit when `SPECFORGE_WRITER` is `planning` or
-`sync` **or** its message body carries a `SpecForge-Writer: planning` /
-`SpecForge-Writer: sync` trailer. The two forms are exact parity: the
+fails). A commit is a writer commit when `NOGGING_WRITER` is `planning` or
+`sync` **or** its message body carries a `Nogging-Writer: planning` /
+`Nogging-Writer: sync` trailer. The two forms are exact parity: the
 environment variable is convenient locally, the trailer travels inside the
 commit object so CI applies the identical rule from the pushed history alone. A
 writer commit still needs a Conventional subject. The rejection names the rule
@@ -285,9 +285,9 @@ exemption; `scripts/agents-boundary.test.sh` covers the `PreToolUse` guard
 `openspec/`); `pre-commit` has no equivalent test.
 
 `scripts/nogg`'s deterministic sync commit sets both: the
-`SPECFORGE_WRITER=sync` environment and a `SpecForge-Writer: sync` trailer.
+`NOGGING_WRITER=sync` environment and a `Nogging-Writer: sync` trailer.
 Planning commits use a Conventional `docs(openspec):` / `chore(openspec):`
-subject plus a `SpecForge-Writer: planning` trailer; the non-Conventional
+subject plus a `Nogging-Writer: planning` trailer; the non-Conventional
 `plan:` subject prefix is retired.
 
 Layers 2 and 3, together with the `pre-push` branch-name check, are installed
@@ -320,7 +320,7 @@ may in a fresh install once Beads diverts it), `.git/hooks/commit-msg` and
 re-runs `scripts/hooks/commit-msg` over every non-merge commit the PR
 introduces (`git rev-list --no-merges origin/<base>..HEAD`, each
 `git show -s --format=%B` piped to the hook). It reuses the two rule scripts
-rather than re-encoding them, and the `SpecForge-Writer:` trailer is what makes
+rather than re-encoding them, and the `Nogging-Writer:` trailer is what makes
 the writer exemption reproducible server-side. A violation fails the PR naming
 the branch, or the commit by SHA and subject.
 
@@ -335,7 +335,7 @@ the branch, or the commit by SHA and subject.
   discovery on SPEC-7ec.
 - **Server-side, PR-only.** The `invariants` job runs on `pull_request`, so a
   branch pushed without an open PR is unchecked until one opens, and a commit
-  made locally with only `SPECFORGE_WRITER` set and no trailer passes locally
+  made locally with only `NOGGING_WRITER` set and no trailer passes locally
   but fails CI. `pre-commit` still runs nowhere in CI; review remains its
   backstop.
 - **Scope.** The layers govern *who* may write `openspec/` and *that* execution
@@ -361,6 +361,6 @@ boundary*). Requirement-to-code fidelity is not claimed to be automatically
 decidable; tests, review and Product Owner acceptance remain the evidence for
 that judgement. The **Orchestration Agent** under an explicit `takeover plan`
 instruction is the one persona that writes `openspec/` outside a `/plan`
-session; its commit still carries the `SpecForge-Writer: planning` trailer, so
+session; its commit still carries the `Nogging-Writer: planning` trailer, so
 the CI `invariants` job accepts it exactly as it accepts a planning session's
 commit (see *The Orchestration Agent and the command floor*).

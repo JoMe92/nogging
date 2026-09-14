@@ -68,7 +68,7 @@ product decision. Subcommands:
   `openspec:change:<id>` and `openspec:task:<id>`. Idempotent.
 - `sync` — one reconciliation pass under an exclusive lock: check the task box
   of every closed mapped Bead, append an `execution-log.md` entry with a stable
-  event key, commit as `SPECFORGE_WRITER=sync`.
+  event key, commit as `NOGGING_WRITER=sync`.
 - `discoveries` — list Beads carrying the `discovery` label, blocking first.
 - `doctor` — tool availability plus `validate`.
 
@@ -195,7 +195,7 @@ order:
    list|launch|attach|log|stop|cleanup`, a durable record and a restricted
    launch profile.
 3. **`enforce-conventional-branching`** — **done** (merged). `<type>/<slug>`
-   branch check, a `SpecForge-Writer:` commit trailer, an advisory `pre-push`
+   branch check, a `Nogging-Writer:` commit trailer, an advisory `pre-push`
    hook, and a CI `invariants` job on `pull_request`.
 4. **`selectable-launch-profile`** — next. Adds `session launch
    --profile/--prompt` and `--full-access`, a `trusted` profile + `autonomous`

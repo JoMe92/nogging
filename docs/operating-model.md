@@ -116,7 +116,7 @@ work itself, and the sub-sessions it launches keep their normal
 **Explicit takeover.** Only on an explicit in-session operator instruction of
 the form `/orchestrate takeover {plan|code} <description>` does it perform one
 task directly — a planning task run as a full `plan-begin` … `plan-end`
-sequence committed with the `SpecForge-Writer: planning` trailer, or a code task
+sequence committed with the `Nogging-Writer: planning` trailer, or a code task
 claimed, implemented, committed with the `[<bead-id>]` token, evidence-noted and
 closed. After the one task it returns to orchestrate-only. Nothing mechanical
 enforces the return: the orchestrator profile is god-mode (see *Launch
@@ -186,16 +186,16 @@ Use Conventional Commits, for example
 Planning changes are committed on their change branch and merged into `develop`
 after `./scripts/nogg validate`. A planning commit uses a Conventional
 subject — `docs(openspec): …` or `chore(openspec): …` — plus a
-`SpecForge-Writer: planning` trailer in the message body; the retired `plan:`
+`Nogging-Writer: planning` trailer in the message body; the retired `plan:`
 subject prefix is not a Conventional Commit type and must not be used. The
-trailer is the durable, portable form of the `SPECFORGE_WRITER=planning`
+trailer is the durable, portable form of the `NOGGING_WRITER=planning`
 exemption: the local `commit-msg` hook and CI honour it identically, so a
 planning commit needs no Beads ID token but still needs the Conventional
 subject.
 
 The timer makes local commits only when there is a tracked execution-log
 update; it never pushes. Its mirror commit is
-`chore(sync): mirror Beads execution evidence` with a `SpecForge-Writer: sync`
+`chore(sync): mirror Beads execution evidence` with a `Nogging-Writer: sync`
 trailer.
 
 ## Acceptance

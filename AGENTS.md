@@ -134,7 +134,7 @@ crash and reboot; it is reachable from a phone via Remote Control). It is
   list` / `doctor` show the session as `FULL-ACCESS`.
 - **Explicit takeover only.** On an explicit `/orchestrate takeover
   {plan|code} <description>` it does one task directly — a planning task
-  committed with the `SpecForge-Writer: planning` trailer, or a code task
+  committed with the `Nogging-Writer: planning` trailer, or a code task
   committed with the `[<bead-id>]` token — then returns to orchestrate-only.
 - **Acceptance stays human.** It never completes an acceptance report's
   `Signed-off-by:` line.

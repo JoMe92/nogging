@@ -862,8 +862,8 @@ def sync(on_request=False):
             run("git", "add", *sorted({str(p.relative_to(ROOT)) for p in changed}))
             run("git", "commit",
                 "-m", "chore(sync): mirror Beads execution evidence",
-                "-m", "SpecForge-Writer: sync",
-                env={**os.environ, "SPECFORGE_WRITER": "sync"})
+                "-m", "Nogging-Writer: sync",
+                env={**os.environ, "NOGGING_WRITER": "sync"})
             print(f"synced {len(set(changed))} file(s)")
         else: print("sync: no changes")
         prev = read_last_success()
