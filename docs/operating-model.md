@@ -200,6 +200,14 @@ trailer.
 
 ## Acceptance
 
+## Requested review changes
+
+The Lead Agent classifies post-review requests autonomously. A small change
+that does not materially alter architecture, interfaces, or scope creates and
+resolves a Bead on the existing implementation branch and restores green CI.
+A large or uncertain change starts a new planning session in a dedicated
+planning worktree; it is not implemented directly on the existing PR branch.
+
 A change is not **accepted** just because its Beads are closed and CI is green.
 Acceptance is an explicit, human act recorded in a signed report.
 

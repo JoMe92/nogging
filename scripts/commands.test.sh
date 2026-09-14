@@ -98,6 +98,10 @@ grep -q 'worktree implement <bead> <branch>' .specforge/launch-prompts/autonomou
   && grep -q 'never merge that pull request yourself' .specforge/launch-prompts/autonomous.md \
   && ok "autonomous Lead guidance requires an implementation worktree and review handoff" \
   || bad "autonomous Lead guidance is missing worktree or no-self-merge rules"
+grep -q 'create a Bead' .specforge/launch-prompts/autonomous.md \
+  && grep -q 'new planning session' .specforge/launch-prompts/autonomous.md \
+  && ok "review changes route small work to Beads and large work to planning" \
+  || bad "review-change routing policy is missing"
 
 # --- 3b. planning is allocated before the write boundary opens -----------
 for path in .claude/commands/plan.md .codex/prompts/plan.md .pi/prompts/plan.md; do

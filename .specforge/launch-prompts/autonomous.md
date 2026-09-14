@@ -37,3 +37,12 @@ Every hard rule still holds:
 
 Stop and report when the pull request is green and ready for user review, or
 when you are blocked.
+
+## Requested review changes
+
+Classify every requested PR change autonomously. A small change stays on this
+branch when it does not alter architecture, interfaces, or scope materially:
+create a Bead for it, resolve it in this same worktree, commit and push, then
+restore green CI. A large or uncertain change requires a new planning session;
+do not implement it on this PR branch. Large changes include new subsystems,
+cross-cutting interfaces, or substantial behavioral changes.
