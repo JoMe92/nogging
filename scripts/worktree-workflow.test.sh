@@ -34,6 +34,7 @@ cat >"$scratch/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 if [[ "$*" == 'pr list'* ]]; then printf '%s\n' '[]'; exit 0; fi
 if [[ "$*" == 'pr create'* ]]; then printf '%s\n' 'https://example.invalid/pr/1'; exit 0; fi
+if [[ "$*" == *'pr checks'*'--required'* ]]; then printf '%s\n' '[]'; exit 1; fi
 if [[ "$*" == 'pr checks'* ]]; then printf '%s\n' '[{"name":"tests","state":"COMPLETED","bucket":"pass"}]'; exit 0; fi
 exit 1
 STUB
@@ -68,7 +69,7 @@ mkdir -p "$impl_tree/.specforge/state"
 "$impl_tree/specforge" pr open --plan demo --task TASK-DEMO-001 --validation scripts/test >/dev/null
 sed -i 's/"initial_check_after": "[^"]*"/"initial_check_after": "2000-01-01T00:00:00+00:00"/' \
   "$impl_tree/.specforge/state/pull-requests/feat-demo.json"
-"$impl_tree/specforge" pr ci | grep -q 'ready_for_user_review'
+"$impl_tree/specforge" pr ci | grep -q 'ready_for_user_review (all checks)'
 
 export SPECFORGE_ROOT="$repo"
 git -C "$repo" merge -q --ff-only feat/demo

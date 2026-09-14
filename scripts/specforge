@@ -228,6 +228,12 @@ def pull_request_ci():
     out = run("gh", "pr", "checks", rec["url"], "--required", "--json", "name,state,bucket", check=False)
     try: checks = json.loads(out.stdout or "[]")
     except ValueError: raise RuntimeError("could not parse required pull request checks")
+    scope = "required"
+    if not checks:
+        out = run("gh", "pr", "checks", rec["url"], "--json", "name,state,bucket", check=False)
+        try: checks = json.loads(out.stdout or "[]")
+        except ValueError: raise RuntimeError("could not parse pull request checks")
+        scope = "all"
     # `gh pr checks` deliberately exits non-zero for failed/pending checks, so
     # valid JSON output is authoritative. A non-zero exit with no checks is a
     # genuine query failure.
@@ -236,8 +242,8 @@ def pull_request_ci():
     if failed: rec["state"] = "ci_failed"; rec["failed_checks"] = failed
     elif checks and all(str(c.get("bucket", "")).lower() in ("pass", "skipping") for c in checks): rec["state"] = "ready_for_user_review"
     else: rec["state"] = "ci_pending"
-    rec["last_checked_at"] = now(); write_worktree_record(path, rec)
-    print(f"CI state: {rec['state']}")
+    rec["last_checked_at"] = now(); rec["check_scope"] = scope; write_worktree_record(path, rec)
+    print(f"CI state: {rec['state']} ({scope} checks)")
     if failed: print("failed required checks: " + ", ".join(failed))
 def changes():
     base = ROOT / "openspec/changes"
