@@ -234,6 +234,12 @@ def pull_request_ci():
         try: checks = json.loads(out.stdout or "[]")
         except ValueError: raise RuntimeError("could not parse pull request checks")
         scope = "all"
+    if not checks:
+        rec["state"] = "ci_pending"
+        rec["last_checked_at"] = now(); rec["check_scope"] = scope
+        write_worktree_record(path, rec)
+        print(f"CI state: ci_pending ({scope} checks; no runs reported yet)")
+        return
     # `gh pr checks` deliberately exits non-zero for failed/pending checks, so
     # valid JSON output is authoritative. A non-zero exit with no checks is a
     # genuine query failure.
