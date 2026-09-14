@@ -1,3 +1,10 @@
+> **Naming update (2026-09-14):** the project has since renamed to **Nogging**
+> (see `rename-to-nogging`). Every "SpecForge"/"Agentsembli" reference below is
+> historical context for why this change exists; the readiness work itself
+> stays valid and should target the Nogging identity going forward.
+> `TASK-PUB-004` closed as implemented via `TASK-NOG-011`; `TASK-PUB-005` and
+> `TASK-PUB-015` were updated in `tasks.md` to target Nogging.
+
 ## Why
 
 SpecForge is functional and released privately, but its repository, installer,
@@ -17,10 +24,10 @@ decision should be reduced to one explicit visibility-change checklist.
 - Replace the maintainer-oriented README with a user-first introduction,
   five-minute walkthrough, support matrix, safety model, and links to task-based
   documentation.
-- Keep **SpecForge** as the public project name and describe **Agentsembli** only
-  as the provisional working name for the wider ecosystem; do not require a
-  repository rename, product website, or broader brand rollout for this release.
-- Credit Gas Town as a conceptual inspiration, state that SpecForge is an
+- ~~Keep SpecForge as the public project name and describe Agentsembli only as
+  the provisional working name~~ — superseded by `rename-to-nogging`: the
+  project is now **Nogging**, and public-facing text should say so.
+- Credit Gas Town as a conceptual inspiration, state that Nogging is an
   independent implementation, and identify Beads as the only Gas Town component
   currently adopted rather than implying code reuse or affiliation.
 - Reconcile installation and operating documentation with current behavior,
@@ -66,5 +73,6 @@ documentation, npm package metadata/allowlisting, installer behavior and tests,
 GitHub workflows, release tooling, acceptance procedures and reports, tracked
 operational artifacts, and potentially public Git/Dolt history. It documents
 Agent Console as an optional sibling project without changing that repository.
-It does not rename SpecForge, launch an Agentsembli website, publish to npm, or
-change repository visibility.
+It does not launch a Nogging website, publish to npm, or change repository
+visibility. (It previously also excluded renaming the project; `rename-to-nogging`
+has since done that separately.)

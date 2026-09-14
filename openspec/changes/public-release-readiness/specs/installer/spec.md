@@ -24,14 +24,14 @@ historical acceptance reports as user documentation.
 
 #### Scenario: An installed documentation link is followed
 
-- **WHEN** a user follows any relative link from a document installed under `docs/specforge/`
+- **WHEN** a user follows any relative link from a document installed under `docs/nogging/`
 - **THEN** its target is installed at the referenced path
 
 ### Requirement: Users can identify, update, roll back, and remove an installation
 
 The CLI SHALL report its released version and the documentation SHALL provide
 safe, explicit procedures for updating to a pinned release, rolling back to a
-prior release, and removing SpecForge-owned files and hook entries without
+prior release, and removing Nogging-owned files and hook entries without
 deleting target-owned OpenSpec changes, Beads data, configuration, or unrelated
 agent settings.
 
@@ -40,10 +40,10 @@ agent settings.
 - **WHEN** the version command or option is invoked
 - **THEN** it prints the same semantic version recorded in the package
 
-#### Scenario: A user removes SpecForge
+#### Scenario: A user removes Nogging
 
 - **WHEN** the documented removal procedure is followed
-- **THEN** SpecForge-owned executables and injected configuration are removed or identified for removal
+- **THEN** Nogging-owned executables and injected configuration are removed or identified for removal
 - **AND** target-owned planning and Beads state remain preserved
 
 ### Requirement: Platform support is explicit and test-backed
