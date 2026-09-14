@@ -41,8 +41,36 @@ grep -q 'nogg-orchestrator-{slug}' bin/lib/manifest.js || fail "generated orches
 grep -q '"name": "Nogging"' templates/nogging-config.json || fail "generated config changed identity"
 grep -q 'scfg("session_tmux_socket", "nogging")' scripts/nogg || fail "tmux socket changed identity"
 grep -q '^# Nogging$' README.md || fail "README display name is stale"
+grep -q '^## Project status and audience$' README.md || fail "README maturity and audience section is missing"
+grep -q 'pre-public release candidate' README.md || fail "README maturity status is missing"
+grep -q '^## Supported environments$' README.md || fail "README support summary is missing"
+grep -q '^## Safety warning$' README.md || fail "README safety warning is missing"
+grep -q '^## Documentation$' README.md || fail "README documentation index is missing"
+grep -q '^## Inspiration and related projects$' README.md || fail "README provenance section is missing"
+grep -q 'github.com/steveyegge/gastown' README.md || fail "README Gas Town link is missing"
+grep -q 'github.com/gastownhall/beads' README.md || fail "README Beads link is missing"
+grep -q 'independent$' README.md && grep -q '^implementation and is not affiliated' README.md \
+  || fail "README independence statement is missing"
+grep -q 'only Gas Town' README.md || fail "README Beads-only adoption boundary is missing"
+grep -q 'optional sibling' README.md || fail "README does not keep Agent Console optional"
+grep -q 'npx github:JoMe92/nogging#v1.6.0 init --no-systemd' README.md \
+  || fail "README quick start is not pinned to the supported GitHub tag"
+! grep -q 'git@github.com' README.md || fail "README assumes private SSH repository access"
 grep -q 'Nogging validation' .github/workflows/nogging-validate.yml || fail "workflow display name is stale"
 grep -q 'security/advisories/new' SECURITY.md || fail "security reporting route is missing"
+
+node <<'NODE' || fail "README contains a missing relative link"
+const fs = require('fs');
+const path = require('path');
+const text = fs.readFileSync('README.md', 'utf8');
+for (const match of text.matchAll(/\[[^\]]*\]\(([^)]+)\)/g)) {
+  const target = match[1].split('#', 1)[0];
+  if (!target || /^[a-z]+:/i.test(target)) continue;
+  if (!fs.existsSync(path.resolve(target))) {
+    throw new Error(`missing README link target: ${target}`);
+  }
+}
+NODE
 
 node -e '
   const pkg = require("./package.json");
