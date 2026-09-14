@@ -98,3 +98,10 @@
     The installation payload table still described the Pi guide as future work after PUB-009 had already shipped it, and omitted the newly installed security guide. The stale statement was found while reconciling lifecycle documentation and is corrected in this task; planning should review whether any release-readiness artifact needs an explicit documentation-consistency note.
     progress: version command/flag, pinned update/rollback/remove documentation, throwaway two-release lifecycle test, and full scripts/test are complete; next commit, record evidence, close, integrate, and sync.
     Implemented in commit f555caabc30ea7a7e624ce49e291782839d40b61. Evidence: scripts/release-lifecycle.test.sh passed version, pinned update, rollback, remove, and preservation scenarios; CLI and installation documentation tests passed; full scripts/test passed; git diff --check passed.
+
+<!-- nogg:SPEC-n4jw:2026-09-14T19:02:24Z -->
+- 2026-09-14T19:02:33+00:00 — SPEC-n4jw closed for TASK-PUB-011 (Bead closed at 2026-09-14T19:02:24Z).
+  - implementation commits: 4a441e6c060f
+  - Bead note:
+    progress: compatibility policy/matrix, packaged installed guide, doctor baseline, 3x3 Node/Python CI matrix, focused regression test, and full scripts/test are complete; next commit, record evidence, close, integrate, and sync.
+    Implemented in commit 4a441e6c060fa37a7ad752207f6d09df20c8eb58. Evidence: scripts/compatibility.test.sh and clean package manifest passed; packed install includes compatibility guide; full scripts/test passed; CI matrix declares Node 18/20/22 x Python 3.9/3.11/3.13; git diff --check passed.

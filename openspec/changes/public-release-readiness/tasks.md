@@ -21,7 +21,7 @@
 
 ## 4. Compatibility, CI, and releases
 
-- [ ] TASK-PUB-011 Define a compatibility policy and matrix for Node, Python, Git, Bash, OpenSpec, Beads, Dolt, tmux, systemd, architectures, operating systems, and Claude/Codex/Pi versions; align declared engine constraints and doctor output, then verify every supported automated combination in CI or link to current manual evidence.
+- [x] TASK-PUB-011 Define a compatibility policy and matrix for Node, Python, Git, Bash, OpenSpec, Beads, Dolt, tmux, systemd, architectures, operating systems, and Claude/Codex/Pi versions; align declared engine constraints and doctor output, then verify every supported automated combination in CI or link to current manual evidence.
 - [ ] TASK-PUB-012 Harden GitHub automation with least-privilege permissions, immutable action revisions, dependency update automation, dependency/security scans, secret and package-content checks, and Markdown link validation; verify an intentionally bad fixture makes each new gate fail and normal CI remains green.
 - [ ] TASK-PUB-013 Add a documented repeatable release process with `CHANGELOG.md`, version/tag/release consistency checks, verifiable tags, generated checksums and SBOM or an explicit not-applicable result, and an exact-tag post-release install smoke test; verify the workflow in a non-public release-candidate dry run.
 
