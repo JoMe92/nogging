@@ -1,3 +1,9 @@
+> **Naming update (2026-09-14):** the project has since renamed to **Nogging**
+> (see `rename-to-nogging`). The "SpecForge"/"Agentsembli" framing below is the
+> historical context this change was written against; treat every reference to
+> keeping SpecForge canonical and Agentsembli provisional as superseded by the
+> Nogging identity.
+
 ## Context
 
 The audit found a healthy functional core and green CI, but no root license or
@@ -17,28 +23,30 @@ scope and the four delta specs for required outcomes.
 - Keep legal, privacy, security, documentation, packaging, compatibility, CI,
   and acceptance work independently executable where possible.
 - End with a report that leaves only the GitHub visibility toggle to the owner.
-- Present SpecForge as a credible standalone open-source project while allowing
-  a lightweight reference to the provisional Agentsembli ecosystem.
+- Present Nogging as a credible standalone open-source project (superseding
+  the original SpecForge/provisional-Agentsembli framing).
 
 **Non-Goals:**
 
 - Changing repository visibility.
-- Publishing to the npm registry or claiming the existing `specforge` name.
+- Publishing to the npm registry or claiming an npm package name.
 - Rewriting Git/Dolt history before the audit proves it necessary and the owner
   explicitly approves the destructive migration.
 - Promising native Windows, macOS, or unsupported agent compatibility without
   matching evidence.
-- Renaming the SpecForge repository, creating an Agentsembli website, or
-  treating the provisional ecosystem name as a finished commercial product.
+- Creating a Nogging website, or treating "Nogging" as a finished commercial
+  brand beyond GitHub availability (repository rename itself is already done,
+  separately, by `rename-to-nogging`).
 
 ## Decisions
 
 ### Use GitHub-tag installation as the first public distribution
 
 Mark the package private to prevent accidental registry publication while
-retaining `npx github:JoMe92/specforge#<tag> init`. This avoids the occupied npm
-name and limits this change to an already-tested channel. A later proposal can
-introduce a scoped npm package such as `@jome92/specforge`.
+retaining `npx github:JoMe92/nogging#<tag> init`. This avoids the previously
+occupied unscoped npm name and limits this change to an already-tested
+channel. A later proposal can introduce a scoped npm package such as
+`@jome92/nogg`.
 
 ### Preserve ISC unless the owner separately changes the license decision
 
@@ -64,14 +72,13 @@ docs. Link and payload tests enforce the boundary.
 
 ### Keep the public identity narrow and credit its inspiration precisely
 
-Publish the repository under its established **SpecForge** name. The README may
-describe it as the workflow core of the emerging **Agentsembli** ecosystem, but
-must label Agentsembli as a working name and must not depend on a website,
-repository rename, or sibling product to explain SpecForge's value. Refer to the
+Publish the repository under its established **Nogging** name (see
+`rename-to-nogging` for the identity itself). The README must not depend on a
+website or sibling product to explain Nogging's value. Refer to the
 UI/orchestration repository as the optional **Agent Console** sibling project.
 
 Give Gas Town a visible, direct-link acknowledgement as conceptual inspiration.
-State in the same section that SpecForge is independently implemented, is not
+State in the same section that Nogging is independently implemented, is not
 affiliated with or endorsed by Gas Town's maintainers, and currently adopts only
 Beads rather than Gas Town runtime components. This is provenance and scope
 documentation, not a claim that the projects are compatible or interchangeable.
