@@ -76,3 +76,10 @@
     Non-blocking dependency discovery for TASK-PUB-009: bin/lib/manifest.js installs operating-model, architecture, failure-recovery, using-with-codex, and worktree-workflow under docs/nogging, but not docs/using-with-pi.md. Installed operating-model prose links to using-with-pi.md, so the installed link is currently absent. PUB-006 will document the current payload accurately; PUB-009 already explicitly owns adding the missing Pi guide and package-manifest enforcement.
     Correction to the discovery note after source verification: sf-<role>-<bead>-<nonce> remains the intentional ordinary supervised-session shape in scripts/nogg; only the singleton orchestrator was renamed to nogg-orchestrator-<slug>. No session-name documentation change is needed. The stale Agentsembli qualifier wording remains a valid PUB-006 documentation correction.
     Completed in commit d850b951d9925cf15480773a2fbc1bdd688439c8. Reconciled installation and identity docs with pinned GitHub installation, automatic Beads init/--no-beads, Claude/Codex/Pi payloads and prerequisites, slugged sync/orchestrator units, three-hook core.hooksPath collision, pinned update/rollback/remove, and non-systemd operation. Added scripts/installation-docs.test.sh, which compares flags to CLI help and verifies fresh installs with rendered units and --no-systemd. Focused test and full scripts/test pass.
+
+<!-- nogg:SPEC-w4fe:2026-09-14T18:50:42Z -->
+- 2026-09-14T18:50:58+00:00 — SPEC-w4fe closed for TASK-PUB-007 (Bead closed at 2026-09-14T18:50:42Z).
+  - implementation commits: 41ec41ffd1bf
+  - Bead note:
+    progress: security guide, entry-point links, regression test, and full scripts/test are complete; next commit, record evidence, close, integrate, and sync.
+    Implemented in commit 41ec41ffd1bf0e8542a6da0d019afb8dafc9a099. Evidence: scripts/security-docs.test.sh passed; full scripts/test passed, including acceptance, installer, guards, sessions, package, and worktree suites; git diff --check passed.
