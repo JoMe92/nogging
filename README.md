@@ -1,8 +1,13 @@
+![Nogging — structure for what's next](brand/nogging-banner.png)
+
 # Nogging
 
-Nogging is a lean, local-first operating model for agentic
-software delivery. The compatible command and installed state remain named
-`nogg`.
+**Structure for what's next.**
+
+Nogging is a lean, local-first operating model for agentic software delivery.
+It gives product intent, executable tasks, and implementation evidence clear
+owners so autonomous agents can move quickly without quietly changing the
+plan. The command and installed state are named `nogg`.
 OpenSpec owns approved product intent, Beads owns executable work, and Git owns
 the implementation. A deterministic sync process mirrors execution evidence
 back into OpenSpec; it never makes product decisions.
@@ -28,19 +33,28 @@ Sync timer ──mechanically mirrors status and evidence──> execution-log.m
 ## Quick start
 
 ```bash
-cd /path/to/nogging
-git switch develop
+git clone git@github.com:JoMe92/nogging.git
+cd nogging
 ./scripts/install-hooks
 ./scripts/nogg doctor
+./scripts/nogg validate
+```
+
+Create a dedicated planning worktree before changing OpenSpec:
+
+```bash
+./scripts/nogg worktree plan <planning-id> "Describe the change"
+cd ../nogging-plan-<planning-id>
 ./scripts/nogg plan-begin
-# Plan with OpenSpec, then add stable TASK-... IDs to tasks.md.
+# Author and validate the OpenSpec change, with stable TASK-... IDs in tasks.md.
 ./scripts/nogg validate
 ./scripts/nogg materialize <change-name>
 ./scripts/nogg plan-end
-./scripts/nogg sync
 ```
 
-The timer is installed with `systemctl --user enable --now nogg-sync.timer`.
+The generated timer is enabled with
+`systemctl --user enable --now nogg-sync.timer`; `./scripts/nogg sync --now`
+runs an immediate manual sync.
 See [docs/vision-and-architecture.md](docs/vision-and-architecture.md) for the
 goal and the design, [docs/operating-model.md](docs/operating-model.md) for the
 process, [docs/running-work-in-sessions.md](docs/running-work-in-sessions.md) for
