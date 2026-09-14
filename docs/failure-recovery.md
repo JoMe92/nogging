@@ -22,7 +22,7 @@ next start — fresh, resumed, or after a tool switch — every agent runs
 | `in_progress` Bead, `stale`, with a diff | Decide: finish the uncommitted diff, or `git stash` it and re-claim clean. Record the decision in the Bead note. |
 | `in_progress` Bead, `stale`, no diff | Likely never started. Re-claim and work it normally. |
 | Orphan Bead | Planning session only: restore the task line, or cancel the Bead with a recorded reason (§ "Orphaned Beads and bad mirrors"). An execution agent stops and reports it. |
-| Materialized-but-uncommitted change | If the `.md` files are complete: commit them (`SPECFORGE_WRITER=planning`), re-run `./scripts/nogg materialize <change>` (idempotent — a leftover `materialize-<change>.json` journal names what is left), continue. If a `tasks.md` write was truncated: repair it against the Beads that exist, then commit. |
+| Materialized-but-uncommitted change | If the `.md` files are complete: commit them (`NOGGING_WRITER=planning`), re-run `./scripts/nogg materialize <change>` (idempotent — a leftover `materialize-<change>.json` journal names what is left), continue. If a `tasks.md` write was truncated: repair it against the Beads that exist, then commit. |
 | Crashed session record | `./scripts/nogg session reap` then `./scripts/nogg session cleanup` (or `session cleanup --reap`); a still-live session is untouched. See § "A crashed or stuck supervised session". |
 | Working tree mid-merge / mid-rebase | Finish or abort the operation before resuming; the sync timer skips while it is in progress. |
 

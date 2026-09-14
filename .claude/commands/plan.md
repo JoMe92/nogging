@@ -50,12 +50,12 @@ reorder.
    the writer, either way works:
 
    ```bash
-   SPECFORGE_WRITER=planning git commit -m "docs(openspec): <summary>" \
-     -m "SpecForge-Writer: planning"
+   NOGGING_WRITER=planning git commit -m "docs(openspec): <summary>" \
+     -m "Nogging-Writer: planning"
    ```
 
    A planning commit needs no Beads ID token but still needs the Conventional
-   subject and the `SpecForge-Writer: planning` trailer (or the env var).
+   subject and the `Nogging-Writer: planning` trailer (or the env var).
 
 8. **Materialize the Beads.** Run `scripts/nogg materialize <change>`.
    This comes *after* the commit: the committed spec is the source of truth and

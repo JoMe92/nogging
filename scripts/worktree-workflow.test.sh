@@ -50,7 +50,7 @@ git -C "$plan_tree" config user.email workflow@example.invalid
 git -C "$plan_tree" config user.name 'Workflow Test'
 printf '%s\n' 'planned' >"$plan_tree/plan-evidence.txt"
 git -C "$plan_tree" add plan-evidence.txt
-git -C "$plan_tree" commit -q -m 'docs: validated plan' -m 'SpecForge-Writer: planning'
+git -C "$plan_tree" commit -q -m 'docs: validated plan' -m 'Nogging-Writer: planning'
 export SPECFORGE_ROOT="$plan_tree"
 "$plan_tree/nogg" validate >/dev/null
 export SPECFORGE_ROOT="$repo"

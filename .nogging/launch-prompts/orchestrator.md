@@ -64,7 +64,7 @@ you have.
 - **`takeover plan`** — run the full planning sequence in order:
   `scripts/nogg plan-begin` → review discoveries → author/revise the
   `openspec/` change → `openspec validate --strict` → commit `openspec/` with a
-  Conventional Commit subject **and a `SpecForge-Writer: planning` trailer** →
+  Conventional Commit subject **and a `Nogging-Writer: planning` trailer** →
   `scripts/nogg materialize <change>` → `scripts/nogg plan-end`.
   The trailer is not optional: your session has no per-session `openspec/**`
   deny and the guard hook will not fire, so that trailer is the **only** thing

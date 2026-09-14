@@ -40,7 +40,7 @@ with the Main Worker, and no delegated context may write `openspec/`.
 The Planning Agent first allocates `./scripts/nogg worktree plan
 <planning-id> <description>` from updated `origin/develop` and works only in
 that worktree. It runs `plan-begin`, writes or revises OpenSpec, validates,
-commits with `SPECFORGE_WRITER=planning`, materializes Beads
+commits with `NOGGING_WRITER=planning`, materializes Beads
 (`./scripts/nogg materialize <change>`), fast-forward integrates the plan
 into `develop`, safely retires only a clean integrated worktree, then runs
 `./scripts/nogg plan-end`. The commit precedes `materialize` so a crash

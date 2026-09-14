@@ -91,4 +91,4 @@ The runner is language-neutral and offline: bash and coreutils only, no Node,
 no network, and no running Beads/Dolt server (tests that need `bd` stub it). CI
 runs it on every push and pull request. It covers the `commit-msg` boundary
 hook — Beads ID accepted, missing ID rejected, and the `planning`/`sync`
-`SPECFORGE_WRITER` exemptions.
+`NOGGING_WRITER` exemptions.

@@ -129,7 +129,7 @@ grep -q 'Allocate `plan/<planning-id>/<description>` from updated `origin/develo
 if python3 - <<'PY'
 import re, sys
 
-COMMIT = r"(as the `planning` writer|SPECFORGE_WRITER=planning)"
+COMMIT = r"(as the `planning` writer|NOGGING_WRITER=planning)"
 MATERIALIZE = r"materialize|materializes Beads"
 
 bad = 0

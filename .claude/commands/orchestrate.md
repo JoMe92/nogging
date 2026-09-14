@@ -43,7 +43,7 @@ the orchestrator session — exactly one of:
 ```
 
 - **`takeover plan`** — one full planning sequence (`plan-begin` → author →
-  `validate` → commit with a Conventional subject **and** a `SpecForge-Writer:
+  `validate` → commit with a Conventional subject **and** a `Nogging-Writer:
   planning` trailer → `materialize` → `plan-end`), then back to
   orchestrate-only. The trailer is mandatory: the orchestrator session has no
   `openspec/**` write guard, so the trailer is the only thing that keeps the
