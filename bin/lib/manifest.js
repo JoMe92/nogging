@@ -60,6 +60,8 @@ module.exports = {
     { from: 'docs/architecture.md', to: 'docs/nogging/architecture.md' },
     { from: 'docs/failure-recovery.md', to: 'docs/nogging/failure-recovery.md' },
     { from: 'docs/using-with-codex.md', to: 'docs/nogging/using-with-codex.md' },
+    { from: 'docs/using-with-pi.md', to: 'docs/nogging/using-with-pi.md' },
+    { from: 'docs/security-model.md', to: 'docs/nogging/security-model.md' },
     { from: 'docs/worktree-workflow.md', to: 'docs/nogging/worktree-workflow.md' },
   ],
 
