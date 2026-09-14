@@ -1,6 +1,6 @@
 ## Purpose
 
-Defines the evidence and repository-facing contracts that make SpecForge safe,
+Defines the evidence and repository-facing contracts that make Nogging safe,
 understandable, supportable, and legally usable before its owner publishes the
 repository to the public.
 
@@ -10,7 +10,7 @@ repository to the public.
 
 The repository SHALL contain the full ISC license text matching its package
 metadata, identify the copyright holder, document applicable third-party
-licenses or generated content, and state that SpecForge is independent of the
+licenses or generated content, and state that Nogging is independent of the
 vendors and projects whose tools it integrates. GitHub-facing metadata SHALL
 provide a description, topics, support destination, and project status without
 claiming an affiliation that does not exist.
@@ -23,14 +23,13 @@ claiming an affiliation that does not exist.
 
 ### Requirement: The public identity preserves project independence and provenance
 
-The repository SHALL continue to present **SpecForge** as the public project
+The repository SHALL continue to present **Nogging** as the public project
 name and SHALL explain its purpose without requiring a separate product website
-or sibling application. It MAY identify **Agentsembli** as the provisional
-working name for a wider ecosystem and **Agent Console** as an optional sibling,
-but SHALL NOT present either as a prerequisite or finished commercial product.
+or sibling application. It MAY identify **Agent Console** as an optional
+sibling, but SHALL NOT present it as a prerequisite.
 
 The public README SHALL visibly credit Gas Town as a conceptual inspiration,
-link to the upstream Gas Town and Beads projects, state that SpecForge is an
+link to the upstream Gas Town and Beads projects, state that Nogging is an
 independent implementation, identify Beads as the only Gas Town component
 currently adopted, and disclaim affiliation or endorsement. It SHALL NOT imply
 that Gas Town runtime code or components are included.
@@ -38,8 +37,7 @@ that Gas Town runtime code or components are included.
 #### Scenario: A reader evaluates the project's origin and product relationship
 
 - **WHEN** a reader opens the public README without prior project context
-- **THEN** SpecForge is understandable and installable as a standalone project
-- **AND** Agentsembli is identified only as a provisional ecosystem working name
+- **THEN** Nogging is understandable and installable as a standalone project
 - **AND** Gas Town inspiration, Beads adoption, independent implementation, and
   non-affiliation are stated together with direct upstream links
 
@@ -55,7 +53,7 @@ operations, recovery, security, and compatibility guidance.
 #### Scenario: A new user starts without repository-specific knowledge
 
 - **WHEN** a user opens the public repository for the first time
-- **THEN** the README explains what SpecForge does, who it is for, its maturity and supported environments
+- **THEN** the README explains what Nogging does, who it is for, its maturity and supported environments
 - **AND** the user can follow a copyable path from prerequisites through a first successful readiness check
 - **AND** no product website, renamed repository, or Agent Console installation
   is required to complete that path

@@ -1,3 +1,11 @@
+> **Superseded (2026-09-14):** the project has since renamed to **Nogging**
+> (see `rename-to-nogging`), which also redefines the `product-identity`
+> capability. This change's capability claim was already folded into the
+> OpenSpec baseline by `rename-agentsembli-specforge`'s archive, and its four
+> remaining tasks (TASK-IDENT-005 through 008) are closed as superseded. Kept
+> here as historical record of the "keep SpecForge, Agentsembli provisional"
+> decision that predated the rename.
+
 ## Why
 
 SpecForge needs a clear public identity before its documentation and release

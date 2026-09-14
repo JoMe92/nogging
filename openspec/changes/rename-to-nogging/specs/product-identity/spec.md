@@ -4,7 +4,16 @@ Defines the public Nogging identity — display name, renamed technical
 identifiers, the legacy-name provenance chain, the accepted OpenSpec-spec
 wording divergence, and the README/brand presentation bar.
 
-## ADDED Requirements
+`rename-agentsembli-specforge` was archived first (see
+`openspec/changes/archive/2026-09-14-rename-agentsembli-specforge/`), so the
+baseline `openspec/specs/product-identity/spec.md` already holds the
+Agentsembli SpecForge requirements this change supersedes. Three of the four
+baseline requirements are `MODIFIED` here under their same titles; the
+identifier-compatibility requirement is `REMOVED` outright because this
+rename reverses it (it renames technical identifiers instead of preserving
+them); two genuinely new requirements are `ADDED`.
+
+## MODIFIED Requirements
 
 ### Requirement: Nogging is the canonical public identity
 
@@ -18,6 +27,46 @@ SHALL resolve to that identity.
 - **WHEN** a user reaches the canonical repository without prior context
 - **THEN** the Nogging purpose, installation, support, security, and
   provenance are complete and internally consistent
+
+### Requirement: Legacy identity remains provenance, not an active destination
+
+Historical references MAY identify the former `JoMe92/specforge` and
+`JoMe92/agentsembli-specforge` repositories and the `specforge` command, but
+maintained public entry points SHALL route to `JoMe92/nogging` and the `nogg`
+command. Both prior repositories SHALL remain private, archived, or otherwise
+unavailable for public installation unless the owner explicitly approves a
+safe redirect.
+
+#### Scenario: A user follows an old installation instruction
+
+- **WHEN** a user encounters a maintained transition notice for either prior
+  identity
+- **THEN** it identifies Nogging as the successor and gives a pinned new
+  command/repository reference
+
+### Requirement: Visibility and final identity acceptance remain human actions
+
+This rename SHALL NOT itself change repository visibility, publish to npm,
+or constitute trademark clearance. Those remain separate, explicit owner
+decisions, same as the two prior naming rounds.
+
+#### Scenario: The rename completes
+
+- **WHEN** every task in this change is done and verified
+- **THEN** the repository remains private
+- **AND** no automated step has claimed public availability, npm publication,
+  or legal clearance for "Nogging"/"nogg"
+
+## REMOVED Requirements
+
+### Requirement: The first renamed release preserves installed identifiers
+
+Reason: reversed by this change. Unlike the preceding Agentsembli SpecForge
+rename, Nogging renames the running technical surface too — see the ADDED
+"Technical identifiers are renamed alongside the display name" requirement
+below.
+
+## ADDED Requirements
 
 ### Requirement: Technical identifiers are renamed alongside the display name
 
@@ -44,22 +93,6 @@ NOT change.
 - **THEN** the old service is stopped, the state is carried over under
   `.nogging/`, and the new `nogg-`-prefixed service is installed, enabled, and
   verified ticking before the old unit files are removed
-
-### Requirement: Legacy identity remains provenance, not an active destination
-
-Historical references MAY identify the former `JoMe92/specforge` and
-`JoMe92/agentsembli-specforge` repositories and the `specforge` command, but
-maintained public entry points SHALL route to `JoMe92/nogging` and the `nogg`
-command. Both prior repositories SHALL remain private, archived, or otherwise
-unavailable for public installation unless the owner explicitly approves a
-safe redirect.
-
-#### Scenario: A user follows an old installation instruction
-
-- **WHEN** a user encounters a maintained transition notice for either prior
-  identity
-- **THEN** it identifies Nogging as the successor and gives a pinned new
-  command/repository reference
 
 ### Requirement: Existing OpenSpec capability specs may retain historical wording
 
@@ -95,16 +128,3 @@ link resolving.
 - **THEN** the banner and tagline appear near the top
 - **AND** every documented command uses the `nogg` CLI, matching what is
   actually installed
-
-### Requirement: Visibility and final identity acceptance remain human actions
-
-This rename SHALL NOT itself change repository visibility, publish to npm,
-or constitute trademark clearance. Those remain separate, explicit owner
-decisions, same as the two prior naming rounds.
-
-#### Scenario: The rename completes
-
-- **WHEN** every task in this change is done and verified
-- **THEN** the repository remains private
-- **AND** no automated step has claimed public availability, npm publication,
-  or legal clearance for "Nogging"/"nogg"
