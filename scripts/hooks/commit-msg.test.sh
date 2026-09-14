@@ -61,6 +61,14 @@ run_msg fail "Nogging-Writer: bogus does not exempt" \
   $'docs(openspec): revise the change\n\nNogging-Writer: bogus'
 run_msg pass "Nogging-Writer: sync trailer exempts the mirror commit" \
   $'chore(sync): mirror Beads execution evidence\n\nNogging-Writer: sync'
+run_msg pass "legacy SpecForge-Writer: planning trailer still exempts pre-rename history" \
+  $'docs(openspec): revise the change\n\nSpecForge-Writer: planning'
+run_msg pass "legacy SpecForge-Writer: sync trailer still exempts pre-rename history" \
+  $'chore(sync): mirror Beads execution evidence\n\nSpecForge-Writer: sync'
+run_msg fail "legacy SpecForge-Writer: bogus does not exempt" \
+  $'docs(openspec): revise the change\n\nSpecForge-Writer: bogus'
+run pass "legacy SPECFORGE_WRITER exemption still accepted" \
+  SPECFORGE_WRITER=planning "docs: revise openspec change"
 
 if [[ $fail -ne 0 ]]; then
   echo "commit-msg checks failed" >&2

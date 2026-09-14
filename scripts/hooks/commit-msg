@@ -21,9 +21,16 @@ fi
 # / `Nogging-Writer: sync` trailer in the message body, so CI — which sees
 # only the pushed commit object — applies the same rule. The Conventional
 # subject requirement above is unconditional and applies to writer commits too.
-writer="${NOGGING_WRITER:-}"
+#
+# The legacy `SpecForge-Writer:` trailer (also SPECFORGE_WRITER) is accepted
+# too: commits made before the Nogging rename are immutable history, and a PR
+# range that crosses the rename point (e.g. develop -> main) must still
+# recognize them as the valid writer commits they were when made.
+writer="${NOGGING_WRITER:-${SPECFORGE_WRITER:-}}"
 trailer='(^|'$'\n'')[Nn]ogging-[Ww]riter:[[:space:]]*(planning|sync)[[:space:]]*($|'$'\n'')'
-if [[ "$writer" != "planning" && "$writer" != "sync" ]] && ! [[ "$body" =~ $trailer ]]; then
+legacy_trailer='(^|'$'\n'')[Ss]pec[Ff]orge-[Ww]riter:[[:space:]]*(planning|sync)[[:space:]]*($|'$'\n'')'
+if [[ "$writer" != "planning" && "$writer" != "sync" ]] \
+    && ! [[ "$body" =~ $trailer ]] && ! [[ "$body" =~ $legacy_trailer ]]; then
   bead_token='\[[A-Z][A-Z0-9]*-[0-9a-z]+\]'
   if ! [[ "$message" =~ $bead_token ]]; then
     {
