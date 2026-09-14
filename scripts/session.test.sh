@@ -920,8 +920,8 @@ export TMUX_STUB_DIR="$work/orc-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN=""
 "$specforge" session launch --role orchestrator --profile orchestrator >"$out" 2>&1 \
   || { echo "FAIL - orc: launch errored"; cat "$out"; fail=1; }
-check "orc: launch reports the singleton name" "launched sf-orchestrator-orc"
-orcrec="$root/.nogging/state/sessions/sf-orchestrator-orc.json"
+check "orc: launch reports the singleton name" "launched nogg-orchestrator-orc"
+orcrec="$root/.nogging/state/sessions/nogg-orchestrator-orc.json"
 [[ -f "$orcrec" ]] \
   && echo "ok   - orc: record written under the fixed name" \
   || { echo "FAIL - orc: no record at the fixed name"; fail=1; }
@@ -945,7 +945,7 @@ refute "orc: no floor deny in the effective settings (rm -rf)" 'Bash(rm -rf:*)'
 refute "orc: no openspec/ deny in the effective settings" 'Edit(openspec/**)'
 refute "orc: the SpecForge-only keys never reach Claude" 'specforge_floor'
 env -u TERM "$specforge" session list >"$out" 2>&1
-check "orc: session list shows the orchestrator row" "sf-orchestrator-orc"
+check "orc: session list shows the orchestrator row" "nogg-orchestrator-orc"
 check "orc: session list marks it FULL-ACCESS" "FULL-ACCESS"
 "$specforge" session launch --role orchestrator --profile orchestrator >"$out" 2>&1 \
   && { echo "FAIL - orc: a second orchestrator launch should be refused"; fail=1; } \

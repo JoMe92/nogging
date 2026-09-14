@@ -50,7 +50,7 @@ between them never leaves Beads without a committed spec.
 
 A fourth persona above Planning and the Main Worker (**Product Owner →
 Orchestration Agent → {Planning, Lead} → Specialists**), run always-on as the
-single supervised `sf-orchestrator-<slug>` session by a systemd user service and
+single supervised `nogg-orchestrator-<slug>` session by a systemd user service and
 reachable from a phone via Remote Control. **Claude Code only** in this version.
 It is **orchestrate-only by default** — reads state and drives Planning and Lead
 sessions through `scripts/nogg`, writing no `openspec/` file and no code

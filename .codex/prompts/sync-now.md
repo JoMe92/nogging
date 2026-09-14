@@ -5,7 +5,7 @@ description: Force an immediate SpecForge reconciliation instead of waiting for 
 # /sync-now — reconcile now
 
 Trigger a reconciliation pass immediately rather than waiting for the
-30-second `specforge-sync.timer` tick.
+30-second `nogg-sync.timer` tick.
 
 ## Step
 

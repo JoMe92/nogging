@@ -95,7 +95,7 @@ sandbox).
 
 The **Orchestration Agent** is a third session persona, above the Planning Agent
 and the Main Worker. It runs always-on as a supervised
-`sf-orchestrator-<slug>` tmux session that a rendered systemd **user service**
+`nogg-orchestrator-<slug>` tmux session that a rendered systemd **user service**
 keeps alive across a crash or a host reboot, resuming its own conversation with
 `claude --continue`. The launched session registers with Remote Control, so the
 Product Owner can read and drive it from a phone with no SSH. Exactly one runs
@@ -348,7 +348,7 @@ From any plain SSH shell (no `TERM`, no tmux client needed):
 | `session stop <name> [--reason <text>]` | interrupt Claude, terminate the pane after the grace period, record `stopped` with `ended_at`/`exit_reason`. Idempotent. |
 | `session reap` | move every active-state record whose tmux session is gone to `failed` (a live one is untouched), so `cleanup` can retire it. |
 | `session cleanup [<name>] [--reap]` | remove a lingering tmux session, archive-rotate the log, retire the record. **Refuses** a `starting`/`running`/`idle` record — stop or `--reap` it first. |
-| `orchestrator run` | the idempotent supervisor the systemd unit runs: acquire the orchestrator lock, adopt or start the `sf-orchestrator-<slug>` session (`claude --continue` when a prior conversation exists), block until it exits, release the lock, exit non-zero. Takes `--force` to reclaim a stale lock. |
+| `orchestrator run` | the idempotent supervisor the systemd unit runs: acquire the orchestrator lock, adopt or start the `nogg-orchestrator-<slug>` session (`claude --continue` when a prior conversation exists), block until it exits, release the lock, exit non-zero. Takes `--force` to reclaim a stale lock. |
 | `orchestrator status` | the unit's enabled/active state, whether user lingering is on, the lock holder, and the live `FULL-ACCESS` session with its last log lines. Read-only. |
 | `orchestrator stop` \| `restart` | stop-and-disable the unit (ending the session and releasing the lock; idempotent), or restart it. |
 

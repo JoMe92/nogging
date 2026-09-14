@@ -101,7 +101,7 @@ Agent; an agreed-intent change waits for a planning session.
 ## The Orchestration Agent
 
 Above the Planning Agent and this Lead Agent persona sits the **Orchestration
-Agent** — a separate always-on session (`sf-orchestrator-<slug>`, kept alive by
+Agent** — a separate always-on session (`nogg-orchestrator-<slug>`, kept alive by
 a systemd user service, reachable from a phone via Remote Control), **Claude
 Code only**. Hierarchy: **Product Owner → Orchestration Agent → {Planning,
 Lead} → Specialists**. It is **orchestrate-only by default**: it reads the whole

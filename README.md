@@ -40,7 +40,7 @@ git switch develop
 ./scripts/nogg sync
 ```
 
-The timer is installed with `systemctl --user enable --now specforge-sync.timer`.
+The timer is installed with `systemctl --user enable --now nogg-sync.timer`.
 See [docs/vision-and-architecture.md](docs/vision-and-architecture.md) for the
 goal and the design, [docs/operating-model.md](docs/operating-model.md) for the
 process, [docs/running-work-in-sessions.md](docs/running-work-in-sessions.md) for

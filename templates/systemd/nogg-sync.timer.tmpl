@@ -1,12 +1,12 @@
 [Unit]
-Description=Run SpecForge sync every 30 seconds ({{NAME}})
+Description=Run Nogging sync every 30 seconds ({{NAME}})
 
 [Timer]
 OnBootSec=1min
 OnUnitActiveSec=30s
 AccuracySec=5s
 Persistent=true
-Unit=specforge-sync-{{SLUG}}.service
+Unit=nogg-sync-{{SLUG}}.service
 
 [Install]
 WantedBy=timers.target

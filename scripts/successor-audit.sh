@@ -36,7 +36,7 @@ test -z "$unexpected_refs" || {
 
 forbidden_paths=$(
   git -C "$mirror" rev-list --all --objects \
-    | grep -E ' (\.beads/interactions\.jsonl$|docs/source/|docs/acceptance/2026-09-02-raspberrypi\.md$|systemd/specforge-sync\.(service|timer)$|scripts/__pycache__/|\.py[co]$|execution-log\.md$)' \
+    | grep -E ' (\.beads/interactions\.jsonl$|docs/source/|docs/acceptance/2026-09-02-raspberrypi\.md$|systemd/nogg-sync\.(service|timer)$|scripts/__pycache__/|\.py[co]$|execution-log\.md$)' \
     || true
 )
 test -z "$forbidden_paths" || fail "successor history contains a forbidden path"

@@ -1304,7 +1304,7 @@ export CODEX_HOME="$root/.codex-home"
 # --- link: creates the specforge-<name>.md symlinks ---------------------
 "$specforge" codex-prompts-link >"$out" 2>&1 \
   || { echo "FAIL - cxf-link: helper errored"; cat "$out"; fail=1; }
-[[ -L "$CODEX_HOME/prompts/specforge-plan.md" && -L "$CODEX_HOME/prompts/specforge-sync-now.md" ]] \
+[[ -L "$CODEX_HOME/prompts/specforge-plan.md" && -L "$CODEX_HOME/prompts/nogg-sync-now.md" ]] \
   && echo "ok   - cxf-link: both prompts linked as specforge-<name>.md" \
   || { echo "FAIL - cxf-link: symlinks not created"; ls -la "$CODEX_HOME/prompts" 2>&1; fail=1; }
 [[ "$(readlink -f "$CODEX_HOME/prompts/specforge-plan.md")" == "$(readlink -f "$root/.codex/prompts/plan.md")" ]] \
@@ -1327,11 +1327,11 @@ check "cxf-link: a wrong target is repointed" "relinked"
   || { echo "FAIL - cxf-link: stale link not repaired"; fail=1; }
 
 # --- a real (non-symlink) file in the way is reported, not clobbered ---
-rm -f "$CODEX_HOME/prompts/specforge-sync-now.md"
-printf 'HAND WRITTEN\n' >"$CODEX_HOME/prompts/specforge-sync-now.md"
+rm -f "$CODEX_HOME/prompts/nogg-sync-now.md"
+printf 'HAND WRITTEN\n' >"$CODEX_HOME/prompts/nogg-sync-now.md"
 "$specforge" codex-prompts-link >"$out" 2>&1 || true
 check "cxf-link: a real file in the way is reported" "exists and is not a specforge symlink"
-[[ "$(cat "$CODEX_HOME/prompts/specforge-sync-now.md")" == "HAND WRITTEN" ]] \
+[[ "$(cat "$CODEX_HOME/prompts/nogg-sync-now.md")" == "HAND WRITTEN" ]] \
   && echo "ok   - cxf-link: the colliding real file is left untouched" \
   || { echo "FAIL - cxf-link: colliding file was clobbered"; fail=1; }
 
@@ -1340,11 +1340,11 @@ check "cxf-link: a real file in the way is reported" "exists and is not a specfo
 [[ ! -e "$CODEX_HOME/prompts/specforge-plan.md" ]] \
   && echo "ok   - cxf-unlink: the specforge-plan.md symlink is removed" \
   || { echo "FAIL - cxf-unlink: symlink survived --unlink"; fail=1; }
-[[ -f "$CODEX_HOME/prompts/specforge-sync-now.md" \
-   && "$(cat "$CODEX_HOME/prompts/specforge-sync-now.md")" == "HAND WRITTEN" ]] \
+[[ -f "$CODEX_HOME/prompts/nogg-sync-now.md" \
+   && "$(cat "$CODEX_HOME/prompts/nogg-sync-now.md")" == "HAND WRITTEN" ]] \
   && echo "ok   - cxf-unlink: a real file named specforge-* is left in place" \
   || { echo "FAIL - cxf-unlink: --unlink removed a non-symlink"; fail=1; }
-rm -f "$CODEX_HOME/prompts/specforge-sync-now.md"
+rm -f "$CODEX_HOME/prompts/nogg-sync-now.md"
 
 # --- doctor NOTE: shown when unlinked, gone once linked, exit code stable
 cat >"$work/bin/codex" <<'STUB'

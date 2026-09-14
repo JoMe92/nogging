@@ -102,16 +102,16 @@ module.exports = {
   // Rendered systemd units: template -> target basename pattern ({slug} filled in).
   systemd: [
     {
-      from: 'templates/systemd/specforge-sync.service.tmpl',
-      to: 'systemd/specforge-sync-{slug}.service',
+      from: 'templates/systemd/nogg-sync.service.tmpl',
+      to: 'systemd/nogg-sync-{slug}.service',
     },
     {
-      from: 'templates/systemd/specforge-sync.timer.tmpl',
-      to: 'systemd/specforge-sync-{slug}.timer',
+      from: 'templates/systemd/nogg-sync.timer.tmpl',
+      to: 'systemd/nogg-sync-{slug}.timer',
     },
     {
-      from: 'templates/systemd/specforge-orchestrator.service.tmpl',
-      to: 'systemd/specforge-orchestrator-{slug}.service',
+      from: 'templates/systemd/nogg-orchestrator.service.tmpl',
+      to: 'systemd/nogg-orchestrator-{slug}.service',
     },
   ],
 };

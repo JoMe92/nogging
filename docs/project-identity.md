@@ -65,7 +65,7 @@ where the public display name should replace stable runtime identifiers:
 | Repository-local command | `scripts/nogg` |
 | Configuration and state root | `.nogging/` |
 | Installed reference documentation | `docs/nogging/` |
-| Generated systemd units | `specforge-sync-<slug>` and `specforge-orchestrator-<slug>` |
+| Generated systemd units | `nogg-sync-<slug>` and `nogg-orchestrator-<slug>` |
 | Dedicated tmux socket and sessions | `specforge` and `sf-<role>-<bead>-<nonce>` |
 | Codex prompt links | `specforge-<prompt>.md` |
 

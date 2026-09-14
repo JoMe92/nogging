@@ -118,7 +118,7 @@ with the **single exception** of the Orchestration Agent (below).
 The **Orchestration Agent** is a fourth persona, above the Planning Agent and
 the Main Worker: **Product Owner → Orchestration Agent → {Planning, Lead} →
 Specialists**. It runs always-on as the single supervised
-`sf-orchestrator-<slug>` session (a systemd user service keeps it alive across
+`nogg-orchestrator-<slug>` session (a systemd user service keeps it alive across
 crash and reboot; it is reachable from a phone via Remote Control). It is
 **Claude Code only** in this version.
 

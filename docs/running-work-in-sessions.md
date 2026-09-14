@@ -220,7 +220,7 @@ single-instance, and always-on. It is not launched with `session launch`; a
 rendered systemd **user service** runs it:
 
 ```bash
-systemctl --user enable --now specforge-orchestrator-<slug>.service
+systemctl --user enable --now nogg-orchestrator-<slug>.service
 loginctl enable-linger "$USER"   # so it starts at boot without a login
 ```
 
@@ -235,7 +235,7 @@ subcommand group:
 ```
 
 `orchestrator run` acquires `.nogging/locks/orchestrator.lock`, adopts a live
-`sf-orchestrator-<slug>` tmux session or starts one (resuming its conversation
+`nogg-orchestrator-<slug>` tmux session or starts one (resuming its conversation
 with `claude --continue` when one exists), blocks until it exits, releases the
 lock and exits non-zero so `Restart=always` brings it back. It runs under the
 `orchestrator` profile with the command floor and the `openspec/` boundary

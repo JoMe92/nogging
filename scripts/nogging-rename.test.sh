@@ -58,7 +58,7 @@ assert_owned_state() {
 )
 assert_owned_state
 grep -q 'Agentsembli SpecForge' "$tmp/target/scripts/../AGENTS.md" || fail "successor update missing"
-test -f "$tmp/target/systemd/specforge-sync-target.service" || fail "stable service identity missing"
+test -f "$tmp/target/systemd/nogg-sync-target.service" || fail "stable service identity missing"
 pass "successor update preserves owned state and service identity"
 
 (
@@ -75,7 +75,7 @@ pass "legacy rollback preserves owned state"
 )
 assert_owned_state
 test ! -e "$tmp/target/scripts/nogg" || fail "managed command remains after remove"
-test ! -e "$tmp/target/systemd/specforge-sync-target.service" || fail "generated service remains after remove"
+test ! -e "$tmp/target/systemd/nogg-sync-target.service" || fail "generated service remains after remove"
 test ! -e "$tmp/target/.codex/prompts/plan.md" || fail "managed Codex prompt remains after remove"
 test ! -e "$tmp/target/.pi/prompts/plan.md" || fail "managed Pi prompt remains after remove"
 if grep -q '<!-- specforge:begin -->' "$tmp/target/AGENTS.md"; then

@@ -102,7 +102,7 @@ if command -v bd >/dev/null 2>&1; then
      && ( cd "$bdrepo" && bd list --json >/dev/null 2>&1 ); then
     ready_out=$( cd "$bdrepo" && node "$cli" init --no-systemd 2>&1 ) || true
     check "verdict says ready in a provisioned repo" \
-      bash -c "grep -q 'SpecForge is ready' <<< \"\$0\"" "$ready_out"
+      bash -c "grep -q 'Nogging is ready' <<< \"\$0\"" "$ready_out"
   else
     echo "ok   - ready-verdict check skipped (toolchain incomplete)"
   fi
@@ -115,7 +115,7 @@ verd="$work/verdict"
 mkdir -p "$verd"; git -C "$verd" init -q
 verd_out=$( cd "$verd" && node "$cli" init --no-beads --no-systemd 2>&1 ) || true
 check "init always prints a readiness verdict" \
-  bash -c "grep -q 'SpecForge is \(ready\|installed but not ready\)' <<< \"\$0\"" "$verd_out"
+  bash -c "grep -q 'Nogging is \(ready\|installed but not ready\)' <<< \"\$0\"" "$verd_out"
 
 # --- idempotent merges ----------------------------------------------------
 merged="$work/merged"
@@ -222,13 +222,13 @@ printf '# Kept project doc\n' > "$repo2/openspec/project.md"
 check "existing project.md untouched" grep -q "Kept project doc" "$repo2/openspec/project.md"
 
 # --- rendered systemd unit ---------------------------------------------
-unit=$(find "$repo/systemd" -name 'specforge-sync-*.service')
+unit=$(find "$repo/systemd" -name 'nogg-sync-*.service')
 check "systemd service rendered" test -n "$unit"
 check "service targets the repo" grep -qx "WorkingDirectory=$repo" "$unit"
 check "service ExecStart is absolute" grep -qx "ExecStart=$repo/scripts/nogg sync" "$unit"
-check "unit filename carries the slug" bash -c "[[ '$(basename "$unit")' == specforge-sync-fresh.service ]]"
-tunit=$(find "$repo/systemd" -name 'specforge-sync-*.timer')
-check "timer binds the slugged service" grep -qx "Unit=specforge-sync-fresh.service" "$tunit"
+check "unit filename carries the slug" bash -c "[[ '$(basename "$unit")' == nogg-sync-fresh.service ]]"
+tunit=$(find "$repo/systemd" -name 'nogg-sync-*.timer')
+check "timer binds the slugged service" grep -qx "Unit=nogg-sync-fresh.service" "$tunit"
 
 # --- --no-systemd -----------------------------------------------------
 nos="$work/nosystemd"
@@ -323,18 +323,18 @@ if command -v npm >/dev/null 2>&1; then
     check "packed install ships the orchestrator profile" test -f "$packrepo/.nogging/launch-profiles/orchestrator.json"
     check "packed install ships the orchestrator prompt"  test -f "$packrepo/.nogging/launch-prompts/orchestrator.md"
     check "packed install ships the orchestrator unit template" \
-      test -f "$pkg/templates/systemd/specforge-orchestrator.service.tmpl"
+      test -f "$pkg/templates/systemd/nogg-orchestrator.service.tmpl"
     # A packed install WITH systemd renders the per-repo orchestrator unit.
     orcrepo="$work/packorc"; mkdir -p "$orcrepo"; git -C "$orcrepo" init -q
     orc_out=$( cd "$orcrepo" && node "$pkg/bin/cli.js" init --no-beads 2>&1 ) || true
-    orc_unit=$(find "$orcrepo/systemd" -name 'specforge-orchestrator-*.service' 2>/dev/null | head -1)
+    orc_unit=$(find "$orcrepo/systemd" -name 'nogg-orchestrator-*.service' 2>/dev/null | head -1)
     check "packed install renders the orchestrator unit" test -n "$orc_unit"
     check "orchestrator unit ExecStart calls orchestrator run" \
       grep -qx "ExecStart=$orcrepo/scripts/nogg orchestrator run" "$orc_unit"
     check "orchestrator unit restarts always"  grep -qx "Restart=always" "$orc_unit"
     check "orchestrator unit targets default.target" grep -qx "WantedBy=default.target" "$orc_unit"
     check "init prints the orchestrator enable line" \
-      bash -c "printf '%s' \"\$1\" | grep -q 'specforge-orchestrator-'" _ "$orc_out"
+      bash -c "printf '%s' \"\$1\" | grep -q 'nogg-orchestrator-'" _ "$orc_out"
     check "init prints the loginctl enable-linger hint" \
       bash -c "printf '%s' \"\$1\" | grep -q 'loginctl enable-linger'" _ "$orc_out"
     check "packed install ships the skills"         test -f "$packrepo/.agents/skills/openspec-propose/SKILL.md"

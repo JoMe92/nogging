@@ -94,7 +94,7 @@ class:
 | verbatim | `scripts/nogg`, the hooks, `.agents/skills/**` | overwrite | overwrite |
 | scaffold | `openspec/project.md`, `.nogging/config.json` | write if absent | skip |
 | merge | `.claude/settings.json`, `.gitignore`, `CLAUDE.md`, `AGENTS.md` | idempotent merge | idempotent merge |
-| rendered | `systemd/specforge-sync-<slug>.{service,timer}` | render with the target's path | render |
+| rendered | `systemd/nogg-sync-<slug>.{service,timer}` | render with the target's path | render |
 
 `init` also runs `bd init`, then ends with a readiness verdict — `SpecForge is
 ready` or the list of missing prerequisites. Target-owned content
@@ -141,7 +141,7 @@ ready` or the list of missing prerequisites. Target-owned content
 | Concept | As built | Why |
 | --- | --- | --- |
 | Distribution: a central **pipx** Python package; the engine is **not** copied into the target; the target stays free of the engine's language | a **zero-dependency Node CLI** that **copies** `scripts/nogg` (Python), the hooks (bash) and `.agents/skills` **into** the target | Product Owner chose `npx github:` over the existing `gh` credential: no registry publish, no pipx runtime to manage, the target is self-contained. Trade-off: target repos now carry the bridge and need `python3`. |
-| `.agentic/config.yml`; `.agentic/systemd/sync-engine.service` via Pixi | `.nogging/config.json`; `systemd/specforge-sync-<slug>.{service,timer}` rendered per repo, no Pixi | one namespace under `.nogging/`; a per-repo slug lets several target repos run timers side by side; no Pixi dependency |
+| `.agentic/config.yml`; `.agentic/systemd/sync-engine.service` via Pixi | `.nogging/config.json`; `systemd/nogg-sync-<slug>.{service,timer}` rendered per repo, no Pixi | one namespace under `.nogging/`; a per-repo slug lets several target repos run timers side by side; no Pixi dependency |
 | `[BEAD-XXX]` commit token | `[SPEC-xxx]` — the real Bead-ID shape | matches the actual Bead prefix; a literal `[BEAD-XXX]` placeholder is explicitly rejected |
 | Long-lived sync **daemon** with a PID file, `SIGUSR1` "sync-now", and a 5-minute poll | a systemd **oneshot** timer every 30 s, no resident process | no daemon lifecycle to supervise; 30 s is cheap; "sync-now" becomes a direct `sync` run |
 | Repo name `agentic-workflow-toolkit` | `specforge` | rename |

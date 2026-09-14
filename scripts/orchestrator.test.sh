@@ -134,7 +134,7 @@ root="$work/run"; make_root "$root"
 export SPECFORGE_ROOT="$root"
 export TMUX_STUB_DIR="$work/run-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export CLAUDE_LOG="$work/run-claude.log"; : >"$CLAUDE_LOG"
-name="sf-orchestrator-run"
+name="nogg-orchestrator-run"
 
 ( set +e; "$specforge" orchestrator run >"$work/run.out" 2>&1; echo "$?" >"$work/run.rc" ) &
 for _ in $(seq 1 80); do [[ -f "$TMUX_STUB_DIR/sess-$name" ]] && break; sleep 0.1; done
@@ -167,7 +167,7 @@ root="$work/adopt"; make_root "$root"
 export SPECFORGE_ROOT="$root"
 export TMUX_STUB_DIR="$work/adopt-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export CLAUDE_LOG="$work/adopt-claude.log"; : >"$CLAUDE_LOG"
-name="sf-orchestrator-adopt"
+name="nogg-orchestrator-adopt"
 mkdir -p "$root/.nogging/state/sessions"
 touch "$TMUX_STUB_DIR/sess-$name"     # a live orchestrator tmux session already exists
 printf '{"name":"%s","role":"orchestrator","bead_id":null,"state":"running","floor_lifted":true,"log_path":"%s"}\n' \
@@ -204,7 +204,7 @@ echo "active"  >"$SYSTEMCTL_STATE_DIR/active"
 export LINGER_STATE="no"
 
 "$specforge" orchestrator status >"$out" 2>&1
-check "status: names the per-repo unit"      "specforge-orchestrator-status.service"
+check "status: names the per-repo unit"      "nogg-orchestrator-status.service"
 check "status: reports the enabled state"    "enabled"
 check "status: reports linger off"           "linger:  off"
 check "status: reports no live session"      "no live orchestrator session"
