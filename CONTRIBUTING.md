@@ -22,7 +22,8 @@ follow [SECURITY.md](SECURITY.md), not the public issue tracker.
 
 See [the operating model](docs/operating-model.md) and
 [worktree workflow](docs/worktree-workflow.md) for the repository's execution
-rules.
+rules. Maintainers cutting a release follow
+[docs/releasing.md](docs/releasing.md).
 
 ## Community expectations
 
