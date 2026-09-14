@@ -1,5 +1,10 @@
 # Security policy
 
+Before enabling `--full-access`, background services, or orchestrator mode,
+read the public [security and threat model](docs/security-model.md). It explains
+installed components, authority levels, vendor-specific limitations, credential
+handling, and safe disable/removal.
+
 Nogging is still in its private pre-release phase. If you have
 access to this repository and find a vulnerability, contact the repository
 owner privately through the contact method associated with their GitHub

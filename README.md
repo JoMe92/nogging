@@ -101,8 +101,8 @@ credentials, start with restricted authority, and enable full-access or
 always-on operation only on a host and repository you trust. Disable the user
 services and stop supervised sessions before removing or relocating a checkout.
 
-Detailed threat-model and safe-disable guidance is being completed under the
-public-release-readiness change. Until then, use
+Before enabling full-access or persistent services, read the
+[security and threat model](docs/security-model.md). Also use
 [the operating model](docs/operating-model.md),
 [session guidance](docs/running-work-in-sessions.md), and
 [failure recovery](docs/failure-recovery.md) as the authoritative boundaries.
@@ -134,6 +134,7 @@ touches `openspec/changes/`, `.beads/`, or your `package.json`. Full details in
 | Roles and delivery workflow | [Operating model](docs/operating-model.md) |
 | Isolated Git worktrees | [Worktree workflow](docs/worktree-workflow.md) |
 | Supervised agent sessions | [Running work in sessions](docs/running-work-in-sessions.md) |
+| Security boundaries and safe disable | [Security and threat model](docs/security-model.md) |
 | Codex integration | [Using Nogging with Codex](docs/using-with-codex.md) |
 | Pi integration | [Using Nogging with Pi](docs/using-with-pi.md) |
 | Interrupted-run recovery | [Failure recovery](docs/failure-recovery.md) |
