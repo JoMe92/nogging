@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # TASK-AGENT-010: the task-reference label is a contract.
 #
-# `scripts/specforge materialize <change>` MUST set both `openspec:change:<name>`
+# `scripts/nogg materialize <change>` MUST set both `openspec:change:<name>`
 # and `openspec:task:<TASK-ID>` on every Bead it creates, and each
 # `openspec:task:<TASK-ID>` MUST resolve to exactly one `- [ ]` / `- [x]` task
 # line in that change's tasks.md. That label is what lets the Lead Agent brief a
@@ -12,7 +12,7 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-specforge="$here/specforge"
+specforge="$here/nogg"
 repo_root="$(cd "$here/.." && pwd)"
 work=$(mktemp -d)
 out=$(mktemp)
@@ -24,8 +24,8 @@ bad() { echo "FAIL - $1"; fail=1; }
 
 # --- a scratch SpecForge checkout with one change and a git repo -----------
 root="$work/root"
-mkdir -p "$root/.specforge/state" "$root/.specforge/locks" "$root/openspec/changes/demo"
-cp "$repo_root/.specforge/config.json" "$root/.specforge/config.json"
+mkdir -p "$root/.nogging/state" "$root/.nogging/locks" "$root/openspec/changes/demo"
+cp "$repo_root/.nogging/config.json" "$root/.nogging/config.json"
 cat >"$root/openspec/changes/demo/tasks.md" <<'MD'
 # Tasks
 

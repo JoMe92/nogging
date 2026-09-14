@@ -12,8 +12,8 @@ from pathlib import Path
 # script lives in; SPECFORGE_ROOT overrides it so the test suite can point the
 # bridge at a scratch repository.
 ROOT = Path(os.environ.get("SPECFORGE_ROOT") or Path(__file__).resolve().parents[1]).resolve()
-CFG = json.loads((ROOT / ".specforge/config.json").read_text())
-LOCKS, STATE, REPORTS = (ROOT / ".specforge/locks", ROOT / ".specforge/state", ROOT / ".specforge/reports")
+CFG = json.loads((ROOT / ".nogging/config.json").read_text())
+LOCKS, STATE, REPORTS = (ROOT / ".nogging/locks", ROOT / ".nogging/state", ROOT / ".nogging/reports")
 WORKTREE_STATE = STATE / "worktrees"
 PR_STATE = STATE / "pull-requests"
 TASK_RE = re.compile(r"^- \[[ x]\] (TASK-[A-Z0-9-]+)\s+(.+)$", re.M)
@@ -166,7 +166,7 @@ def cleanup_worktree(record_name):
     """Retire only a clean recorded worktree whose branch reached develop."""
     path = WORKTREE_STATE / record_name
     if path.suffix != ".json" or path.parent != WORKTREE_STATE or not path.is_file():
-        raise RuntimeError("cleanup requires one existing .specforge/state/worktrees/*.json record name")
+        raise RuntimeError("cleanup requires one existing .nogging/state/worktrees/*.json record name")
     try: record = json.loads(path.read_text())
     except (ValueError, OSError): raise RuntimeError(f"unreadable worktree record: {path.name}")
     location, branch = record.get("path"), record.get("branch")
@@ -552,7 +552,7 @@ def lock(name, ttl, force=False):
     path.write_text(json.dumps({"pid": os.getpid(), "host": socket.gethostname(), "created_at": now()}, indent=2) + "\n")
     return path
 def orchestrator_lock_ttl():
-    """Staleness horizon for `.specforge/locks/orchestrator.lock`. Long by
+    """Staleness horizon for `.nogging/locks/orchestrator.lock`. Long by
     default — the orchestrator is always-on and its supervisor rewrites the
     lock's `created_at` on every (re)start — so a lock only reads as stale once
     the supervisor has been gone for a full day."""
@@ -1061,7 +1061,7 @@ def resolve_launch_file(value, dir_key, default_dir, suffix):
         f"{candidate} exists")
 def tmux_bin(): return scfg("session_tmux_command", "tmux")
 def tmux_socket(): return scfg("session_tmux_socket", "specforge")
-def sessions_dir(): return data_dir(ROOT / scfg("session_state_dir", ".specforge/state/sessions"))
+def sessions_dir(): return data_dir(ROOT / scfg("session_state_dir", ".nogging/state/sessions"))
 def tmux(*args, check=True):
     """Invoke the dedicated SpecForge tmux server (never the operator's own)."""
     return run(tmux_bin(), "-L", tmux_socket(), *args, check=check)
@@ -1188,7 +1188,7 @@ def resolve_codex_profile(profile, full_access):
             f"--profile {value!r} is a Claude settings file; --agent codex takes a "
             f"Codex launch spec (a level name or a .codex.toml path), not a permissions JSON")
     return resolve_launch_file(
-        value, "session_launch_profile_dir", ".specforge/launch-profiles", ".codex.toml")
+        value, "session_launch_profile_dir", ".nogging/launch-profiles", ".codex.toml")
 def resolve_pi_profile(profile, full_access):
     """Resolve a Pi launch level to a `.pi.toml` spec.
 
@@ -1210,7 +1210,7 @@ def resolve_pi_profile(profile, full_access):
             f"--profile {value!r} is a Codex launch spec; --agent pi takes a "
             f"Pi launch spec (a level name or a .pi.toml path), not a .codex.toml file")
     return resolve_launch_file(
-        value, "session_launch_profile_dir", ".specforge/launch-profiles", ".pi.toml")
+        value, "session_launch_profile_dir", ".nogging/launch-profiles", ".pi.toml")
 def resolved_launch_pair(profile, prompt, full_access, agent="claude"):
     """Resolve the launch selection to concrete files.
 
@@ -1231,20 +1231,20 @@ def resolved_launch_pair(profile, prompt, full_access, agent="claude"):
         profile_path, profile_label = resolve_pi_profile(profile, full_access)
     elif profile is not None:
         profile_path, profile_label = resolve_launch_file(
-            profile, "session_launch_profile_dir", ".specforge/launch-profiles", ".json")
+            profile, "session_launch_profile_dir", ".nogging/launch-profiles", ".json")
     elif "session_launch_profile" in CFG:
         profile_path, profile_label = (ROOT / CFG["session_launch_profile"]).resolve(), "restricted"
     else:
         profile_path, profile_label = resolve_launch_file(
-            "restricted", "session_launch_profile_dir", ".specforge/launch-profiles", ".json")
+            "restricted", "session_launch_profile_dir", ".nogging/launch-profiles", ".json")
     if prompt is not None:
         prompt_path, _ = resolve_launch_file(
-            prompt, "session_launch_prompt_dir", ".specforge/launch-prompts", ".md")
+            prompt, "session_launch_prompt_dir", ".nogging/launch-prompts", ".md")
     elif "session_launch_prompt" in CFG:
         prompt_path = (ROOT / CFG["session_launch_prompt"]).resolve()
     else:
         prompt_path, _ = resolve_launch_file(
-            "no-autonomous-claim", "session_launch_prompt_dir", ".specforge/launch-prompts", ".md")
+            "no-autonomous-claim", "session_launch_prompt_dir", ".nogging/launch-prompts", ".md")
     return profile_path, profile_label, prompt_path
 def load_profile_settings(path):
     """Read a profile file as JSON and require a `permissions` object. Fails
@@ -1346,7 +1346,7 @@ def session_launch(role, bead, cwd, read_only, owner,
     This function performs NO Beads mutation. The only `bd` call it makes is
     the read-only `bd show` inside bead_exists(); it never claims, starts, or
     otherwise changes a Bead. Claiming stays a deliberate in-session action
-    the operator directs (see .specforge/session-launch-prompt.md)."""
+    the operator directs (see .nogging/session-launch-prompt.md)."""
     agent = resolve_agent(agent)
     role_meta, role_slug = normalize_role(role)
     is_orchestrator = role_meta == "orchestrator"
@@ -1465,7 +1465,7 @@ def session_launch(role, bead, cwd, read_only, owner,
     else:  # pi: no per-session permissions file and no sandbox/approval/
            # network spec — the floor is the always-on guard extension
            # (`.pi/extensions/specforge-guard.ts`), which reads
-           # `.specforge/locks/openspec.readonly` directly at tool-call time.
+           # `.nogging/locks/openspec.readonly` directly at tool-call time.
            # That means, unlike Codex, this branch passes nothing extra for
            # the openspec/ write boundary (openspec_readonly is not consulted
            # here) and never constructs a flag that would disable or bypass
@@ -1848,7 +1848,7 @@ def commit_tokens_with_subject(rev_range=None):
     return out
 MATERIALIZE_JOURNAL_RE = re.compile(r"^materialize-(.+)\.json$")
 def materialize_journals():
-    """Every leftover `.specforge/state/materialize-<change>.json` journal
+    """Every leftover `.nogging/state/materialize-<change>.json` journal
     (written by `materialize()`, deleted on clean completion) as
     `{change: parsed-json}`. A crash between `bd create` calls leaves one; its
     `tasks_planned` minus `tasks_created` is exactly what still needs a Bead."""
@@ -2014,7 +2014,7 @@ def recover_scan():
 
     # --- Crashed sessions -----------------------------------------
     crashed_lines = []
-    sdir = ROOT / scfg("session_state_dir", ".specforge/state/sessions")
+    sdir = ROOT / scfg("session_state_dir", ".nogging/state/sessions")
     if sdir.is_dir():
         live = tmux_sessions()
         for _, rec in session_records():
@@ -2123,7 +2123,7 @@ def doctor(audit=False, with_recover=False):
         if prompt_plan and any(state != "linked" for _, _, state in prompt_plan):
             notes.append(f"codex prompts present in .codex/prompts/ but not linked into "
                          f"{codex_home() / 'prompts'}/ "
-                         f"(run: ./scripts/specforge codex-prompts-link)")
+                         f"(run: ./scripts/nogg codex-prompts-link)")
     pi_present = tool_on_path("pi")
     notes.append("pi available" if pi_present
                  else "pi not installed; only needed for the Pi agent path")
@@ -2219,7 +2219,7 @@ def main():
     wti.add_argument("branch")
     wti.add_argument("--path", help="explicit empty destination path (defaults beside the shared checkout)")
     wtc = wtsub.add_parser("cleanup", help="retire one clean, develop-integrated recorded worktree")
-    wtc.add_argument("record", help="record filename under .specforge/state/worktrees/")
+    wtc.add_argument("record", help="record filename under .nogging/state/worktrees/")
     pr = sub.add_parser("pr", help="create or locate an implementation pull request")
     prsub = pr.add_subparsers(dest="pr_command", required=True)
     pro = prsub.add_parser("open", help="create or locate an open PR targeting develop")

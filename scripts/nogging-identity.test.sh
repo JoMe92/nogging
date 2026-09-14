@@ -35,12 +35,12 @@ docs/security/successor-migration-2026-09-10.md" \
   || fail "legacy repository URL escaped its transition-document allowlist"
 
 grep -q 'npx github:JoMe92/agentsembli-specforge' bin/cli.js || fail "CLI install command changed identity"
-grep -q "'scripts/specforge'" bin/lib/manifest.js || fail "installed command path changed identity"
-grep -q "to: 'docs/specforge/" bin/lib/manifest.js || fail "installed documentation path changed identity"
+grep -q "'scripts/nogg'" bin/lib/manifest.js || fail "installed command path changed identity"
+grep -q "to: 'docs/nogging/" bin/lib/manifest.js || fail "installed documentation path changed identity"
 grep -q 'specforge-sync-{slug}' bin/lib/manifest.js || fail "generated sync unit changed identity"
 grep -q 'specforge-orchestrator-{slug}' bin/lib/manifest.js || fail "generated orchestrator unit changed identity"
-grep -q '"name": "SpecForge"' templates/specforge-config.json || fail "generated config changed identity"
-grep -q 'scfg("session_tmux_socket", "specforge")' scripts/specforge || fail "tmux socket changed identity"
+grep -q '"name": "SpecForge"' templates/nogging-config.json || fail "generated config changed identity"
+grep -q 'scfg("session_tmux_socket", "specforge")' scripts/nogg || fail "tmux socket changed identity"
 grep -q '^# Agentsembli SpecForge$' README.md || fail "README display name is stale"
 grep -q 'Agentsembli SpecForge validation' .github/workflows/specforge-validate.yml || fail "workflow display name is stale"
 grep -q 'security/advisories/new' SECURITY.md || fail "security reporting route is missing"
@@ -48,7 +48,7 @@ grep -q 'security/advisories/new' SECURITY.md || fail "security reporting route 
 node -e '
   const pkg = require("./package.json");
   if (pkg.name !== "specforge") throw new Error(`unexpected package name: ${pkg.name}`);
-  if (pkg.bin?.specforge !== "bin/cli.js") throw new Error("specforge CLI entry is missing");
+  if (pkg.bin?.nogging !== "bin/cli.js") throw new Error("specforge CLI entry is missing");
   if (pkg.private === false) throw new Error("package explicitly enables publication");
 ' || fail "package identity contradicts the canonical document"
 

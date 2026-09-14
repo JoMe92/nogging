@@ -1,6 +1,6 @@
 # Running work in supervised sessions
 
-A practical guide to `scripts/specforge session` — starting a Claude Code
+A practical guide to `scripts/nogg session` — starting a Claude Code
 session on the delivery host, watching it, steering it, and shutting it down.
 
 For the design and internals see the *Session supervision* sections of
@@ -9,7 +9,7 @@ see `failure-recovery.md`.
 
 ## What a supervised session is
 
-`scripts/specforge session launch` starts a **separate agent process inside a
+`scripts/nogg session launch` starts a **separate agent process inside a
 tmux session** on the host — Claude Code by default, or Codex with `--agent
 codex` (see *Choosing the agent*) — on a dedicated tmux server socket (`tmux -L
 specforge`). Compared with running the agent in your terminal:
@@ -18,7 +18,7 @@ specforge`). Compared with running the agent in your terminal:
   laptop — the session keeps working on the host.
 - **It is observable from anywhere.** Any SSH shell — or your phone through
   Remote Control — can list it, tail its output, or attach to it.
-- **It is on the record.** A JSON file under `.specforge/state/sessions/`
+- **It is on the record.** A JSON file under `.nogging/state/sessions/`
   records the Bead, role, start time, working directory and lifecycle state,
   and survives a crash or a restart of whatever launched it.
 - **It is fenced in.** By default the launch profile (`restricted`) denies
@@ -36,7 +36,7 @@ want to be able to stop independently.
 
 ```bash
 # anchor the session to the change's first Bead
-./scripts/specforge session launch --role lead --bead SPEC-xxx --owner "$USER"
+./scripts/nogg session launch --role lead --bead SPEC-xxx --owner "$USER"
 ```
 
 `--bead` is required and must exist; `launch` runs a read-only `bd show` to
@@ -54,7 +54,7 @@ briefing file.
 
 If the session is **resuming** interrupted work — a previous session ran out of
 budget or crashed, or you are switching tools — have it run
-`./scripts/specforge recover` and work through what it reports (the
+`./scripts/nogg recover` and work through what it reports (the
 [`failure-recovery.md`](failure-recovery.md) § "Resuming an interrupted run"
 playbook) *before* it selects work with `bd ready`. `AGENTS.md` § "Resuming a
 run" is the tool-neutral protocol; a `LIMBO` / `resumable` Bead is verified and
@@ -65,11 +65,11 @@ closed, never re-implemented.
 A session runs **Claude Code** by default. To run **OpenAI Codex** instead:
 
 ```bash
-./scripts/specforge session launch --role lead --bead SPEC-xxx --agent codex
+./scripts/nogg session launch --role lead --bead SPEC-xxx --agent codex
 ```
 
 With no `--agent` flag the agent is the `session_agent` key in
-`.specforge/config.json` (default `claude`), so an install only runs Codex when
+`.nogging/config.json` (default `claude`), so an install only runs Codex when
 it opts in — per launch, or by setting that key. `session list` shows which
 agent each session runs in an `AGENT` column.
 
@@ -100,8 +100,8 @@ token is ever passed on the command line, exactly as for Claude.
 ## Watch without touching
 
 ```bash
-./scripts/specforge session list                       # all sessions + state
-./scripts/specforge session log  <name> --follow        # tail its output
+./scripts/nogg session list                       # all sessions + state
+./scripts/nogg session log  <name> --follow        # tail its output
 ```
 
 `session list` reconciles every record against live tmux; a session whose tmux
@@ -111,7 +111,7 @@ tail, not the session.
 ## Attach and steer
 
 ```bash
-./scripts/specforge session attach <name>
+./scripts/nogg session attach <name>
 ```
 
 You are now **inside** the session — the same view Claude has. You can type
@@ -141,7 +141,7 @@ a whole change unattended — commit per Bead, push its branch, merge to
 `develop` when green — launch it with broader authority:
 
 ```bash
-./scripts/specforge session launch --role lead --bead SPEC-xxx --full-access
+./scripts/nogg session launch --role lead --bead SPEC-xxx --full-access
 ```
 
 `--full-access` is shorthand for `--profile trusted --prompt autonomous`:
@@ -157,7 +157,7 @@ a whole change unattended — commit per Bead, push its branch, merge to
 
 You can also pass the two flags separately, or point either at a file of your
 own: `--profile ./my-profile.json`, `--prompt ./my-prompt.md`. A bare name
-resolves under `.specforge/launch-profiles/` / `.specforge/launch-prompts/`;
+resolves under `.nogging/launch-profiles/` / `.nogging/launch-prompts/`;
 anything else is a path.
 
 **The command floor always holds.** `rm -rf`/`rm -fr`, `sudo`, `dd`,
@@ -168,7 +168,7 @@ OS sandbox: a `trusted` session genuinely can push and merge.
 
 **It is on the record.** `session list` shows the profile each session runs
 under (`restricted` renders as `-`). The merged, floored settings are written
-to `.specforge/state/sessions/<name>.settings.json`; the source profile is
+to `.nogging/state/sessions/<name>.settings.json`; the source profile is
 never modified, and `session cleanup` removes the per-session file when it
 retires the record.
 
@@ -182,8 +182,8 @@ Control sessions.
 ## Stop and clean up
 
 ```bash
-./scripts/specforge session stop    <name> --reason "going the wrong way"
-./scripts/specforge session cleanup <name>
+./scripts/nogg session stop    <name> --reason "going the wrong way"
+./scripts/nogg session cleanup <name>
 ```
 
 `stop` sends Claude an interrupt, waits the grace period
@@ -207,7 +207,7 @@ worktree:
 
 ```bash
 git worktree add ../specforge-cmd feat/planning-and-discovery-commands
-./scripts/specforge session launch --role lead --bead SPEC-yyy \
+./scripts/nogg session launch --role lead --bead SPEC-yyy \
   --cwd "$(cd ../specforge-cmd && pwd)"
 ```
 
@@ -228,13 +228,13 @@ loginctl enable-linger "$USER"   # so it starts at boot without a login
 subcommand group:
 
 ```bash
-./scripts/specforge orchestrator status    # unit + linger state, the lock, the live session, last log lines
-./scripts/specforge orchestrator restart   # bounce the service
-./scripts/specforge orchestrator stop      # stop + disable it, end the session, release the lock
-./scripts/specforge orchestrator run       # the supervisor itself (what the unit calls); --force reclaims a stale lock
+./scripts/nogg orchestrator status    # unit + linger state, the lock, the live session, last log lines
+./scripts/nogg orchestrator restart   # bounce the service
+./scripts/nogg orchestrator stop      # stop + disable it, end the session, release the lock
+./scripts/nogg orchestrator run       # the supervisor itself (what the unit calls); --force reclaims a stale lock
 ```
 
-`orchestrator run` acquires `.specforge/locks/orchestrator.lock`, adopts a live
+`orchestrator run` acquires `.nogging/locks/orchestrator.lock`, adopts a live
 `sf-orchestrator-<slug>` tmux session or starts one (resuming its conversation
 with `claude --continue` when one exists), blocks until it exits, releases the
 lock and exits non-zero so `Restart=always` brings it back. It runs under the
@@ -259,12 +259,12 @@ orchestrate-only-by-default scope.
 | `orchestrator status` | unit enabled/active state, linger on/off, the lock holder, the live `FULL-ACCESS` session |
 | `orchestrator stop` \| `orchestrator restart` | stop-and-disable the unit (idempotent), or restart it |
 
-Config keys (`.specforge/config.json`): `session_agent` (`claude` |  `codex`,
+Config keys (`.nogging/config.json`): `session_agent` (`claude` |  `codex`,
 default `claude`), `session_tmux_socket`, `session_state_dir`,
 `session_log_max_bytes`, `session_log_rotation_depth`,
 `session_stop_grace_seconds`, `orchestrator_lock_ttl_seconds` (default 86400),
 `orchestrator_poll_seconds` (default 5). The launch profile / prompt directories default
-to `.specforge/launch-profiles/` and `.specforge/launch-prompts/` and are
+to `.nogging/launch-profiles/` and `.nogging/launch-prompts/` and are
 overridable with `session_launch_profile_dir` / `session_launch_prompt_dir`; a
 `session_launch_profile` / `session_launch_prompt` key still pins a single file
 and wins over the directory default.

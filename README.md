@@ -31,13 +31,13 @@ Sync timer ──mechanically mirrors status and evidence──> execution-log.m
 cd /path/to/specforge
 git switch develop
 ./scripts/install-hooks
-./scripts/specforge doctor
-./scripts/specforge plan-begin
+./scripts/nogg doctor
+./scripts/nogg plan-begin
 # Plan with OpenSpec, then add stable TASK-... IDs to tasks.md.
-./scripts/specforge validate
-./scripts/specforge materialize <change-name>
-./scripts/specforge plan-end
-./scripts/specforge sync
+./scripts/nogg validate
+./scripts/nogg materialize <change-name>
+./scripts/nogg plan-end
+./scripts/nogg sync
 ```
 
 The timer is installed with `systemctl --user enable --now specforge-sync.timer`.

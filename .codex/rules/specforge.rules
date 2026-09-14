@@ -2,8 +2,8 @@
 #
 # Codex loads this file (every `*.rules` under `<repo>/.codex/rules/`) once the
 # project's `.codex/` layer is trusted. It is the Codex-side sibling of the
-# Claude launch floor (`FLOOR_DENY` in `scripts/specforge` + the `deny` list in
-# `.specforge/launch-profiles/*.json`): the always-on command classes that are
+# Claude launch floor (`FLOOR_DENY` in `scripts/nogg` + the `deny` list in
+# `.nogging/launch-profiles/*.json`): the always-on command classes that are
 # refused for *every* SpecForge-supervised Codex session, trusted or restricted.
 #
 # It carries the floor and nothing else. Remote/network operations

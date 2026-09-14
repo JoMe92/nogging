@@ -105,15 +105,15 @@ Agent** — a separate always-on session (`sf-orchestrator-<slug>`, kept alive b
 a systemd user service, reachable from a phone via Remote Control), **Claude
 Code only**. Hierarchy: **Product Owner → Orchestration Agent → {Planning,
 Lead} → Specialists**. It is **orchestrate-only by default**: it reads the whole
-state and drives Planning and Lead sessions through `scripts/specforge`, and
+state and drives Planning and Lead sessions through `scripts/nogg`, and
 writes no `openspec/` file and no implementation code itself. Its command floor
 and `openspec/` boundary are lifted (the one documented exception, keyed to
 `--role orchestrator`; `session list` / `doctor` show it as `FULL-ACCESS`), so
-the discipline is prompt-borne — see `.specforge/launch-prompts/orchestrator.md`.
+the discipline is prompt-borne — see `.nogging/launch-prompts/orchestrator.md`.
 It writes `openspec/` or code only under an explicit
 `/orchestrate takeover {plan|code}` instruction (one task, then back to
 orchestrate-only), and it never signs an acceptance report. Reach and drive it
-with `.claude/commands/orchestrate.md` and `scripts/specforge orchestrator
+with `.claude/commands/orchestrate.md` and `scripts/nogg orchestrator
 {run,status,stop,restart}`. See `docs/operating-model.md` *Orchestration*.
 
 

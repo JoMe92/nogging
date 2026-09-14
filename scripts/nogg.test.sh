@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Focused checks for `scripts/specforge`.
+# Focused checks for `scripts/nogg`.
 #
 # `discoveries` (TASK-BOUNDARY-002, TASK-SYNC-005/006): no discoveries,
 # blocked-first ordering, ID/status/title/note surfaced, missing note tolerated,
@@ -16,7 +16,7 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-specforge="$here/specforge"
+specforge="$here/nogg"
 repo_root="$(cd "$here/.." && pwd)"
 work=$(mktemp -d)
 trap 'rm -f "$out"; rm -rf "$work"' EXIT
@@ -151,15 +151,15 @@ if [[ "$op_ln" -lt "$cl_ln" ]]; then echo "ok   - closed-disc: open listed befor
   echo "FAIL - closed-disc: closed not sorted after open ($op_ln vs $cl_ln)"; fail=1; fi
 
 # --- Scenario: acknowledging a discovery stops it being surfaced -----------
-ackroot="$work/ackroot"; mkdir -p "$ackroot/.specforge/state"
-cp "$repo_root/.specforge/config.json" "$ackroot/.specforge/config.json"
+ackroot="$work/ackroot"; mkdir -p "$ackroot/.nogging/state"
+cp "$repo_root/.nogging/config.json" "$ackroot/.nogging/config.json"
 export SPECFORGE_ROOT="$ackroot"
 "$specforge" discoveries >"$out" 2>&1
 check "ack: closed discovery listed before acknowledgement" "SPEC-cl1  Closed before review"
 "$specforge" discoveries --ack SPEC-cl1 >"$out" 2>&1
 check "ack: acknowledgement confirmed" "acknowledged 1 discovery Bead(s): SPEC-cl1"
-[[ -f "$ackroot/.specforge/state/acknowledged-discoveries.json" ]] \
-  && echo "ok   - ack: ledger written under .specforge/state/" \
+[[ -f "$ackroot/.nogging/state/acknowledged-discoveries.json" ]] \
+  && echo "ok   - ack: ledger written under .nogging/state/" \
   || { echo "FAIL - ack: ledger not written"; fail=1; }
 "$specforge" discoveries >"$out" 2>&1
 refute "ack: acknowledged discovery no longer listed" "SPEC-cl1"
@@ -173,8 +173,8 @@ unset SPECFORGE_ROOT
 # make_root <dir> — a minimal SpecForge checkout with one change and a git repo.
 make_root() {
   local r="$1"
-  mkdir -p "$r/.specforge/state" "$r/.specforge/locks" "$r/openspec/changes/demo"
-  cp "$repo_root/.specforge/config.json" "$r/.specforge/config.json"
+  mkdir -p "$r/.nogging/state" "$r/.nogging/locks" "$r/openspec/changes/demo"
+  cp "$repo_root/.nogging/config.json" "$r/.nogging/config.json"
   cat >"$r/openspec/changes/demo/tasks.md" <<'MD'
 # Tasks
 
@@ -234,7 +234,7 @@ export SPECFORGE_ROOT="$root"
 [[ "$(git -C "$destination" branch --show-current)" == "plan/agent-runtime/parallel-execution" ]] \
   && echo "ok   - wt-plan: dedicated hierarchical planning branch created" \
   || { echo "FAIL - wt-plan: planning branch missing"; git -C "$destination" branch --show-current 2>/dev/null || true; fail=1; }
-record="$root/.specforge/state/worktrees/plan--agent-runtime--parallel-execution.json"
+record="$root/.nogging/state/worktrees/plan--agent-runtime--parallel-execution.json"
 grep -qF '"state": "allocated"' "$record" \
   && echo "ok   - wt-plan: durable allocated record written" \
   || { echo "FAIL - wt-plan: durable record missing or incomplete"; cat "$record" 2>/dev/null || true; fail=1; }
@@ -269,7 +269,7 @@ record="implementation--spec-impl.json"
 "$specforge" worktree cleanup "$record" >"$out" 2>&1 \
   && echo "ok   - wt-implementation: clean develop-integrated branch is retired" \
   || { echo "FAIL - wt-implementation: safe cleanup errored"; cat "$out"; fail=1; }
-[[ ! -e "$destination" && ! -e "$root/.specforge/state/worktrees/$record" ]] \
+[[ ! -e "$destination" && ! -e "$root/.nogging/state/worktrees/$record" ]] \
   && echo "ok   - wt-implementation: cleanup removes only the recorded clean worktree" \
   || { echo "FAIL - wt-implementation: cleanup left recorded artifacts"; fail=1; }
 unset SPECFORGE_ROOT BD_FIXTURE
@@ -293,7 +293,7 @@ grep -qF 'pr create --base develop --head feat/demo' "$GH_CALLS" \
   && echo "ok   - pr-handoff: creates a PR targeting develop" \
   || { echo "FAIL - pr-handoff: create arguments missing"; cat "$GH_CALLS"; fail=1; }
 if grep -qi 'merge' "$GH_CALLS"; then echo "FAIL - pr-handoff: helper invoked merge"; fail=1; else echo "ok   - pr-handoff: helper never invokes merge"; fi
-[[ -f "$root/.specforge/state/pull-requests/feat-demo.json" ]] \
+[[ -f "$root/.nogging/state/pull-requests/feat-demo.json" ]] \
   && echo "ok   - pr-handoff: durable PR state recorded" \
   || { echo "FAIL - pr-handoff: PR state missing"; fail=1; }
 "$specforge" pr ci >"$out" 2>&1 \
@@ -398,7 +398,7 @@ JSON
 grep -qF 'already materialized TASK-DEMO-001' "$out" \
   && echo "ok   - mat-idem: the closed Bead's task counts as materialized" \
   || { echo "FAIL - mat-idem: closed task not recognised"; cat "$out"; fail=1; }
-[[ ! -f "$root/.specforge/state/materialize-demo.json" ]] \
+[[ ! -f "$root/.nogging/state/materialize-demo.json" ]] \
   && echo "ok   - mat-idem: the materialize journal is deleted on clean completion" \
   || { echo "FAIL - mat-idem: journal left behind after a clean run"; fail=1; }
 unset SPECFORGE_ROOT BD_CREATE_LOG
@@ -415,7 +415,7 @@ export BD_CREATE_FAIL="TASK-DEMO-002"
 "$specforge" materialize demo >"$out" 2>&1 \
   && { echo "FAIL - mat-journal: materialize should fail on the forced bd create error"; fail=1; } \
   || echo "ok   - mat-journal: materialize errors out mid-run"
-jr="$root/.specforge/state/materialize-demo.json"
+jr="$root/.nogging/state/materialize-demo.json"
 [[ -f "$jr" ]] \
   && echo "ok   - mat-journal: a journal is left behind after the interrupted run" \
   || { echo "FAIL - mat-journal: no journal after interruption"; cat "$out"; fail=1; }
@@ -453,7 +453,7 @@ cat >"$BD_FIXTURE" <<'JSON'
    "labels": ["openspec:change:demo", "openspec:task:TASK-DEMO-404"]}
 ]
 JSON
-rec="$root/.specforge/state/sync-failure.json"
+rec="$root/.nogging/state/sync-failure.json"
 "$specforge" sync >"$out" 2>&1 && { echo "FAIL - fail-perm: sync should have failed"; fail=1; }
 [[ -f "$rec" ]] \
   && echo "ok   - fail-perm: active failure record written" \
@@ -473,8 +473,8 @@ export BD_FIXTURE="$work/fail-trans-beads.json"
 printf '[]\n' >"$BD_FIXTURE"
 held="$(date -u +%Y-%m-%dT%H:%M:%S+00:00)"
 printf '{"pid": 999999, "host": "ghost", "created_at": "%s"}\n' "$held" \
-  >"$root/.specforge/locks/sync.lock"
-rec="$root/.specforge/state/sync-failure.json"
+  >"$root/.nogging/locks/sync.lock"
+rec="$root/.nogging/state/sync-failure.json"
 "$specforge" sync >"$out" 2>&1 && { echo "FAIL - fail-trans: sync should have failed on lock"; fail=1; }
 grep -qF '"classification": "transient"' "$rec" \
   && echo "ok   - fail-trans: classified transient" \
@@ -490,7 +490,7 @@ grep -qE '"next_retry_after": "[0-9]' "$rec" \
 grep -qF '"attempts": 2' "$rec" \
   && echo "ok   - fail-trans: consecutive failure increments attempts" \
   || { echo "FAIL - fail-trans: attempts did not increment"; cat "$rec"; fail=1; }
-jsonl="$root/.specforge/state/sync-failures.jsonl"
+jsonl="$root/.nogging/state/sync-failures.jsonl"
 [[ "$(count "$jsonl" '"event_time"')" == "2" ]] \
   && echo "ok   - fail-trans: every failure appended to the JSONL log" \
   || { echo "FAIL - fail-trans: JSONL log line count $(count "$jsonl" '"event_time"')"; cat "$jsonl"; fail=1; }
@@ -506,7 +506,7 @@ grep -qF '"next_retry_after": null' "$rec" \
   || { echo "FAIL - fail-trans: retry still scheduled past the cap"; cat "$rec"; fail=1; }
 
 # --- Scenario: a successful sync clears the failure record -----------------
-rm -f "$root/.specforge/locks/sync.lock"
+rm -f "$root/.nogging/locks/sync.lock"
 "$specforge" sync >"$out" 2>&1 || { echo "FAIL - clear: recovery sync errored"; cat "$out"; fail=1; }
 [[ ! -f "$rec" ]] \
   && echo "ok   - clear: successful sync removed the active failure record" \
@@ -603,13 +603,13 @@ export SPECFORGE_ROOT="$root"
 export BD_FIXTURE="$work/now-locked-beads.json"; printf '[]\n' >"$BD_FIXTURE"
 held="$(date -u +%Y-%m-%dT%H:%M:%S+00:00)"
 printf '{"pid": 999999, "host": "timer-host", "created_at": "%s"}\n' "$held" \
-  >"$root/.specforge/locks/sync.lock"
+  >"$root/.nogging/locks/sync.lock"
 "$specforge" sync --now >"$out" 2>&1 || { echo "FAIL - now-locked: sync --now should exit 0 on contention"; cat "$out"; fail=1; }
 check "now-locked: contention reported with the holder" "sync lock held by timer-host pid 999999"
 check "now-locked: does not retry" "not retrying"
-[[ ! -f "$root/.specforge/state/sync-failure.json" ]] \
+[[ ! -f "$root/.nogging/state/sync-failure.json" ]] \
   && echo "ok   - now-locked: no failure record written for a held lock" \
-  || { echo "FAIL - now-locked: spurious failure record"; cat "$root/.specforge/state/sync-failure.json"; fail=1; }
+  || { echo "FAIL - now-locked: spurious failure record"; cat "$root/.nogging/state/sync-failure.json"; fail=1; }
 unset SPECFORGE_ROOT
 
 # --- Scenario: a stale PID file falls through to a direct pass -------------
@@ -625,7 +625,7 @@ cat >"$BD_FIXTURE" <<'JSON'
    "labels": ["openspec:change:demo", "openspec:task:TASK-DEMO-002"]}
 ]
 JSON
-printf '999999\n' >"$root/.specforge/state/sync.pid"
+printf '999999\n' >"$root/.nogging/state/sync.pid"
 "$specforge" sync --now >"$out" 2>&1 || { echo "FAIL - now-stalepid: sync --now errored"; cat "$out"; fail=1; }
 grep -qF -- '- [x] TASK-DEMO-002' "$root/openspec/changes/demo/tasks.md" \
   && echo "ok   - now-stalepid: dead PID ignored, direct pass ran" \
@@ -639,7 +639,7 @@ export BD_FIXTURE="$work/now-daemon-beads.json"; printf '[]\n' >"$BD_FIXTURE"
 sleep 30 &
 daemon_pid=$!
 disown "$daemon_pid" 2>/dev/null || true   # silence job-control notice when it is signalled
-printf '%s\n' "$daemon_pid" >"$root/.specforge/state/sync.pid"
+printf '%s\n' "$daemon_pid" >"$root/.nogging/state/sync.pid"
 "$specforge" sync --now >"$out" 2>&1 || { echo "FAIL - now-daemon: sync --now errored"; cat "$out"; fail=1; }
 check "now-daemon: reports signalling the live daemon PID" "signalled sync daemon pid $daemon_pid"
 kill "$daemon_pid" 2>/dev/null || true
@@ -657,24 +657,24 @@ root="$work/sts-planlock"; make_root "$root"
 export SPECFORGE_ROOT="$root"
 export BD_FIXTURE="$work/sts-planlock-beads.json"; printf '[]\n' >"$BD_FIXTURE"
 seed='{"at":"2020-01-01T00:00:00+00:00","branch":"seed-branch"}'
-printf '%s\n' "$seed" >"$root/.specforge/state/last-success.json"
+printf '%s\n' "$seed" >"$root/.nogging/state/last-success.json"
 held="$(date -u +%Y-%m-%dT%H:%M:%S+00:00)"
 printf '{"pid":1,"host":"h","created_at":"%s"}\n' "$held" \
-  >"$root/.specforge/locks/planning.lock"
+  >"$root/.nogging/locks/planning.lock"
 "$specforge" sync >"$out" 2>&1 || { echo "FAIL - sts-planlock: sync exited non-zero"; cat "$out"; fail=1; }
 check "sts-planlock: skip reason printed" "sync: skipped (planning session active)"
-[[ ! -f "$root/.specforge/state/sync-failure.json" ]] \
+[[ ! -f "$root/.nogging/state/sync-failure.json" ]] \
   && echo "ok   - sts-planlock: no failure record for a skipped tick" \
   || { echo "FAIL - sts-planlock: failure record written on skip"; fail=1; }
-[[ "$(cat "$root/.specforge/state/last-success.json")" == "$seed" ]] \
+[[ "$(cat "$root/.nogging/state/last-success.json")" == "$seed" ]] \
   && echo "ok   - sts-planlock: last-success.json left untouched" \
-  || { echo "FAIL - sts-planlock: last-success.json changed on skip"; cat "$root/.specforge/state/last-success.json"; fail=1; }
-grep -qF -- '"reason": "planning session active"' "$root/.specforge/state/last-skip.json" \
+  || { echo "FAIL - sts-planlock: last-success.json changed on skip"; cat "$root/.nogging/state/last-success.json"; fail=1; }
+grep -qF -- '"reason": "planning session active"' "$root/.nogging/state/last-skip.json" \
   && echo "ok   - sts-planlock: last-skip.json records the reason" \
   || { echo "FAIL - sts-planlock: last-skip.json missing or wrong"; fail=1; }
 "$specforge" doctor >"$out" 2>&1 || true
 check "sts-planlock: doctor surfaces the stalled mirror" "last sync skipped: planning session active"
-rm -f "$root/.specforge/locks/planning.lock"
+rm -f "$root/.nogging/locks/planning.lock"
 unset SPECFORGE_ROOT
 
 # --- Scenario: a merge in progress -> skip; sync --now still refuses it -----
@@ -684,7 +684,7 @@ export BD_FIXTURE="$work/sts-merge-beads.json"; printf '[]\n' >"$BD_FIXTURE"
 touch "$root/.git/MERGE_HEAD"
 "$specforge" sync >"$out" 2>&1 || { echo "FAIL - sts-merge: sync exited non-zero"; cat "$out"; fail=1; }
 check "sts-merge: timer skips a mid-merge" "sync: skipped (merge in progress)"
-[[ ! -f "$root/.specforge/state/sync-failure.json" ]] \
+[[ ! -f "$root/.nogging/state/sync-failure.json" ]] \
   && echo "ok   - sts-merge: no failure record on a mid-merge skip" \
   || { echo "FAIL - sts-merge: failure record on mid-merge skip"; fail=1; }
 "$specforge" sync --now >"$out" 2>&1 || { echo "FAIL - sts-merge: sync --now exited non-zero"; cat "$out"; fail=1; }
@@ -724,10 +724,10 @@ grep -qF -- '- [ ] TASK-DEMO-001' "$root/openspec/changes/demo/tasks.md" \
 grep -qF -- '- [x] TASK-DEMO-001' "$root/openspec/changes/demo/tasks.md" \
   && echo "ok   - sts-protected: sync --now proceeds on a protected branch" \
   || { echo "FAIL - sts-protected: sync --now did not mirror on develop"; cat "$out"; fail=1; }
-grep -qF -- '"branch": "develop"' "$root/.specforge/state/last-success.json" \
+grep -qF -- '"branch": "develop"' "$root/.nogging/state/last-success.json" \
   && echo "ok   - sts-protected: last-success.json records the develop branch" \
-  || { echo "FAIL - sts-protected: branch not recorded"; cat "$root/.specforge/state/last-success.json"; fail=1; }
-[[ ! -f "$root/.specforge/state/last-skip.json" ]] \
+  || { echo "FAIL - sts-protected: branch not recorded"; cat "$root/.nogging/state/last-success.json"; fail=1; }
+[[ ! -f "$root/.nogging/state/last-skip.json" ]] \
   && echo "ok   - sts-protected: the successful sync --now cleared last-skip.json" \
   || { echo "FAIL - sts-protected: last-skip.json not cleared by a successful sync"; fail=1; }
 unset SPECFORGE_ROOT BD_STUB_DIR
@@ -746,9 +746,9 @@ cat >"$BD_FIXTURE" <<'JSON'
 ]
 JSON
 "$specforge" sync >"$out" 2>&1 || { echo "FAIL - sts-branchnote: first sync errored"; cat "$out"; fail=1; }
-grep -qF -- '"branch": "feat/one"' "$root/.specforge/state/last-success.json" \
+grep -qF -- '"branch": "feat/one"' "$root/.nogging/state/last-success.json" \
   && echo "ok   - sts-branchnote: first run records feat/one" \
-  || { echo "FAIL - sts-branchnote: feat/one not recorded"; cat "$root/.specforge/state/last-success.json"; fail=1; }
+  || { echo "FAIL - sts-branchnote: feat/one not recorded"; cat "$root/.nogging/state/last-success.json"; fail=1; }
 git -C "$root" checkout -q -b feat/two
 cat >"$BD_FIXTURE" <<'JSON'
 [
@@ -760,9 +760,9 @@ cat >"$BD_FIXTURE" <<'JSON'
 JSON
 "$specforge" sync >"$out" 2>&1 || { echo "FAIL - sts-branchnote: second sync errored"; cat "$out"; fail=1; }
 check "sts-branchnote: branch-change note printed" "sync: note — mirroring on feat/two (last run was on feat/one)"
-grep -qF -- '"branch": "feat/two"' "$root/.specforge/state/last-success.json" \
+grep -qF -- '"branch": "feat/two"' "$root/.nogging/state/last-success.json" \
   && echo "ok   - sts-branchnote: last-success.json branch updated to feat/two" \
-  || { echo "FAIL - sts-branchnote: branch not updated"; cat "$root/.specforge/state/last-success.json"; fail=1; }
+  || { echo "FAIL - sts-branchnote: branch not updated"; cat "$root/.nogging/state/last-success.json"; fail=1; }
 unset SPECFORGE_ROOT BD_STUB_DIR
 
 # --- Scenario: a skipped tick retries once the reason clears ---------------
@@ -784,7 +784,7 @@ rm -f "$root/.git/MERGE_HEAD"
 grep -qF -- '- [x] TASK-DEMO-001' "$root/openspec/changes/demo/tasks.md" \
   && echo "ok   - sts-retry: the next tick mirrors once the mid-merge clears" \
   || { echo "FAIL - sts-retry: outstanding closure not mirrored after the reason cleared"; cat "$out"; fail=1; }
-[[ ! -f "$root/.specforge/state/last-skip.json" ]] \
+[[ ! -f "$root/.nogging/state/last-skip.json" ]] \
   && echo "ok   - sts-retry: last-skip.json cleared by the recovery sync" \
   || { echo "FAIL - sts-retry: last-skip.json not cleared"; fail=1; }
 unset SPECFORGE_ROOT BD_STUB_DIR
@@ -797,7 +797,7 @@ unset SPECFORGE_ROOT BD_STUB_DIR
 root="$work/twb-bootstrap"; make_root "$root"
 export SPECFORGE_ROOT="$root"
 export BD_FIXTURE="$work/twb-bootstrap-beads.json"; printf '[]\n' >"$BD_FIXTURE"
-sentinel="$root/.specforge/locks/openspec.readonly"
+sentinel="$root/.nogging/locks/openspec.readonly"
 [[ ! -e "$sentinel" ]] || { echo "FAIL - twb-bootstrap: sentinel present before doctor"; fail=1; }
 "$specforge" doctor >"$out" 2>&1 || true
 [[ -f "$sentinel" ]] \
@@ -838,10 +838,10 @@ cp "$repo_root/scripts/install-hooks" "$root/scripts/install-hooks"
 chmod +x "$root/scripts/install-hooks"
 git -C "$root" add -A && git -C "$root" commit -q -m "chore: hook sources [SPEC-000]"
 ( cd "$root" && ./scripts/install-hooks ) >"$out" 2>&1 || { echo "FAIL - twb-install: install-hooks errored"; cat "$out"; fail=1; }
-[[ -f "$root/.specforge/locks/openspec.readonly" ]] \
+[[ -f "$root/.nogging/locks/openspec.readonly" ]] \
   && echo "ok   - twb-install: install-hooks creates the boundary sentinel" \
   || { echo "FAIL - twb-install: no sentinel after install-hooks"; cat "$out"; fail=1; }
-grep -qF '"by": "install-hooks"' "$root/.specforge/locks/openspec.readonly" \
+grep -qF '"by": "install-hooks"' "$root/.nogging/locks/openspec.readonly" \
   && echo "ok   - twb-install: sentinel attributes the closure to install-hooks" \
   || { echo "FAIL - twb-install: wrong sentinel body"; fail=1; }
 
@@ -852,8 +852,8 @@ grep -qF '"by": "install-hooks"' "$root/.specforge/locks/openspec.readonly" \
 # ===========================================================================
 root="$work/twb-sync"; make_root "$root"
 git -C "$root" commit -q --allow-empty -m "feat(demo): the thing [SPEC-s55]"
-mkdir -p "$root/.specforge/locks"
-printf '{"closed_at":"x","by":"plan-end"}\n' >"$root/.specforge/locks/openspec.readonly"
+mkdir -p "$root/.nogging/locks"
+printf '{"closed_at":"x","by":"plan-end"}\n' >"$root/.nogging/locks/openspec.readonly"
 export SPECFORGE_ROOT="$root"
 export BD_FIXTURE="$work/twb-sync-beads.json"
 export BD_STUB_DIR="$root"
@@ -876,7 +876,7 @@ grep -qF -- '- [x] TASK-DEMO-001' "$root/openspec/changes/demo/tasks.md" \
 git -C "$root" log -1 --format='%s' | grep -qF 'chore(sync)' \
   && echo "ok   - twb-sync: the sync writer committed as normal" \
   || { echo "FAIL - twb-sync: no sync commit"; git -C "$root" log -1 --format='%s'; fail=1; }
-[[ -f "$root/.specforge/locks/openspec.readonly" ]] \
+[[ -f "$root/.nogging/locks/openspec.readonly" ]] \
   && echo "ok   - twb-sync: sync left the sentinel in place (it never touches it)" \
   || { echo "FAIL - twb-sync: sync removed the sentinel"; fail=1; }
 # git branch operations are unaffected: a branch that differs under openspec/
@@ -895,7 +895,7 @@ unset SPECFORGE_ROOT BD_FIXTURE BD_STUB_DIR
 root="$work/twb-doctor"; make_root "$root"
 export SPECFORGE_ROOT="$root"
 export BD_FIXTURE="$work/twb-doctor-beads.json"; printf '[]\n' >"$BD_FIXTURE"
-mkdir -p "$root/.specforge/locks"
+mkdir -p "$root/.nogging/locks"
 "$specforge" doctor >"$out" 2>&1 || true
 check "twb-doctor: closed boundary reported as LOCKED" "openspec write boundary: LOCKED"
 "$specforge" plan-begin >/dev/null 2>&1
@@ -903,8 +903,8 @@ check "twb-doctor: closed boundary reported as LOCKED" "openspec write boundary:
 check "twb-doctor: active planning session reported as OPEN" "openspec write boundary: OPEN (planning session active"
 "$specforge" plan-end >/dev/null 2>&1
 printf '{"pid":1,"host":"h","created_at":"2000-01-01T00:00:00+00:00"}\n' \
-  >"$root/.specforge/locks/planning.lock"
-rm -f "$root/.specforge/locks/openspec.readonly"
+  >"$root/.nogging/locks/planning.lock"
+rm -f "$root/.nogging/locks/openspec.readonly"
 "$specforge" doctor >"$out" 2>&1 || true
 check "twb-doctor: stale planning lock named as the reason" \
   "LOCKED (stale planning lock present — run plan-end --force)"
@@ -912,7 +912,7 @@ check "twb-doctor: stale planning lock named as the reason" \
 # code is whatever the tool-availability checks produce (non-zero on a host
 # without dolt, e.g. CI) and `set -e` must not see it — hence `|| true`.
 "$specforge" doctor >/dev/null 2>&1 || true
-rm -f "$root/.specforge/locks/planning.lock"
+rm -f "$root/.nogging/locks/planning.lock"
 unset SPECFORGE_ROOT BD_FIXTURE
 
 # ===========================================================================
@@ -924,7 +924,7 @@ guard="$repo_root/scripts/hooks/pre-tool-use-openspec-guard"
 root="$work/twb-guard"; make_root "$root"
 export SPECFORGE_ROOT="$root"
 export BD_FIXTURE="$work/twb-guard-beads.json"; printf '[]\n' >"$BD_FIXTURE"
-mkdir -p "$root/.specforge/locks"
+mkdir -p "$root/.nogging/locks"
 run_guard() { # run_guard <file_path> ; sets $grc
   printf '{"tool_input":{"file_path":"%s"}}' "$1" \
     | CLAUDE_PROJECT_DIR="$root" "$guard" >"$work/twb-guard.err" 2>&1
@@ -955,16 +955,16 @@ run_guard "openspec/changes/demo/spec.md" || true; [[ "$grc" -eq 2 ]] \
 
 # a stale planning lock does not confer write permission (W6), even without a
 # sentinel on disk
-rm -f "$root/.specforge/locks/openspec.readonly"
+rm -f "$root/.nogging/locks/openspec.readonly"
 printf '{"pid":1,"host":"h","created_at":"2000-01-01T00:00:00+00:00"}\n' \
-  >"$root/.specforge/locks/planning.lock"
+  >"$root/.nogging/locks/planning.lock"
 run_guard "openspec/changes/demo/spec.md" || true; [[ "$grc" -eq 2 ]] \
   && echo "ok   - twb-guard: guard blocks when the planning lock is stale (W6)" \
   || { echo "FAIL - twb-guard: guard honoured a stale planning lock (rc=$grc)"; cat "$work/twb-guard.err"; fail=1; }
 grep -qF 'stale' "$work/twb-guard.err" \
   && echo "ok   - twb-guard: the block names the stale lock" \
   || { echo "FAIL - twb-guard: block reason did not mention staleness"; cat "$work/twb-guard.err"; fail=1; }
-rm -f "$root/.specforge/locks/planning.lock"
+rm -f "$root/.nogging/locks/planning.lock"
 unset SPECFORGE_ROOT BD_FIXTURE
 
 # ===========================================================================
@@ -1091,8 +1091,8 @@ unset SPECFORGE_ROOT BD_FIXTURE BD_STUB_DIR
 
 # --- interrupted worktree allocations remain visible --------------------
 root="$work/rec-worktree-record"; make_root "$root"
-mkdir -p "$root/.specforge/state/worktrees"
-cat >"$root/.specforge/state/worktrees/impl.json" <<'JSON'
+mkdir -p "$root/.nogging/state/worktrees"
+cat >"$root/.nogging/state/worktrees/impl.json" <<'JSON'
 {"branch":"feat/demo","path":"/missing/specforge-worktree"}
 JSON
 export SPECFORGE_ROOT="$root"
@@ -1131,12 +1131,12 @@ export SPECFORGE_ROOT="$root"
 export BD_FIXTURE="$work/rec-lock-beads.json"; printf '[]\n' >"$BD_FIXTURE"
 export BD_STUB_DIR="$root"
 printf '{"pid":999999,"host":"ghost","created_at":"2000-01-01T00:00:00+00:00"}\n' \
-  >"$root/.specforge/locks/planning.lock"
+  >"$root/.nogging/locks/planning.lock"
 "$specforge" recover >"$out" 2>&1 \
   && { echo "FAIL - rec-lock: recover should exit non-zero on a stale lock"; cat "$out"; fail=1; } \
   || echo "ok   - rec-lock: recover exits non-zero on a stale lock"
 check "rec-lock: reports the stale planning lock" "planning.lock: STALE"
-rm -f "$root/.specforge/locks/planning.lock"
+rm -f "$root/.nogging/locks/planning.lock"
 unset SPECFORGE_ROOT BD_FIXTURE BD_STUB_DIR
 
 # --- an in_progress Bead with a commit classifies resumable ------------
@@ -1168,7 +1168,7 @@ cat >"$BD_FIXTURE" <<'JSON'
    "labels": ["openspec:change:demo", "openspec:task:TASK-DEMO-001"]}
 ]
 JSON
-grep -q '"claim_stale_seconds"' "$root/.specforge/config.json" \
+grep -q '"claim_stale_seconds"' "$root/.nogging/config.json" \
   && echo "ok   - rec-stale-claim: config carries claim_stale_seconds" \
   || { echo "FAIL - rec-stale-claim: claim_stale_seconds not in config"; fail=1; }
 "$specforge" recover >"$out" 2>&1 \
@@ -1199,8 +1199,8 @@ unset SPECFORGE_ROOT BD_FIXTURE BD_STUB_DIR
 # (TASK-RIR-013) distinct from mat-journal's real interrupted run: recover
 # reads a journal that a crash left on disk and names the task with no Bead.
 root="$work/rec-journal"; make_root "$root"
-mkdir -p "$root/.specforge/state"
-cat >"$root/.specforge/state/materialize-demo.json" <<'JSON'
+mkdir -p "$root/.nogging/state"
+cat >"$root/.nogging/state/materialize-demo.json" <<'JSON'
 {
   "started_at": "2026-09-03T00:00:00+00:00",
   "tasks_planned": ["TASK-DEMO-001", "TASK-DEMO-002"],
@@ -1227,14 +1227,14 @@ cat >"$BD_FIXTURE" <<'JSON'
    "labels": ["openspec:change:demo", "openspec:task:TASK-DEMO-001"]}
 ]
 JSON
-before_state="$(find "$root/.specforge" -type f | sort | xargs cksum 2>/dev/null | cksum)"
+before_state="$(find "$root/.nogging" -type f | sort | xargs cksum 2>/dev/null | cksum)"
 before_tree="$(git -C "$root" status --porcelain; git -C "$root" rev-parse HEAD)"
 "$specforge" recover >"$out" 2>&1 || true
-after_state="$(find "$root/.specforge" -type f | sort | xargs cksum 2>/dev/null | cksum)"
+after_state="$(find "$root/.nogging" -type f | sort | xargs cksum 2>/dev/null | cksum)"
 after_tree="$(git -C "$root" status --porcelain; git -C "$root" rev-parse HEAD)"
 [[ "$before_state" == "$after_state" ]] \
-  && echo "ok   - rec-readonly: recover wrote no file under .specforge/" \
-  || { echo "FAIL - rec-readonly: .specforge/ changed"; fail=1; }
+  && echo "ok   - rec-readonly: recover wrote no file under .nogging/" \
+  || { echo "FAIL - rec-readonly: .nogging/ changed"; fail=1; }
 [[ "$before_tree" == "$after_tree" ]] \
   && echo "ok   - rec-readonly: recover made no commit and did not touch the tree" \
   || { echo "FAIL - rec-readonly: working tree / HEAD changed"; fail=1; }
@@ -1254,7 +1254,7 @@ export BD_STUB_DIR="$root"
 check "rir-doctor-recover: plain doctor prints a recover summary NOTE" "NOTE  recover:"
 refute "rir-doctor-recover: plain doctor does not print the RECOVER block" "RECOVER  "
 printf '{"pid":999999,"host":"ghost","created_at":"2000-01-01T00:00:00+00:00"}\n' \
-  >"$root/.specforge/locks/planning.lock"
+  >"$root/.nogging/locks/planning.lock"
 "$specforge" doctor >"$out" 2>&1 || true
 check "rir-doctor-recover: the summary NOTE names the stale lock" "stale planning.lock"
 rc=0; "$specforge" doctor --recover >"$out" 2>&1 || rc=$?
@@ -1262,7 +1262,7 @@ rc=0; "$specforge" doctor --recover >"$out" 2>&1 || rc=$?
   && echo "ok   - rir-doctor-recover: doctor --recover exits non-zero when recover flags something" \
   || { echo "FAIL - rir-doctor-recover: doctor --recover should fail on a stale lock"; cat "$out"; fail=1; }
 check "rir-doctor-recover: doctor --recover prints the RECOVER report" "RECOVER  Locks"
-rm -f "$root/.specforge/locks/planning.lock"
+rm -f "$root/.nogging/locks/planning.lock"
 unset SPECFORGE_ROOT BD_FIXTURE BD_STUB_DIR
 
 # ===========================================================================
@@ -1273,7 +1273,7 @@ unset SPECFORGE_ROOT BD_FIXTURE BD_STUB_DIR
 root="$work/rir-arity"; make_root "$root"
 export SPECFORGE_ROOT="$root"
 export BD_FIXTURE="$work/rir-arity-beads.json"; printf '[]\n' >"$BD_FIXTURE"
-arity=$(python3 - "$repo_root/scripts/specforge" <<'PY'
+arity=$(python3 - "$repo_root/scripts/nogg" <<'PY'
 import sys
 from importlib.machinery import SourceFileLoader
 m = SourceFileLoader("sf_arity", sys.argv[1]).load_module()
@@ -1356,7 +1356,7 @@ rc_unlinked=0; "$specforge" doctor >"$out" 2>&1 || rc_unlinked=$?
 check "cxf-doctor: NOTE flags the unlinked codex prompts" \
   "codex prompts present in .codex/prompts/ but not linked into"
 check "cxf-doctor: NOTE points at the helper" \
-  "run: ./scripts/specforge codex-prompts-link"
+  "run: ./scripts/nogg codex-prompts-link"
 check "rtd-hostile-sh: codex-prompts NOTE still fires with the hostile sh stub in PATH" \
   "codex prompts present in .codex/prompts/ but not linked into"
 "$specforge" codex-prompts-link >/dev/null 2>&1 || true

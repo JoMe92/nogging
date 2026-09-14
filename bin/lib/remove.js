@@ -72,7 +72,7 @@ function removeInstallation(ctx) {
   removeMarkerBlock(ctx, 'CLAUDE.md');
   removeMarkerBlock(ctx, 'AGENTS.md');
   removeClaudeGuard(ctx);
-  ctx.notes.push('Target-owned OpenSpec, Beads, .specforge configuration/state, and unrelated settings were preserved.');
+  ctx.notes.push('Target-owned OpenSpec, Beads, .nogging configuration/state, and unrelated settings were preserved.');
   ctx.notes.push('Review shared .gitignore entries and Git hooks manually; ownership cannot be inferred safely.');
 }
 

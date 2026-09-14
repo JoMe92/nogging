@@ -22,19 +22,19 @@ clone fails to authenticate, run `gh auth setup-git` once, or use the SSH form
 
 | Class | Paths | Behaviour |
 | --- | --- | --- |
-| Tool files | `scripts/specforge`, `scripts/install-hooks`, `scripts/test`, `scripts/*.test.sh`, `scripts/hooks/*`, `.agents/skills/**` | copied verbatim, overwritten on every `init` / `update` |
-| Reference docs | `docs/specforge/{operating-model,architecture,failure-recovery}.md` | copied verbatim |
-| Scaffold | `openspec/config.yaml`, `openspec/project.md`, `.specforge/config.json` | written **only when absent** — never overwritten |
+| Tool files | `scripts/nogg`, `scripts/install-hooks`, `scripts/test`, `scripts/*.test.sh`, `scripts/hooks/*`, `.agents/skills/**` | copied verbatim, overwritten on every `init` / `update` |
+| Reference docs | `docs/nogging/{operating-model,architecture,failure-recovery}.md` | copied verbatim |
+| Scaffold | `openspec/config.yaml`, `openspec/project.md`, `.nogging/config.json` | written **only when absent** — never overwritten |
 | Merged | `.claude/settings.json`, `.gitignore`, `CLAUDE.md`, `AGENTS.md`, `.codex/hooks.json` | edited idempotently; your other content is preserved (a `bd`-written `.codex/hooks.json` is never clobbered) |
 | Codex payload | `.codex/rules/specforge.rules`, `.codex/prompts/{plan,discovery-review,sync-now}.md` | copied verbatim; only relevant if you run the loop from Codex — see [`docs/using-with-codex.md`](using-with-codex.md) |
 | Pi payload | `.pi/prompts/{plan,discovery-review,sync-now}.md`, `.pi/extensions/specforge-guard.ts` | copied verbatim; only relevant if you run the loop from Pi — see [`docs/using-with-pi.md`](using-with-pi.md) |
 | Rendered | `systemd/specforge-sync-<slug>.service` and `.timer` | generated with this repo's absolute path; `<slug>` is the repo directory name |
 
-`.specforge/config.json` records `name` (your repo's directory name) and
-`specforge_version`.
+`.nogging/config.json` records `name` (your repo's directory name) and
+`nogging_version`.
 
 Never touched: `openspec/changes/**`, `.beads/**`,
-`.specforge/{state,locks,reports}`, your `README.md`, your `package.json`.
+`.nogging/{state,locks,reports}`, your `README.md`, your `package.json`.
 
 ### Flags
 
@@ -49,7 +49,7 @@ Never touched: `openspec/changes/**`, `.beads/**`,
 ```bash
 bd init                                   # if you do not already use Beads
 systemctl --user enable --now "$PWD/systemd/specforge-sync-<slug>.timer"
-./scripts/specforge doctor                # check tools and mappings
+./scripts/nogg doctor                # check tools and mappings
 ```
 
 ## Updating
@@ -59,7 +59,7 @@ npx github:JoMe92/agentsembli-specforge update
 ```
 
 `update` refreshes the tool files, reference docs and merged files, and bumps
-`specforge_version`. It does **not** run the scaffold step, so
+`nogging_version`. It does **not** run the scaffold step, so
 `openspec/project.md`, the config `name`, and everything under
 `openspec/changes/` are left exactly as they are.
 
@@ -75,7 +75,7 @@ npx github:JoMe92/agentsembli-specforge#<new-tag> update
 
 For rollback, run `update` from the exact preceding legacy tag. This restores
 that tag's managed payload while retaining OpenSpec changes, Beads data,
-`.specforge/` state, the configuration name, service filenames, and unrelated
+`.nogging/` state, the configuration name, service filenames, and unrelated
 Claude, Codex, and Pi settings. Do not use an unpinned branch for either step.
 
 ## Removing the installed payload
@@ -89,14 +89,14 @@ npx github:JoMe92/agentsembli-specforge#<tag> remove
 `remove` deletes exact manifest-owned tool, prompt, agent, reference-document,
 and generated-unit files. It also removes the managed blocks from `AGENTS.md`
 and `CLAUDE.md` and the matching Claude guard entry. It preserves OpenSpec,
-Beads, `.specforge/` configuration/state/reports, and unrelated settings.
+Beads, `.nogging/` configuration/state/reports, and unrelated settings.
 Shared `.gitignore` entries and Git hooks are left for manual review because
 the installer cannot prove whether another tool now owns them.
 
 ## Prerequisites in the target repo
 
 - **Node.js ≥ 18** — only to run the installer.
-- **python3** — the `scripts/specforge` sync bridge runs under it.
+- **python3** — the `scripts/nogg` sync bridge runs under it.
 - **bd (Beads)** and, for sync, a reachable **Dolt** — as SpecForge needs anyway.
 - For the **Codex agent path only**: the `codex` CLI and a Codex login. See
   [`docs/using-with-codex.md`](using-with-codex.md).

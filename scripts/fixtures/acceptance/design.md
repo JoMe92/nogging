@@ -4,8 +4,8 @@
 
 This is a fixture change for the SpecForge acceptance runbook. It must be a
 structurally complete OpenSpec change (`proposal` / `design` / `tasks` /
-`specs`) with stable task IDs so `scripts/specforge validate` and
-`scripts/specforge materialize` act on it exactly as they would a real change.
+`specs`) with stable task IDs so `scripts/nogg validate` and
+`scripts/nogg materialize` act on it exactly as they would a real change.
 
 ## Goals / Non-goals
 

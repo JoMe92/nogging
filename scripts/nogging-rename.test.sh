@@ -20,14 +20,14 @@ git -C "$tmp/target" init -q
 mkdir -p \
   "$tmp/target/openspec/changes/user-change" \
   "$tmp/target/.beads" \
-  "$tmp/target/.specforge/state" \
+  "$tmp/target/.nogging/state" \
   "$tmp/target/.claude/agents" \
   "$tmp/target/.codex" \
   "$tmp/target/.pi"
 printf 'owner intent\n' >"$tmp/target/openspec/changes/user-change/spec.md"
 printf 'beads state\n' >"$tmp/target/.beads/issues.jsonl"
-printf '{"name":"kept-name","specforge_version":"1.4.0","custom":true}\n' >"$tmp/target/.specforge/config.json"
-printf 'runtime state\n' >"$tmp/target/.specforge/state/owner-state"
+printf '{"name":"kept-name","nogging_version":"1.4.0","custom":true}\n' >"$tmp/target/.nogging/config.json"
+printf 'runtime state\n' >"$tmp/target/.nogging/state/owner-state"
 printf 'custom agent\n' >"$tmp/target/.claude/agents/custom.md"
 printf '{"custom":true}\n' >"$tmp/target/.codex/config.json"
 printf 'custom pi\n' >"$tmp/target/.pi/custom.txt"
@@ -36,17 +36,17 @@ printf 'custom pi\n' >"$tmp/target/.pi/custom.txt"
   cd "$tmp/target"
   node "$tmp/legacy/bin/cli.js" init --no-beads --no-hooks >/dev/null
 )
-test -x "$tmp/target/scripts/specforge" || fail "legacy tag installs"
+test -x "$tmp/target/scripts/nogg" || fail "legacy tag installs"
 pass "legacy tag installs"
 
 assert_owned_state() {
   test "$(cat "$tmp/target/openspec/changes/user-change/spec.md")" = 'owner intent' || fail "OpenSpec state changed"
   test "$(cat "$tmp/target/.beads/issues.jsonl")" = 'beads state' || fail "Beads state changed"
   node -e 'const c=require(process.argv[1]); if(c.name!=="kept-name") process.exit(1)' \
-    "$tmp/target/.specforge/config.json" || fail "config name changed"
+    "$tmp/target/.nogging/config.json" || fail "config name changed"
   node -e 'const c=require(process.argv[1]); if(c.custom!==true) process.exit(1)' \
-    "$tmp/target/.specforge/config.json" || fail "custom config changed"
-  test -f "$tmp/target/.specforge/state/owner-state" || fail "SpecForge state removed"
+    "$tmp/target/.nogging/config.json" || fail "custom config changed"
+  test -f "$tmp/target/.nogging/state/owner-state" || fail "SpecForge state removed"
   test -f "$tmp/target/.claude/agents/custom.md" || fail "custom Claude agent removed"
   grep -q '"custom":true' "$tmp/target/.codex/config.json" || fail "custom Codex setting changed"
   test -f "$tmp/target/.pi/custom.txt" || fail "custom Pi setting removed"
@@ -74,7 +74,7 @@ pass "legacy rollback preserves owned state"
   node "$root/bin/cli.js" remove >/dev/null
 )
 assert_owned_state
-test ! -e "$tmp/target/scripts/specforge" || fail "managed command remains after remove"
+test ! -e "$tmp/target/scripts/nogg" || fail "managed command remains after remove"
 test ! -e "$tmp/target/systemd/specforge-sync-target.service" || fail "generated service remains after remove"
 test ! -e "$tmp/target/.codex/prompts/plan.md" || fail "managed Codex prompt remains after remove"
 test ! -e "$tmp/target/.pi/prompts/plan.md" || fail "managed Pi prompt remains after remove"

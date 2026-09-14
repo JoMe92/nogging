@@ -82,23 +82,23 @@ function renderScaffoldConfig(ctx, raw) {
     data = {};
   }
   data.name = ctx.repoName;
-  data.specforge_version = ctx.version;
+  data.nogging_version = ctx.version;
   return JSON.stringify(data, null, 2) + '\n';
 }
 
 function writeScaffold(ctx) {
   for (const item of manifest.scaffold) {
     let content = fs.readFileSync(src(ctx, item.from), 'utf8');
-    if (item.transform === 'specforgeConfig') {
+    if (item.transform === 'noggingConfig') {
       content = renderScaffoldConfig(ctx, content);
     }
     fsops.writeIfAbsent(item.to, content, ctx);
   }
 }
 
-// Bump the recorded SpecForge version in an existing .specforge/config.json.
+// Bump the recorded SpecForge version in an existing .nogging/config.json.
 function recordVersion(ctx) {
-  const rel = '.specforge/config.json';
+  const rel = '.nogging/config.json';
   const cur = fsops.readTarget(rel, ctx);
   if (cur == null) return;
   let data;
@@ -107,8 +107,8 @@ function recordVersion(ctx) {
   } catch (_) {
     return;
   }
-  if (data.specforge_version === ctx.version) return;
-  data.specforge_version = ctx.version;
+  if (data.nogging_version === ctx.version) return;
+  data.nogging_version = ctx.version;
   fsops.writeFile(rel, JSON.stringify(data, null, 2) + '\n', ctx);
 }
 
@@ -150,7 +150,7 @@ function beadsHint(ctx) {
   }
 }
 
-// Run the installed `scripts/specforge doctor` checks plus a tracker check and
+// Run the installed `scripts/nogg doctor` checks plus a tracker check and
 // print a single readiness verdict. The installer never installs system tools;
 // this only tells the operator whether the repo is ready to plan.
 function readinessVerdict(ctx) {
@@ -159,14 +159,14 @@ function readinessVerdict(ctx) {
   if (!fs.existsSync(path.join(ctx.targetRoot, '.beads'))) {
     gaps.push('uninitialized tracker (run `bd init`)');
   }
-  if (fs.existsSync(path.join(ctx.targetRoot, 'scripts', 'specforge'))) {
+  if (fs.existsSync(path.join(ctx.targetRoot, 'scripts', 'nogg'))) {
     const { spawnSync } = require('child_process');
-    const r = spawnSync('scripts/specforge', ['doctor'], {
+    const r = spawnSync('scripts/nogg', ['doctor'], {
       cwd: ctx.targetRoot,
       encoding: 'utf8',
     });
     if (r.error) {
-      gaps.push('scripts/specforge doctor could not run');
+      gaps.push('scripts/nogg doctor could not run');
     } else {
       for (const line of `${r.stdout || ''}\n${r.stderr || ''}`.split('\n')) {
         const m = line.match(/^FAIL\s+(.+)$/);
@@ -174,12 +174,12 @@ function readinessVerdict(ctx) {
       }
     }
   } else {
-    gaps.push('scripts/specforge missing');
+    gaps.push('scripts/nogg missing');
   }
   const uniq = [...new Set(gaps)];
   process.stdout.write('\n');
   if (uniq.length === 0) {
-    process.stdout.write('Nogging is ready — run ./scripts/specforge plan-begin to start.\n');
+    process.stdout.write('Nogging is ready — run ./scripts/nogg plan-begin to start.\n');
   } else {
     process.stdout.write(`Nogging is installed but not ready: ${uniq.join('; ')}\n`);
   }

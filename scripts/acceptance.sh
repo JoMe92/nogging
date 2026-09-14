@@ -44,7 +44,7 @@ note() { echo "    $*"; }
 die()  { echo "FAIL - $*" >&2; fail=1; }
 
 mode_label=$([[ $mechanical -eq 1 ]] && echo mechanical || echo full)
-echo "SpecForge acceptance harness — $mode_label mode"
+echo "Nogging acceptance harness — $mode_label mode"
 echo "checkout: $root"
 echo "throwaway target: $target"
 
@@ -56,7 +56,7 @@ if [[ $mechanical -eq 1 ]]; then
   printf '[]\n' >"$BD_FIXTURE"
   : >"$BD_CREATE_LOG"
   export BD_FIXTURE BD_CREATE_LOG
-  # Same contract as scripts/specforge.test.sh: `list` prints $BD_FIXTURE,
+  # Same contract as scripts/nogg.test.sh: `list` prints $BD_FIXTURE,
   # `show` returns an empty record, `create` appends its argv to $BD_CREATE_LOG.
   cat >"$work/bin/bd" <<'STUB'
 #!/usr/bin/env bash
@@ -100,9 +100,9 @@ else
   die "step 2: installer exited non-zero"
   cat "$install_out"
 fi
-sf="$target/scripts/specforge"
-[[ -x "$sf" ]]                              || die "step 2: scripts/specforge not installed executable"
-[[ -f "$target/.specforge/config.json" ]]  || die "step 2: .specforge/config.json missing"
+sf="$target/scripts/nogg"
+[[ -x "$sf" ]]                              || die "step 2: scripts/nogg not installed executable"
+[[ -f "$target/.nogging/config.json" ]]  || die "step 2: .nogging/config.json missing"
 # The boundary hooks are installed into .git/hooks only when core.hooksPath is
 # not diverted. A full run's `bd init` points core.hooksPath at .beads/hooks
 # (the known Beads collision), and the installer then warns instead of writing
@@ -120,7 +120,7 @@ fi
 # 3 [M] — assert the readiness verdict
 # ===========================================================================
 step "[M] step 3: assert the readiness verdict"
-verdict=$(grep -E 'SpecForge is (ready|installed but not ready)' "$install_out" | tail -1 || true)
+verdict=$(grep -E 'Nogging is (ready|installed but not ready)' "$install_out" | tail -1 || true)
 note "verdict: ${verdict:-<none>}"
 if [[ -z "$verdict" ]]; then
   die "step 3: installer printed no readiness verdict"
@@ -128,7 +128,7 @@ elif [[ $mechanical -eq 1 ]]; then
   # No backend: the verdict must not claim ready, and the uninitialized tracker
   # must be the ONLY gap named.
   case "$verdict" in
-    *"SpecForge is ready"*) die "step 3: verdict claims ready with no backend" ;;
+    *"Nogging is ready"*) die "step 3: verdict claims ready with no backend" ;;
   esac
   gap=${verdict#*"installed but not ready: "}
   expected='uninitialized tracker (run `bd init`)'
@@ -136,8 +136,8 @@ elif [[ $mechanical -eq 1 ]]; then
     || die "step 3: expected the tracker as the only gap ('$expected'), got '$gap'"
 else
   case "$verdict" in
-    *"SpecForge is ready"*) : ;;
-    *) die "step 3: full run did not reach 'SpecForge is ready'" ;;
+    *"Nogging is ready"*) : ;;
+    *) die "step 3: full run did not reach 'Nogging is ready'" ;;
   esac
 fi
 

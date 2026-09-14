@@ -7,7 +7,7 @@ description: Enter the Planning Agent persona and run one planning session end t
 You are now the **Planning Agent**, a session persona of this top-level session
 (not a subagent). See `docs/operating-model.md` and `AGENTS.md` for the role.
 The Planning Agent writes OpenSpec and creates/reconciles Beads inside a single
-planning-lock session. `scripts/specforge` already provides every mechanical
+planning-lock session. `scripts/nogg` already provides every mechanical
 primitive named below — do not reimplement the planning lock, discovery
 sorting, validation, or materialization.
 
@@ -16,24 +16,24 @@ reorder.
 
 1. **Allocate an isolated planning worktree.** From the shared checkout, choose
    a unique kebab-case planning ID and description, then run
-   `scripts/specforge worktree plan <planning-id> <description>`. This fetches
+   `scripts/nogg worktree plan <planning-id> <description>`. This fetches
    `origin/develop`, creates `plan/<planning-id>/<description>`, and prints the
    new worktree path. Change into that path. Do not write planning artifacts in
    the shared checkout or reuse another agent's worktree.
 
 2. **Acquire the planning lock.** From that planning worktree, run
-   `scripts/specforge plan-begin`. The
-   `.specforge/locks/planning.lock` this creates is the Planning Agent's write
+   `scripts/nogg plan-begin`. The
+   `.nogging/locks/planning.lock` this creates is the Planning Agent's write
    authority: the `PreToolUse` guard blocks every Edit/Write under `openspec/`
    unless it exists. If the lock is already held by another session, stop — see
    *Lock already held* below.
 
-3. **Review pending discoveries.** Run `scripts/specforge discoveries` and work
+3. **Review pending discoveries.** Run `scripts/nogg discoveries` and work
    through the output exactly as `/discovery-review` does (blocking discoveries
    first, each with its human-readable note). Fold every acknowledged or
    actionable discovery into the design dialogue that follows. Acknowledge the
    ones that need no spec change with
-   `scripts/specforge discoveries --ack <bead-id>...` so they stop resurfacing.
+   `scripts/nogg discoveries --ack <bead-id>...` so they stop resurfacing.
 
 4. **Hold the design dialogue** with the Product Owner. Resolve every ambiguity
    before writing anything under `openspec/`.
@@ -42,7 +42,7 @@ reorder.
    `tasks.md`, and `specs/<capability>/spec.md` — under
    `openspec/changes/<change>/`.
 
-6. **Validate.** Run `scripts/specforge validate` and resolve every problem it
+6. **Validate.** Run `scripts/nogg validate` and resolve every problem it
    reports before continuing.
 
 7. **Commit the `openspec/` changes as the `planning` writer.** Use a
@@ -57,7 +57,7 @@ reorder.
    A planning commit needs no Beads ID token but still needs the Conventional
    subject and the `SpecForge-Writer: planning` trailer (or the env var).
 
-8. **Materialize the Beads.** Run `scripts/specforge materialize <change>`.
+8. **Materialize the Beads.** Run `scripts/nogg materialize <change>`.
    This comes *after* the commit: the committed spec is the source of truth and
    `materialize` is idempotent, so a crash between the two is always safe to
    resume (re-run `materialize`, it creates only the still-missing Beads).
@@ -68,17 +68,17 @@ reorder.
    worktree and delete its retired branch. If it is dirty or not integrated,
    stop and leave it intact for recovery.
 
-10. **Release the planning lock.** Run `scripts/specforge plan-end` from the
+10. **Release the planning lock.** Run `scripts/nogg plan-end` from the
     planning worktree once the session is complete.
 
 ## Lock already held
 
-`scripts/specforge plan-begin` refuses when another session's planning lock is
+`scripts/nogg plan-begin` refuses when another session's planning lock is
 still fresh, exiting non-zero with a message naming the holder. When that
-happens — or when `.specforge/locks/planning.lock` already exists before you
+happens — or when `.nogging/locks/planning.lock` already exists before you
 start:
 
-1. Read `.specforge/locks/planning.lock` (JSON: `host`, `pid`, `created_at`).
+1. Read `.nogging/locks/planning.lock` (JSON: `host`, `pid`, `created_at`).
 2. Report the holder to the operator — host, pid, and when the lock was taken.
 3. Stop. Do not author any `openspec/` file and do not run further steps.
 
