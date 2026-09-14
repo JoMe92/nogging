@@ -59,7 +59,7 @@ function removeClaudeGuard(ctx) {
   if (kept.length === pre.length) return;
   data.hooks.PreToolUse = kept;
   if (!ctx.dryRun) fs.writeFileSync(full, JSON.stringify(data, null, 2) + '\n');
-  ctx.log.add('remove', 'SpecForge Claude guard', ctx.dryRun ? 'dry-run' : undefined);
+  ctx.log.add('remove', 'Nogging Claude guard', ctx.dryRun ? 'dry-run' : undefined);
 }
 
 function removeInstallation(ctx) {
