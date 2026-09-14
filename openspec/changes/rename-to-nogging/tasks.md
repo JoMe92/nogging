@@ -26,7 +26,7 @@
 
 ## 6. Branding
 
-- [ ] TASK-NOG-010 Add the three supplied Nogging brand assets (square logo/wordmark, horizontal banner, wide social card) under a checked-in `brand/` directory with descriptive filenames, and rewrite `README.md` as a full, presentable README: banner at the top, tagline, purpose, the two-phase model, a `nogg`-based quick start, install instructions, non-negotiable boundaries table, and test instructions; verify every link resolves and the quick start commands match the renamed CLI/scripts from group 3.
+- [ ] TASK-NOG-010 Add the three supplied Nogging brand assets (logo, banner, social card) under a checked-in `brand/` directory, and rewrite `README.md` as a full README: banner, tagline, purpose, the two-phase model, a `nogg` quick start, install steps, boundaries table, and test instructions; verify links resolve and quick-start commands match the renamed CLI from group 3.
 
 ## 7. Governance and community files
 
