@@ -69,4 +69,4 @@ dolt.shared-server: true
 agents:
     file: AGENTS.md
 sync:
-    remote: "git+ssh://git@github.com/JoMe92/agentsembli-specforge.git"
+    remote: "git+ssh://git@github.com/JoMe92/nogging.git"

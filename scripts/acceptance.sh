@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SpecForge end-to-end acceptance harness — the [M] (mechanical) subset of
+# Nogging end-to-end acceptance harness — the [M] (mechanical) subset of
 # docs/acceptance.md, in the same order, printing each step tag as it runs.
 #
 #   scripts/acceptance.sh              full run — needs a real bd + dolt backend
@@ -8,7 +8,7 @@
 #                                     materialize-create per task, the sync
 #                                     round-trip and its idempotency)
 #
-# It creates a throwaway git repo, installs SpecForge from this checkout
+# It creates a throwaway git repo, installs Nogging from this checkout
 # (node bin/cli.js init), opens a planning session, drops in the canned example
 # change (scripts/fixtures/acceptance/), validates, materializes, ends the
 # planning session, then on a change branch simulates the closure of the first
@@ -44,7 +44,7 @@ note() { echo "    $*"; }
 die()  { echo "FAIL - $*" >&2; fail=1; }
 
 mode_label=$([[ $mechanical -eq 1 ]] && echo mechanical || echo full)
-echo "SpecForge acceptance harness — $mode_label mode"
+echo "Nogging acceptance harness — $mode_label mode"
 echo "checkout: $root"
 echo "throwaway target: $target"
 
@@ -56,7 +56,7 @@ if [[ $mechanical -eq 1 ]]; then
   printf '[]\n' >"$BD_FIXTURE"
   : >"$BD_CREATE_LOG"
   export BD_FIXTURE BD_CREATE_LOG
-  # Same contract as scripts/specforge.test.sh: `list` prints $BD_FIXTURE,
+  # Same contract as scripts/nogg.test.sh: `list` prints $BD_FIXTURE,
   # `show` returns an empty record, `create` appends its argv to $BD_CREATE_LOG.
   cat >"$work/bin/bd" <<'STUB'
 #!/usr/bin/env bash
@@ -83,14 +83,14 @@ fi
 step "[M] step 1: create a throwaway target repository"
 git -C "$target" init -q
 git -C "$target" config user.email acceptance@example.invalid
-git -C "$target" config user.name "SpecForge Acceptance"
+git -C "$target" config user.name "Nogging Acceptance"
 [[ -d "$target/.git" ]] || die "step 1: git repo not created"
 note "initialised empty repo at $target"
 
 # ===========================================================================
-# 2 [M] — install SpecForge from the local checkout
+# 2 [M] — install Nogging from the local checkout
 # ===========================================================================
-step "[M] step 2: install SpecForge from the local checkout"
+step "[M] step 2: install Nogging from the local checkout"
 install_args=(init --no-systemd)
 [[ $mechanical -eq 1 ]] && install_args+=(--no-beads)
 install_out="$work/install.out"
@@ -100,9 +100,9 @@ else
   die "step 2: installer exited non-zero"
   cat "$install_out"
 fi
-sf="$target/scripts/specforge"
-[[ -x "$sf" ]]                              || die "step 2: scripts/specforge not installed executable"
-[[ -f "$target/.specforge/config.json" ]]  || die "step 2: .specforge/config.json missing"
+sf="$target/scripts/nogg"
+[[ -x "$sf" ]]                              || die "step 2: scripts/nogg not installed executable"
+[[ -f "$target/.nogging/config.json" ]]  || die "step 2: .nogging/config.json missing"
 # The boundary hooks are installed into .git/hooks only when core.hooksPath is
 # not diverted. A full run's `bd init` points core.hooksPath at .beads/hooks
 # (the known Beads collision), and the installer then warns instead of writing
@@ -120,7 +120,7 @@ fi
 # 3 [M] — assert the readiness verdict
 # ===========================================================================
 step "[M] step 3: assert the readiness verdict"
-verdict=$(grep -E 'SpecForge is (ready|installed but not ready)' "$install_out" | tail -1 || true)
+verdict=$(grep -E 'Nogging is (ready|installed but not ready)' "$install_out" | tail -1 || true)
 note "verdict: ${verdict:-<none>}"
 if [[ -z "$verdict" ]]; then
   die "step 3: installer printed no readiness verdict"
@@ -128,7 +128,7 @@ elif [[ $mechanical -eq 1 ]]; then
   # No backend: the verdict must not claim ready, and the uninitialized tracker
   # must be the ONLY gap named.
   case "$verdict" in
-    *"SpecForge is ready"*) die "step 3: verdict claims ready with no backend" ;;
+    *"Nogging is ready"*) die "step 3: verdict claims ready with no backend" ;;
   esac
   gap=${verdict#*"installed but not ready: "}
   expected='uninitialized tracker (run `bd init`)'
@@ -136,8 +136,8 @@ elif [[ $mechanical -eq 1 ]]; then
     || die "step 3: expected the tracker as the only gap ('$expected'), got '$gap'"
 else
   case "$verdict" in
-    *"SpecForge is ready"*) : ;;
-    *) die "step 3: full run did not reach 'SpecForge is ready'" ;;
+    *"Nogging is ready"*) : ;;
+    *) die "step 3: full run did not reach 'Nogging is ready'" ;;
   esac
 fi
 
@@ -162,9 +162,9 @@ for f in proposal.md design.md tasks.md specs/acceptance-example/spec.md; do
   [[ -f "$target/openspec/changes/acceptance-example/$f" ]] || die "step 7: fixture missing $f"
 done
 # Commit the install + fixture so the tree is clean before sync. Bookkeeping
-# only, so the SpecForge boundary hooks are bypassed for this one commit.
+# only, so the Nogging boundary hooks are bypassed for this one commit.
 git -C "$target" -c core.hooksPath=/dev/null add -A
-git -C "$target" -c core.hooksPath=/dev/null commit -q -m "chore: install SpecForge and the acceptance fixture"
+git -C "$target" -c core.hooksPath=/dev/null commit -q -m "chore: install Nogging and the acceptance fixture"
 note "fixture at openspec/changes/acceptance-example/"
 
 # ===========================================================================
@@ -252,10 +252,10 @@ grep -q '^- \[x\] TASK-ACCEPTX-001 ' "$tasks_md" || die "step 12: TASK-ACCEPTX-0
 grep -q '^- \[ \] TASK-ACCEPTX-002 ' "$tasks_md" || die "step 12: TASK-ACCEPTX-002 must stay unchecked"
 # ... and appends exactly one execution-log.md entry for the closed Bead.
 [[ -f "$log_md" ]] || die "step 12: execution-log.md was not written"
-entries=$(grep -c '^<!-- specforge:' "$log_md" || true)
+entries=$(grep -c '^<!-- nogg:' "$log_md" || true)
 [[ "$entries" == "1" ]] || die "step 12: expected exactly one execution-log entry, got $entries"
 if [[ $mechanical -eq 1 ]]; then
-  grep -q '<!-- specforge:SPEC-ax1:' "$log_md" || die "step 12: log entry is not keyed to the closed Bead SPEC-ax1"
+  grep -q '<!-- nogg:SPEC-ax1:' "$log_md" || die "step 12: log entry is not keyed to the closed Bead SPEC-ax1"
 fi
 grep -q 'closed for TASK-ACCEPTX-001' "$log_md" || die "step 12: log entry does not name TASK-ACCEPTX-001"
 # The mirror is a single commit.
@@ -273,7 +273,7 @@ if ( cd "$target" && "$sf" sync ) >"$work/sync2.out" 2>&1; then
   # no further modification" is about.
   git -C "$target" diff --quiet -- openspec/changes/acceptance-example \
     || die "step 13: second sync modified the example change files"
-  [[ "$(grep -c '^<!-- specforge:' "$log_md" || true)" == "1" ]] \
+  [[ "$(grep -c '^<!-- nogg:' "$log_md" || true)" == "1" ]] \
     || die "step 13: execution-log entry count changed on the second sync"
   [[ "$(grep -c '^- \[x\] ' "$tasks_md" || true)" == "1" ]] \
     || die "step 13: checked-task count changed on the second sync"

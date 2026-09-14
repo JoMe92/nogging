@@ -30,7 +30,7 @@ function makeContext(opts) {
   const targetRoot = opts.targetRoot || process.cwd();
   if (!fs.existsSync(path.join(targetRoot, '.git'))) {
     const err = new Error(
-      'not a git repository root — run this from the top of the repo you want SpecForge in',
+      'not a git repository root — run this from the top of the repo you want Nogging in',
     );
     err.userFacing = true;
     throw err;
@@ -82,23 +82,53 @@ function renderScaffoldConfig(ctx, raw) {
     data = {};
   }
   data.name = ctx.repoName;
-  data.specforge_version = ctx.version;
+  data.nogging_version = ctx.version;
   return JSON.stringify(data, null, 2) + '\n';
 }
 
 function writeScaffold(ctx) {
   for (const item of manifest.scaffold) {
     let content = fs.readFileSync(src(ctx, item.from), 'utf8');
-    if (item.transform === 'specforgeConfig') {
+    if (item.transform === 'noggingConfig') {
       content = renderScaffoldConfig(ctx, content);
     }
     fsops.writeIfAbsent(item.to, content, ctx);
   }
 }
 
-// Bump the recorded SpecForge version in an existing .specforge/config.json.
+// A v1.x install used `.specforge/` as its state root and
+// `specforge_version` as the recorded-version key. If a target has that
+// legacy root but no `.nogging/config.json` yet, `update` (and a re-run of
+// `init`) would otherwise treat it as never installed and either refuse
+// (update) or silently leave the old directory orphaned (init). Rename the
+// whole directory once, carrying config, launch-profiles, launch-prompts,
+// locks and state across, and rename the version key so recordVersion()
+// naturally bumps it to the running Nogging version afterward.
+function migrateLegacyStateRoot(ctx) {
+  const legacyAbs = path.join(ctx.targetRoot, '.specforge');
+  const currentAbs = path.join(ctx.targetRoot, '.nogging');
+  if (fs.existsSync(currentAbs) || !fs.existsSync(legacyAbs)) return;
+  fs.renameSync(legacyAbs, currentAbs);
+  const configAbs = path.join(currentAbs, 'config.json');
+  if (fs.existsSync(configAbs)) {
+    try {
+      const data = JSON.parse(fs.readFileSync(configAbs, 'utf8'));
+      if ('specforge_version' in data && !('nogging_version' in data)) {
+        data.nogging_version = data.specforge_version;
+        delete data.specforge_version;
+      }
+      fs.writeFileSync(configAbs, JSON.stringify(data, null, 2) + '\n');
+    } catch (_) {
+      // Malformed legacy config: leave it for recordVersion()/writeScaffold()
+      // to sort out rather than aborting the migration over it.
+    }
+  }
+  ctx.log.add('migrate', '.nogging', 'from legacy .specforge/ (v1.x state root)');
+}
+
+// Bump the recorded Nogging version in an existing .nogging/config.json.
 function recordVersion(ctx) {
-  const rel = '.specforge/config.json';
+  const rel = '.nogging/config.json';
   const cur = fsops.readTarget(rel, ctx);
   if (cur == null) return;
   let data;
@@ -107,8 +137,8 @@ function recordVersion(ctx) {
   } catch (_) {
     return;
   }
-  if (data.specforge_version === ctx.version) return;
-  data.specforge_version = ctx.version;
+  if (data.nogging_version === ctx.version) return;
+  data.nogging_version = ctx.version;
   fsops.writeFile(rel, JSON.stringify(data, null, 2) + '\n', ctx);
 }
 
@@ -127,7 +157,7 @@ function installGitHooks(ctx) {
   const configured = (hp.stdout || '').trim();
   if (configured && path.resolve(ctx.targetRoot, configured) !== path.join(ctx.targetRoot, '.git', 'hooks')) {
     ctx.warnings.push(
-      `core.hooksPath is set to "${configured}", so Git will not run the SpecForge\n` +
+      `core.hooksPath is set to "${configured}", so Git will not run the Nogging\n` +
         '  pre-commit and commit-msg boundary hooks from .git/hooks. Install them into\n' +
         `  that directory yourself, or clear core.hooksPath. (scripts/hooks/ hold the sources.)`,
     );
@@ -150,7 +180,7 @@ function beadsHint(ctx) {
   }
 }
 
-// Run the installed `scripts/specforge doctor` checks plus a tracker check and
+// Run the installed `scripts/nogg doctor` checks plus a tracker check and
 // print a single readiness verdict. The installer never installs system tools;
 // this only tells the operator whether the repo is ready to plan.
 function readinessVerdict(ctx) {
@@ -159,14 +189,14 @@ function readinessVerdict(ctx) {
   if (!fs.existsSync(path.join(ctx.targetRoot, '.beads'))) {
     gaps.push('uninitialized tracker (run `bd init`)');
   }
-  if (fs.existsSync(path.join(ctx.targetRoot, 'scripts', 'specforge'))) {
+  if (fs.existsSync(path.join(ctx.targetRoot, 'scripts', 'nogg'))) {
     const { spawnSync } = require('child_process');
-    const r = spawnSync('scripts/specforge', ['doctor'], {
+    const r = spawnSync('scripts/nogg', ['doctor'], {
       cwd: ctx.targetRoot,
       encoding: 'utf8',
     });
     if (r.error) {
-      gaps.push('scripts/specforge doctor could not run');
+      gaps.push('scripts/nogg doctor could not run');
     } else {
       for (const line of `${r.stdout || ''}\n${r.stderr || ''}`.split('\n')) {
         const m = line.match(/^FAIL\s+(.+)$/);
@@ -174,14 +204,14 @@ function readinessVerdict(ctx) {
       }
     }
   } else {
-    gaps.push('scripts/specforge missing');
+    gaps.push('scripts/nogg missing');
   }
   const uniq = [...new Set(gaps)];
   process.stdout.write('\n');
   if (uniq.length === 0) {
-    process.stdout.write('Agentsembli SpecForge is ready — run ./scripts/specforge plan-begin to start.\n');
+    process.stdout.write('Nogging is ready — run ./scripts/nogg plan-begin to start.\n');
   } else {
-    process.stdout.write(`Agentsembli SpecForge is installed but not ready: ${uniq.join('; ')}\n`);
+    process.stdout.write(`Nogging is installed but not ready: ${uniq.join('; ')}\n`);
   }
 }
 
@@ -225,6 +255,7 @@ module.exports = {
   slugify,
   makeContext,
   src,
+  migrateLegacyStateRoot,
   copyVerbatim,
   copyDocs,
   writeScaffold,

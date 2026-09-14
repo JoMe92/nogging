@@ -28,7 +28,7 @@ The following checks were performed:
    the local Dolt state were reviewed by field and scanned without printing
    their values into this report.
 4. `.beads/interactions.jsonl`, `docs/source/`, `docs/acceptance/`, execution
-   logs, `.specforge/`, and the generated root `systemd/` unit were reviewed
+   logs, `.nogging/`, and the generated root `systemd/` unit were reviewed
    separately because they can contain operational or human context.
 5. `npm pack --dry-run --json` inspected the exact package payload. The
    payload was scanned using the same path and content rules.

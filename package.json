@@ -1,49 +1,81 @@
 {
-  "name": "specforge",
-  "version": "1.6.0",
+  "name": "nogg",
+  "version": "2.0.0",
   "private": true,
-  "description": "Agentsembli SpecForge — a local-first operating model for agentic software delivery",
+  "description": "Nogging — the structural layer for agentic software development",
   "main": "bin/cli.js",
   "bin": {
-    "specforge": "bin/cli.js"
+    "nogg": "bin/cli.js"
   },
   "files": [
     "LICENSE",
+    "README.md",
+    "SECURITY.md",
     "THIRD_PARTY_NOTICES.md",
-    "bin",
-    "templates",
-    "scripts",
-    "!scripts/__pycache__",
-    "!scripts/**/*.pyc",
-    ".agents",
+    "AGENTS.md",
+    "bin/cli.js",
+    "bin/lib/fsops.js",
+    "bin/lib/install.js",
+    "bin/lib/manifest.js",
+    "bin/lib/merge.js",
+    "bin/lib/remove.js",
+    "bin/lib/systemd.js",
+    "templates/agents-block.md",
+    "templates/claude-block.md",
+    "templates/nogging-config.json",
+    "templates/openspec-project.md",
+    "templates/systemd/nogg-orchestrator.service.tmpl",
+    "templates/systemd/nogg-sync.service.tmpl",
+    "templates/systemd/nogg-sync.timer.tmpl",
+    "scripts/nogg",
+    "scripts/install-hooks",
+    "scripts/test",
+    "scripts/nogg.test.sh",
+    "scripts/worktree-workflow.test.sh",
+    "scripts/check-branch-name",
+    "scripts/session-launch",
+    "scripts/session-log-writer",
+    "scripts/hooks/commit-msg",
+    "scripts/hooks/pre-commit",
+    "scripts/hooks/pre-push",
+    "scripts/hooks/pre-tool-use-openspec-guard",
+    "scripts/hooks/commit-msg.test.sh",
+    "scripts/hooks/branch-name.test.sh",
+    ".agents/skills",
     ".claude/agents",
     ".claude/commands",
-    ".specforge/launch-profiles",
-    ".specforge/launch-prompts",
+    ".nogging/launch-profiles",
+    ".nogging/launch-prompts",
     ".codex/rules",
     ".codex/prompts",
     ".pi/prompts",
     ".pi/extensions",
-    "docs",
-    "!docs/source",
-    "!docs/acceptance",
-    "openspec/config.yaml",
-    "AGENTS.md"
+    "docs/architecture.md",
+    "docs/compatibility.md",
+    "docs/failure-recovery.md",
+    "docs/installation.md",
+    "docs/operating-model.md",
+    "docs/running-work-in-sessions.md",
+    "docs/security-model.md",
+    "docs/using-with-codex.md",
+    "docs/using-with-pi.md",
+    "docs/worktree-workflow.md",
+    "openspec/config.yaml"
   ],
   "engines": {
     "node": ">=18"
   },
   "scripts": {
     "test": "scripts/test",
-    "prepublishOnly": "node -e \"console.error('SpecForge is distributed from tagged GitHub releases, not the npm registry.'); process.exit(1)\""
+    "prepublishOnly": "node -e \"console.error('Nogging is distributed from tagged GitHub releases, not the npm registry.'); process.exit(1)\""
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/JoMe92/agentsembli-specforge.git"
+    "url": "git+https://github.com/JoMe92/nogging.git"
   },
-  "homepage": "https://github.com/JoMe92/agentsembli-specforge#readme",
+  "homepage": "https://github.com/JoMe92/nogging#readme",
   "bugs": {
-    "url": "https://github.com/JoMe92/agentsembli-specforge/issues"
+    "url": "https://github.com/JoMe92/nogging/issues"
   },
   "keywords": [
     "agentic-development",

@@ -6,13 +6,13 @@ hooks="$root/.git/hooks"
 install -m 0755 "$root/scripts/hooks/commit-msg" "$hooks/commit-msg"
 install -m 0755 "$root/scripts/hooks/pre-commit" "$hooks/pre-commit"
 install -m 0755 "$root/scripts/hooks/pre-push" "$hooks/pre-push"
-echo "SpecForge hooks installed."
+echo "Nogging hooks installed."
 
 # A fresh install starts with the OpenSpec write boundary closed: openspec/ is
 # read-only to an execution agent until the first `plan-begin`. Only create the
 # sentinel when nothing has toggled the boundary yet (no sentinel, no planning
 # lock) so this stays idempotent and never disturbs a live planning session.
-locks="$root/.specforge/locks"
+locks="$root/.nogging/locks"
 sentinel="$locks/openspec.readonly"
 if [[ ! -e "$sentinel" && ! -e "$locks/planning.lock" ]]; then
   mkdir -p "$locks"

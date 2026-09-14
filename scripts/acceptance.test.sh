@@ -2,7 +2,7 @@
 # Thin wrapper around the mechanical acceptance harness.
 #
 # Runs `scripts/acceptance.sh --mechanical` — the no-LLM, no-backend subset of
-# the SpecForge end-to-end acceptance procedure (docs/acceptance.md): install
+# the Nogging end-to-end acceptance procedure (docs/acceptance.md): install
 # into a throwaway repo, readiness verdict, plan-begin, materialize the canned
 # example change, simulate a closure, the sync round-trip and its idempotency,
 # doctor/audit, plan-end.

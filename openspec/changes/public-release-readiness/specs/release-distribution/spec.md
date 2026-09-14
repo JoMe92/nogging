@@ -2,7 +2,7 @@
 
 Defines a deterministic GitHub-based distribution and release process whose
 contents, provenance, compatibility, and user-visible changes can be verified
-before public users install SpecForge.
+before public users install Nogging.
 
 ## ADDED Requirements
 
@@ -11,14 +11,15 @@ before public users install SpecForge.
 The project SHALL identify tagged GitHub source installation as its supported
 initial public distribution, SHALL recommend a concrete release tag rather
 than an unpinned default branch, and SHALL prevent accidental npm-registry
-publication. It SHALL disclose that the unscoped npm name `specforge` belongs
-to another project and treat npm publication as out of scope for this change.
+publication. It SHALL treat npm publication, including verifying whether the
+desired unscoped `nogg`/`nogging` package name is available, as out of scope
+for this change.
 
 #### Scenario: A user chooses an installation source
 
 - **WHEN** a user reads the public installation instructions
 - **THEN** the primary command pins a released GitHub tag
-- **AND** the documentation does not imply that this project owns the npm package named `specforge`
+- **AND** the documentation does not imply that this project has published or claimed any npm package name
 
 #### Scenario: Accidental npm publication is attempted
 

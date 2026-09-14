@@ -1,0 +1,46 @@
+# Nogging Codex execution-policy floor.
+#
+# Codex loads this file (every `*.rules` under `<repo>/.codex/rules/`) once the
+# project's `.codex/` layer is trusted. It is the Codex-side sibling of the
+# Claude launch floor (`FLOOR_DENY` in `scripts/nogg` + the `deny` list in
+# `.nogging/launch-profiles/*.json`): the always-on command classes that are
+# refused for *every* Nogging-supervised Codex session, trusted or restricted.
+#
+# It carries the floor and nothing else. Remote/network operations
+# (`git push`, `bd sync`, `bd dolt push|pull|clone`, `dolt push|pull|remote`)
+# are a *restricted-profile* boundary, not a floor: they are enforced by the
+# network-off workspace-write sandbox (`network_access=false` in
+# `restricted.codex.toml`), which fails every one of them with no network. A
+# second execpolicy-level copy of that denial is only useful if it can be made
+# profile-specific, and codex-cli 0.148.0 has no per-profile or
+# alternate-directory rules selection — so it would only block the trusted path,
+# which is allowed to push. One mechanism per concern: the floor is this file,
+# the profile is the sandbox.
+#
+# Grammar note (verified against codex-cli 0.148.0): a rule is
+#   prefix_rule(pattern=[<tokens>], decision="forbidden" | "prompt" | "allow")
+# `decision="deny"` is NOT valid on this version — it raises `invalid decision`.
+# `forbidden` refuses the command outright. Check a command against this file
+# with:  codex execpolicy check --rules .codex/rules/nogging.rules -- <cmd...>
+#
+# `session-launch` never passes `--ignore-rules`; this floor always applies.
+
+# --- no privilege escalation --------------------------------------------
+prefix_rule(pattern=["sudo"], decision="forbidden")
+
+# --- no destructive host commands ----------------------------------------
+prefix_rule(pattern=["rm", "-rf"], decision="forbidden")
+prefix_rule(pattern=["rm", "-fr"], decision="forbidden")
+prefix_rule(pattern=["dd"], decision="forbidden")
+# `mkfs` and its filesystem-specific variants (`mkfs.ext4`, `mkfs.xfs`, …).
+# A prefix token matches whole words only, so each variant is listed as an
+# alternative — codex-cli 0.148.0 has no regex rule form.
+prefix_rule(pattern=[["mkfs", "mkfs.ext2", "mkfs.ext3", "mkfs.ext4", "mkfs.xfs", "mkfs.btrfs", "mkfs.vfat", "mkfs.fat", "mkfs.f2fs", "mkfs.ntfs", "mkfs.exfat", "mkfs.minix"]], decision="forbidden")
+prefix_rule(pattern=["shutdown"], decision="forbidden")
+prefix_rule(pattern=["reboot"], decision="forbidden")
+prefix_rule(pattern=["systemctl"], decision="forbidden")
+prefix_rule(pattern=["chown"], decision="forbidden")
+
+# --- no outbound network fetch ------------------------------------------
+prefix_rule(pattern=["curl"], decision="forbidden")
+prefix_rule(pattern=["wget"], decision="forbidden")

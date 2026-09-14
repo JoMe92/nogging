@@ -1,23 +1,23 @@
 ---
-description: Force an immediate SpecForge reconciliation instead of waiting for the timer.
+description: Force an immediate Nogging reconciliation instead of waiting for the timer.
 ---
 
 # /sync-now — reconcile now
 
 Trigger a reconciliation pass immediately rather than waiting for the
-30-second `specforge-sync.timer` tick.
+30-second `nogg-sync.timer` tick.
 
 ## Step
 
 Run:
 
 ```bash
-scripts/specforge sync --now
+scripts/nogg sync --now
 ```
 
 That single command encapsulates all three cases:
 
-- **Resident daemon running** — if `.specforge/state/sync.pid` names a live
+- **Resident daemon running** — if `.nogging/state/sync.pid` names a live
   process it is sent `SIGUSR1` and asked to reconcile now. No daemon exists
   under the current oneshot timer; this path is kept for a future one.
 - **No daemon** — a reconciliation pass runs directly (the normal path today).
