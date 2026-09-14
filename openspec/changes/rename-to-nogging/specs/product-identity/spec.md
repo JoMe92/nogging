@@ -37,7 +37,7 @@ command. Both prior repositories SHALL remain private, archived, or otherwise
 unavailable for public installation unless the owner explicitly approves a
 safe redirect.
 
-#### Scenario: A user follows an old installation instruction
+#### Scenario: User follows an old installation instruction
 
 - **WHEN** a user encounters a maintained transition notice for either prior
   identity
@@ -49,6 +49,14 @@ safe redirect.
 This rename SHALL NOT itself change repository visibility, publish to npm,
 or constitute trademark clearance. Those remain separate, explicit owner
 decisions, same as the two prior naming rounds.
+
+#### Scenario: Mechanical checks finish
+
+- **WHEN** every automated rename and release check passes
+- **THEN** the repository remains private and the acceptance report remains
+  unsigned until the owner acts
+- **AND** the owner checklist sequences public visibility, Private
+  Vulnerability Reporting enablement and verification, then final sign-off
 
 #### Scenario: The rename completes
 
