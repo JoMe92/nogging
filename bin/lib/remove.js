@@ -59,7 +59,7 @@ function removeClaudeGuard(ctx) {
   if (kept.length === pre.length) return;
   data.hooks.PreToolUse = kept;
   if (!ctx.dryRun) fs.writeFileSync(full, JSON.stringify(data, null, 2) + '\n');
-  ctx.log.add('remove', 'SpecForge Claude guard', ctx.dryRun ? 'dry-run' : undefined);
+  ctx.log.add('remove', 'Nogging Claude guard', ctx.dryRun ? 'dry-run' : undefined);
 }
 
 function removeInstallation(ctx) {
@@ -72,7 +72,7 @@ function removeInstallation(ctx) {
   removeMarkerBlock(ctx, 'CLAUDE.md');
   removeMarkerBlock(ctx, 'AGENTS.md');
   removeClaudeGuard(ctx);
-  ctx.notes.push('Target-owned OpenSpec, Beads, .specforge configuration/state, and unrelated settings were preserved.');
+  ctx.notes.push('Target-owned OpenSpec, Beads, .nogging configuration/state, and unrelated settings were preserved.');
   ctx.notes.push('Review shared .gitignore entries and Git hooks manually; ownership cannot be inferred safely.');
 }
 

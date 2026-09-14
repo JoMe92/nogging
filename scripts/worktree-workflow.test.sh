@@ -6,12 +6,12 @@ scratch=$(mktemp -d)
 trap 'git -C "$repo" worktree remove --force "$plan_tree" 2>/dev/null || true; git -C "$repo" worktree remove --force "$impl_tree" 2>/dev/null || true; rm -rf "$scratch"' EXIT
 repo="$scratch/repo"; remote="$scratch/origin.git"
 plan_tree="$scratch/plan"; impl_tree="$scratch/implementation"
-mkdir -p "$repo/.specforge/locks" "$repo/.specforge/state" "$repo/openspec/changes/demo" "$scratch/bin"
-cp "$source_root/.specforge/config.json" "$repo/.specforge/config.json"
-cp "$source_root/scripts/specforge" "$repo/specforge"
-chmod +x "$repo/specforge"
+mkdir -p "$repo/.nogging/locks" "$repo/.nogging/state" "$repo/openspec/changes/demo" "$scratch/bin"
+cp "$source_root/.nogging/config.json" "$repo/.nogging/config.json"
+cp "$source_root/scripts/nogg" "$repo/nogg"
+chmod +x "$repo/nogg"
 printf '%s\n' '# Tasks' '' '- [ ] TASK-DEMO-001 Implement demo' >"$repo/openspec/changes/demo/tasks.md"
-printf '%s\n' '.specforge/locks/' '.specforge/state/' >"$repo/.gitignore"
+printf '%s\n' '.nogging/locks/' '.nogging/state/' >"$repo/.gitignore"
 git -C "$repo" init -q
 git -C "$repo" config user.email workflow@example.invalid
 git -C "$repo" config user.name 'Workflow Test'
@@ -43,36 +43,36 @@ cat >"$scratch/bin/dolt" <<'STUB'
 exit 0
 STUB
 chmod +x "$scratch/bin/bd" "$scratch/bin/gh" "$scratch/bin/dolt"
-export PATH="$scratch/bin:$PATH" SPECFORGE_ROOT="$repo"
+export PATH="$scratch/bin:$PATH" NOGGING_ROOT="$repo"
 
-"$repo/specforge" worktree plan demo auth-flow --path "$plan_tree" >/dev/null
+"$repo/nogg" worktree plan demo auth-flow --path "$plan_tree" >/dev/null
 git -C "$plan_tree" config user.email workflow@example.invalid
 git -C "$plan_tree" config user.name 'Workflow Test'
 printf '%s\n' 'planned' >"$plan_tree/plan-evidence.txt"
 git -C "$plan_tree" add plan-evidence.txt
-git -C "$plan_tree" commit -q -m 'docs: validated plan' -m 'SpecForge-Writer: planning'
-export SPECFORGE_ROOT="$plan_tree"
-"$plan_tree/specforge" validate >/dev/null
-export SPECFORGE_ROOT="$repo"
+git -C "$plan_tree" commit -q -m 'docs: validated plan' -m 'Nogging-Writer: planning'
+export NOGGING_ROOT="$plan_tree"
+"$plan_tree/nogg" validate >/dev/null
+export NOGGING_ROOT="$repo"
 git -C "$repo" merge -q --ff-only plan/demo/auth-flow
 git -C "$repo" push -q origin develop
-"$repo/specforge" worktree cleanup plan--demo--auth-flow.json >/dev/null
+"$repo/nogg" worktree cleanup plan--demo--auth-flow.json >/dev/null
 
-"$repo/specforge" worktree implement SPEC-e2e feat/demo --path "$impl_tree" >/dev/null
+"$repo/nogg" worktree implement SPEC-e2e feat/demo --path "$impl_tree" >/dev/null
 git -C "$impl_tree" config user.email workflow@example.invalid
 git -C "$impl_tree" config user.name 'Workflow Test'
 printf '%s\n' 'implemented' >"$impl_tree/implementation.txt"
 git -C "$impl_tree" add implementation.txt
 git -C "$impl_tree" commit -q -m 'feat: implement demo [SPEC-e2e]'
-export SPECFORGE_ROOT="$impl_tree"
-mkdir -p "$impl_tree/.specforge/state"
-"$impl_tree/specforge" pr open --plan demo --task TASK-DEMO-001 --validation scripts/test >/dev/null
+export NOGGING_ROOT="$impl_tree"
+mkdir -p "$impl_tree/.nogging/state"
+"$impl_tree/nogg" pr open --plan demo --task TASK-DEMO-001 --validation scripts/test >/dev/null
 sed -i 's/"initial_check_after": "[^"]*"/"initial_check_after": "2000-01-01T00:00:00+00:00"/' \
-  "$impl_tree/.specforge/state/pull-requests/feat-demo.json"
-"$impl_tree/specforge" pr ci | grep -q 'ready_for_user_review (all checks)'
+  "$impl_tree/.nogging/state/pull-requests/feat-demo.json"
+"$impl_tree/nogg" pr ci | grep -q 'ready_for_user_review (all checks)'
 
-export SPECFORGE_ROOT="$repo"
+export NOGGING_ROOT="$repo"
 git -C "$repo" merge -q --ff-only feat/demo
-"$repo/specforge" worktree cleanup implementation--spec-e2e.json >/dev/null
+"$repo/nogg" worktree cleanup implementation--spec-e2e.json >/dev/null
 [[ ! -e "$plan_tree" && ! -e "$impl_tree" ]]
 echo 'worktree workflow end-to-end: ok'

@@ -1,4 +1,4 @@
-# Agentsembli SpecForge public cutover checklist
+# Nogging public cutover checklist
 
 This checklist is executed and signed by the repository owner only. Automation
 may run the read-only verification commands, but must not change visibility,
@@ -8,11 +8,11 @@ fill an acceptance report's `Signed-off-by:` field.
 ## Before changing visibility
 
 - [ ] Confirm `scripts/test` passes on the exact release-candidate commit.
-- [ ] Confirm `scripts/successor-audit.sh JoMe92/agentsembli-specforge` passes
+- [ ] Confirm `scripts/successor-audit.sh JoMe92/nogging` passes
   and reports only the reviewed heads and tags.
 - [ ] Confirm the successor is private with
-  `gh repo view JoMe92/agentsembli-specforge --json isPrivate --jq .isPrivate`.
-- [ ] Confirm the legacy `JoMe92/specforge` repository is private. Its hidden
+  `gh repo view JoMe92/nogging --json isPrivate --jq .isPrivate`.
+- [ ] Confirm the legacy `JoMe92/nogg` repository is private. Its hidden
   pull-request refs make public visibility unsafe.
 - [ ] Confirm the private recovery bundle checksum and restore notes described
   in `docs/security/successor-migration-2026-09-10.md`.
@@ -30,7 +30,7 @@ In the successor repository's GitHub **Settings → General** page:
 - [ ] Set `main` as the default branch.
 - [ ] Keep Issues enabled and verify the Issues tab is visible.
 - [ ] Confirm the canonical URL is
-  `https://github.com/JoMe92/agentsembli-specforge`.
+  `https://github.com/JoMe92/nogging`.
 
 Do not import, mirror-push, or restore refs from the legacy repository or the
 private recovery set.
@@ -49,8 +49,8 @@ private recovery set.
 
 Choose exactly one owner-controlled action:
 
-- [ ] Keep `JoMe92/specforge` private and archive it; or
-- [ ] Delete `JoMe92/specforge` only after verifying the private recovery set.
+- [ ] Keep `JoMe92/nogg` private and archive it; or
+- [ ] Delete `JoMe92/nogg` only after verifying the private recovery set.
 
 Never make the legacy repository public. Record the chosen state in the
 acceptance report.
@@ -59,7 +59,7 @@ acceptance report.
 
 Perform these steps consecutively in the GitHub web interface:
 
-1. [ ] Change **only** `JoMe92/agentsembli-specforge` from private to public.
+1. [ ] Change **only** `JoMe92/nogging` from private to public.
 2. [ ] Immediately open **Settings → Code security and analysis** and enable
    Private Vulnerability Reporting.
 3. [ ] Verify **Security → Advisories → New draft security advisory** is
@@ -74,7 +74,7 @@ Perform these steps consecutively in the GitHub web interface:
 After public validation, each maintainer may update their own checkout:
 
 ```bash
-git remote set-url origin git@github.com:JoMe92/agentsembli-specforge.git
+git remote set-url origin git@github.com:JoMe92/nogging.git
 git remote -v
 git fetch --prune origin
 ```

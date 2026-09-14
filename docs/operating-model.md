@@ -59,7 +59,7 @@ are Task-tool subagents and are not ported to Codex, and there is no MCP bridge
 exposing them. A **Codex** Lead Agent has no in-process subagent mechanism, so
 it either does the isolated work inline under the same constraints, or — when
 the operator wants a separate observable process — starts one with
-`scripts/specforge session launch --agent codex --role specialist:<type>
+`scripts/nogg session launch --agent codex --role specialist:<type>
 --bead <id>`. Either way every specialist boundary rule still holds: one
 already-claimed Bead, no `openspec/` writes, no claim/close/commit, plan-relevant
 findings reported to the Lead Agent as discoveries. `AGENTS.md` *Tool notes*
@@ -68,18 +68,18 @@ states the same.
 ## Commands
 
 Three slash commands under `.claude/commands/` are the operator's entry points
-into the workflow. Each is a thin, declarative wrapper over `scripts/specforge`
+into the workflow. Each is a thin, declarative wrapper over `scripts/nogg`
 plus a persona instruction — they orchestrate existing primitives, they do not
 reimplement the planning lock, discovery sorting, or sync.
 
 | Command | May do | May **not** do |
 | --- | --- | --- |
 | `/plan` (`plan.md`) | Allocate `plan/<planning-id>/<description>` from updated `origin/develop`, then in that isolated worktree run `plan-begin` → discovery review → design dialogue → author/revise → `validate` → commit `openspec/` as the `planning` writer → `materialize <change>` → fast-forward integrate into `develop` → safe cleanup → `plan-end`. The commit precedes `materialize`, so a crash between them never leaves Beads without a committed spec (`materialize` is idempotent). Consult the `architect` specialist for architecture questions. | Write planning artifacts in the shared checkout; force a planning lock another session holds; clean a dirty or unintegrated planning worktree; do execution work; or auto-delete an orphaned Bead. |
-| `/discovery-review` (`discovery-review.md`) | Run `scripts/specforge discoveries` and render it unchanged (blocking first). Per discovery, offer: carry into a `/plan` session, acknowledge via `scripts/specforge discoveries --ack <id>`, or leave pending. | Acquire the planning lock. Create or modify any file under `openspec/`. |
-| `/sync-now` (`sync-now.md`) | Run `scripts/specforge sync --now`: signal a resident sync daemon if one exists, else run one reconciliation pass directly. | Retry, loop, or `--force` when the 30-second timer holds the sync lock — report the contention and stop. |
+| `/discovery-review` (`discovery-review.md`) | Run `scripts/nogg discoveries` and render it unchanged (blocking first). Per discovery, offer: carry into a `/plan` session, acknowledge via `scripts/nogg discoveries --ack <id>`, or leave pending. | Acquire the planning lock. Create or modify any file under `openspec/`. |
+| `/sync-now` (`sync-now.md`) | Run `scripts/nogg sync --now`: signal a resident sync daemon if one exists, else run one reconciliation pass directly. | Retry, loop, or `--force` when the 30-second timer holds the sync lock — report the contention and stop. |
 
 `AGENTS.md` keeps a one-line pointer to these files and the equivalent manual
-`scripts/specforge` sequence, so a non-Claude tool can run the same steps by
+`scripts/nogg` sequence, so a non-Claude tool can run the same steps by
 hand. A Codex session invokes the same three commands from
 `.codex/prompts/{plan,discovery-review,sync-now}.md`; see
 [`using-with-codex.md`](using-with-codex.md) for the Codex specifics (the
@@ -95,16 +95,16 @@ sandbox).
 
 The **Orchestration Agent** is a third session persona, above the Planning Agent
 and the Main Worker. It runs always-on as a supervised
-`sf-orchestrator-<slug>` tmux session that a rendered systemd **user service**
+`nogg-orchestrator-<slug>` tmux session that a rendered systemd **user service**
 keeps alive across a crash or a host reboot, resuming its own conversation with
 `claude --continue`. The launched session registers with Remote Control, so the
 Product Owner can read and drive it from a phone with no SSH. Exactly one runs
-at a time, guarded by `.specforge/locks/orchestrator.lock` (the planning-lock
+at a time, guarded by `.nogging/locks/orchestrator.lock` (the planning-lock
 shape and staleness rule, independent of the planning lock).
 
 **Default scope is orchestrate-only.** The Orchestration Agent reads the whole
 state (Beads, OpenSpec, session records and logs, `git`) and drives the loop by
-running `scripts/specforge` — `session launch|attach|log|stop`, `sync --now`,
+running `scripts/nogg` — `session launch|attach|log|stop`, `sync --now`,
 `recover`, `discoveries` — plus `bd` and `git` (read, and a local
 fast-forward integration). It does **not** write any file under `openspec/` and
 does **not** edit implementation code. When a spec change is needed it starts or
@@ -116,12 +116,12 @@ work itself, and the sub-sessions it launches keep their normal
 **Explicit takeover.** Only on an explicit in-session operator instruction of
 the form `/orchestrate takeover {plan|code} <description>` does it perform one
 task directly — a planning task run as a full `plan-begin` … `plan-end`
-sequence committed with the `SpecForge-Writer: planning` trailer, or a code task
+sequence committed with the `Nogging-Writer: planning` trailer, or a code task
 claimed, implemented, committed with the `[<bead-id>]` token, evidence-noted and
 closed. After the one task it returns to orchestrate-only. Nothing mechanical
 enforces the return: the orchestrator profile is god-mode (see *Launch
 profiles* under *Session supervision*), so the discipline lives in
-`.specforge/launch-prompts/orchestrator.md` and the operator's explicit
+`.nogging/launch-prompts/orchestrator.md` and the operator's explicit
 scoping, exactly as the `autonomous` prompt scopes a `--full-access` Lead
 session to one named change.
 
@@ -133,7 +133,7 @@ the Product Owner's one reserved act.
 **Claude Code only in this version.** Remote Control — the "reachable from a
 phone" requirement — is a Claude feature; a Codex/Pi orchestrator is a recorded
 follow-up. The `/orchestrate` command file documents how the operator reaches
-and scopes the session; `scripts/specforge orchestrator {run,status,stop,restart}`
+and scopes the session; `scripts/nogg orchestrator {run,status,stop,restart}`
 drives the service.
 
 ## Resuming an interrupted run
@@ -141,7 +141,7 @@ drives the service.
 A planning or development run can stop mid-way — the token budget runs out, the
 process crashes, the SSH session drops, or the operator switches tools (Claude
 Code ↔ Codex). On the next start, every session — fresh, resumed, or
-tool-switched — runs `./scripts/specforge recover` **before** `bd ready`.
+tool-switched — runs `./scripts/nogg recover` **before** `bd ready`.
 `recover` is a read-only diagnostic: it reports stale/held locks,
 committed-but-not-closed (`LIMBO`) Beads, `in_progress` Beads classified
 `resumable` / `stale` / `active`, a materialized-but-uncommitted change (with
@@ -184,18 +184,18 @@ Use Conventional Commits, for example
 `feat(ui): add dark mode toggle [SPEC-abc123]`.
 
 Planning changes are committed on their change branch and merged into `develop`
-after `./scripts/specforge validate`. A planning commit uses a Conventional
+after `./scripts/nogg validate`. A planning commit uses a Conventional
 subject — `docs(openspec): …` or `chore(openspec): …` — plus a
-`SpecForge-Writer: planning` trailer in the message body; the retired `plan:`
+`Nogging-Writer: planning` trailer in the message body; the retired `plan:`
 subject prefix is not a Conventional Commit type and must not be used. The
-trailer is the durable, portable form of the `SPECFORGE_WRITER=planning`
+trailer is the durable, portable form of the `NOGGING_WRITER=planning`
 exemption: the local `commit-msg` hook and CI honour it identically, so a
 planning commit needs no Beads ID token but still needs the Conventional
 subject.
 
 The timer makes local commits only when there is a tracked execution-log
 update; it never pushes. Its mirror commit is
-`chore(sync): mirror Beads execution evidence` with a `SpecForge-Writer: sync`
+`chore(sync): mirror Beads execution evidence` with a `Nogging-Writer: sync`
 trailer.
 
 ## Acceptance
@@ -232,7 +232,7 @@ moves it to `openspec/changes/archive/YYYY-MM-DD-<name>/`. Its Beads stay closed
 in the tracker, still carrying their `openspec:change:` / `openspec:task:`
 labels. This is supported and does not break the mechanical layer:
 
-- `./scripts/specforge validate` (and `doctor` / `audit`) read the archived
+- `./scripts/nogg validate` (and `doctor` / `audit`) read the archived
   `tasks.md` too — an archived-inclusive `task_map` mode strips the date prefix
   back to the original change name — so a closed Bead mapping to an archived
   task still resolves instead of reporting a missing task or a disagreeing
@@ -246,16 +246,16 @@ and the audit stays clean.
 
 ## Session supervision
 
-Every agent session SpecForge starts for Lead Agent or specialist work runs
+Every agent session Nogging starts for Lead Agent or specialist work runs
 inside a **named tmux session on the Pi**, under a dedicated tmux server socket
-(`tmux -L specforge`) that is isolated from the operator's own tmux. The session
-is started with `scripts/specforge session launch --role <lead |
+(`tmux -L nogg`) that is isolated from the operator's own tmux. The session
+is started with `scripts/nogg session launch --role <lead |
 specialist:<type>> --bead <id> [--cwd <path>] [--read-only]
 [--agent <claude|codex>] [--profile <name-or-path>] [--prompt <name-or-path>]
 [--full-access]`, which:
 
 - generates a collision-free name `sf-<role>-<bead>-<nonce>`;
-- writes a durable JSON record to `.specforge/state/sessions/<name>.json`
+- writes a durable JSON record to `.nogging/state/sessions/<name>.json`
   (Bead ID, role, host, start time, working directory, redacted launch
   command, owner, lifecycle state, log path) **before** the Claude process
   starts, so the association survives an SSH drop or a restart of the launcher;
@@ -273,15 +273,15 @@ operator directs.
 ### The agent is selectable
 
 `--agent {claude,codex}` chooses the binary; with no flag it reads the
-`session_agent` key from `.specforge/config.json`, default `claude`, so no
+`session_agent` key from `.nogging/config.json`, default `claude`, so no
 existing install changes behaviour. The record stores the agent and
 `session list` shows it in an `AGENT` column. `--agent claude` and the default
 are byte-for-byte the previous launch — the same settings file, prompt and
 effective-settings write.
 
 The `restricted` / `trusted` authority levels are **tool-neutral** and resolve
-per agent: for `claude` to the existing `.specforge/launch-profiles/<level>.json`
-settings file; for `codex` to `.specforge/launch-profiles/<level>.codex.toml`,
+per agent: for `claude` to the existing `.nogging/launch-profiles/<level>.json`
+settings file; for `codex` to `.nogging/launch-profiles/<level>.codex.toml`,
 mapped onto Codex's model — `--sandbox workspace-write`, `--ask-for-approval`
 `on-request` (`restricted`) or `never` (`trusted`), and network access off.
 A Codex session has no per-session `permissions` file; its command floor is the
@@ -292,8 +292,8 @@ and `session launch` warns when that floor file is missing but still starts.
 ### Launch profiles
 
 `--profile <name-or-path>` and `--prompt <name-or-path>` choose the authority a
-session runs under. A bare name resolves under `.specforge/launch-profiles/` /
-`.specforge/launch-prompts/`; anything else is a filesystem path. With neither
+session runs under. A bare name resolves under `.nogging/launch-profiles/` /
+`.nogging/launch-prompts/`; anything else is a filesystem path. With neither
 flag the behaviour is exactly as before this existed: `restricted` +
 no-autonomous-claim. Two profiles ship: `restricted` (the default) and
 `trusted` (`acceptEdits`; allows `git push`/`merge`/`switch`/`rebase`, `bd`,
@@ -313,7 +313,7 @@ against a hostile agent.
 
 The **single exception** is the `orchestrator` profile combined with
 `--role orchestrator`. That profile runs `bypassPermissions` with an empty deny
-list and carries `specforge_floor: false` / `specforge_openspec_readonly:
+list and carries `nogging_floor: false` / `nogging_openspec_readonly:
 false`; those two keys are read **only** for `--role orchestrator`, and for that
 role only the floor merge and the per-session `openspec/**` deny are skipped —
 so the Orchestration Agent runs with full command access and `openspec/`
@@ -329,7 +329,7 @@ single-instance lock, not a boundary. See `docs/architecture.md` and
 *Orchestration* above.
 
 For a Claude session the merged, floored settings are written per session to
-`.specforge/state/sessions/<name>.settings.json` and that file — never the
+`.nogging/state/sessions/<name>.settings.json` and that file — never the
 source profile — is passed to Claude. The metadata record stores the profile
 name and that path; `session list` shows the profile; `session cleanup`
 removes the effective-settings file when it retires the record. A Codex session
@@ -348,7 +348,7 @@ From any plain SSH shell (no `TERM`, no tmux client needed):
 | `session stop <name> [--reason <text>]` | interrupt Claude, terminate the pane after the grace period, record `stopped` with `ended_at`/`exit_reason`. Idempotent. |
 | `session reap` | move every active-state record whose tmux session is gone to `failed` (a live one is untouched), so `cleanup` can retire it. |
 | `session cleanup [<name>] [--reap]` | remove a lingering tmux session, archive-rotate the log, retire the record. **Refuses** a `starting`/`running`/`idle` record — stop or `--reap` it first. |
-| `orchestrator run` | the idempotent supervisor the systemd unit runs: acquire the orchestrator lock, adopt or start the `sf-orchestrator-<slug>` session (`claude --continue` when a prior conversation exists), block until it exits, release the lock, exit non-zero. Takes `--force` to reclaim a stale lock. |
+| `orchestrator run` | the idempotent supervisor the systemd unit runs: acquire the orchestrator lock, adopt or start the `nogg-orchestrator-<slug>` session (`claude --continue` when a prior conversation exists), block until it exits, release the lock, exit non-zero. Takes `--force` to reclaim a stale lock. |
 | `orchestrator status` | the unit's enabled/active state, whether user lingering is on, the lock holder, and the live `FULL-ACCESS` session with its last log lines. Read-only. |
 | `orchestrator stop` \| `restart` | stop-and-disable the unit (ending the session and releasing the lock; idempotent), or restart it. |
 

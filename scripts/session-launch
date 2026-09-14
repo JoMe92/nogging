@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Launch wrapper for a SpecForge-supervised agent session. It is the process
-# `specforge session launch` starts inside tmux. It dispatches on `--agent`
+# Launch wrapper for a Nogging-supervised agent session. It is the process
+# `nogg session launch` starts inside tmux. It dispatches on `--agent`
 # (default `claude`, so an old caller is unchanged) to either Claude Code or
 # OpenAI Codex; everything around it — the tmux server, the record, the
 # pipe-pane log, the lifecycle — is agent-neutral and lives in the caller.
@@ -21,7 +21,7 @@
 #
 # The Codex branch NEVER passes `--ignore-rules` (which would drop the
 # project execpolicy `.rules` floor) or `--dangerously-bypass-approvals-and-
-# sandbox`. The SpecForge command floor for Codex is the repo's `.codex/rules/`
+# sandbox`. The Nogging command floor for Codex is the repo's `.codex/rules/`
 # directory, which Codex loads from the working tree by default.
 #
 # Usage:
@@ -83,7 +83,7 @@ case "$agent" in
       set -- "$@" --append-system-prompt "$(cat "$prompt")"
     fi
     [ "$read_only" -eq 1 ] && set -- "$@" --permission-mode plan
-    echo "specforge: starting Claude for ${bead:-<no bead>} in $(pwd) (read-only=${read_only} resume=${resume})"
+    echo "nogg: starting Claude for ${bead:-<no bead>} in $(pwd) (read-only=${read_only} resume=${resume})"
     exec claude "$@"
     ;;
   codex)
@@ -108,12 +108,12 @@ case "$agent" in
       if codex --help 2>/dev/null | grep -q -- '--sandbox-state-readable-root'; then
         set -- "$@" --sandbox-state-readable-root "$readonly_root"
       else
-        echo "specforge: this codex build has no plain-launch --sandbox-state-readable-root;" >&2
-        echo "specforge: openspec/ read-only for Codex relies on the .codex/rules/ execpolicy deny" >&2
-        echo "specforge: (codex-onboarding) and the pre-commit boundary hook for this session." >&2
+        echo "nogg: this codex build has no plain-launch --sandbox-state-readable-root;" >&2
+        echo "nogg: openspec/ read-only for Codex relies on the .codex/rules/ execpolicy deny" >&2
+        echo "nogg: (codex-onboarding) and the pre-commit boundary hook for this session." >&2
       fi
     fi
-    echo "specforge: starting Codex for ${bead:-<no bead>} in $(pwd) (sandbox=${sandbox} approval=${approval} network=${network})"
+    echo "nogg: starting Codex for ${bead:-<no bead>} in $(pwd) (sandbox=${sandbox} approval=${approval} network=${network})"
     if [ -n "$prompt" ] && [ -f "$prompt" ]; then
       exec codex "$@" "$(cat "$prompt")"
     fi
@@ -126,7 +126,7 @@ case "$agent" in
     if [ -n "$prompt" ] && [ -f "$prompt" ]; then
       set -- "$@" --append-system-prompt "$(cat "$prompt")"
     fi
-    echo "specforge: starting Pi for ${bead:-<no bead>} in $(pwd)"
+    echo "nogg: starting Pi for ${bead:-<no bead>} in $(pwd)"
     exec pi "$@"
     ;;
   *)

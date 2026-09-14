@@ -1,0 +1,14 @@
+[Unit]
+Description=Nogging Orchestration Agent — always-on ({{NAME}})
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory={{WORKDIR}}
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart={{WORKDIR}}/scripts/nogg orchestrator run
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

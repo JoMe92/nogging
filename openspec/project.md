@@ -1,4 +1,4 @@
-# SpecForge project
+# Nogging project
 
 ## Purpose
 

@@ -1,7 +1,7 @@
-## Agentsembli SpecForge
+## Nogging
 
-This repository uses the Agentsembli SpecForge operating model. **`AGENTS.md` is the
-canonical instruction file** — read it (and `docs/specforge/`) for the hard
+This repository uses the Nogging operating model. **`AGENTS.md` is the
+canonical instruction file** — read it (and `docs/nogging/`) for the hard
 rules, the write boundary, and the workflow. This block carries only the one
 detail specific to Claude Code.
 
@@ -11,11 +11,11 @@ detail specific to Claude Code.
   tool-neutral write boundary described in `AGENTS.md`; the boundary holds
   without it.
 - **Claude-only:** the **Orchestration Agent** — the always-on
-  `sf-orchestrator-<slug>` session above Planning and the Main Worker,
+  `nogg-orchestrator-<slug>` session above Planning and the Main Worker,
   orchestrate-only by default, floor- and boundary-lifted for `--role
   orchestrator`, reachable from a phone via Remote Control. `AGENTS.md` *The
-  Orchestration Agent* and `docs/specforge/operating-model.md` have the persona
-  and its scope; `scripts/specforge orchestrator {run,status,stop,restart}` and
+  Orchestration Agent* and `docs/nogging/operating-model.md` have the persona
+  and its scope; `scripts/nogg orchestrator {run,status,stop,restart}` and
   `.claude/commands/orchestrate.md` drive it.
 
-Update SpecForge with `npx github:JoMe92/agentsembli-specforge update`.
+Update Nogging with `npx github:JoMe92/nogging update`.

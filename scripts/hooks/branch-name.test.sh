@@ -3,7 +3,7 @@
 #
 # Self-contained: builds a scratch git repo with its own openspec/changes/ tree
 # and runs check-branch-name from inside it, so this test passes in any repo
-# SpecForge is installed into — it does not depend on this repo's change names
+# Nogging is installed into — it does not depend on this repo's change names
 # (SPEC-9s1 / SPEC-kbh: hard-coded names broke scripts/test in every target repo).
 set -euo pipefail
 

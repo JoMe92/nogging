@@ -1,0 +1,24 @@
+# Nogging Pi launch spec — the `trusted` authority level for a
+# `session launch --agent pi` session. `--full-access` selects this level.
+#
+# `trusted` for Pi selects the autonomous launch prompt — handled by the
+# existing agent-neutral prompt logic in `resolved_launch_pair()`, not by
+# this file — while the guard extension
+# (`.pi/extensions/nogging-guard.ts`, ships with this same change,
+# TASK-PIA-004) remains active exactly as under `restricted`. `trusted`
+# never disables the command floor or the `openspec/` write boundary for
+# Pi: there is no flag this bridge passes that would suppress or bypass the
+# guard extension at either level.
+#
+# Honesty note (matches the spec): this is a strictly weaker guarantee than
+# the `claude` and `codex` `trusted` level. There is NO network sandbox and
+# NO filesystem sandbox under either Pi authority level — only the command
+# floor and the openspec/ write boundary are enforced, unconditionally.
+#
+# Keys (both optional; `session_launch()` reads only these two, and neither
+# is required — an empty/all-comment file is valid):
+#   provider   quoted string -> pi --provider <name>
+#   model      quoted string -> pi --model <pattern>
+#
+# provider = "anthropic"
+# model    = "claude-..."

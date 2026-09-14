@@ -1,0 +1,9 @@
+{
+  "name": "Nogging",
+  "sync_interval_seconds": 30,
+  "beads_command": "bd",
+  "planning_lock_ttl_seconds": 7200,
+  "sync_lock_ttl_seconds": 120,
+  "change_states": ["open", "done", "archived"],
+  "nogging_version": "0.0.0"
+}

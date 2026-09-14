@@ -1,0 +1,20 @@
+{
+  "name": "Nogging",
+  "sync_interval_seconds": 30,
+  "beads_command": "bd",
+  "planning_lock_ttl_seconds": 7200,
+  "sync_lock_ttl_seconds": 120,
+  "sync_max_attempts": 5,
+  "sync_retry_base_seconds": 30,
+  "sync_retry_cap_seconds": 1800,
+  "sync_protected_branches": ["main", "develop"],
+  "claim_stale_seconds": 14400,
+  "change_states": ["open", "done", "archived"],
+  "session_tmux_command": "tmux",
+  "session_tmux_socket": "nogging",
+  "session_state_dir": ".nogging/state/sessions",
+  "session_log_max_bytes": 1048576,
+  "session_log_rotation_depth": 3,
+  "session_stop_grace_seconds": 10,
+  "session_agent": "claude"
+}

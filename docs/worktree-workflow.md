@@ -9,7 +9,7 @@ From a clean shared checkout, allocate a planning worktree from the latest
 remote `develop`:
 
 ```bash
-scripts/specforge worktree plan <planning-id> <description>
+scripts/nogg worktree plan <planning-id> <description>
 ```
 
 Change into the printed path, run `plan-begin`, author and validate OpenSpec,
@@ -18,7 +18,7 @@ Fast-forward the planning branch into `develop` and push `develop` before
 starting implementation. Cleanup accepts only a clean, integrated worktree:
 
 ```bash
-scripts/specforge worktree cleanup <planning-record.json>
+scripts/nogg worktree cleanup <planning-record.json>
 ```
 
 ## Implementation
@@ -26,19 +26,19 @@ scripts/specforge worktree cleanup <planning-record.json>
 Claim the assigned Bead first, then allocate its implementation worktree:
 
 ```bash
-scripts/specforge worktree implement <bead-id> <type/change-slug>
+scripts/nogg worktree implement <bead-id> <type/change-slug>
 ```
 
 Perform edits, validation, and Bead-tagged commits only in that worktree. Push
 the branch and create or locate its pull request against `develop`:
 
 ```bash
-scripts/specforge pr open --plan <change> --task <task-id> \
+scripts/nogg pr open --plan <change> --task <task-id> \
   --decision '<decision>' --validation '<check>' --limitation '<limitation>'
 ```
 
 The PR record stores the earliest initial CI inspection time. After that time,
-inspect required checks with `scripts/specforge pr ci`. Failed checks remain on
+inspect required checks with `scripts/nogg pr ci`. Failed checks remain on
 the same branch for diagnosis and repair; `ready_for_user_review` means stop
 and ask the user to review. It never means self-merge.
 

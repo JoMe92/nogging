@@ -1,6 +1,9 @@
 node_modules/
-.specforge/locks/
-.specforge/state/
-.specforge/reports/
+.nogging/locks/
+.nogging/state/
+.nogging/reports/
 __pycache__/
 *.py[cod]
+/dist/
+.specforge/
+.beads/interactions.jsonl

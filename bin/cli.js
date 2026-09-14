@@ -8,31 +8,34 @@ const install = require('./lib/install');
 const { applyMerges } = require('./lib/merge');
 const { renderSystemd } = require('./lib/systemd');
 const { removeInstallation } = require('./lib/remove');
+const { version: VERSION } = require('../package.json');
 
-const USAGE = `specforge — install the Agentsembli SpecForge operating structure into a repo
+const USAGE = `nogg — install the Nogging operating structure into a repo
 
 Usage:
-  npx github:JoMe92/agentsembli-specforge <command> [options]
+  npx github:JoMe92/nogging <command> [options]
 
 Commands:
-  init      Install Agentsembli SpecForge into the current git repository
-  update    Refresh Agentsembli SpecForge tool files and re-apply merges (keeps your
+  version   Print the Nogging package version
+  init      Install Nogging into the current git repository
+  update    Refresh Nogging tool files and re-apply merges (keeps your
             openspec/changes, openspec/project.md and config name)
   remove    Remove managed payload while preserving project-owned state
-  doctor    Run the installed ./scripts/specforge doctor
+  doctor    Run the installed ./scripts/nogg doctor
 
 Options:
   --dry-run      Show what would change, write nothing
   --no-beads     Skip initializing the Beads issue tracker
   --no-hooks     Skip installing the git hooks
   --no-systemd   Skip rendering the systemd sync unit
+  -v, --version  Print the Nogging package version
   -h, --help     Show this help
 
 init is idempotent and safe to re-run; use update for routine refreshes.
 `;
 
 function parseArgs(argv) {
-  const args = { command: null, dryRun: false, noBeads: false, noHooks: false, noSystemd: false, help: false };
+  const args = { command: null, dryRun: false, noBeads: false, noHooks: false, noSystemd: false, help: false, version: false };
   for (const a of argv) {
     switch (a) {
       case '-h':
@@ -41,6 +44,8 @@ function parseArgs(argv) {
       case '--no-beads': args.noBeads = true; break;
       case '--no-hooks': args.noHooks = true; break;
       case '--no-systemd': args.noSystemd = true; break;
+      case '-v':
+      case '--version': args.version = true; break;
       default:
         if (a.startsWith('-')) {
           throw Object.assign(new Error(`unknown option: ${a}`), { userFacing: true });
@@ -68,10 +73,11 @@ function report(ctx) {
 
 function cmdInit(args) {
   const ctx = install.makeContext(args);
-  const reinstall = fs.existsSync(path.join(ctx.targetRoot, '.specforge/config.json'));
+  install.migrateLegacyStateRoot(ctx);
+  const reinstall = fs.existsSync(path.join(ctx.targetRoot, '.nogging/config.json'));
   if (reinstall && !ctx.dryRun) {
     process.stdout.write(
-      'Agentsembli SpecForge is already installed here; re-running init idempotently ' +
+      'Nogging is already installed here; re-running init idempotently ' +
         '(use `update` for routine refreshes).\n',
     );
   }
@@ -90,8 +96,9 @@ function cmdInit(args) {
 
 function cmdUpdate(args) {
   const ctx = install.makeContext(args);
-  if (!fs.existsSync(path.join(ctx.targetRoot, '.specforge/config.json'))) {
-    throw Object.assign(new Error('no .specforge/config.json — run `init` first'), { userFacing: true });
+  install.migrateLegacyStateRoot(ctx);
+  if (!fs.existsSync(path.join(ctx.targetRoot, '.nogging/config.json'))) {
+    throw Object.assign(new Error('no .nogging/config.json — run `init` first'), { userFacing: true });
   }
   install.copyVerbatim(ctx);
   install.copyDocs(ctx);
@@ -111,10 +118,10 @@ function cmdRemove(args) {
 
 function cmdDoctor() {
   const { spawnSync } = require('child_process');
-  if (!fs.existsSync('scripts/specforge')) {
-    throw Object.assign(new Error('scripts/specforge not found — run `init` first'), { userFacing: true });
+  if (!fs.existsSync('scripts/nogg')) {
+    throw Object.assign(new Error('scripts/nogg not found — run `init` first'), { userFacing: true });
   }
-  const r = spawnSync('scripts/specforge', ['doctor'], { stdio: 'inherit' });
+  const r = spawnSync('scripts/nogg', ['doctor'], { stdio: 'inherit' });
   process.exit(r.status == null ? 1 : r.status);
 }
 
@@ -123,8 +130,17 @@ function main() {
   try {
     args = parseArgs(process.argv.slice(2));
   } catch (e) {
-    process.stderr.write(`specforge: ${e.message}\n`);
+    process.stderr.write(`nogg: ${e.message}\n`);
     process.exit(2);
+  }
+
+  if (args.version) {
+    if (args.command && args.command !== 'version') {
+      process.stderr.write('nogg: --version cannot be combined with another command\n');
+      process.exit(2);
+    }
+    process.stdout.write(`${VERSION}\n`);
+    process.exit(0);
   }
 
   if (args.help || !args.command) {
@@ -134,16 +150,17 @@ function main() {
 
   try {
     switch (args.command) {
+      case 'version': process.stdout.write(`${VERSION}\n`); break;
       case 'init': cmdInit(args); break;
       case 'update': cmdUpdate(args); break;
       case 'remove': cmdRemove(args); break;
       case 'doctor': cmdDoctor(args); break;
       default:
-        process.stderr.write(`specforge: unknown command: ${args.command}\n`);
+        process.stderr.write(`nogg: unknown command: ${args.command}\n`);
         process.exit(2);
     }
   } catch (e) {
-    process.stderr.write(`specforge: ${e.userFacing ? e.message : e.stack || e.message}\n`);
+    process.stderr.write(`nogg: ${e.userFacing ? e.message : e.stack || e.message}\n`);
     process.exit(1);
   }
 }
