@@ -30,7 +30,7 @@ fi
 
 grep -Fq 'must not change visibility' "$doc" || fail "automation visibility boundary is missing"
 grep -Fq 'Signed-off-by:` value is empty' "$doc" || fail "unsigned acceptance gate is missing"
-grep -Fq 'Change **only** `JoMe92/agentsembli-specforge` from private to public' "$doc" \
+grep -Fq 'Change **only** `JoMe92/nogging` from private to public' "$doc" \
   || fail "successor-only visibility action is missing"
 grep -Fq 'Never make the legacy repository public' "$doc" || fail "legacy visibility prohibition is missing"
 

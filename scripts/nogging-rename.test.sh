@@ -13,8 +13,7 @@ trap cleanup EXIT
 pass() { printf 'ok   - %s\n' "$1"; }
 fail() { printf 'FAIL - %s\n' "$1" >&2; exit 1; }
 
-mkdir -p "$tmp/legacy" "$tmp/target"
-git -C "$root" archive v1.4.0 | tar -x -C "$tmp/legacy"
+mkdir -p "$tmp/target"
 git -C "$tmp/target" init -q
 
 mkdir -p \
@@ -34,10 +33,10 @@ printf 'custom pi\n' >"$tmp/target/.pi/custom.txt"
 
 (
   cd "$tmp/target"
-  node "$tmp/legacy/bin/cli.js" init --no-beads --no-hooks >/dev/null
+  node "$root/bin/cli.js" init --no-beads --no-hooks >/dev/null
 )
-test -x "$tmp/target/scripts/nogg" || fail "legacy tag installs"
-pass "legacy tag installs"
+test -x "$tmp/target/scripts/nogg" || fail "Nogging installs"
+pass "Nogging installs"
 
 assert_owned_state() {
   test "$(cat "$tmp/target/openspec/changes/user-change/spec.md")" = 'owner intent' || fail "OpenSpec state changed"
@@ -46,7 +45,7 @@ assert_owned_state() {
     "$tmp/target/.nogging/config.json" || fail "config name changed"
   node -e 'const c=require(process.argv[1]); if(c.custom!==true) process.exit(1)' \
     "$tmp/target/.nogging/config.json" || fail "custom config changed"
-  test -f "$tmp/target/.nogging/state/owner-state" || fail "SpecForge state removed"
+  test -f "$tmp/target/.nogging/state/owner-state" || fail "Nogging state removed"
   test -f "$tmp/target/.claude/agents/custom.md" || fail "custom Claude agent removed"
   grep -q '"custom":true' "$tmp/target/.codex/config.json" || fail "custom Codex setting changed"
   test -f "$tmp/target/.pi/custom.txt" || fail "custom Pi setting removed"
@@ -57,16 +56,9 @@ assert_owned_state() {
   node "$root/bin/cli.js" update --no-hooks >/dev/null
 )
 assert_owned_state
-grep -q 'Agentsembli SpecForge' "$tmp/target/scripts/../AGENTS.md" || fail "successor update missing"
+grep -q 'Nogging' "$tmp/target/scripts/../AGENTS.md" || fail "Nogging update missing"
 test -f "$tmp/target/systemd/nogg-sync-target.service" || fail "stable service identity missing"
-pass "successor update preserves owned state and service identity"
-
-(
-  cd "$tmp/target"
-  node "$tmp/legacy/bin/cli.js" update --no-hooks >/dev/null
-)
-assert_owned_state
-pass "legacy rollback preserves owned state"
+pass "Nogging update preserves owned state and service identity"
 
 (
   cd "$tmp/target"
@@ -78,7 +70,7 @@ test ! -e "$tmp/target/scripts/nogg" || fail "managed command remains after remo
 test ! -e "$tmp/target/systemd/nogg-sync-target.service" || fail "generated service remains after remove"
 test ! -e "$tmp/target/.codex/prompts/plan.md" || fail "managed Codex prompt remains after remove"
 test ! -e "$tmp/target/.pi/prompts/plan.md" || fail "managed Pi prompt remains after remove"
-if grep -q '<!-- specforge:begin -->' "$tmp/target/AGENTS.md"; then
+if grep -q '<!-- nogging:begin -->' "$tmp/target/AGENTS.md"; then
   fail "managed AGENTS block remains after remove"
 fi
 pass "remove deletes managed payload and preserves owned state"

@@ -18,7 +18,7 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-specforge="$here/nogg"
+nogg="$here/nogg"
 repo_root="$(cd "$here/.." && pwd)"
 work=$(mktemp -d)
 out=$(mktemp)
@@ -83,7 +83,7 @@ STUB
 chmod +x "$work/bin/"*
 export PATH="$work/bin:$PATH"
 
-# make_root <dir> — a minimal SpecForge checkout with a low poll interval
+# make_root <dir> — a minimal Nogging checkout with a low poll interval
 make_root() {
   local r="$1"
   mkdir -p "$r/.nogging/state" "$r/scripts"
@@ -105,7 +105,7 @@ record() { python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get(sy
 # The orchestrator lock primitive
 # ===========================================================================
 root="$work/lock"; make_root "$root"
-lock_out=$(SPECFORGE_ROOT="$root" python3 - "$repo_root/scripts/nogg" <<'PY'
+lock_out=$(NOGGING_ROOT="$root" python3 - "$repo_root/scripts/nogg" <<'PY'
 import json, sys
 from importlib.machinery import SourceFileLoader
 m = SourceFileLoader("sf_orc", sys.argv[1]).load_module()
@@ -131,12 +131,12 @@ refute "lock: no FAIL lines"                "FAIL"
 # run: cold start acquires the lock, creates the session, then releases on exit
 # ===========================================================================
 root="$work/run"; make_root "$root"
-export SPECFORGE_ROOT="$root"
+export NOGGING_ROOT="$root"
 export TMUX_STUB_DIR="$work/run-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export CLAUDE_LOG="$work/run-claude.log"; : >"$CLAUDE_LOG"
 name="nogg-orchestrator-run"
 
-( set +e; "$specforge" orchestrator run >"$work/run.out" 2>&1; echo "$?" >"$work/run.rc" ) &
+( set +e; "$nogg" orchestrator run >"$work/run.out" 2>&1; echo "$?" >"$work/run.rc" ) &
 for _ in $(seq 1 80); do [[ -f "$TMUX_STUB_DIR/sess-$name" ]] && break; sleep 0.1; done
 [[ -f "$TMUX_STUB_DIR/sess-$name" ]] \
   && echo "ok   - run: created the singleton tmux session" \
@@ -158,13 +158,13 @@ for _ in $(seq 1 80); do [[ -f "$work/run.rc" ]] && break; sleep 0.1; done
 [[ "$(record "$root/.nogging/state/sessions/$name.json" state)" == "stopped" ]] \
   && echo "ok   - run: marks the record terminal when the session ends" \
   || { echo "FAIL - run: record state is $(record "$root/.nogging/state/sessions/$name.json" state)"; fail=1; }
-unset SPECFORGE_ROOT
+unset NOGGING_ROOT
 
 # ===========================================================================
 # run: adopts a live session instead of starting a second Claude
 # ===========================================================================
 root="$work/adopt"; make_root "$root"
-export SPECFORGE_ROOT="$root"
+export NOGGING_ROOT="$root"
 export TMUX_STUB_DIR="$work/adopt-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export CLAUDE_LOG="$work/adopt-claude.log"; : >"$CLAUDE_LOG"
 name="nogg-orchestrator-adopt"
@@ -173,7 +173,7 @@ touch "$TMUX_STUB_DIR/sess-$name"     # a live orchestrator tmux session already
 printf '{"name":"%s","role":"orchestrator","bead_id":null,"state":"running","floor_lifted":true,"log_path":"%s"}\n' \
   "$name" "$root/.nogging/state/sessions/$name.log" >"$root/.nogging/state/sessions/$name.json"
 
-( set +e; "$specforge" orchestrator run >"$work/adopt.out" 2>&1; echo "$?" >"$work/adopt.rc" ) &
+( set +e; "$nogg" orchestrator run >"$work/adopt.out" 2>&1; echo "$?" >"$work/adopt.rc" ) &
 # wait until the supervisor is past its startup (lock taken), then end the session
 for _ in $(seq 1 80); do [[ -f "$root/.nogging/locks/orchestrator.lock" ]] && break; sleep 0.1; done
 sleep 0.5
@@ -190,20 +190,20 @@ grep -qF "new-session" "$TMUX_STUB_DIR/calls.log" \
 [[ ! -f "$root/.nogging/locks/orchestrator.lock" ]] \
   && echo "ok   - adopt: releases the lock on exit" \
   || { echo "FAIL - adopt: lock not released"; fail=1; }
-unset SPECFORGE_ROOT
+unset NOGGING_ROOT
 
 # ===========================================================================
 # status is read-only; stop is idempotent
 # ===========================================================================
 root="$work/status"; make_root "$root"
-export SPECFORGE_ROOT="$root"
+export NOGGING_ROOT="$root"
 export TMUX_STUB_DIR="$work/status-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export SYSTEMCTL_STATE_DIR="$work/status-sysd"; mkdir -p "$SYSTEMCTL_STATE_DIR"
 echo "enabled" >"$SYSTEMCTL_STATE_DIR/enabled"
 echo "active"  >"$SYSTEMCTL_STATE_DIR/active"
 export LINGER_STATE="no"
 
-"$specforge" orchestrator status >"$out" 2>&1
+"$nogg" orchestrator status >"$out" 2>&1
 check "status: names the per-repo unit"      "nogg-orchestrator-status.service"
 check "status: reports the enabled state"    "enabled"
 check "status: reports linger off"           "linger:  off"
@@ -212,16 +212,16 @@ check "status: reports no live session"      "no live orchestrator session"
   && echo "ok   - status: wrote no session state (read-only)" \
   || { echo "FAIL - status: mutated session state"; fail=1; }
 
-"$specforge" orchestrator stop >"$out" 2>&1 \
+"$nogg" orchestrator stop >"$out" 2>&1 \
   || { echo "FAIL - stop: errored"; cat "$out"; fail=1; }
 check "stop: reports stopped and disabled" "stopped and disabled"
-"$specforge" orchestrator stop >"$out" 2>&1 \
+"$nogg" orchestrator stop >"$out" 2>&1 \
   && echo "ok   - stop: a second stop is a no-op success" \
   || { echo "FAIL - stop: second stop errored"; cat "$out"; fail=1; }
 [[ "$(cat "$SYSTEMCTL_STATE_DIR/enabled")" == "disabled" ]] \
   && echo "ok   - stop: the unit stays disabled" \
   || { echo "FAIL - stop: unit not disabled"; fail=1; }
-unset SPECFORGE_ROOT
+unset NOGGING_ROOT
 
 if [[ $fail -ne 0 ]]; then echo "orchestrator checks failed" >&2; exit 1; fi
 echo "all orchestrator checks passed"

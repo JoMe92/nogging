@@ -1,4 +1,4 @@
-# SpecForge Pi launch spec — the `trusted` authority level for a
+# Nogging Pi launch spec — the `trusted` authority level for a
 # `session launch --agent pi` session. `--full-access` selects this level.
 #
 # `trusted` for Pi selects the autonomous launch prompt — handled by the

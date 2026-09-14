@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The single implementation of the SpecForge branch-naming convention.
+# The single implementation of the Nogging branch-naming convention.
 #
 #   scripts/check-branch-name <ref>
 #
@@ -31,7 +31,7 @@ root=$(git rev-parse --show-toplevel 2>/dev/null) || root=$(cd "$(dirname "${BAS
 
 usage() {
   {
-    echo "SpecForge: branch name must be <type>/<slug>, or plan/<planning-id>/<description>."
+    echo "Nogging: branch name must be <type>/<slug>, or plan/<planning-id>/<description>."
     echo "  <type> is one of: feat, fix, chore, docs, refactor, perf, test"
     echo "  a change branch's <slug> must equal an openspec/changes/<slug>/ directory name"
     echo "  chore/<topic> takes a free kebab topic; planning IDs and descriptions are kebab-case"
@@ -40,7 +40,7 @@ usage() {
 }
 
 if [[ -z "$ref" || "$ref" == "HEAD" ]]; then
-  echo "SpecForge: could not resolve a branch name (detached HEAD or empty ref)." >&2
+  echo "Nogging: could not resolve a branch name (detached HEAD or empty ref)." >&2
   usage
   exit 1
 fi
@@ -54,7 +54,7 @@ if [[ "$ref" =~ ^plan/([a-z0-9]+(-[a-z0-9]+)*)/([a-z0-9]+(-[a-z0-9]+)*)$ ]]; the
 fi
 
 if ! [[ "$ref" =~ ^($types)/([a-z0-9]+(-[a-z0-9]+)*)$ ]]; then
-  echo "SpecForge: branch '$ref' does not match <type>/<slug>." >&2
+  echo "Nogging: branch '$ref' does not match <type>/<slug>." >&2
   usage
   exit 1
 fi
@@ -67,7 +67,7 @@ if [[ "$type" == "chore" ]]; then
 fi
 
 if [[ "$slug" == "archive" ]]; then
-  echo "SpecForge: branch '$ref' — 'archive' is not a change slug." >&2
+  echo "Nogging: branch '$ref' — 'archive' is not a change slug." >&2
   usage
   exit 1
 fi
@@ -82,7 +82,7 @@ for d in "$root"/openspec/changes/archive/*-"$slug"; do
   [[ -d "$d" ]] && exit 0
 done
 
-echo "SpecForge: branch '$ref' is a change branch but no openspec/changes/$slug/ (live or archived) exists." >&2
+echo "Nogging: branch '$ref' is a change branch but no openspec/changes/$slug/ (live or archived) exists." >&2
 echo "  Rename the branch to match its change directory, use chore/<topic>, or use plan/<planning-id>/<description>." >&2
 usage
 exit 1

@@ -56,7 +56,7 @@ fi
 
 if [[ -n "$reason" ]]; then
   {
-    echo "SpecForge: openspec/ is writable only during an active planning session."
+    echo "Nogging: openspec/ is writable only during an active planning session."
     echo "$reason"
     echo "This Edit/Write is blocked. Execution agents record changes in Beads and code;"
     echo "agreed intent changes go through a planning session (plan-begin … plan-end)."

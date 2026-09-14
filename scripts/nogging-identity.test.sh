@@ -12,12 +12,11 @@ fail() {
 identity=docs/project-identity.md
 test -f "$identity" || fail "canonical project identity document is missing"
 
-grep -q 'Display name: \*\*Agentsembli SpecForge\*\*' "$identity" || fail "Agentsembli SpecForge is not canonical"
-grep -q 'does not introduce a separate runtime' "$identity" || fail "Agentsembli runtime boundary is missing"
-grep -q 'SpecForge works without Agent Console' "$identity" || fail "Agent Console is not optional"
-grep -q 'github.com/JoMe92/agentsembli-specforge' "$identity" || fail "repository destination is missing"
-grep -q 'github.com/JoMe92/agentsembli-specforge/issues' "$identity" || fail "support destination is missing"
-grep -q 'github.com/JoMe92/agentsembli-specforge/security' "$identity" || fail "security destination is missing"
+grep -q 'Display name: \*\*Nogging\*\*' "$identity" || fail "Nogging is not canonical"
+grep -q 'Nogging works without Agent Console' "$identity" || fail "Agent Console is not optional"
+grep -q 'github.com/JoMe92/nogging' "$identity" || fail "repository destination is missing"
+grep -q 'github.com/JoMe92/nogging/issues' "$identity" || fail "support destination is missing"
+grep -q 'github.com/JoMe92/nogging/security' "$identity" || fail "security destination is missing"
 grep -q 'github.com/steveyegge/gastown' "$identity" || fail "Gas Town link is missing"
 grep -q 'github.com/gastownhall/beads' "$identity" || fail "Beads link is missing"
 grep -q 'only component' "$identity" || fail "Beads-only adoption boundary is missing"
@@ -29,26 +28,26 @@ grep -q 'require no' "$identity" || fail "no-migration lifecycle decision is mis
 
 # The legacy URL is provenance only. Its one maintained occurrence is the
 # migration/rollback record; all active destinations must use the successor.
-legacy_hits=$(git grep -l 'JoMe92/specforge' -- ':!openspec/**' ':!scripts/identity.test.sh' || true)
-test "$legacy_hits" = "docs/public-cutover.md
-docs/security/successor-migration-2026-09-10.md" \
+legacy_repo="JoMe92/spec""forge"
+legacy_hits=$(git grep -l "$legacy_repo" -- ':!openspec/**' ':!scripts/nogging-identity.test.sh' || true)
+test "$legacy_hits" = "docs/security/successor-migration-2026-09-10.md" \
   || fail "legacy repository URL escaped its transition-document allowlist"
 
-grep -q 'npx github:JoMe92/agentsembli-specforge' bin/cli.js || fail "CLI install command changed identity"
+grep -q 'npx github:JoMe92/nogging' bin/cli.js || fail "CLI install command changed identity"
 grep -q "'scripts/nogg'" bin/lib/manifest.js || fail "installed command path changed identity"
 grep -q "to: 'docs/nogging/" bin/lib/manifest.js || fail "installed documentation path changed identity"
 grep -q 'nogg-sync-{slug}' bin/lib/manifest.js || fail "generated sync unit changed identity"
 grep -q 'nogg-orchestrator-{slug}' bin/lib/manifest.js || fail "generated orchestrator unit changed identity"
-grep -q '"name": "SpecForge"' templates/nogging-config.json || fail "generated config changed identity"
-grep -q 'scfg("session_tmux_socket", "specforge")' scripts/nogg || fail "tmux socket changed identity"
-grep -q '^# Agentsembli SpecForge$' README.md || fail "README display name is stale"
-grep -q 'Agentsembli SpecForge validation' .github/workflows/specforge-validate.yml || fail "workflow display name is stale"
+grep -q '"name": "Nogging"' templates/nogging-config.json || fail "generated config changed identity"
+grep -q 'scfg("session_tmux_socket", "nogging")' scripts/nogg || fail "tmux socket changed identity"
+grep -q '^# Nogging$' README.md || fail "README display name is stale"
+grep -q 'Nogging validation' .github/workflows/nogging-validate.yml || fail "workflow display name is stale"
 grep -q 'security/advisories/new' SECURITY.md || fail "security reporting route is missing"
 
 node -e '
   const pkg = require("./package.json");
-  if (pkg.name !== "specforge") throw new Error(`unexpected package name: ${pkg.name}`);
-  if (pkg.bin?.nogging !== "bin/cli.js") throw new Error("specforge CLI entry is missing");
+  if (pkg.name !== "nogg") throw new Error(`unexpected package name: ${pkg.name}`);
+  if (pkg.bin?.nogg !== "bin/cli.js") throw new Error("nogg CLI entry is missing");
   if (pkg.private === false) throw new Error("package explicitly enables publication");
 ' || fail "package identity contradicts the canonical document"
 

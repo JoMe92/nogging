@@ -43,7 +43,7 @@ cat >"$scratch/bin/dolt" <<'STUB'
 exit 0
 STUB
 chmod +x "$scratch/bin/bd" "$scratch/bin/gh" "$scratch/bin/dolt"
-export PATH="$scratch/bin:$PATH" SPECFORGE_ROOT="$repo"
+export PATH="$scratch/bin:$PATH" NOGGING_ROOT="$repo"
 
 "$repo/nogg" worktree plan demo auth-flow --path "$plan_tree" >/dev/null
 git -C "$plan_tree" config user.email workflow@example.invalid
@@ -51,9 +51,9 @@ git -C "$plan_tree" config user.name 'Workflow Test'
 printf '%s\n' 'planned' >"$plan_tree/plan-evidence.txt"
 git -C "$plan_tree" add plan-evidence.txt
 git -C "$plan_tree" commit -q -m 'docs: validated plan' -m 'Nogging-Writer: planning'
-export SPECFORGE_ROOT="$plan_tree"
+export NOGGING_ROOT="$plan_tree"
 "$plan_tree/nogg" validate >/dev/null
-export SPECFORGE_ROOT="$repo"
+export NOGGING_ROOT="$repo"
 git -C "$repo" merge -q --ff-only plan/demo/auth-flow
 git -C "$repo" push -q origin develop
 "$repo/nogg" worktree cleanup plan--demo--auth-flow.json >/dev/null
@@ -64,14 +64,14 @@ git -C "$impl_tree" config user.name 'Workflow Test'
 printf '%s\n' 'implemented' >"$impl_tree/implementation.txt"
 git -C "$impl_tree" add implementation.txt
 git -C "$impl_tree" commit -q -m 'feat: implement demo [SPEC-e2e]'
-export SPECFORGE_ROOT="$impl_tree"
+export NOGGING_ROOT="$impl_tree"
 mkdir -p "$impl_tree/.nogging/state"
 "$impl_tree/nogg" pr open --plan demo --task TASK-DEMO-001 --validation scripts/test >/dev/null
 sed -i 's/"initial_check_after": "[^"]*"/"initial_check_after": "2000-01-01T00:00:00+00:00"/' \
   "$impl_tree/.nogging/state/pull-requests/feat-demo.json"
 "$impl_tree/nogg" pr ci | grep -q 'ready_for_user_review (all checks)'
 
-export SPECFORGE_ROOT="$repo"
+export NOGGING_ROOT="$repo"
 git -C "$repo" merge -q --ff-only feat/demo
 "$repo/nogg" worktree cleanup implementation--spec-e2e.json >/dev/null
 [[ ! -e "$plan_tree" && ! -e "$impl_tree" ]]

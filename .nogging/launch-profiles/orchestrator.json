@@ -1,6 +1,6 @@
 {
   "//": [
-    "SpecForge Orchestration Agent launch profile — the unrestricted authority",
+    "Nogging Orchestration Agent launch profile — the unrestricted authority",
     "level for `session launch --role orchestrator`. Claude Code only: there is",
     "deliberately no orchestrator.codex.toml / orchestrator.pi.toml sibling in",
     "this version (Remote Control, the 'reachable from a phone' requirement, is",

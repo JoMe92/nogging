@@ -1,8 +1,8 @@
 # Third-party notices
 
-SpecForge is licensed under the ISC License. See [`LICENSE`](LICENSE).
+Nogging is licensed under the ISC License. See [`LICENSE`](LICENSE).
 
-## Material distributed with SpecForge
+## Material distributed with Nogging
 
 | Material | Origin | License | Notes |
 | --- | --- | --- | --- |
@@ -12,15 +12,15 @@ SpecForge is licensed under the ISC License. See [`LICENSE`](LICENSE).
 The package does not bundle `node_modules`. JavaScript packages recorded in
 `package-lock.json` are development dependencies and retain their respective
 upstream licenses when installed by a developer. They are not relicensed under
-SpecForge's ISC License.
+Nogging's ISC License.
 
 Repository templates, generated service templates, agent prompts, tests, and
-documentation authored specifically for SpecForge are covered by the root ISC
+documentation authored specifically for Nogging are covered by the root ISC
 License unless a file states otherwise.
 
 ## Independence and trademarks
 
-SpecForge is an independent project. It is not affiliated with, endorsed by,
+Nogging is an independent project. It is not affiliated with, endorsed by,
 or sponsored by Anthropic, OpenAI, the Pi coding agent, OpenSpec, Beads, Dolt,
 GitHub, or their owners. Product and project names are used only to describe
 interoperability. All trademarks belong to their respective owners.

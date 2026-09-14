@@ -1,4 +1,4 @@
-# SpecForge Codex launch spec — the `restricted` authority level for a
+# Nogging Codex launch spec — the `restricted` authority level for a
 # `session launch --agent codex` session. It is the Codex-side sibling of
 # restricted.json: same intent (require approval for non-trivial actions,
 # no outbound network), expressed in Codex's sandbox / approval model.
