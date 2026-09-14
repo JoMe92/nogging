@@ -8,6 +8,7 @@ const install = require('./lib/install');
 const { applyMerges } = require('./lib/merge');
 const { renderSystemd } = require('./lib/systemd');
 const { removeInstallation } = require('./lib/remove');
+const { version: VERSION } = require('../package.json');
 
 const USAGE = `nogg — install the Nogging operating structure into a repo
 
@@ -15,6 +16,7 @@ Usage:
   npx github:JoMe92/nogging <command> [options]
 
 Commands:
+  version   Print the Nogging package version
   init      Install Nogging into the current git repository
   update    Refresh Nogging tool files and re-apply merges (keeps your
             openspec/changes, openspec/project.md and config name)
@@ -26,13 +28,14 @@ Options:
   --no-beads     Skip initializing the Beads issue tracker
   --no-hooks     Skip installing the git hooks
   --no-systemd   Skip rendering the systemd sync unit
+  -v, --version  Print the Nogging package version
   -h, --help     Show this help
 
 init is idempotent and safe to re-run; use update for routine refreshes.
 `;
 
 function parseArgs(argv) {
-  const args = { command: null, dryRun: false, noBeads: false, noHooks: false, noSystemd: false, help: false };
+  const args = { command: null, dryRun: false, noBeads: false, noHooks: false, noSystemd: false, help: false, version: false };
   for (const a of argv) {
     switch (a) {
       case '-h':
@@ -41,6 +44,8 @@ function parseArgs(argv) {
       case '--no-beads': args.noBeads = true; break;
       case '--no-hooks': args.noHooks = true; break;
       case '--no-systemd': args.noSystemd = true; break;
+      case '-v':
+      case '--version': args.version = true; break;
       default:
         if (a.startsWith('-')) {
           throw Object.assign(new Error(`unknown option: ${a}`), { userFacing: true });
@@ -127,6 +132,15 @@ function main() {
     process.exit(2);
   }
 
+  if (args.version) {
+    if (args.command && args.command !== 'version') {
+      process.stderr.write('nogg: --version cannot be combined with another command\n');
+      process.exit(2);
+    }
+    process.stdout.write(`${VERSION}\n`);
+    process.exit(0);
+  }
+
   if (args.help || !args.command) {
     process.stdout.write(USAGE);
     process.exit(args.command ? 0 : (args.help ? 0 : 1));
@@ -134,6 +148,7 @@ function main() {
 
   try {
     switch (args.command) {
+      case 'version': process.stdout.write(`${VERSION}\n`); break;
       case 'init': cmdInit(args); break;
       case 'update': cmdUpdate(args); break;
       case 'remove': cmdRemove(args); break;

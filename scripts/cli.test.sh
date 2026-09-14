@@ -21,6 +21,12 @@ check() { # <description> <test-expr...>
   if "$@"; then echo "ok   - $desc"; else echo "FAIL - $desc"; fail=1; fi
 }
 
+expected_version=$(node -p "require('$root/package.json').version")
+check "version subcommand matches package" \
+  test "$(node "$cli" version)" = "$expected_version"
+check "--version matches package" \
+  test "$(node "$cli" --version)" = "$expected_version"
+
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
