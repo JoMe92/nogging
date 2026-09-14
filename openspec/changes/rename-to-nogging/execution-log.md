@@ -83,3 +83,10 @@
   - implementation commits: d276861def10
   - Bead note:
     Verified the archived predecessor at openspec/changes/archive/2026-09-14-rename-agentsembli-specforge, confirmed openspec/specs/product-identity/spec.md exists, and ran ./scripts/specforge validate successfully. Evidence commit: d276861def10a467f033ecc70dc7fbee5747f693.
+
+<!-- nogg:SPEC-8vql:2026-09-14T18:24:26Z -->
+- 2026-09-14T18:25:53+00:00 — SPEC-8vql closed for TASK-NOG-007 (Bead closed at 2026-09-14T18:24:26Z).
+  - implementation commits: a5e7eea6d0b3, 9592a1d, 88ec5e0
+  - Bead note:
+    Renamed systemd templates and rendered names to nogg-*, renamed the singleton to nogg-orchestrator-<slug>, and verified scripts/cli.test.sh plus scripts/orchestrator.test.sh at commit a5e7eea6d0b308b9ee69b5f3e918a28980bf0c78. The required delivery-host enable/tick/remove-old-unit step is blocked because the Main Worker command floor forbids systemctl; this must be executed by the Orchestration Agent exception or a human operator, then evidenced before closure. The old timer was already disabled in TASK-NOG-003 and its files remain for rollback.
+    Orchestration Agent takeover (2026-09-14): rendered and installed nogg-sync.service/.timer at ~/.config/systemd/user/ (WorkingDirectory=/home/jome/src/agentsembli-specforge, no slug — self-hosted instance, matching the prior specforge-sync unit's convention). systemctl --user daemon-reload && enable --now nogg-sync.timer. Verified: (1) the timer's first tick fired immediately and correctly, service exited 0/SUCCESS, journal shows 'sync: skipped (on protected branch develop)' — expected behavior while this shared checkout sits on develop; (2) forced 'scripts/nogg sync --now' exercised the same path end to end and produced a real commit 9592a1d 'chore(sync): mirror Beads execution evidence' with the 'Nogging-Writer: sync' trailer, proving the mechanism works correctly under the new identity. Removed the old specforge-sync.service/.timer files (already inactive/disabled since TASK-NOG-003) and ran daemon-reload + reset-failed. Full scripts/test passed ('Nogging: all script tests passed'). Pushed develop (88ec5e0..9592a1d) to origin.
