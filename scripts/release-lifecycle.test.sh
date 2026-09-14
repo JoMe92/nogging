@@ -72,4 +72,30 @@ done
 test -f "$target/.nogging/config.json" || fail "remove deleted target configuration"
 pass "remove preserves target-owned planning, Beads, config, state, and agent settings"
 
+# --- update migrates a legacy v1.x .specforge/ state root (TASK-PUB-014) ---
+legacy="$tmp/legacy-target"
+git -C "$tmp" init -q legacy-target
+mkdir -p "$legacy/.specforge/launch-profiles" "$legacy/.specforge/state"
+printf 'legacy launch profile\n' >"$legacy/.specforge/launch-profiles/trusted.json"
+printf 'legacy state\n' >"$legacy/.specforge/state/owner"
+cat >"$legacy/.specforge/config.json" <<'JSON'
+{
+  "name": "legacy-target",
+  "sync_interval_seconds": 30,
+  "specforge_version": "1.6.0"
+}
+JSON
+(cd "$legacy" && node "$tmp/release-2/bin/cli.js" update --no-hooks --no-systemd >/dev/null)
+test ! -e "$legacy/.specforge" || fail "migration left the legacy .specforge/ directory behind"
+test -f "$legacy/.nogging/config.json" || fail "migration did not produce .nogging/config.json"
+grep -q '"nogging_version": "1.7.0"' "$legacy/.nogging/config.json" \
+  || fail "migrated config was not bumped to the running version"
+grep -q 'specforge_version' "$legacy/.nogging/config.json" \
+  && fail "migrated config still carries the legacy version key"
+test -f "$legacy/.nogging/launch-profiles/trusted.json" \
+  || fail "migration lost the legacy launch-profiles directory"
+test -f "$legacy/.nogging/state/owner" \
+  || fail "migration lost the legacy state directory"
+pass "update migrates a legacy .specforge/ state root to .nogging/ in place"
+
 printf 'release lifecycle checks passed\n'

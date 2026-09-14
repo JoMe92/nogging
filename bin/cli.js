@@ -73,6 +73,7 @@ function report(ctx) {
 
 function cmdInit(args) {
   const ctx = install.makeContext(args);
+  install.migrateLegacyStateRoot(ctx);
   const reinstall = fs.existsSync(path.join(ctx.targetRoot, '.nogging/config.json'));
   if (reinstall && !ctx.dryRun) {
     process.stdout.write(
@@ -95,6 +96,7 @@ function cmdInit(args) {
 
 function cmdUpdate(args) {
   const ctx = install.makeContext(args);
+  install.migrateLegacyStateRoot(ctx);
   if (!fs.existsSync(path.join(ctx.targetRoot, '.nogging/config.json'))) {
     throw Object.assign(new Error('no .nogging/config.json — run `init` first'), { userFacing: true });
   }
