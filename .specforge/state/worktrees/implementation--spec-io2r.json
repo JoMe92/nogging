@@ -1,0 +1,10 @@
+{
+  "allocated_at": "2026-09-14T16:56:11+00:00",
+  "base_ref": "origin/develop",
+  "bead_id": "SPEC-io2r",
+  "branch": "feat/rename-to-nogging",
+  "created_at": "2026-09-14T16:56:11+00:00",
+  "kind": "implementation",
+  "path": "/home/jome/src/agentsembli-specforge-spec-io2r",
+  "state": "allocated"
+}

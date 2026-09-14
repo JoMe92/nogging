@@ -9,13 +9,14 @@ and GitHub Releases for that history.
 
 ## [Unreleased]
 
-## [2.0.0-rc.2] - 2026-09-14
+## [2.0.0] - 2026-09-14
 
 A major version bump: the Nogging rename changes technical identifiers
 (CLI command, state root, commit trailer) that a `v1.x` installation
-relied on — see the compatibility note under Changed. Supersedes
-`v2.0.0-rc.1`, which shipped without the `update` migration added below
-and could not upgrade a real v1.x install.
+relied on — see the compatibility note under Changed. Released from
+release candidate `v2.0.0-rc.2` (`v2.0.0-rc.1` was pushed, found unable
+to upgrade a real v1.x install, and superseded by rc.2's `update`
+migration fix) with no further code changes.
 
 ### Changed
 
