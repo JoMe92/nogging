@@ -96,6 +96,36 @@ function writeScaffold(ctx) {
   }
 }
 
+// A v1.x install used `.specforge/` as its state root and
+// `specforge_version` as the recorded-version key. If a target has that
+// legacy root but no `.nogging/config.json` yet, `update` (and a re-run of
+// `init`) would otherwise treat it as never installed and either refuse
+// (update) or silently leave the old directory orphaned (init). Rename the
+// whole directory once, carrying config, launch-profiles, launch-prompts,
+// locks and state across, and rename the version key so recordVersion()
+// naturally bumps it to the running Nogging version afterward.
+function migrateLegacyStateRoot(ctx) {
+  const legacyAbs = path.join(ctx.targetRoot, '.specforge');
+  const currentAbs = path.join(ctx.targetRoot, '.nogging');
+  if (fs.existsSync(currentAbs) || !fs.existsSync(legacyAbs)) return;
+  fs.renameSync(legacyAbs, currentAbs);
+  const configAbs = path.join(currentAbs, 'config.json');
+  if (fs.existsSync(configAbs)) {
+    try {
+      const data = JSON.parse(fs.readFileSync(configAbs, 'utf8'));
+      if ('specforge_version' in data && !('nogging_version' in data)) {
+        data.nogging_version = data.specforge_version;
+        delete data.specforge_version;
+      }
+      fs.writeFileSync(configAbs, JSON.stringify(data, null, 2) + '\n');
+    } catch (_) {
+      // Malformed legacy config: leave it for recordVersion()/writeScaffold()
+      // to sort out rather than aborting the migration over it.
+    }
+  }
+  ctx.log.add('migrate', '.nogging', 'from legacy .specforge/ (v1.x state root)');
+}
+
 // Bump the recorded Nogging version in an existing .nogging/config.json.
 function recordVersion(ctx) {
   const rel = '.nogging/config.json';
@@ -225,6 +255,7 @@ module.exports = {
   slugify,
   makeContext,
   src,
+  migrateLegacyStateRoot,
   copyVerbatim,
   copyDocs,
   writeScaffold,

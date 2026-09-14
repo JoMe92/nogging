@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# Verifies version/tag/changelog consistency for a release.
+#
+# Usage: scripts/release-check [<version>]
+#   <version>   semver without the leading v (e.g. 1.7.0 or 1.7.0-rc.1).
+#               Defaults to the version currently in package.json.
+#
+# Checks, and reports each with OK/FAIL:
+#   - package.json version is valid semver and equals <version>
+#   - package-lock.json's top-level version matches
+#   - CHANGELOG.md has a "## [<version>]" section (not just Unreleased)
+#   - if a "v<version>" tag exists, it points at the current HEAD commit
+#   - the working tree is clean
+#
+# Exits non-zero if any check fails.
+set -euo pipefail
+
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+cd "$root"
+
+fail=0
+ok() { printf 'OK   - %s\n' "$1"; }
+bad() { printf 'FAIL - %s\n' "$1"; fail=1; }
+
+pkg_version=$(node -e "process.stdout.write(require('./package.json').version)")
+version="${1:-$pkg_version}"
+
+semver_re='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'
+if [[ "$version" =~ $semver_re ]]; then
+  ok "version '$version' is valid semver"
+else
+  bad "version '$version' is not valid semver (expected X.Y.Z or X.Y.Z-rc.N)"
+fi
+
+if [[ "$pkg_version" == "$version" ]]; then
+  ok "package.json version matches '$version'"
+else
+  bad "package.json version is '$pkg_version', expected '$version'"
+fi
+
+lock_version=$(node -e "process.stdout.write((require('./package-lock.json').version)||'')")
+if [[ "$lock_version" == "$version" ]]; then
+  ok "package-lock.json version matches '$version'"
+else
+  bad "package-lock.json version is '$lock_version', expected '$version'"
+fi
+
+if grep -qF "## [$version]" CHANGELOG.md; then
+  ok "CHANGELOG.md has a '## [$version]' section"
+else
+  bad "CHANGELOG.md has no '## [$version]' section (still under Unreleased?)"
+fi
+
+tag="v$version"
+if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+  tag_sha=$(git rev-parse "refs/tags/$tag^{commit}")
+  head_sha=$(git rev-parse HEAD)
+  if [[ "$tag_sha" == "$head_sha" ]]; then
+    ok "tag '$tag' points at HEAD ($head_sha)"
+  else
+    bad "tag '$tag' points at $tag_sha, HEAD is $head_sha"
+  fi
+else
+  ok "tag '$tag' does not exist yet (pre-tag check)"
+fi
+
+if [[ -z "$(git status --porcelain)" ]]; then
+  ok "working tree is clean"
+else
+  bad "working tree has uncommitted changes"
+fi
+
+if [[ "$fail" -eq 0 ]]; then
+  printf 'release-check: %s is consistent\n' "$version"
+else
+  printf 'release-check: %s has unresolved problems\n' "$version" >&2
+fi
+exit "$fail"
