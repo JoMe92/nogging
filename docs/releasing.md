@@ -27,10 +27,15 @@ a release candidate or a final release.
    `npm install --package-lock-only`) so `package-lock.json`'s top-level
    version matches.
 
-4. **Commit** the version bump and changelog as
+4. **Bump the pinned install tag** in `README.md` (Quick start and Install
+   into another repo) and `docs/installation.md` from the previous version to
+   `vX.Y.Z`. This was missed across three prior releases before `v2.0.1`,
+   leaving the documented quick start pointed at a stale tag — don't skip it.
+
+5. **Commit** the version bump, changelog, and pin update as
    `chore(release): prepare vX.Y.Z [<Bead ID>]`.
 
-5. **Run the pre-tag consistency check:**
+6. **Run the pre-tag consistency check:**
 
    ```bash
    scripts/release-check X.Y.Z
@@ -39,18 +44,18 @@ a release candidate or a final release.
    This confirms the version is valid semver, `package.json` and
    `package-lock.json` agree, `CHANGELOG.md` has the new section, and the
    working tree is clean. It reports the `vX.Y.Z` tag as "does not exist
-   yet" at this point — that is expected before step 6. Run it *after*
-   committing (step 4): the working-tree-clean check is only meaningful
+   yet" at this point — that is expected before step 7. Run it *after*
+   committing (step 5): the working-tree-clean check is only meaningful
    once the version bump itself is committed.
 
-6. **Tag** the release commit with an annotated tag and push both:
+7. **Tag** the release commit with an annotated tag and push both:
 
    ```bash
    git tag -a vX.Y.Z -m "vX.Y.Z"
    git push origin <branch> vX.Y.Z
    ```
 
-7. **Run the consistency check again**, now against the tag:
+8. **Run the consistency check again**, now against the tag:
 
    ```bash
    scripts/release-check X.Y.Z
@@ -58,7 +63,7 @@ a release candidate or a final release.
 
    Every line SHALL report `OK`, including `tag 'vX.Y.Z' points at HEAD`.
 
-8. **Generate release artifacts** (a package tarball, its SHA-256 checksum,
+9. **Generate release artifacts** (a package tarball, its SHA-256 checksum,
    and a CycloneDX SBOM generated from the lockfile, or an explicit
    not-applicable note if SBOM generation fails):
 
@@ -69,17 +74,17 @@ a release candidate or a final release.
    Output lands under `dist/release/X.Y.Z/` (git-ignored — attach these
    files to the GitHub Release by hand, don't commit them).
 
-9. **Run the exact-tag install smoke test** against the pushed tag:
+10. **Run the exact-tag install smoke test** against the pushed tag:
 
-   ```bash
-   scripts/release-smoke-test github:JoMe92/nogging#vX.Y.Z
-   ```
+    ```bash
+    scripts/release-smoke-test github:JoMe92/nogging#vX.Y.Z
+    ```
 
-   Before pushing a real tag — for example while drafting this procedure or
-   testing a change to it — run the same script against a local path
-   instead for an offline dry run: `scripts/release-smoke-test .`
+    Before pushing a real tag — for example while drafting this procedure or
+    testing a change to it — run the same script against a local path
+    instead for an offline dry run: `scripts/release-smoke-test .`
 
-10. **Hand off to acceptance.** A release candidate or final release still
+11. **Hand off to acceptance.** A release candidate or final release still
     needs the full acceptance evidence (install, upgrade, rollback, uninstall,
     every supported agent path) described in
     [docs/acceptance.md](acceptance.md), filled in from

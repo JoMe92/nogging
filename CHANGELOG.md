@@ -9,6 +9,39 @@ and GitHub Releases for that history.
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-09-15
+
+Documentation-only release: no installed CLI behavior changes.
+
+### Added
+
+- Four diagrams in the README (communication model, tool map, quick start,
+  daily workflow), rendered from the Nogging Claude Design project.
+- A CI status badge and a "Tests and CI" section documenting every
+  `nogging-validate.yml` job.
+- A "Brand" section in the README with the palette sampled from the shipped
+  brand assets.
+- `docs/README.md`, a categorized index of the `docs/` folder (Concepts /
+  Using Nogging / Releasing and maintaining).
+
+### Changed
+
+- Moved the brand asset directory to `docs/brand/` (was `brand/`).
+- Moved product-planning and internal audit/status documents
+  (`docs/product-identity/`, `docs/security/`,
+  `docs/public-release-readiness-report.md`) to the new private
+  `JoMe92/rooftree` companion repository; they are not something an end user
+  of the public tool needs.
+- `docs/architecture.md` is now linked from the README documentation table.
+
+### Fixed
+
+- The Quick start and Install sections were still pinned to the pre-rename
+  `v1.6.0` tag despite `v2.0.0` having been tagged and released; bumped to
+  the current tag.
+- `docs/compatibility.md` still described "Nogging 1.6.x" and linked a
+  superseded acceptance report as "latest".
+
 ## [2.0.0] - 2026-09-14
 
 A major version bump: the Nogging rename changes technical identifiers
