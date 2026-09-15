@@ -26,12 +26,13 @@ grep -q 'a local-first delivery system that carries approved intent' "$identity"
 grep -q '## Technical identifier inventory' "$identity" || fail "technical identifier inventory is missing"
 grep -q 'require no' "$identity" || fail "no-migration lifecycle decision is missing"
 
-# The legacy URL is provenance only. Its one maintained occurrence is the
-# migration/rollback record; all active destinations must use the successor.
+# The legacy URL is provenance only. The migration/rollback record that used
+# to carry it now lives in the private rooftree companion repo; nothing in
+# this repository should mention it any more.
 legacy_repo="JoMe92/spec""forge"
 legacy_hits=$(git grep -l "$legacy_repo" -- ':!openspec/**' ':!scripts/nogging-identity.test.sh' || true)
-test "$legacy_hits" = "docs/security/successor-migration-2026-09-10.md" \
-  || fail "legacy repository URL escaped its transition-document allowlist"
+test -z "$legacy_hits" \
+  || fail "legacy repository URL appears outside the archived openspec history: $legacy_hits"
 
 grep -q 'npx github:JoMe92/nogging' bin/cli.js || fail "CLI install command changed identity"
 grep -q "'scripts/nogg'" bin/lib/manifest.js || fail "installed command path changed identity"
