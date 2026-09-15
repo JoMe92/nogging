@@ -87,6 +87,6 @@
   "author": "Jonas Meier",
   "license": "ISC",
   "devDependencies": {
-    "@fission-ai/openspec": "^1.11.0"
+    "@fission-ai/openspec": "^1.13.0"
   }
 }
