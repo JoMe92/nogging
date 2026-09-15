@@ -54,7 +54,7 @@ grep -q 'independent$' README.md && grep -q '^implementation and is not affiliat
   || fail "README independence statement is missing"
 grep -q 'only Gas Town' README.md || fail "README Beads-only adoption boundary is missing"
 grep -q 'optional sibling' README.md || fail "README does not keep Agent Console optional"
-grep -q 'npx github:JoMe92/nogging#v2.0.0 init --no-systemd' README.md \
+grep -q 'npx github:JoMe92/nogging#v2.0.1 init --no-systemd' README.md \
   || fail "README quick start is not pinned to the supported GitHub tag"
 ! grep -q 'git@github.com' README.md || fail "README assumes private SSH repository access"
 grep -q 'Nogging validation' .github/workflows/nogging-validate.yml || fail "workflow display name is stale"

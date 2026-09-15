@@ -27,7 +27,7 @@ other.
 | `bash`, coreutils | the harness and `scripts/test` | — |
 | `bd` (Beads) + `dolt` | real-backend run only ([A] + full [M]); the `--mechanical` subset stubs both | `bd version`, `dolt version` |
 | An **isolated** Beads workspace | so acceptance Beads never mix with real work | run in a throwaway repo, or a dedicated `.beads` |
-| `v1.1.1` pushed + tagged on `JoMe92/nogging` | the real `npx github:` install path (step 3) | `git ls-remote --tags` |
+| The release-candidate tag pushed on `JoMe92/nogging` | the real `npx github:` install path (step 3) | `git ls-remote --tags` |
 
 The mechanical subset (`scripts/acceptance.sh --mechanical`) needs only `git`,
 `node`, `bash` and coreutils — it stubs `bd` and `dolt` and needs no backend and
@@ -76,10 +76,10 @@ no network. That subset also runs from `scripts/test` (via
 
 ### 4. Real-distribution install check — [A]
 
-- **Prerequisite:** `v1.1.1` pushed and tagged on `JoMe92/nogging`; network
-  access.
+- **Prerequisite:** the release-candidate tag pushed on `JoMe92/nogging`;
+  network access.
 - **Do:** in a **second** throwaway repo,
-  `npx github:JoMe92/nogging#v1.1.1 init`.
+  `npx github:JoMe92/nogging#<tag> init`.
 - **Expected:** the published package installs the same file set as step 2 and
   prints a readiness verdict. If the repository is not yet pushed/tagged, record
   this step **skipped** with that reason.
