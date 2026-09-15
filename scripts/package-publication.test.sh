@@ -44,6 +44,6 @@ grep -q 'distributed from tagged GitHub releases' "$publish_log" \
   || fail "publish refusal does not explain the GitHub-only route"
 
 grep -q 'unscoped npm name' README.md || fail "README does not document the npm name collision"
-grep -q 'github:JoMe92/nogging#v1.6.0' README.md || fail "README does not use a pinned GitHub tag"
+grep -q 'github:JoMe92/nogging#v2.0.1' README.md || fail "README does not use a pinned GitHub tag"
 
 printf 'GitHub-only package publication policy: ok\n'

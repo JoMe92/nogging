@@ -1,6 +1,6 @@
 # Compatibility policy and matrix
 
-This page defines the supported environment for Nogging 1.6.x. “Supported”
+This page defines the supported environment for Nogging 2.0.x. “Supported”
 means the project claims the combination and supplies CI or recorded manual
 evidence. “Optional” means the core local workflow works without the component.
 Versions newer than the validated baseline are expected to work within the same
@@ -33,7 +33,7 @@ a hard gate, because they are not stable APIs.
 | Ubuntu Linux, x86_64 | Supported | GitHub Actions runs functional, install, validation, and acceptance jobs |
 | Debian-family Linux, aarch64 | Supported | dated Raspberry Pi acceptance report and maintainer-host full suite |
 | Other Linux distributions / architectures | Experimental | run `doctor`, the full suite, and the acceptance runbook before relying on them |
-| macOS, Windows, WSL | Unsupported for 1.6.x | no release gate covers path, shell, service-manager, or sandbox behavior |
+| macOS, Windows, WSL | Unsupported for 2.0.x | no release gate covers path, shell, service-manager, or sandbox behavior |
 | systemd user services | Optional, supported on declared Linux hosts | install may use `--no-systemd`; generated units are tested |
 | Other service managers | Unsupported | use manual `./scripts/nogg sync --now`; no persistent-unit claim |
 
@@ -68,6 +68,6 @@ Current evidence entry points:
 
 - [CI workflow](https://github.com/JoMe92/nogging/actions/workflows/nogging-validate.yml)
 - [Acceptance runbook](https://github.com/JoMe92/nogging/blob/develop/docs/acceptance.md)
-- [Latest recorded Raspberry Pi acceptance](https://github.com/JoMe92/nogging/blob/develop/docs/acceptance/2026-09-10-agentsembli-specforge-v1.5.0-rc.1.md)
+- [Latest recorded Raspberry Pi acceptance](https://github.com/JoMe92/nogging/blob/develop/docs/acceptance/2026-09-14-raspberrypi.md)
 - [Codex integration evidence and limitations](using-with-codex.md)
 - [Pi integration evidence and limitations](using-with-pi.md)
