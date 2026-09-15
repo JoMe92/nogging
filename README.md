@@ -50,13 +50,7 @@ the current machine against the required tool set.
 The phases may run at the same time. Planning is session-based, not a resident
 LLM process. The Main Worker and specialist agents must never edit `openspec/`.
 
-```text
-Product Owner + Planning Agent ──writes──> OpenSpec ──materializes──> Beads
-                                                               │
-Main Worker + specialists ──implement/validate/close──────────┘
-                                                               │
-Sync timer ──mechanically mirrors status and evidence──> execution-log.md
-```
+![Who talks to whom: Product Owner, the Planning Agent and Main Worker personas, six advisory specialists, and the sync timer, connected through OpenSpec, Beads and Git](brand/nogging-communication-model.png)
 
 ## Quick start
 
