@@ -67,7 +67,7 @@ Start in a new or existing Git repository. The command is pinned because the
 initial distribution is GitHub-only:
 
 ```bash
-npx github:JoMe92/nogging#v1.6.0 init --no-systemd
+npx github:JoMe92/nogging#v2.0.0 init --no-systemd
 ./scripts/nogg doctor
 ./scripts/nogg validate
 ```
@@ -121,7 +121,7 @@ Nogging GitHub tag instead:
 
 ```bash
 cd /path/to/your-repo
-npx github:JoMe92/nogging#v1.6.0 init      # then: update, doctor
+npx github:JoMe92/nogging#v2.0.0 init      # then: update, doctor
 ```
 
 `init` copies the tool files verbatim, writes an OpenSpec scaffold only where one
@@ -131,6 +131,9 @@ touches `openspec/changes/`, `.beads/`, or your `package.json`. Full details in
 [docs/installation.md](docs/installation.md).
 
 ## Documentation
+
+Full index, grouped by concepts / using Nogging / releasing and maintaining:
+[docs/README.md](docs/README.md).
 
 | Need | Guide |
 | --- | --- |
