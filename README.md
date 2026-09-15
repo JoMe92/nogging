@@ -36,6 +36,8 @@ existing Git repository, OpenSpec installation, or Beads tracker.
 - **Other systems:** macOS, Windows, other service managers, and unlisted agent
   versions are not currently claimed as supported.
 
+![What runs on top of what: four callers — the Product Owner, an agent session, the sync timer, and Git hooks — reach the single scripts/nogg CLI, which shells out to OpenSpec, Beads, Git, Dolt, tmux, and systemd and stores state in openspec/, .beads/, .git/, and .nogging/](brand/nogging-tool-map.png)
+
 See the [compatibility policy and matrix](docs/compatibility.md) for minimum
 versions, supported combinations, and evidence. `./scripts/nogg doctor` checks
 the current machine against the required tool set.
@@ -52,6 +54,11 @@ LLM process. The Main Worker and specialist agents must never edit `openspec/`.
 
 ![Who talks to whom: Product Owner, the Planning Agent and Main Worker personas, six advisory specialists, and the sync timer, connected through OpenSpec, Beads and Git](brand/nogging-communication-model.png)
 
+A worked example, from reading the agreed intent to the evidence landing back
+in it — every command below is one you actually type:
+
+![Working with it day to day: a worked example that reads OpenSpec and Beads, plans a change in a locked planning worktree, implements one Bead in a supervised session, and lets the sync timer mirror the closed work back into OpenSpec as evidence](brand/nogging-daily-workflow.png)
+
 ## Quick start
 
 Start in a new or existing Git repository. The command is pinned because the
@@ -66,6 +73,8 @@ npx github:JoMe92/nogging#v1.6.0 init --no-systemd
 `init` creates the Beads tracker by default and prints a readiness verdict. It
 does not require a website or Agent Console. Remove `--no-systemd` only after
 reviewing the security and background-service implications below.
+
+![From zero to a running repo: install the required and optional components, install Nogging into the repository with an exact pinned tag, verify the machine with nogg doctor, optionally enable background sync, then work the plan / materialize / execute / mirror loop](brand/nogging-quick-start.png)
 
 Maintainers developing Nogging itself clone the repository and run
 `./scripts/install-hooks`. To create a change, allocate a dedicated planning
