@@ -206,24 +206,3 @@ plus the following, on every push and pull request:
 | `dependency-review` | `npm audit`-based dependency scanning |
 
 The badge at the top of this file tracks the `main` branch.
-
-## Brand
-
-The Nogging identity — logo, banner, social card, and the four diagrams
-embedded above — lives in [`docs/brand/`](docs/brand/). The palette below is
-sampled directly from those shipped files, not a proposal:
-
-| Name | Hex | Use |
-| --- | --- | --- |
-| Ink | `#1f3320` | Dark bars, wordmark, primary text |
-| Moss | `#7c9c7e` | Light bars, primary accent |
-| Moss — light | `#94b18f` | Secondary accent, dark-mode accent |
-| Overlap | `#4a5b4c` | Where two bars cross — used sparingly, for emphasis only |
-| Paper | `#f7f8f5` | Ground / page background |
-
-The wordmark uses a bold, rounded geometric sans (heavy weight, tight
-tracking, lowercase); no typeface is fixed yet for running text or UI beyond
-that mark. In timber framing, a **nogging** is the horizontal brace fitted
-between two upright studs — it keeps them from twisting independently and
-turns a row of separate members into one stable frame. That is the whole
-pitch: structure through connection, not a central node.
