@@ -135,6 +135,7 @@ touches `openspec/changes/`, `.beads/`, or your `package.json`. Full details in
 | Need | Guide |
 | --- | --- |
 | Concepts and architecture | [Vision and architecture](docs/vision-and-architecture.md) |
+| Data contracts and safety layers | [Architecture](docs/architecture.md) |
 | Install, update, and remove | [Installation](docs/installation.md) |
 | Roles and delivery workflow | [Operating model](docs/operating-model.md) |
 | Isolated Git worktrees | [Worktree workflow](docs/worktree-workflow.md) |

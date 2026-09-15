@@ -15,7 +15,8 @@ fill an acceptance report's `Signed-off-by:` field.
 - [ ] Confirm the legacy `JoMe92/nogg` repository is private. Its hidden
   pull-request refs make public visibility unsafe.
 - [ ] Confirm the private recovery bundle checksum and restore notes described
-  in `docs/security/successor-migration-2026-09-10.md`.
+  in `reports/2026-09-10-successor-migration.md` in the private
+  [`JoMe92/rooftree`](https://github.com/JoMe92/rooftree) companion repo.
 - [ ] Confirm `SECURITY.md` gives the applicable private-phase reporting route.
 - [ ] Confirm the candidate acceptance report is committed and its
   `Signed-off-by:` value is empty.
