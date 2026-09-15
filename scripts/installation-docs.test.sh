@@ -15,7 +15,7 @@ for flag in --dry-run --no-beads --no-hooks --no-systemd; do
   grep -q -- "$flag" "$docs" || fail "installation guide omits $flag"
 done
 
-grep -q 'github:JoMe92/nogging#v1.6.0 init' "$docs" || fail "install command is not pinned"
+grep -q 'github:JoMe92/nogging#v2.0.1 init' "$docs" || fail "install command is not pinned"
 grep -q 'runs `bd init` automatically' "$docs" || fail "default Beads initialization is undocumented"
 grep -q '### Without systemd' "$docs" || fail "non-systemd operation is undocumented"
 grep -q 'Updating and rolling back' "$docs" || fail "rollback is undocumented"

@@ -5,7 +5,7 @@ you want to adopt the operating model.
 
 ```bash
 cd /path/to/your-repo
-npx github:JoMe92/nogging#v1.6.0 init
+npx github:JoMe92/nogging#v2.0.1 init
 ```
 
 Always pin a released tag; do not install an unpinned default branch. Until the

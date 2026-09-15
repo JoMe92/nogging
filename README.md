@@ -1,6 +1,8 @@
-![Nogging — structure for what's next](brand/nogging-banner.png)
+![Nogging — structure for what's next](docs/brand/nogging-banner.png)
 
 # Nogging
+
+[![Nogging validation](https://github.com/JoMe92/nogging/actions/workflows/nogging-validate.yml/badge.svg?branch=main)](https://github.com/JoMe92/nogging/actions/workflows/nogging-validate.yml)
 
 **Structure for what's next.**
 
@@ -36,6 +38,8 @@ existing Git repository, OpenSpec installation, or Beads tracker.
 - **Other systems:** macOS, Windows, other service managers, and unlisted agent
   versions are not currently claimed as supported.
 
+![What runs on top of what: four callers — the Product Owner, an agent session, the sync timer, and Git hooks — reach the single scripts/nogg CLI, which shells out to OpenSpec, Beads, Git, Dolt, tmux, and systemd and stores state in openspec/, .beads/, .git/, and .nogging/](docs/brand/nogging-tool-map.png)
+
 See the [compatibility policy and matrix](docs/compatibility.md) for minimum
 versions, supported combinations, and evidence. `./scripts/nogg doctor` checks
 the current machine against the required tool set.
@@ -50,13 +54,12 @@ the current machine against the required tool set.
 The phases may run at the same time. Planning is session-based, not a resident
 LLM process. The Main Worker and specialist agents must never edit `openspec/`.
 
-```text
-Product Owner + Planning Agent ──writes──> OpenSpec ──materializes──> Beads
-                                                               │
-Main Worker + specialists ──implement/validate/close──────────┘
-                                                               │
-Sync timer ──mechanically mirrors status and evidence──> execution-log.md
-```
+![Who talks to whom: Product Owner, the Planning Agent and Main Worker personas, six advisory specialists, and the sync timer, connected through OpenSpec, Beads and Git](docs/brand/nogging-communication-model.png)
+
+A worked example, from reading the agreed intent to the evidence landing back
+in it — every command below is one you actually type:
+
+![Working with it day to day: a worked example that reads OpenSpec and Beads, plans a change in a locked planning worktree, implements one Bead in a supervised session, and lets the sync timer mirror the closed work back into OpenSpec as evidence](docs/brand/nogging-daily-workflow.png)
 
 ## Quick start
 
@@ -64,7 +67,7 @@ Start in a new or existing Git repository. The command is pinned because the
 initial distribution is GitHub-only:
 
 ```bash
-npx github:JoMe92/nogging#v1.6.0 init --no-systemd
+npx github:JoMe92/nogging#v2.0.1 init --no-systemd
 ./scripts/nogg doctor
 ./scripts/nogg validate
 ```
@@ -72,6 +75,8 @@ npx github:JoMe92/nogging#v1.6.0 init --no-systemd
 `init` creates the Beads tracker by default and prints a readiness verdict. It
 does not require a website or Agent Console. Remove `--no-systemd` only after
 reviewing the security and background-service implications below.
+
+![From zero to a running repo: install the required and optional components, install Nogging into the repository with an exact pinned tag, verify the machine with nogg doctor, optionally enable background sync, then work the plan / materialize / execute / mirror loop](docs/brand/nogging-quick-start.png)
 
 Maintainers developing Nogging itself clone the repository and run
 `./scripts/install-hooks`. To create a change, allocate a dedicated planning
@@ -116,7 +121,7 @@ Nogging GitHub tag instead:
 
 ```bash
 cd /path/to/your-repo
-npx github:JoMe92/nogging#v1.6.0 init      # then: update, doctor
+npx github:JoMe92/nogging#v2.0.1 init      # then: update, doctor
 ```
 
 `init` copies the tool files verbatim, writes an OpenSpec scaffold only where one
@@ -127,9 +132,13 @@ touches `openspec/changes/`, `.beads/`, or your `package.json`. Full details in
 
 ## Documentation
 
+Full index, grouped by concepts / using Nogging / releasing and maintaining:
+[docs/README.md](docs/README.md).
+
 | Need | Guide |
 | --- | --- |
 | Concepts and architecture | [Vision and architecture](docs/vision-and-architecture.md) |
+| Data contracts and safety layers | [Architecture](docs/architecture.md) |
 | Install, update, and remove | [Installation](docs/installation.md) |
 | Roles and delivery workflow | [Operating model](docs/operating-model.md) |
 | Isolated Git worktrees | [Worktree workflow](docs/worktree-workflow.md) |
@@ -171,14 +180,50 @@ running [docs/acceptance.md](docs/acceptance.md) and filled in from
 [docs/acceptance-report-template.md](docs/acceptance-report-template.md). The
 mechanical subset of that runbook runs unattended as the `acceptance` CI job.
 
-## Tests
+## Tests and CI
 
 ```bash
 scripts/test   # runs every scripts/**/*.test.sh; also `npm test`
 ```
 
 The runner is language-neutral and offline: bash and coreutils only, no Node,
-no network, and no running Beads/Dolt server (tests that need `bd` stub it). CI
-runs it on every push and pull request. It covers the `commit-msg` boundary
-hook — Beads ID accepted, missing ID rejected, and the `planning`/`sync`
-`NOGGING_WRITER` exemptions.
+no network, and no running Beads/Dolt server (tests that need `bd` stub it). It
+covers the `commit-msg` boundary hook — Beads ID accepted, missing ID rejected,
+and the `planning`/`sync` `NOGGING_WRITER` exemptions.
+
+[Nogging validation](.github/workflows/nogging-validate.yml) runs this suite,
+plus the following, on every push and pull request:
+
+| Job | Checks |
+| --- | --- |
+| `compatibility` | The tool-version matrix from [docs/compatibility.md](docs/compatibility.md) |
+| `script-tests` | `scripts/test` — every `scripts/**/*.test.sh` |
+| `installer` | `nogg init` / `update` against a scratch repository |
+| `validate` | `openspec validate --strict` over the committed changes |
+| `acceptance` | The mechanical subset of [docs/acceptance.md](docs/acceptance.md) |
+| `invariants` | The `openspec/` write boundary and archived-change consistency |
+| `public-release-gates` | Release-readiness checks from [docs/releasing.md](docs/releasing.md) |
+| `dependency-review` | `npm audit`-based dependency scanning |
+
+The badge at the top of this file tracks the `main` branch.
+
+## Brand
+
+The Nogging identity — logo, banner, social card, and the four diagrams
+embedded above — lives in [`docs/brand/`](docs/brand/). The palette below is
+sampled directly from those shipped files, not a proposal:
+
+| Name | Hex | Use |
+| --- | --- | --- |
+| Ink | `#1f3320` | Dark bars, wordmark, primary text |
+| Moss | `#7c9c7e` | Light bars, primary accent |
+| Moss — light | `#94b18f` | Secondary accent, dark-mode accent |
+| Overlap | `#4a5b4c` | Where two bars cross — used sparingly, for emphasis only |
+| Paper | `#f7f8f5` | Ground / page background |
+
+The wordmark uses a bold, rounded geometric sans (heavy weight, tight
+tracking, lowercase); no typeface is fixed yet for running text or UI beyond
+that mark. In timber framing, a **nogging** is the horizontal brace fitted
+between two upright studs — it keeps them from twisting independently and
+turns a row of separate members into one stable frame. That is the whole
+pitch: structure through connection, not a central node.
