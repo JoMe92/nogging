@@ -9,6 +9,19 @@ and GitHub Releases for that history.
 
 ## [Unreleased]
 
+## [2.0.2] - 2026-09-16
+
+Documentation-only release: no installed CLI behavior changes.
+
+### Removed
+
+- The README's "Brand" section (palette hex table, typography note, the
+  nogging timber-framing etymology, voice guidance). Brand-design detail an
+  end user of the tool doesn't need — it already lives, more completely, in
+  the private `JoMe92/rooftree` companion repo. `docs/brand/` itself (the
+  actual logo/banner/social-card/diagram image assets the README embeds) is
+  unaffected.
+
 ## [2.0.1] - 2026-09-15
 
 Documentation-only release: no installed CLI behavior changes.
