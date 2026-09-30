@@ -1444,6 +1444,12 @@ def session_launch(role, bead, cwd, read_only, owner,
         else:
             claude_session_id = str(uuid.uuid4())
             inner += ["--session-id", claude_session_id]
+        if is_orchestrator:
+            # The "reachable from a phone" requirement is Remote Control, which
+            # `claude` only turns on when asked — it is never automatic. Without
+            # this the orchestrator's own docs (docs/operating-model.md:
+            # "the launched session registers with Remote Control") were false.
+            inner += ["--remote-control", name]
     if agent == "claude":
         # Write the merged, floored settings for THIS session and pass that file
         # to Claude — never the source profile, which is left untouched. The
