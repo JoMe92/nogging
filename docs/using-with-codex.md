@@ -55,6 +55,11 @@ the Claude trusted path: it pushes the feature branch, fast-forward-merges into
 session has no network, so `git push`, `bd sync`, and `dolt push|pull` all fail;
 it stops and reports instead.
 
+Both levels additionally pass `--add-dir <shared checkout root>`, unconditionally
+alongside `--cd <worktree>`, so the shared checkout's `.git`/`.beads` stay
+writable from inside the worktree sandbox even at `restricted` — `bd` and local
+`git` commit still need that, independent of the network-access column above.
+
 ### The execpolicy floor — `.codex/rules/nogging.rules`
 
 Codex loads every `*.rules` file under `<repo>/.codex/rules/` (once the
