@@ -1,0 +1,105 @@
+#!/usr/bin/env sh
+# Nogging bootstrap installer.
+#
+# Provisions the whole Nogging toolchain on a fresh machine: Node (via nvm),
+# the npm-distributed agent CLIs, `bd` and `dolt`, the `git`/`tmux`/`gh`
+# system packages, then runs the Nogging payload installer against a target
+# repository and `scripts/nogg doctor`. Idempotent: every step checks the
+# pinned version first and skips whatever already satisfies it, so re-running
+# this script (e.g. after a partial failure) is safe.
+#
+# Usage:
+#   curl -fsSL https://raw.githubusercontent.com/JoMe92/nogging/<tag>/scripts/bootstrap | bash
+#   scripts/bootstrap [--repo <path>] [--with-pi]
+#
+# This script intentionally avoids bash-only syntax (arrays, [[ ]], etc.) so
+# it stays POSIX-sh compatible, even though the documented one-liner above
+# pipes it into `bash`.
+set -eu
+
+# --- Pinned versions --------------------------------------------------------
+# Kept in sync with docs/compatibility.md's validated baseline. Checked by
+# scripts/compatibility.test.sh's pin-consistency assertion — bump both
+# together, never just one.
+NVM_VERSION="v0.40.1"
+NODE_LTS_PIN="22"
+NODE_LTS_LINE="18 20 22"
+CLAUDE_CODE_VERSION="2.1.260"
+CODEX_VERSION="0.148.0"
+OPENSPEC_VERSION="1.11.0"
+PI_VERSION="0.85.0"
+BD_VERSION="1.2.2"
+DOLT_VERSION="2.3.1"
+NOGGING_TAG="v2.0.2"
+
+usage() {
+  cat <<'EOF'
+Usage: bootstrap [--repo <path>] [--with-pi]
+
+  --repo <path>  target repository to initialize Nogging into (default: .)
+                 created and `git init`-ed first if it does not exist yet.
+  --with-pi      also install the optional Pi coding agent CLI (pinned
+                 version); not installed by default.
+EOF
+}
+
+report_step() {
+  # report_step <tool> <skipped|installed|upgraded> <detail>
+  printf 'bootstrap: %-28s %-9s %s\n' "$1" "$2" "$3"
+}
+
+# --- Step 1: platform gate ---------------------------------------------------
+# docs/compatibility.md: supported is Debian/Ubuntu-family Linux, x86_64 or
+# aarch64, only. This must run and fail before anything else is touched.
+check_platform() {
+  # Overridable only for scripts/compatibility.test.sh's gate check; a real
+  # run always reads the live files/commands (the defaults below).
+  os_release_file="${NOGGING_BOOTSTRAP_OS_RELEASE:-/etc/os-release}"
+  arch="${NOGGING_BOOTSTRAP_UNAME_M:-}"
+  [ -n "$arch" ] || arch=$(uname -m)
+
+  os_id="" os_id_like=""
+  if [ -r "$os_release_file" ]; then
+    os_id=$(. "$os_release_file" && printf '%s' "${ID:-}")
+    os_id_like=$(. "$os_release_file" && printf '%s' "${ID_LIKE:-}")
+  fi
+  platform_ok=0
+  case " $os_id $os_id_like " in
+    *" debian "*|*" ubuntu "*) platform_ok=1 ;;
+  esac
+  arch_ok=0
+  case "$arch" in
+    x86_64|aarch64) arch_ok=1 ;;
+  esac
+  if [ "$platform_ok" -ne 1 ] || [ "$arch_ok" -ne 1 ]; then
+    cat >&2 <<EOF
+Nogging bootstrap supports Debian/Ubuntu-family Linux on x86_64 or aarch64
+only (see docs/compatibility.md). Detected: ID="$os_id" ID_LIKE="$os_id_like"
+arch="$arch". Other Linux distributions/architectures are experimental, not
+installable by this script; macOS, Windows, and WSL are unsupported for
+2.0.x. Nothing has been installed.
+EOF
+    exit 1
+  fi
+}
+
+main() {
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -h|--help) usage; exit 0 ;;
+      *) echo "bootstrap: unknown argument: $1" >&2; usage >&2; exit 1 ;;
+    esac
+  done
+
+  check_platform
+  # Further provisioning steps (Node, the npm-distributed CLIs, bd/dolt,
+  # system packages, and the final `init`/`doctor` wiring) land in later
+  # commits of this change, each gated behind this same platform check.
+}
+
+# NOGGING_BOOTSTRAP_NO_MAIN lets scripts/compatibility.test.sh source this
+# file to unit-check individual functions (e.g. check_platform) without
+# running the real installer.
+if [ "${NOGGING_BOOTSTRAP_NO_MAIN:-0}" != "1" ]; then
+  main "$@"
+fi
