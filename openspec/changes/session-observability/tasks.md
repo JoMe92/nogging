@@ -1,6 +1,6 @@
 # Tasks — session observability
 
-- [ ] TASK-SOB-001 Add the `Adapter` data shape (`design.md` Decision 1) and
+- [x] TASK-SOB-001 Add the `Adapter` data shape (`design.md` Decision 1) and
       ship the `claude` and `codex` pattern tables verbatim as specified.
       Implement classification: strip `ignore` matches from the last ~15
       pane lines, then check states in precedence order
@@ -9,7 +9,7 @@
       captures (no live agent required), including the specific
       `Auto-update failed` false-positive regression case.
 
-- [ ] TASK-SOB-002 Add `scripts/nogg session watch [--all-running | <name>...]
+- [x] TASK-SOB-002 Add `scripts/nogg session watch [--all-running | <name>...]
       [--interval 30] [--stall-after 15m] [--format lines|jsonl]`. Poll each
       named session (default: every live session from `session list`),
       classify via TASK-SOB-001's adapters keyed off the session record's own
