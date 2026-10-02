@@ -34,7 +34,7 @@
       review the merged `specs/`, `validate`, commit as the `planning`
       writer) before authoring any new change content.
 
-- [ ] TASK-TCC-005 Update `.nogging/launch-prompts/orchestrator.md` and
+- [x] TASK-TCC-005 Update `.nogging/launch-prompts/orchestrator.md` and
       `docs/operating-model.md`'s *Orchestration* section: when `doctor`
       reports a change ready to archive, the Orchestration Agent directs a
       planning session to run the archive step (TASK-TCC-004) — either by
