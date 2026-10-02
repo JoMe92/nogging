@@ -1976,6 +1976,48 @@ def session_watch(names, interval, stall_after, fmt, once=False):
             time.sleep(interval)
     except KeyboardInterrupt:
         return
+# --- session observability: send --------------------------------------
+def _submit_pane_input(name, agent):
+    tmux("send-keys", "-t", name, "Enter")
+    if agent == "claude":
+        # Known quirk: Claude Code requires a second bare Enter to actually
+        # submit a multi-line paste.
+        tmux("send-keys", "-t", name, "Enter")
+def _pane_input_pending(name, agent):
+    """Whether a just-sent message is still sitting unsubmitted. For codex
+    this is exactly the adapter's `needs_input` (`undelivered_input`) signal
+    (design.md); claude has no such structural signal yet, so this is always
+    False for it — the second bare Enter above is the known fix, not a
+    condition `send --verify` can detect and branch on."""
+    if agent != "codex":
+        return False
+    return classify(session_pane_text(name), CODEX_ADAPTER) == "needs_input"
+def codex_queue_send(rec, message):
+    """Primary send path for a codex session once TASK-SOB-006 confirms
+    `codex queue --thread <THREAD> --message <TEXT>` resolves against a
+    scripts/nogg-launched session. Returns True if it delivered the message
+    (the caller then skips the Layer-1 pane-based send entirely), False to
+    fall back to Layer 1. Never raises."""
+    return False
+def session_send(name, message, verify=False):
+    """Send `message` to a managed session via the agent-appropriate
+    key-injection sequence. With `verify`, confirm it was actually submitted
+    (not left sitting in the input box) and retry the submit step once if
+    not (design.md's `send --verify` requirement)."""
+    _, rec = load_session(name)
+    if not tmux_has_session(name):
+        raise RuntimeError(f"{name} has no live tmux session; cannot send")
+    agent = rec.get("agent") or "claude"
+    if agent == "codex" and codex_queue_send(rec, message):
+        print(f"sent to {name} (codex queue)")
+        return
+    tmux("send-keys", "-t", name, "-l", message)
+    _submit_pane_input(name, agent)
+    if verify and _pane_input_pending(name, agent):
+        _submit_pane_input(name, agent)             # retry the submit step once
+        if _pane_input_pending(name, agent):
+            raise RuntimeError(f"{name}: message still unsubmitted after a retry")
+    print(f"sent to {name}")
 # --- orchestrator: the always-on supervisor ------------------------------
 # `orchestrator run` is the idempotent process the systemd user service starts.
 # The thing kept alive is a normal supervised Claude session (a durable record,
@@ -2628,6 +2670,9 @@ def main():
     sw.add_argument("--format", choices=("lines", "jsonl"), default="lines")
     sw.add_argument("--once", action="store_true",
                     help="run exactly one polling pass then exit (scripting/testing)")
+    ssend = ssub.add_parser("send")
+    ssend.add_argument("name"); ssend.add_argument("message")
+    ssend.add_argument("--verify", action="store_true")
     args = p.parse_args()
     if args.command == "plan-begin":
         lock("planning", CFG["planning_lock_ttl_seconds"], args.force)
@@ -2680,6 +2725,8 @@ def session_cmd(args):
         if args.names and args.all_running:
             raise RuntimeError("session watch: pass session names or --all-running, not both")
         session_watch(args.names, args.interval, args.stall_after, args.format, args.once)
+    elif args.session_command == "send":
+        session_send(args.name, args.message, args.verify)
 if __name__ == "__main__":
     try: main()
     except Exception as exc: print(f"nogg: {exc}", file=sys.stderr); sys.exit(1)

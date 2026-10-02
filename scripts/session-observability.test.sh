@@ -285,6 +285,50 @@ docgrep() {
 docgrep "$repo_root/docs/failure-recovery.md"
 docgrep "$repo_root/docs/using-with-codex.md"
 
+# ===========================================================================
+# TASK-SOB-005: session send — literal paste + the claude second-Enter
+# quirk, and --verify retrying the submit step once before failing loudly
+# ===========================================================================
+root="$work/send-claude"; make_obs_root "$root"
+export NOGGING_ROOT="$root"
+export TMUX_STUB_DIR="$work/send-claude-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-s01"
+"$nogg" session launch --role lead --bead SPEC-s01 >/dev/null 2>&1
+name="$(sess_name "$root")"
+: >"$TMUX_STUB_DIR/calls.log"
+out_s=$(mktemp)
+"$nogg" session send "$name" "continue please" >"$out_s" 2>&1 \
+  || { echo "FAIL - send: errored"; cat "$out_s"; fail=1; }
+grep -qF -- "send-keys -t $name -l continue please" "$TMUX_STUB_DIR/calls.log" \
+  && ok "send: the literal message is pasted via send-keys -l" \
+  || { echo "FAIL - send: literal paste not sent"; cat "$TMUX_STUB_DIR/calls.log"; fail=1; }
+enter_count=$(grep -cF -- "send-keys -t $name Enter" "$TMUX_STUB_DIR/calls.log")
+[[ "$enter_count" == "2" ]] \
+  && ok "send: claude gets the second-bare-Enter quirk (2 Enters)" \
+  || { echo "FAIL - send: expected 2 Enters for claude, got $enter_count"; fail=1; }
+unset NOGGING_ROOT
+
+root="$work/send-codex"; make_obs_root "$root"
+export NOGGING_ROOT="$root"
+export TMUX_STUB_DIR="$work/send-codex-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-s02"
+"$nogg" session launch --role lead --bead SPEC-s02 --agent codex --profile restricted >/dev/null 2>&1
+name="$(sess_name "$root")"
+printf '[Pasted Content]\n> Ask Codex to do anything\n' >"$TMUX_STUB_DIR/pane-$name.txt"
+: >"$TMUX_STUB_DIR/calls.log"
+"$nogg" session send "$name" "continue please" --verify >"$out_s" 2>&1 \
+  && { echo "FAIL - send --verify: should have failed (message stays stuck)"; cat "$out_s"; fail=1; } \
+  || ok "send --verify: raises when the message is still unsubmitted after a retry"
+grep -qF "still unsubmitted after a retry" "$out_s" \
+  && ok "send --verify: the error names the retry" \
+  || { echo "FAIL - send --verify: unexpected error text"; cat "$out_s"; fail=1; }
+submit_enters=$(grep -cF -- "send-keys -t $name Enter" "$TMUX_STUB_DIR/calls.log")
+[[ "$submit_enters" == "2" ]] \
+  && ok "send --verify: the submit step was retried exactly once" \
+  || { echo "FAIL - send --verify: expected 2 submit attempts, got $submit_enters"; fail=1; }
+rm -f "$out_s"
+unset NOGGING_ROOT
+
 if [[ $fail -ne 0 ]]; then
   echo "session-observability: FAILED" >&2
   exit 1
