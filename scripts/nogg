@@ -42,6 +42,35 @@ def require_kebab(value, label):
     if not KEBAB_RE.fullmatch(value or ""):
         raise RuntimeError(f"{label} must be a non-empty kebab-case value")
     return value
+PERSONAS = CFG.get("personas", {})
+def persona_identity(slug):
+    """The `(name, email)` commit identity for a roster persona `slug`, from
+    `.nogging/config.json`'s `personas` table. Raises if the slug is missing
+    or incomplete — an unconfigured persona must fail loudly rather than let
+    a commit land under no identity or the operator's own."""
+    entry = PERSONAS.get(slug)
+    if not isinstance(entry, dict) or not entry.get("name") or not entry.get("email"):
+        raise RuntimeError(f"persona roster has no complete entry for '{slug}'")
+    return entry["name"], entry["email"]
+def ensure_worktree_config_extension(path):
+    """Idempotently enable `extensions.worktreeConfig` for the repository at
+    `path` (a linked worktree or the main checkout) so a later
+    `git config --worktree` call scopes to that one worktree/checkout instead
+    of the shared `.git/config`."""
+    current = run("git", "-C", str(path), "config", "--get",
+                  "extensions.worktreeConfig", check=False)
+    if current.stdout.strip() != "true":
+        run("git", "-C", str(path), "config", "extensions.worktreeConfig", "true")
+def set_persona_identity(path, slug):
+    """Set the worktree-scoped `user.name`/`user.email` at `path` (a linked
+    worktree or the main checkout) to the roster identity for `slug`, so
+    every commit made there for the rest of its life carries the right
+    author automatically (design.md Decision 1) — no per-commit flag an
+    agent could forget to pass."""
+    ensure_worktree_config_extension(path)
+    name, email = persona_identity(slug)
+    run("git", "-C", str(path), "config", "--worktree", "user.name", name)
+    run("git", "-C", str(path), "config", "--worktree", "user.email", email)
 def worktree_record_path(kind, identifier, description):
     return WORKTREE_STATE / f"{kind}--{identifier}--{description}.json"
 def write_worktree_record(path, record):
