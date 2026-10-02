@@ -6,6 +6,7 @@ It intentionally contains no LLM call and makes no semantic product decision.
 from __future__ import annotations
 
 import argparse, datetime as dt, getpass, json, os, re, shlex, shutil, signal, socket, subprocess, sys, time, uuid
+from dataclasses import dataclass, field
 from pathlib import Path
 
 # ROOT is the repository the bridge operates on. It defaults to the checkout the
@@ -1109,6 +1110,68 @@ def sync_now():
         # The timer grabbed the lock between the check above and sync()'s own
         # acquire. Same outcome: report, do not retry.
         print(f"{exc}; the timer is mid-pass — not retrying")
+# --- session observability: per-agent state adapters -----------------------
+# An Adapter is a plain data record, not a single global keyword table: an
+# `ignore` pattern list (benign chrome stripped before classifying) plus
+# ordered per-state pattern lists. This is a direct fix for the hand-rolled
+# predecessor's false-positive problem — every Claude pane permanently
+# showing `Auto-update failed: no write permission to npm prefix`, which a
+# bare `failed` keyword match flagged as needing attention forever (#23).
+@dataclass
+class Adapter:
+    name: str
+    ignore: list = field(default_factory=list)
+    working: list = field(default_factory=list)
+    waiting_bg: list = field(default_factory=list)
+    needs_input: list = field(default_factory=list)
+    limit: list = field(default_factory=list)
+    idle: list = field(default_factory=list)
+
+def _pats(*patterns, flags=0):
+    return [re.compile(p, flags) for p in patterns]
+
+# Patterns are shipped verbatim from design.md's production-observed tables
+# (#23) — not re-derived — because re-guessing them would re-risk the exact
+# false-positive class this change exists to fix.
+CLAUDE_ADAPTER = Adapter(
+    name="claude",
+    ignore=_pats(r"Auto-update failed", r"Tip:"),
+    working=_pats(r"esc to interrupt"),
+    waiting_bg=_pats(r"\d+ shells?( still running)?", r"\d+ monitors?"),
+    needs_input=_pats(r"Do you want to proceed", r"Allow this", r"❯ 1\. Yes"),
+    limit=_pats(r"usage limit reached", r"rate limit", flags=re.I),
+    idle=_pats(r"❯\s*$"),
+)
+CODEX_ADAPTER = Adapter(
+    name="codex",
+    working=_pats(r"Working \("),
+    idle=_pats(r"Ask Codex to do anything"),
+    # `undelivered_input`: `Pasted Content` sitting visible is the lost-
+    # message failure mode itself (#23) — pane text otherwise reads idle.
+    needs_input=_pats(r"Pasted Content"),
+)
+ADAPTERS = {"claude": CLAUDE_ADAPTER, "codex": CODEX_ADAPTER}
+# Classification precedence, fixed: `limit` > `needs_input` > `working` >
+# `waiting_background` > `idle`, else `unknown`.
+_CLASSIFY_ORDER = (
+    ("limit", "limit"), ("needs_input", "needs_input"),
+    ("working", "working"), ("waiting_bg", "waiting_background"),
+    ("idle", "idle"),
+)
+def classify(pane_text, adapter):
+    """Classify `pane_text` (a captured tmux pane) under `adapter`.
+
+    Reads only the last ~15 lines (never full scrollback), strips lines
+    matching `adapter.ignore` first, then checks states in the fixed
+    precedence order above. Returns `unknown` when nothing matches."""
+    lines = (pane_text or "").splitlines()[-15:]
+    kept = [ln for ln in lines
+            if not any(p.search(ln) for p in adapter.ignore)]
+    for attr, state in _CLASSIFY_ORDER:
+        patterns = getattr(adapter, attr)
+        if patterns and any(p.search(ln) for ln in kept for p in patterns):
+            return state
+    return "unknown"
 # --- session supervision ---------------------------------------------------
 # A thin, mechanical layer that runs each Nogging-launched Claude Code
 # session inside a named tmux session on a dedicated server socket, tracks it
