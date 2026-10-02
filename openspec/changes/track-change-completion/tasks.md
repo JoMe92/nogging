@@ -25,7 +25,7 @@
       mapped to that change is closed, print a NOTE naming the change as
       ready to archive. Never a FAIL; never changes `doctor`'s exit code.
 
-- [ ] TASK-TCC-004 Add a conditional archive step to `/plan`'s sequence,
+- [x] TASK-TCC-004 Add a conditional archive step to `/plan`'s sequence,
       placed after discovery review and before the design dialogue, in every
       place the sequence is documented: `.claude/commands/plan.md`,
       `.codex/prompts/plan.md`, and the step table in
