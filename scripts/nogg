@@ -1874,6 +1874,32 @@ def parse_duration(spec):
     if not m:
         raise RuntimeError(f"not a duration: {spec!r} (expected e.g. 30, 30s, 15m, 2h)")
     return float(m.group(1)) * _DURATION_UNITS[m.group(2)]
+_CLOCK_TIME_RE = re.compile(r"\b(\d{1,2}):(\d{2})\s*([AaPp][Mm])?\b")
+def resolve_clock_time(text, now=None):
+    """Resolve the first bare `HH:MM` / `H:MM AM/PM` token in `text` to an
+    absolute ISO 8601 timestamp against `now`'s local date (design.md
+    Decision 2), rolling to the next day when the parsed time precedes
+    `now`. Returns None when no time-like token is found or it does not
+    resolve to a valid time."""
+    m = _CLOCK_TIME_RE.search(text or "")
+    if not m:
+        return None
+    now = now or dt.datetime.now()
+    hour, minute, ampm = int(m.group(1)), int(m.group(2)), m.group(3)
+    if not (0 <= minute < 60):
+        return None
+    if ampm:
+        if not (1 <= hour <= 12):
+            return None
+        hour = hour % 12
+        if ampm.lower() == "pm":
+            hour += 12
+    elif not (0 <= hour < 24):
+        return None
+    candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if candidate < now:
+        candidate += dt.timedelta(days=1)
+    return candidate.isoformat()
 def session_pane_text(name):
     """The session's current visible pane (no scrollback), or '' if its tmux
     session does not exist."""
@@ -1919,10 +1945,15 @@ def watch_poll_once(tracked, stall_secs, fmt):
             _, rec = load_session(name)
         except RuntimeError:
             continue
-        state, _pane = classify_session(rec, live)
+        state, pane = classify_session(rec, live)
         prev = st.get("state")
         if state != prev:
-            _emit_watch_event(fmt, name, state)
+            fields = {}
+            if state == "limit":
+                until = resolve_clock_time(pane)
+                if until:
+                    fields["until"] = until
+            _emit_watch_event(fmt, name, state, **fields)
             st["state"], st["stalled"] = state, False
         elif state == "working" and not st.get("stalled"):
             log_path = Path(rec.get("log_path") or "")
