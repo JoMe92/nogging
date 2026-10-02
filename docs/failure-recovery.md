@@ -92,6 +92,24 @@ Nogging adds no `bd dolt commit` checkpoint of its own in `sync` or
 propagation is a separate concern — that is `bd dolt push` to a remote, which
 the mechanical layer never does.)
 
+## Diverged Dolt histories under multi-machine mode
+
+With `multi_machine: true` (see `AGENTS.md` *Multi-machine mode*), two
+machines writing Beads before either has pulled the other's commits becomes a
+newly *likely* scenario — it was always possible, just unlikely without a
+protocol encouraging concurrent local writes. `bd dolt push`/`pull` already
+detect this and refuse rather than silently lose history: `bd` reports
+**"Local and remote Dolt histories have diverged."**
+
+Nogging does not add a second, parallel recovery procedure for this — follow
+`bd`'s own guidance, printed under **"Recovery (bootstrap from one canonical
+clone):"**: pick one machine's clone as canonical and re-bootstrap the others
+from it. Re-bootstrapping a non-canonical clone discards its unpushed work, so
+export anything not yet pushed from it first (`bd export`) before
+re-bootstrapping. `./scripts/nogg doctor`'s "local Dolt is N commit(s) ahead
+of its remote" NOTE is the earlier warning that heads this off — push from
+each machine before another machine's session starts pulling.
+
 ## Discoveries closed before review
 
 `./scripts/nogg discoveries` lists every `discovery`-labelled Bead
