@@ -234,11 +234,41 @@ ensure_system_packages() {
   report_step "git/tmux/gh" "installed" "installed:$missing"
 }
 
+# --- Step 6: the Nogging payload itself, then doctor -------------------------
+run_nogging_init() {
+  repo="$1"
+  if [ ! -d "$repo" ]; then
+    mkdir -p "$repo"
+  fi
+  if [ ! -d "$repo/.git" ]; then
+    git -C "$repo" init
+  fi
+  ( cd "$repo" && npx --yes "github:JoMe92/nogging#${NOGGING_TAG}" init )
+
+  doctor_status=0
+  if [ -x "$repo/scripts/nogg" ]; then
+    ( cd "$repo" && ./scripts/nogg doctor ) || doctor_status=$?
+  else
+    echo "bootstrap: scripts/nogg not found in $repo after init" >&2
+    doctor_status=1
+  fi
+
+  if [ "$doctor_status" -eq 0 ]; then
+    echo "bootstrap: done — scripts/nogg doctor reports every required tool present and in range"
+  else
+    echo "bootstrap: done, but scripts/nogg doctor reported problems above (exit $doctor_status) — see FAIL/WARN lines" >&2
+  fi
+  return "$doctor_status"
+}
+
 main() {
   with_pi=0
+  repo="."
   while [ $# -gt 0 ]; do
     case "$1" in
       --with-pi) with_pi=1; shift ;;
+      --repo) repo="${2:?--repo needs a path}"; shift 2 ;;
+      --repo=*) repo="${1#--repo=}"; shift ;;
       -h|--help) usage; exit 0 ;;
       *) echo "bootstrap: unknown argument: $1" >&2; usage >&2; exit 1 ;;
     esac
@@ -256,7 +286,7 @@ main() {
   ensure_dolt
   ensure_bd
   ensure_system_packages
-  # The final init/doctor wiring lands in a later commit of this change.
+  run_nogging_init "$repo"
 }
 
 # NOGGING_BOOTSTRAP_NO_MAIN lets scripts/compatibility.test.sh source this
