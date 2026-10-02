@@ -89,7 +89,11 @@ the specialist's return **you**:
 
 1. validate the work (run `scripts/test` or the narrower suite);
 2. write the evidence note — `bd update <id> --append-notes "commit <sha>; <evidence>"`;
-3. commit with a Conventional subject carrying the `[<ID>]` token;
+3. commit with a Conventional subject carrying the `[<ID>]` token, adding a
+   `Co-authored-by: <persona name> <persona email>` trailer naming the
+   specialist whose delegated, incorporated work contributed to the commit
+   (roster in `.nogging/config.json`'s `personas` key — e.g. `Co-authored-by:
+   Nogging Backend Engineer <backend-engineer@nogging.bot>`);
 4. `bd close <id>`.
 
 If a specialist reports a plan-relevant finding, you record the discovery per
