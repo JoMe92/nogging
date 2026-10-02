@@ -77,5 +77,63 @@ check "roster: unknown persona raises" "ok   - roster: an unconfigured persona s
 refute "roster: no FAIL lines" "FAIL"
 unset NOGGING_ROOT
 
+unset NOGGING_ROOT
+
+# ===========================================================================
+# Scenario: worktree plan sets the planner identity inside the new worktree
+# ===========================================================================
+root="$work/wt-plan"; make_root "$root"
+remote="$work/wt-plan-origin.git"; git init -q --bare "$remote"
+git -C "$root" branch develop
+git -C "$root" remote add origin "$remote"
+git -C "$root" push -q origin develop
+export NOGGING_ROOT="$root"
+destination="$work/wt-plan-destination"
+"$nogg" worktree plan agent-identity commit-identity --path "$destination" >"$out" 2>&1 \
+  || { echo "FAIL - wt-plan: allocation errored"; cat "$out"; fail=1; }
+[[ "$(git -C "$destination" config --worktree --get user.name)" == "Nogging Planner" ]] \
+  && echo "ok   - wt-plan: worktree-scoped user.name is Nogging Planner" \
+  || { echo "FAIL - wt-plan: user.name is $(git -C "$destination" config --get user.name 2>/dev/null || echo unset)"; fail=1; }
+[[ "$(git -C "$destination" config --worktree --get user.email)" == "planner@nogging.bot" ]] \
+  && echo "ok   - wt-plan: worktree-scoped user.email is planner@nogging.bot" \
+  || { echo "FAIL - wt-plan: user.email is $(git -C "$destination" config --get user.email 2>/dev/null || echo unset)"; fail=1; }
+[[ "$(git -C "$root" config --get extensions.worktreeConfig)" == "true" ]] \
+  && echo "ok   - wt-plan: extensions.worktreeConfig enabled on the shared repo" \
+  || { echo "FAIL - wt-plan: extensions.worktreeConfig not enabled"; fail=1; }
+[[ "$(git -C "$root" config --get user.name)" == "Operator" ]] \
+  && echo "ok   - wt-plan: the shared checkout's own identity is untouched" \
+  || { echo "FAIL - wt-plan: shared checkout identity changed to $(git -C "$root" config --get user.name)"; fail=1; }
+printf 'planned\n' >"$destination/plan-evidence.txt"
+git -C "$destination" add plan-evidence.txt
+git -C "$destination" commit -q -m 'docs: validated plan' -m 'Nogging-Writer: planning'
+[[ "$(git -C "$destination" log -1 --format='%an <%ae>')" == "Nogging Planner <planner@nogging.bot>" ]] \
+  && echo "ok   - wt-plan: a commit made with no author flag carries the planner identity" \
+  || { echo "FAIL - wt-plan: commit author is $(git -C "$destination" log -1 --format='%an <%ae>')"; fail=1; }
+git -C "$root" worktree remove --force "$destination"
+unset NOGGING_ROOT
+
+# ===========================================================================
+# Scenario: worktree implement sets the lead identity inside the new worktree
+# ===========================================================================
+root="$work/wt-implementation"; make_root "$root"
+remote="$work/wt-implementation-origin.git"; git init -q --bare "$remote"
+git -C "$root" branch develop
+git -C "$root" remote add origin "$remote"
+git -C "$root" push -q origin develop
+export NOGGING_ROOT="$root"
+export BD_FIXTURE="$work/wt-implementation-beads.json"
+printf '[{"id":"SPEC-impl","status":"in_progress","labels":[]}]\n' >"$BD_FIXTURE"
+destination="$work/wt-implementation-destination"
+"$nogg" worktree implement SPEC-impl feat/demo --path "$destination" >"$out" 2>&1 \
+  || { echo "FAIL - wt-implementation: allocation errored"; cat "$out"; fail=1; }
+[[ "$(git -C "$destination" config --worktree --get user.name)" == "Nogging Lead" ]] \
+  && echo "ok   - wt-implementation: worktree-scoped user.name is Nogging Lead" \
+  || { echo "FAIL - wt-implementation: user.name is $(git -C "$destination" config --get user.name 2>/dev/null || echo unset)"; fail=1; }
+[[ "$(git -C "$destination" config --worktree --get user.email)" == "lead@nogging.bot" ]] \
+  && echo "ok   - wt-implementation: worktree-scoped user.email is lead@nogging.bot" \
+  || { echo "FAIL - wt-implementation: user.email is $(git -C "$destination" config --get user.email 2>/dev/null || echo unset)"; fail=1; }
+git -C "$root" worktree remove --force "$destination"
+unset NOGGING_ROOT BD_FIXTURE
+
 if [[ $fail -ne 0 ]]; then echo "commit-identity checks failed" >&2; exit 1; fi
 echo "commit identity: ok"

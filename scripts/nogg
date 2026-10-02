@@ -151,6 +151,7 @@ def planning_worktree(planning_id, description, location=None):
     # diagnosable rather than silently losing the allocation request.
     write_worktree_record(record_path, record)
     run("git", "worktree", "add", "-b", branch, str(location), base)
+    set_persona_identity(location, "planner")
     record["state"] = "allocated"
     record["allocated_at"] = now()
     write_worktree_record(record_path, record)
@@ -186,6 +187,7 @@ def implementation_worktree(bead_id, branch, location=None):
               "kind": "implementation", "path": str(location), "state": "allocating", "base_ref": base}
     write_worktree_record(record_path, record)
     run("git", "worktree", "add", "-b", branch, str(location), base)
+    set_persona_identity(location, "lead")
     record["state"], record["allocated_at"] = "allocated", now()
     write_worktree_record(record_path, record)
     print(f"implementation worktree allocated: {location}")
