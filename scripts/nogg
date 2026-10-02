@@ -193,6 +193,30 @@ def implementation_worktree(bead_id, branch, location=None):
     print(f"implementation worktree allocated: {location}")
     print(f"branch: {branch} (from {base}; Bead {bead_id})")
     print(f"record: {record_path.relative_to(ROOT)}")
+WORKTREE_KIND_PERSONA = {"planning": "planner", "implementation": "lead"}
+def persona_mismatch_notes():
+    """A NOTE (never a FAIL) for each recorded, still-registered worktree
+    whose `user.name` does not match its role's expected persona — catches a
+    worktree created before this change, or one where identity-setting
+    silently failed."""
+    notes = []
+    known = git_worktree_paths()
+    for _path, record in worktree_records():
+        if not isinstance(record, dict):
+            continue
+        slug = WORKTREE_KIND_PERSONA.get(record.get("kind"))
+        location = record.get("path")
+        if not slug or not isinstance(location, str) or location not in known:
+            continue
+        try:
+            expected_name, _expected_email = persona_identity(slug)
+        except RuntimeError:
+            continue
+        actual = run("git", "-C", location, "config", "--get", "user.name", check=False).stdout.strip()
+        if actual != expected_name:
+            notes.append(f"worktree {Path(location).name} ({record['kind']}) user.name is "
+                         f"{actual or '(unset)'}, expected {expected_name}")
+    return notes
 def cleanup_worktree(record_name):
     """Retire only a clean recorded worktree whose branch reached develop."""
     path = WORKTREE_STATE / record_name
@@ -2316,6 +2340,7 @@ def doctor(audit=False, with_recover=False):
         notes.append(f"recover checks could not run: {exc}")
     notes.append(f"recover: {len(rattention)} item(s) need attention"
                  + (f" — {', '.join(rattention)}" if rattention else " (nothing in flight)"))
+    notes.extend(persona_mismatch_notes())
     for note in notes: print(f"NOTE  {note}")
     recover_lines = []
     if with_recover:

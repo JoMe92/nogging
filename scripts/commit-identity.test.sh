@@ -161,5 +161,30 @@ JSON
   || { echo "FAIL - sync-identity: commit committer is $(git -C "$root" log -1 --format='%cn <%ce>')"; fail=1; }
 unset NOGGING_ROOT BD_FIXTURE
 
+unset NOGGING_ROOT BD_FIXTURE
+
+# ===========================================================================
+# Scenario: doctor NOTEs a worktree whose identity doesn't match its persona
+# ===========================================================================
+root="$work/doctor-mismatch"; make_root "$root"
+remote="$work/doctor-mismatch-origin.git"; git init -q --bare "$remote"
+git -C "$root" branch develop
+git -C "$root" remote add origin "$remote"
+git -C "$root" push -q origin develop
+export NOGGING_ROOT="$root"
+export BD_FIXTURE="$work/doctor-mismatch-beads.json"; printf '[]\n' >"$BD_FIXTURE"
+destination="$work/doctor-mismatch-destination"
+"$nogg" worktree plan agent-identity doctor-note --path "$destination" >/dev/null 2>&1
+"$nogg" doctor >"$out" 2>&1 || true
+refute "doctor-mismatch: no NOTE while the identity matches its persona" \
+  "user.name is Nogging Planner, expected Nogging Planner"
+# simulate a pre-change worktree / silently failed identity-set
+git -C "$destination" config --worktree user.name 'Workflow Test'
+"$nogg" doctor >"$out" 2>&1 || true
+check "doctor-mismatch: NOTEs a worktree whose user.name does not match its persona" \
+  "user.name is Workflow Test, expected Nogging Planner"
+git -C "$root" worktree remove --force "$destination"
+unset NOGGING_ROOT BD_FIXTURE
+
 if [[ $fail -ne 0 ]]; then echo "commit-identity checks failed" >&2; exit 1; fi
 echo "commit identity: ok"
