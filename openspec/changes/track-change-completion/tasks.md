@@ -40,7 +40,7 @@
       planning session to run the archive step (TASK-TCC-004) — either by
       starting one, or by naming it to an already-running one.
 
-- [ ] TASK-TCC-006 Run `scripts/test`. Manually verify TASK-TCC-001/002 by
+- [x] TASK-TCC-006 Run `scripts/test`. Manually verify TASK-TCC-001/002 by
       closing a throwaway mapped Bead, running `task-done`, and confirming
       the exact `tasks.md` line ticks and `sync()`'s later pass is a no-op
       for that line. Manually verify TASK-TCC-003 by closing every Bead of a
