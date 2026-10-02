@@ -956,10 +956,18 @@ def sync(on_request=False):
             if tick_task_line(f, task): changed.append(f)
         if changed:
             run("git", "add", *sorted({str(p.relative_to(ROOT)) for p in changed}))
+            # `sync`'s working directory is whatever branch the timer finds
+            # checked out — commonly the shared checkout, which may also host
+            # the orchestrator's own `git config --worktree` identity. A
+            # direct author/committer override here avoids fighting over that
+            # shared `--worktree` config with whichever persona set it last.
+            sync_name, sync_email = persona_identity("sync")
             run("git", "commit",
                 "-m", "chore(sync): mirror Beads execution evidence",
                 "-m", "Nogging-Writer: sync",
-                env={**os.environ, "NOGGING_WRITER": "sync"})
+                env={**os.environ, "NOGGING_WRITER": "sync",
+                     "GIT_AUTHOR_NAME": sync_name, "GIT_AUTHOR_EMAIL": sync_email,
+                     "GIT_COMMITTER_NAME": sync_name, "GIT_COMMITTER_EMAIL": sync_email})
             print(f"synced {len(set(changed))} file(s)")
         else: print("sync: no changes")
         prev = read_last_success()

@@ -135,5 +135,31 @@ destination="$work/wt-implementation-destination"
 git -C "$root" worktree remove --force "$destination"
 unset NOGGING_ROOT BD_FIXTURE
 
+unset NOGGING_ROOT BD_FIXTURE
+
+# ===========================================================================
+# Scenario: the sync mirror commit carries the Nogging Sync identity
+# ===========================================================================
+root="$work/sync-identity"; make_root "$root"
+git -C "$root" commit -q --allow-empty -m "feat(demo): first demo thing [SPEC-d01]"
+export NOGGING_ROOT="$root"
+export BD_FIXTURE="$work/sync-identity-beads.json"
+cat >"$BD_FIXTURE" <<'JSON'
+[
+  {"id": "SPEC-d01", "status": "closed",
+   "closed_at": "2026-09-01T10:00:00Z", "updated_at": "2026-09-01T10:00:00Z",
+   "notes": "commit abc1234; implemented the first demo thing",
+   "labels": ["openspec:change:demo", "openspec:task:TASK-DEMO-001"]}
+]
+JSON
+"$nogg" sync >"$out" 2>&1 || { echo "FAIL - sync-identity: sync errored"; cat "$out"; fail=1; }
+[[ "$(git -C "$root" log -1 --format='%an <%ae>')" == "Nogging Sync <sync@nogging.bot>" ]] \
+  && echo "ok   - sync-identity: mirror commit author is Nogging Sync" \
+  || { echo "FAIL - sync-identity: commit author is $(git -C "$root" log -1 --format='%an <%ae>')"; fail=1; }
+[[ "$(git -C "$root" log -1 --format='%cn <%ce>')" == "Nogging Sync <sync@nogging.bot>" ]] \
+  && echo "ok   - sync-identity: mirror commit committer is Nogging Sync" \
+  || { echo "FAIL - sync-identity: commit committer is $(git -C "$root" log -1 --format='%cn <%ce>')"; fail=1; }
+unset NOGGING_ROOT BD_FIXTURE
+
 if [[ $fail -ne 0 ]]; then echo "commit-identity checks failed" >&2; exit 1; fi
 echo "commit identity: ok"
