@@ -105,13 +105,17 @@ shape and staleness rule, independent of the planning lock).
 **Default scope is orchestrate-only.** The Orchestration Agent reads the whole
 state (Beads, OpenSpec, session records and logs, `git`) and drives the loop by
 running `scripts/nogg` — `session launch|attach|log|stop`, `sync --now`,
-`recover`, `discoveries` — plus `bd` and `git` (read, and a local
+`recover`, `discoveries`, `doctor` — plus `bd` and `git` (read, and a local
 fast-forward integration). It does **not** write any file under `openspec/` and
 does **not** edit implementation code. When a spec change is needed it starts or
 directs a planning session; when a change is ready it launches a Lead session
 and steers it through the log and `attach`. It never does the sub-session's Bead
 work itself, and the sub-sessions it launches keep their normal
-`restricted` / `trusted` profiles — only the conductor is unfenced.
+`restricted` / `trusted` profiles — only the conductor is unfenced. When
+`doctor` reports a `NOTE change ready to archive: <change>`, it directs a
+planning session to run `/plan`'s archive step for that change — starting one
+if none is running, or naming the change to one already running — and never
+runs `openspec archive` itself.
 
 **Explicit takeover.** Only on an explicit in-session operator instruction of
 the form `/orchestrate takeover {plan|code} <description>` does it perform one

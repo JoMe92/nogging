@@ -217,6 +217,25 @@ else
   bad "/plan: conditional archive step missing or misplaced (see output above)"
 fi
 
+# --- 4c. the Orchestration Agent directs archive-readiness to planning -----
+#     (TASK-TCC-005): never runs `openspec archive` itself.
+for f in .nogging/launch-prompts/orchestrator.md docs/operating-model.md; do
+  grep -q 'ready to archive' "$f" \
+    && ok "$f names doctor's archive-readiness NOTE" \
+    || bad "$f does not mention doctor's archive-readiness NOTE"
+  grep -q 'planning session' "$f" \
+    && echo "$f" | grep -q . \
+    && grep -A2 'ready to archive' "$f" | grep -qi 'planning session' \
+    && ok "$f directs a planning session to handle it" \
+    || bad "$f does not direct a planning session to handle archive-readiness"
+done
+orch_flat="$(tr '\n' ' ' < .nogging/launch-prompts/orchestrator.md)"
+if [[ "$orch_flat" =~ never\ runs?\ .openspec\ archive.\ (your|it)self ]]; then
+  ok "orchestrator.md: the Orchestration Agent never runs openspec archive itself"
+else
+  bad "orchestrator.md: missing the explicit 'never runs openspec archive itself' rule"
+fi
+
 # --- 5. the resumption protocol + playbook exist (TASK-RIR-007) ----------
 if python3 - <<'PY'
 import re, sys
