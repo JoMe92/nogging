@@ -10,7 +10,7 @@
       `design.md`, Decision 2, for why this is safe and idempotent either
       order).
 
-- [ ] TASK-TCC-002 Update the Lead Agent close protocol everywhere it is
+- [x] TASK-TCC-002 Update the Lead Agent close protocol everywhere it is
       documented — `AGENTS.md`, `templates/claude-block.md`,
       `templates/agents-block.md` — to call `scripts/nogg task-done <id>`
       immediately after `bd close <id>`, bundled into the same commit as the
