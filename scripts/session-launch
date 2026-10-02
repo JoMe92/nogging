@@ -74,6 +74,11 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# The shared checkout root: resolved from the script's own location, not
+# `pwd`, so it is the same directory regardless of the session's `--cwd`
+# (a worktree). Only the codex) branch uses it (--add-dir, below).
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)
+
 [ -n "$cwd" ] && cd "$cwd"
 
 case "$agent" in
@@ -110,7 +115,11 @@ case "$agent" in
     [ "$read_only" -eq 1 ] && sandbox="read-only"
     : "${sandbox:=workspace-write}"
     : "${approval:=on-request}"
-    set -- --cd "$(pwd)" --sandbox "$sandbox" --ask-for-approval "$approval"
+    # --add-dir is unconditional, at every authority level: the shared
+    # checkout's .git/.beads must stay writable even for a `restricted`
+    # (network-off) session, which still commits locally and runs local
+    # bd/scripts/nogg commands inside its worktree (design.md, Decision 3).
+    set -- --cd "$(pwd)" --add-dir "$repo_root" --sandbox "$sandbox" --ask-for-approval "$approval"
     # Emit the network_access override explicitly in both directions rather than
     # omitting it for `on` and leaning on the codex default: the trusted profile
     # (network on) must be able to `git push` to complete an integration, the
