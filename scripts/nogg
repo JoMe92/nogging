@@ -1861,6 +1861,90 @@ def session_log(name, follow):
     if follow:
         os.execvp("tail", ["tail", "-n", "+1", "-F", str(lp)])
     sys.stdout.write(lp.read_text())
+# --- session observability: watch -------------------------------------
+# `watch` polls each tracked session's pane, classifies it per-agent
+# (Decision 1), and emits one event per state transition plus `stalled`
+# (Decision 3) — never a firehose, never a daemon; it is a foreground
+# command run under whatever already supervises the operator.
+_DURATION_RE = re.compile(r"^(\d+(?:\.\d+)?)\s*([smh]?)$")
+_DURATION_UNITS = {"s": 1, "m": 60, "h": 3600, "": 1}
+def parse_duration(spec):
+    """Parse a bounded duration like `30`, `30s`, `15m`, `2h` to seconds."""
+    m = _DURATION_RE.match(str(spec).strip())
+    if not m:
+        raise RuntimeError(f"not a duration: {spec!r} (expected e.g. 30, 30s, 15m, 2h)")
+    return float(m.group(1)) * _DURATION_UNITS[m.group(2)]
+def session_pane_text(name):
+    """The session's current visible pane (no scrollback), or '' if its tmux
+    session does not exist."""
+    res = tmux("capture-pane", "-p", "-t", name, check=False)
+    return res.stdout if res.returncode == 0 else ""
+def classify_session(rec, live=None):
+    """One-shot Layer-1 (pane-scraping) state classification for a managed
+    session record. Returns `(state, pane_text)`."""
+    name = rec.get("name")
+    live = tmux_sessions() if live is None else live
+    if name not in live:
+        return "ended", ""
+    agent = rec.get("agent") or "claude"
+    adapter = ADAPTERS.get(agent)
+    if adapter is None:
+        return "unknown", ""
+    pane = session_pane_text(name)
+    return classify(pane, adapter), pane
+def _watch_targets(names):
+    if names:
+        return list(names)
+    live = tmux_sessions()
+    return [rec["name"] for _, rec in session_records()
+            if reconciled_state(rec, live) in SESSION_ACTIVE_STATES]
+def _emit_watch_event(fmt, name, event, **fields):
+    if fmt == "jsonl":
+        print(json.dumps({"time": now(), "session": name, "event": event, **fields}))
+    else:
+        extra = " ".join(f"{k}={v}" for k, v in fields.items() if v is not None)
+        line = f"{now()} {name} {event}"
+        print(f"{line} {extra}" if extra else line)
+    sys.stdout.flush()
+def watch_poll_once(tracked, stall_secs, fmt):
+    """One polling pass over every session in `tracked`, a mutable
+    `{name: {"state": str|None, "stalled": bool}}` map the caller carries
+    across polls. Emits an event only on a state change, plus one `stalled`
+    event (not repeated) when a `working` session's pane and log are both
+    unchanged for `stall_secs`. Factored out of `session_watch`'s loop so it
+    is testable without a real `sleep`."""
+    live = tmux_sessions()
+    for name, st in tracked.items():
+        try:
+            _, rec = load_session(name)
+        except RuntimeError:
+            continue
+        state, _pane = classify_session(rec, live)
+        prev = st.get("state")
+        if state != prev:
+            _emit_watch_event(fmt, name, state)
+            st["state"], st["stalled"] = state, False
+        elif state == "working" and not st.get("stalled"):
+            log_path = Path(rec.get("log_path") or "")
+            if log_path.exists() and (time.time() - log_path.stat().st_mtime) >= stall_secs:
+                _emit_watch_event(fmt, name, "stalled")
+                st["stalled"] = True
+def session_watch(names, interval, stall_after, fmt, once=False):
+    stall_secs = parse_duration(stall_after)
+    tracked = {name: {"state": None, "stalled": False} for name in _watch_targets(names)}
+    if not tracked:
+        print("no sessions to watch"); return
+    try:
+        while True:
+            if not names:   # re-resolve "every live session" each pass
+                for nm in _watch_targets(names):
+                    tracked.setdefault(nm, {"state": None, "stalled": False})
+            watch_poll_once(tracked, stall_secs, fmt)
+            if once:
+                return
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        return
 # --- orchestrator: the always-on supervisor ------------------------------
 # `orchestrator run` is the idempotent process the systemd user service starts.
 # The thing kept alive is a normal supervised Claude session (a durable record,
@@ -2504,6 +2588,15 @@ def main():
     scl = ssub.add_parser("cleanup"); scl.add_argument("name", nargs="?")
     scl.add_argument("--reap", action="store_true",
                      help="first move vanished active sessions to failed, then clean up")
+    sw = ssub.add_parser("watch")
+    sw.add_argument("names", nargs="*", default=[])
+    sw.add_argument("--all-running", action="store_true",
+                    help="watch every live session (the default when no names are given)")
+    sw.add_argument("--interval", type=float, default=30)
+    sw.add_argument("--stall-after", default="15m")
+    sw.add_argument("--format", choices=("lines", "jsonl"), default="lines")
+    sw.add_argument("--once", action="store_true",
+                    help="run exactly one polling pass then exit (scripting/testing)")
     args = p.parse_args()
     if args.command == "plan-begin":
         lock("planning", CFG["planning_lock_ttl_seconds"], args.force)
@@ -2552,6 +2645,10 @@ def session_cmd(args):
         session_reap()
     elif args.session_command == "cleanup":
         session_cleanup(args.name, args.reap)
+    elif args.session_command == "watch":
+        if args.names and args.all_running:
+            raise RuntimeError("session watch: pass session names or --all-running, not both")
+        session_watch(args.names, args.interval, args.stall_after, args.format, args.once)
 if __name__ == "__main__":
     try: main()
     except Exception as exc: print(f"nogg: {exc}", file=sys.stderr); sys.exit(1)
