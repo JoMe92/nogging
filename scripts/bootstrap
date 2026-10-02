@@ -83,6 +83,43 @@ EOF
   fi
 }
 
+# --- Step 2: Node via nvm ----------------------------------------------------
+# docs/compatibility.md's baseline is Node 18/20/22 LTS; any of the three is
+# satisfying (Decision 4: a range match, not an exact patch match). A
+# missing or non-satisfying Node is provisioned via nvm, pinned to the
+# baseline's current LTS line (NODE_LTS_PIN), installing nvm itself first
+# (via its own official installer, pinned to NVM_VERSION) only if not
+# already present.
+ensure_node() {
+  current_major=0
+  if command -v node >/dev/null 2>&1; then
+    current_major=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)
+  fi
+  satisfies=0
+  case " $NODE_LTS_LINE " in
+    *" $current_major "*) satisfies=1 ;;
+  esac
+  if [ "$satisfies" -eq 1 ]; then
+    report_step "node" "skipped" "existing node $(node --version) already in the $NODE_LTS_LINE LTS line"
+    return
+  fi
+
+  nvm_dir="${NVM_DIR:-$HOME/.nvm}"
+  if [ ! -s "$nvm_dir/nvm.sh" ]; then
+    curl -fsSL "https://raw.githubusercontent.com/nvm-sh/nvm/${NVM_VERSION}/install.sh" | bash
+  fi
+  export NVM_DIR="$nvm_dir"
+  # shellcheck disable=SC1091
+  . "$nvm_dir/nvm.sh"
+  nvm install "$NODE_LTS_PIN"
+  nvm alias default "$NODE_LTS_PIN" >/dev/null
+  nvm use "$NODE_LTS_PIN" >/dev/null
+
+  action="installed"
+  [ "$current_major" -ne 0 ] && action="upgraded"
+  report_step "node" "$action" "now $(node --version) via nvm (pinned LTS $NODE_LTS_PIN)"
+}
+
 main() {
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -92,9 +129,10 @@ main() {
   done
 
   check_platform
-  # Further provisioning steps (Node, the npm-distributed CLIs, bd/dolt,
-  # system packages, and the final `init`/`doctor` wiring) land in later
-  # commits of this change, each gated behind this same platform check.
+  ensure_node
+  # Further provisioning steps (the npm-distributed CLIs, bd/dolt, system
+  # packages, and the final `init`/`doctor` wiring) land in later commits of
+  # this change, each gated behind this same platform check.
 }
 
 # NOGGING_BOOTSTRAP_NO_MAIN lets scripts/compatibility.test.sh source this
