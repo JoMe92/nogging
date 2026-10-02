@@ -2018,6 +2018,36 @@ def session_send(name, message, verify=False):
         if _pane_input_pending(name, agent):
             raise RuntimeError(f"{name}: message still unsubmitted after a retry")
     print(f"sent to {name}")
+# --- session observability: resume-when-ready -------------------------
+DEFAULT_RESUME_MESSAGE = ("the usage limit has reset, continue exactly where "
+                          "you left off per your original instructions")
+_SWITCH_MODEL_RE = re.compile(r"switch.*model", re.I)
+def session_resume_when_ready(name, message=None, poll_interval=60):
+    """Wait out a `limit` state using its resolved reset timestamp (never a
+    tight spin-loop — falls back to a bounded `poll_interval` cadence when
+    the timestamp could not be parsed), dismiss a residual model-switch
+    prompt by keeping the current model (design.md Decision 2: switching
+    models never clears a genuine account-wide limit), then send the resume
+    instruction via `session_send`."""
+    message = message or DEFAULT_RESUME_MESSAGE
+    while True:
+        _, rec = load_session(name)
+        state, pane = classify_session(rec)
+        if state != "limit":
+            break
+        until_iso = resolve_clock_time(pane)
+        if until_iso:
+            wait = (dt.datetime.fromisoformat(until_iso) - dt.datetime.now()).total_seconds()
+            time.sleep(max(0.0, min(wait, poll_interval)) if wait > poll_interval else max(0.0, wait))
+        else:
+            time.sleep(poll_interval)
+    pane = session_pane_text(name)
+    if _SWITCH_MODEL_RE.search(pane):
+        # Dismiss the residual "switch model?" prompt without acting on it —
+        # Escape cancels the prompt and leaves the current model selected.
+        tmux("send-keys", "-t", name, "Escape")
+    session_send(name, message, verify=True)
+    print(f"resumed {name}")
 # --- orchestrator: the always-on supervisor ------------------------------
 # `orchestrator run` is the idempotent process the systemd user service starts.
 # The thing kept alive is a normal supervised Claude session (a durable record,
@@ -2673,6 +2703,8 @@ def main():
     ssend = ssub.add_parser("send")
     ssend.add_argument("name"); ssend.add_argument("message")
     ssend.add_argument("--verify", action="store_true")
+    srw = ssub.add_parser("resume-when-ready")
+    srw.add_argument("name"); srw.add_argument("--message")
     args = p.parse_args()
     if args.command == "plan-begin":
         lock("planning", CFG["planning_lock_ttl_seconds"], args.force)
@@ -2727,6 +2759,8 @@ def session_cmd(args):
         session_watch(args.names, args.interval, args.stall_after, args.format, args.once)
     elif args.session_command == "send":
         session_send(args.name, args.message, args.verify)
+    elif args.session_command == "resume-when-ready":
+        session_resume_when_ready(args.name, args.message)
 if __name__ == "__main__":
     try: main()
     except Exception as exc: print(f"nogg: {exc}", file=sys.stderr); sys.exit(1)

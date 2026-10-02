@@ -329,6 +329,67 @@ submit_enters=$(grep -cF -- "send-keys -t $name Enter" "$TMUX_STUB_DIR/calls.log
 rm -f "$out_s"
 unset NOGGING_ROOT
 
+# ===========================================================================
+# TASK-SOB-004: resume-when-ready — waits out `limit`, dismisses a residual
+# switch-model prompt without switching, then sends the resume instruction
+# (classify_session/session_pane_text/session_send/tmux monkeypatched; pure)
+# ===========================================================================
+got=$(run_py "
+m.time.sleep = lambda s: None
+calls = {'n': 0}
+def fake_classify(rec, live=None):
+    calls['n'] += 1
+    return ('limit', 'resets at 11:59pm') if calls['n'] == 1 else ('idle', '> ')
+m.classify_session = fake_classify
+m.load_session = lambda name: (None, {'name': name, 'agent': 'claude'})
+m.session_pane_text = lambda name: '> '
+sent = {}
+m.session_send = lambda name, message, verify=False: sent.update(name=name, message=message, verify=verify)
+import contextlib, io
+with contextlib.redirect_stdout(io.StringIO()):
+    m.session_resume_when_ready('s1')
+print(sent['message'])
+print(sent['verify'])
+print(sent['name'])
+")
+expected_default=$(printf 'the usage limit has reset, continue exactly where you left off per your original instructions\nTrue\ns1')
+[[ "$got" == "$expected_default" ]] \
+  && ok "resume-when-ready: waits out limit then sends the default resume message with verify" \
+  || bad "resume-when-ready: default-message run was: $got"
+
+got=$(run_py "
+m.time.sleep = lambda s: None
+m.classify_session = lambda rec, live=None: ('idle', '> ')
+m.load_session = lambda name: (None, {'name': name, 'agent': 'claude'})
+m.session_pane_text = lambda name: '> '
+sent = {}
+m.session_send = lambda name, message, verify=False: sent.update(message=message)
+import contextlib, io
+with contextlib.redirect_stdout(io.StringIO()):
+    m.session_resume_when_ready('s1', message='custom resume text')
+print(sent['message'])
+")
+[[ "$got" == "custom resume text" ]] \
+  && ok "resume-when-ready: --message overrides the default" \
+  || bad "resume-when-ready: custom message run was: $got"
+
+got=$(run_py "
+m.time.sleep = lambda s: None
+m.classify_session = lambda rec, live=None: ('idle', '> ')
+m.load_session = lambda name: (None, {'name': name, 'agent': 'claude'})
+m.session_pane_text = lambda name: 'Switch model? (y/n)'
+tmux_calls = []
+m.tmux = lambda *a, **k: tmux_calls.append(a)
+m.session_send = lambda name, message, verify=False: None
+import contextlib, io
+with contextlib.redirect_stdout(io.StringIO()):
+    m.session_resume_when_ready('s1')
+print(any(call[-1] == 'Escape' for call in tmux_calls))
+")
+[[ "$got" == "True" ]] \
+  && ok "resume-when-ready: dismisses a residual switch-model prompt (Escape, not a switch)" \
+  || bad "resume-when-ready: switch-model dismissal run was: $got"
+
 if [[ $fail -ne 0 ]]; then
   echo "session-observability: FAILED" >&2
   exit 1
