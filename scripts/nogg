@@ -2267,6 +2267,15 @@ def doctor(audit=False, with_recover=False):
                              f"`loginctl enable-linger {getpass.getuser()}`")
     else:
         notes.append("systemctl not available; orchestrator service state not checked")
+    # Cloud session visibility: informational only, like every other
+    # environment-presence check above — never a FAIL, never changes the exit
+    # code, and silent outside a cloud session (CLAUDE_CODE_REMOTE unset).
+    if os.environ.get("CLAUDE_CODE_REMOTE") == "true":
+        hooks_path = run("git", "config", "--get", "core.hooksPath", check=False).stdout.strip()
+        notes.append(f"cloud session: core.hooksPath is {hooks_path!r}" if hooks_path
+                     else "cloud session: core.hooksPath is not set")
+        notes.append("cloud session: bd is on PATH" if tool_on_path(CFG["beads_command"])
+                     else "cloud session: bd is not on PATH")
     # The interrupted-run checks: doctor always prints a one-line summary
     # (`recover` folds the full report). Read-only, like the rest of doctor.
     try:
