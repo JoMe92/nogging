@@ -1,6 +1,6 @@
 # Tasks — track change completion through delivery
 
-- [ ] TASK-TCC-001 Extract the `tasks.md`-ticking logic `sync()` already uses
+- [x] TASK-TCC-001 Extract the `tasks.md`-ticking logic `sync()` already uses
       (the `- [ ] TASK-X` → `- [x] TASK-X` regex replace, keyed off
       `task_map()`/`mapping(issue)`) into one shared helper function. Add
       `scripts/nogg task-done <bead-id>`: resolves the Bead's
