@@ -166,6 +166,44 @@ ensure_node_floor_for_pi() {
   fi
 }
 
+# --- Step 4: bd and dolt, via each project's own install script -------------
+# Orchestrates each project's own official, already-audited installer at an
+# exact pinned release tag, rather than reimplementing arch detection and
+# binary download/checksum logic (Decision 3).
+ensure_dolt() {
+  installed=""
+  if command -v dolt >/dev/null 2>&1; then
+    installed=$(dolt version 2>/dev/null | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)
+  fi
+  case "$installed" in
+    2.3.*) report_step "dolt" "skipped" "dolt $installed already satisfies 2.3.x"; return ;;
+  esac
+  # Pinned to dolt's own exact release-tag install script, never "latest".
+  curl -fsSL "https://github.com/dolthub/dolt/releases/download/v${DOLT_VERSION}/install.sh" | bash
+  action="installed"
+  [ -n "$installed" ] && action="upgraded"
+  report_step "dolt" "$action" "now $(dolt version 2>/dev/null | head -n1) (was: ${installed:-none})"
+}
+
+ensure_bd() {
+  installed=""
+  if command -v bd >/dev/null 2>&1; then
+    installed=$(bd version 2>/dev/null | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)
+  fi
+  case "$installed" in
+    1.2.*) report_step "bd" "skipped" "bd $installed already satisfies 1.2.x"; return ;;
+  esac
+  # Beads' own install script does not publish a per-tag URL the way dolt
+  # does (confirmed during planning: only its `main`-branch raw path
+  # resolves); the version pin is passed through VERSION for the script to
+  # honor itself.
+  curl -fsSL "https://raw.githubusercontent.com/gastownhall/beads/main/scripts/install.sh" \
+    | VERSION="$BD_VERSION" bash
+  action="installed"
+  [ -n "$installed" ] && action="upgraded"
+  report_step "bd" "$action" "now $(bd version 2>/dev/null | head -n1) (was: ${installed:-none})"
+}
+
 main() {
   with_pi=0
   while [ $# -gt 0 ]; do
@@ -185,9 +223,11 @@ main() {
     ensure_node_floor_for_pi
     ensure_npm_global "@earendil-works/pi-coding-agent" "$PI_VERSION" pi
   fi
-  # Further provisioning steps (bd/dolt, system packages, and the final
-  # `init`/`doctor` wiring) land in later commits of this change, each
-  # gated behind this same platform check.
+  ensure_dolt
+  ensure_bd
+  # Further provisioning steps (system packages and the final init/doctor
+  # wiring) land in later commits of this change, each gated behind this
+  # same platform check.
 }
 
 # NOGGING_BOOTSTRAP_NO_MAIN lets scripts/compatibility.test.sh source this
