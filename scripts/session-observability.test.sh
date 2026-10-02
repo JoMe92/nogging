@@ -234,6 +234,57 @@ grep -qF '"event": "ended"' "$out_w" \
 rm -f "$out_w"
 unset NOGGING_ROOT
 
+# ===========================================================================
+# TASK-SOB-003: usage-limit timestamp resolution (pure) + watch's until=
+# ===========================================================================
+got=$(run_py "
+import datetime as dt
+now = dt.datetime(2026, 10, 2, 14, 0, 0)
+print(m.resolve_clock_time('reset at 3:30pm', now=now))
+")
+[[ "$got" == "2026-10-02T15:30:00" ]] \
+  && ok "resolve_clock_time: same-day reset resolves to today" \
+  || bad "resolve_clock_time same-day = $got"
+
+got=$(run_py "
+import datetime as dt
+now = dt.datetime(2026, 10, 2, 23, 0, 0)
+print(m.resolve_clock_time('reset at 1:00am', now=now))
+")
+[[ "$got" == "2026-10-03T01:00:00" ]] \
+  && ok "resolve_clock_time: overnight reset rolls to the next day" \
+  || bad "resolve_clock_time overnight = $got"
+
+got=$(run_py "print(m.resolve_clock_time('nothing resembling a time here'))")
+[[ "$got" == "None" ]] && ok "resolve_clock_time: no time token found returns None" \
+  || bad "resolve_clock_time no-match = $got"
+
+root="$work/watch-limit"; make_obs_root "$root"
+export NOGGING_ROOT="$root"
+export TMUX_STUB_DIR="$work/watch-limit-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-w02"
+"$nogg" session launch --role lead --bead SPEC-w02 >/dev/null 2>&1
+name="$(sess_name "$root")"
+printf 'Claude usage limit reached. Your limit will reset at 11:59pm.\n' >"$TMUX_STUB_DIR/pane-$name.txt"
+out_w2=$(mktemp)
+"$nogg" session watch "$name" --once --format jsonl >"$out_w2" 2>&1
+grep -qF '"event": "limit"' "$out_w2" \
+  && ok "watch --once: a usage-limit banner classifies limit" \
+  || { echo "FAIL - watch --once: expected limit"; cat "$out_w2"; fail=1; }
+grep -qE '"until": "[0-9]{4}-[0-9]{2}-[0-9]{2}T' "$out_w2" \
+  && ok "watch --once: the limit event carries a resolved until= timestamp" \
+  || { echo "FAIL - watch --once: no resolved until= timestamp"; cat "$out_w2"; fail=1; }
+rm -f "$out_w2"
+unset NOGGING_ROOT
+
+docgrep() {
+  grep -qi "switching models does not clear" "$1" \
+    && ok "docs: $1 carries the switching-models-does-not-clear-this note" \
+    || bad "docs: $1 is missing the switching-models note"
+}
+docgrep "$repo_root/docs/failure-recovery.md"
+docgrep "$repo_root/docs/using-with-codex.md"
+
 if [[ $fail -ne 0 ]]; then
   echo "session-observability: FAILED" >&2
   exit 1
