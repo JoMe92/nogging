@@ -999,6 +999,45 @@ rm -f "$root/.nogging/locks/planning.lock"
 unset NOGGING_ROOT BD_FIXTURE
 
 # ===========================================================================
+# Scenario: doctor flags a live change whose every mapped Bead is closed
+# (TASK-TCC-003) — a NOTE only, never a FAIL, never changes the exit code.
+# ===========================================================================
+root="$work/tcc-archive"; make_root "$root"
+export NOGGING_ROOT="$root"
+export BD_FIXTURE="$work/tcc-archive-beads.json"
+cat >"$BD_FIXTURE" <<'JSON'
+[
+  {"id": "SPEC-ar1", "status": "closed",
+   "labels": ["openspec:change:demo", "openspec:task:TASK-DEMO-001"]},
+  {"id": "SPEC-ar2", "status": "open",
+   "labels": ["openspec:change:demo", "openspec:task:TASK-DEMO-002"]}
+]
+JSON
+rc_partial=0; "$nogg" doctor >"$out" 2>&1 || rc_partial=$?
+refute "tcc-archive: an in-progress change (open mapped Bead) is not flagged" "ready to archive"
+
+cat >"$BD_FIXTURE" <<'JSON'
+[
+  {"id": "SPEC-ar1", "status": "closed",
+   "labels": ["openspec:change:demo", "openspec:task:TASK-DEMO-001"]},
+  {"id": "SPEC-ar2", "status": "closed",
+   "labels": ["openspec:change:demo", "openspec:task:TASK-DEMO-002"]}
+]
+JSON
+rc_ready=0; "$nogg" doctor >"$out" 2>&1 || rc_ready=$?
+check "tcc-archive: NOTE names the change as ready to archive" \
+  "NOTE  change ready to archive: demo (every mapped Bead is closed)"
+[[ "$rc_partial" == "$rc_ready" ]] \
+  && echo "ok   - tcc-archive: the archive-ready NOTE never changes doctor's exit code ($rc_ready)" \
+  || { echo "FAIL - tcc-archive: exit code changed ($rc_partial -> $rc_ready)"; fail=1; }
+
+# only one of the change's two tasks has a mapped Bead at all -> never flagged
+printf '[{"id":"SPEC-ar1","status":"closed","labels":["openspec:change:demo","openspec:task:TASK-DEMO-001"]}]\n' >"$BD_FIXTURE"
+"$nogg" doctor >"$out" 2>&1 || true
+refute "tcc-archive: a task with no mapped Bead yet is not flagged" "ready to archive"
+unset NOGGING_ROOT BD_FIXTURE
+
+# ===========================================================================
 # Scenario: the PreToolUse guard tracks the boundary as plan-begin / plan-end
 # toggle it (TASK-TWB-008). End-to-end: real plan-begin/plan-end drive the
 # sentinel, and the guard binary is invoked exactly as Claude Code invokes it.
