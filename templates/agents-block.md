@@ -70,6 +70,9 @@ never signs an acceptance report. See `docs/nogging/operating-model.md`.
   (`scripts/hooks/pre-tool-use-openspec-guard`). Specialists are the
   `.claude/agents/*.md` roster, invoked in process through the Task tool.
   Operator entry points: `.claude/commands/{plan,discovery-review,sync-now}.md`.
+- **Claude Code cloud sessions.** The assigned `claude/*` branch is never a PR
+  source: push the branch `nogg worktree implement` / `worktree plan`
+  allocated, and open the pull request from that branch instead.
 - **Codex.** No per-tool hook — `openspec/` stays read-only through the
   filesystem write guard plus the commit hooks; the command floor is
   `.codex/rules/nogging.rules` (execpolicy). Codex has no in-process subagent
