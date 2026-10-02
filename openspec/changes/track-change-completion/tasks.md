@@ -18,7 +18,7 @@
       commit trailer (see `design.md`, Decision 2 — the existing Bead-ID
       token already makes this legal).
 
-- [ ] TASK-TCC-003 Add a `doctor()` check: for each live (non-archived)
+- [x] TASK-TCC-003 Add a `doctor()` check: for each live (non-archived)
       change under `openspec/changes/`, using the closed-inclusive Beads
       enumeration (`beads()`/`task_map()` as `sync()`/`materialize()` already
       call it, not the default closed-excluding `bd list`), if every Bead
