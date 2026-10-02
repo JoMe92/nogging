@@ -63,8 +63,25 @@ in it — every command below is one you actually type:
 
 ## Quick start
 
-Start in a new or existing Git repository. The command is pinned because the
-initial distribution is GitHub-only:
+Starting from a completely fresh machine? One pinned command provisions the
+whole toolchain (Node via `nvm`, the agent CLIs, `bd`, Dolt, `git`/`tmux`/`gh`)
+and then runs `init` for you:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/JoMe92/nogging/v2.0.2/scripts/bootstrap | bash
+```
+
+Always pin a tagged release in that URL, never `main`/`develop`. Add
+`--repo <path>` to target a different (or brand-new) repository and
+`--with-pi` to also install the optional Pi coding agent CLI. It is safe to
+re-run: each step checks what's already installed first and only provisions
+what's missing or out of range. See
+[docs/installation.md](docs/installation.md#fresh-machine-scriptsbootstrap)
+for the full flag reference.
+
+Already have Node 18+ and the rest of the toolchain? Start in a new or
+existing Git repository instead. The command is pinned because the initial
+distribution is GitHub-only:
 
 ```bash
 npx github:JoMe92/nogging#v2.0.2 init --no-systemd
