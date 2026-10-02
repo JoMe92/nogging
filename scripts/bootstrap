@@ -120,9 +120,57 @@ ensure_node() {
   report_step "node" "$action" "now $(node --version) via nvm (pinned LTS $NODE_LTS_PIN)"
 }
 
+# --- Step 3: npm-distributed CLI installs ------------------------------------
+# Each checked against an existing install's version first (skip if it
+# already equals the pin, install/upgrade otherwise). `npm install -g
+# pkg@<pin>` is npm's own exact-version pinning mechanism.
+ensure_npm_global() {
+  # ensure_npm_global <npm-package> <pinned-version> <binary-on-path>
+  pkg="$1"; pin="$2"; bin="$3"
+  installed=""
+  if command -v "$bin" >/dev/null 2>&1; then
+    installed=$("$bin" --version 2>/dev/null | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)
+  fi
+  if [ "$installed" = "$pin" ]; then
+    report_step "$pkg" "skipped" "$bin $installed already satisfies $pin"
+    return
+  fi
+  npm install -g "${pkg}@${pin}" >/dev/null
+  action="installed"
+  [ -n "$installed" ] && action="upgraded"
+  report_step "$pkg" "$action" "$bin now $("$bin" --version 2>/dev/null | head -n1) (was: ${installed:-none})"
+}
+
+# Pi needs Node >= 22.19, stricter than the core baseline; only enforced
+# when --with-pi is requested, so the default path never forces this.
+ensure_node_floor_for_pi() {
+  pi_major=0
+  if command -v node >/dev/null 2>&1; then
+    pi_major=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)
+  fi
+  if [ "$pi_major" -ge 22 ] 2>/dev/null; then
+    return
+  fi
+  nvm_dir="${NVM_DIR:-$HOME/.nvm}"
+  export NVM_DIR="$nvm_dir"
+  if [ -s "$nvm_dir/nvm.sh" ]; then
+    # shellcheck disable=SC1091
+    . "$nvm_dir/nvm.sh"
+    nvm install 22 >/dev/null
+    nvm alias default 22 >/dev/null
+    nvm use 22 >/dev/null
+    report_step "node (for --with-pi)" "upgraded" "now $(node --version) to satisfy Pi's Node >= 22.19 floor"
+  else
+    echo "bootstrap: --with-pi needs Node >= 22.19 and nvm is unavailable" >&2
+    exit 1
+  fi
+}
+
 main() {
+  with_pi=0
   while [ $# -gt 0 ]; do
     case "$1" in
+      --with-pi) with_pi=1; shift ;;
       -h|--help) usage; exit 0 ;;
       *) echo "bootstrap: unknown argument: $1" >&2; usage >&2; exit 1 ;;
     esac
@@ -130,9 +178,16 @@ main() {
 
   check_platform
   ensure_node
-  # Further provisioning steps (the npm-distributed CLIs, bd/dolt, system
-  # packages, and the final `init`/`doctor` wiring) land in later commits of
-  # this change, each gated behind this same platform check.
+  ensure_npm_global "@anthropic-ai/claude-code" "$CLAUDE_CODE_VERSION" claude
+  ensure_npm_global "@openai/codex" "$CODEX_VERSION" codex
+  ensure_npm_global "@fission-ai/openspec" "$OPENSPEC_VERSION" openspec
+  if [ "$with_pi" -eq 1 ]; then
+    ensure_node_floor_for_pi
+    ensure_npm_global "@earendil-works/pi-coding-agent" "$PI_VERSION" pi
+  fi
+  # Further provisioning steps (bd/dolt, system packages, and the final
+  # `init`/`doctor` wiring) land in later commits of this change, each
+  # gated behind this same platform check.
 }
 
 # NOGGING_BOOTSTRAP_NO_MAIN lets scripts/compatibility.test.sh source this
