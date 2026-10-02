@@ -1830,6 +1830,7 @@ def orchestrator_run(force=False):
     signal.signal(signal.SIGTERM, _term)
     name = orchestrator_session_name()
     workdir = str(ROOT)
+    set_persona_identity(ROOT, "orchestrator")
     acquire_orchestrator_lock(force)
     try:
         if tmux_has_session(name):
