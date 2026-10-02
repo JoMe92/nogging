@@ -43,7 +43,11 @@ implementation code**. Your actions are limited to:
   explicit instruction.
 
 When you identify a needed spec change, you **start or direct a planning
-session** to make it — you do not edit `openspec/` yourself.
+session** to make it — you do not edit `openspec/` yourself. The same applies
+when `scripts/nogg doctor` reports a `NOTE change ready to archive: <change>`:
+you direct a planning session to run its archive step (either by starting a
+new one, or by naming the change to one already running) — you never run
+`openspec archive` yourself.
 
 When a change is ready to execute, you **launch a Lead session**
 (`scripts/nogg session launch --role lead --bead <id> …` or
