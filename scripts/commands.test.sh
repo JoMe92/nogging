@@ -180,6 +180,43 @@ else
   bad "planning flow: commit-before-materialize order is inconsistent (see output above)"
 fi
 
+# --- 4b. /plan's conditional archive step sits after discovery review and --
+#     before the design dialogue, naming `doctor` as the readiness signal
+#     (TASK-TCC-004), and is never phrased as mandatory.
+if python3 - <<'PY'
+import re, sys
+bad = 0
+for f in (".claude/commands/plan.md", ".codex/prompts/plan.md"):
+    t = open(f).read()
+    discoveries = t.find("Review pending discoveries")
+    archive = t.find("Archive any change")
+    dialogue = t.find("Hold the design dialogue")
+    if not (0 <= discoveries < archive < dialogue):
+        print(f"{f}: archive step missing or out of order "
+              f"(discoveries={discoveries}, archive={archive}, dialogue={dialogue})")
+        bad = 1
+        continue
+    if "doctor" not in t[archive:dialogue]:
+        print(f"{f}: archive step does not name doctor as the readiness signal"); bad = 1
+    if "openspec archive" not in t[archive:dialogue]:
+        print(f"{f}: archive step does not call openspec archive"); bad = 1
+
+row = next((ln for ln in open("docs/operating-model.md") if "`/plan` (`plan.md`)" in ln), "")
+if "conditional archive" not in row or "doctor" not in row:
+    print("docs/operating-model.md /plan row is missing the conditional archive step"); bad = 1
+disc_pos = row.find("discovery review")
+arch_pos = row.find("conditional archive")
+dlg_pos = row.find("design dialogue")
+if not (0 <= disc_pos < arch_pos < dlg_pos):
+    print("docs/operating-model.md /plan row: archive step out of order"); bad = 1
+sys.exit(bad)
+PY
+then
+  ok "/plan: conditional archive step present, ordered, and doctor-gated in plan.md + operating-model.md"
+else
+  bad "/plan: conditional archive step missing or misplaced (see output above)"
+fi
+
 # --- 5. the resumption protocol + playbook exist (TASK-RIR-007) ----------
 if python3 - <<'PY'
 import re, sys
