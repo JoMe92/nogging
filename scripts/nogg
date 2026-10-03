@@ -1992,13 +1992,82 @@ def _pane_input_pending(name, agent):
     if agent != "codex":
         return False
     return classify(session_pane_text(name), CODEX_ADAPTER) == "needs_input"
+def _codex_rollout_files():
+    """Every rollout file Codex has written under `<codex_home>/sessions/`.
+    Each file's first line is a `session_meta` record carrying the thread's
+    own id, cwd, and creation timestamp — the only place that mapping
+    exists, since a plain `codex` launch has no flag to pin a known thread
+    id up front (TASK-SOB-006)."""
+    root = codex_home() / "sessions"
+    return sorted(root.glob("*/*/*/rollout-*.jsonl")) if root.is_dir() else []
+def _codex_rollout_session_meta(path):
+    try:
+        with path.open() as fh:
+            line = json.loads(fh.readline())
+    except (OSError, ValueError):
+        return None
+    if line.get("type") != "session_meta":
+        return None
+    payload = line.get("payload") or {}
+    thread_id, cwd, ts = payload.get("id"), payload.get("cwd"), payload.get("timestamp")
+    return (thread_id, cwd, ts) if (thread_id and cwd and ts) else None
+def resolve_codex_thread_id(rec):
+    """Discover and cache the Codex-internal thread UUID for a codex session
+    `scripts/nogg` launched, by matching the session's `working_dir` against
+    the `session_meta` header Codex writes at the top of its own rollout file
+    (`<codex_home>/sessions/<Y>/<M>/<D>/rollout-*-<uuid>.jsonl`). Codex
+    assigns this id itself, lazily, once its own session actually starts
+    (there is no cold-start flag to pin it, unlike Claude's `--session-id`),
+    so this is a discover-after-the-fact lookup, not something
+    `session_launch` can record up front. Among unclaimed same-cwd rollouts
+    no older than this session's own `started_at`, picks the earliest — the
+    one this launch itself produced. Caches the result on the session record
+    once found. Returns None (never raises) when no match exists yet — the
+    thread may simply not have started (e.g. still sitting at Codex's
+    hook-trust prompt)."""
+    if rec.get("codex_thread_id"):
+        return rec["codex_thread_id"]
+    try:
+        started = parse_iso(rec["started_at"]) - dt.timedelta(seconds=5)
+    except (KeyError, ValueError):
+        return None
+    claimed = {r.get("codex_thread_id") for _, r in session_records() if r.get("codex_thread_id")}
+    candidates = []
+    for path in _codex_rollout_files():
+        meta = _codex_rollout_session_meta(path)
+        if not meta:
+            continue
+        thread_id, cwd, ts = meta
+        if thread_id in claimed or cwd != rec.get("working_dir"):
+            continue
+        try:
+            ts_dt = parse_iso(ts)
+        except ValueError:
+            continue
+        if ts_dt < started:
+            continue
+        candidates.append((ts_dt, thread_id))
+    if not candidates:
+        return None
+    candidates.sort()
+    thread_id = candidates[0][1]
+    rec["codex_thread_id"] = thread_id
+    write_session(sessions_dir() / f"{rec['name']}.json", rec)
+    return thread_id
 def codex_queue_send(rec, message):
-    """Primary send path for a codex session once TASK-SOB-006 confirms
-    `codex queue --thread <THREAD> --message <TEXT>` resolves against a
-    scripts/nogg-launched session. Returns True if it delivered the message
-    (the caller then skips the Layer-1 pane-based send entirely), False to
-    fall back to Layer 1. Never raises."""
-    return False
+    """Primary send path for a codex session: `codex queue --thread <THREAD>
+    --message <TEXT>`, against the thread id `resolve_codex_thread_id` finds.
+    TASK-SOB-006 confirmed live that this delivers straight into the
+    session's pane and submits immediately — no `_submit_pane_input` quirk
+    to apply, unlike the Layer-1 path. Returns True if it delivered (the
+    caller then skips the Layer-1 pane-based send entirely), False to fall
+    back — a thread id not yet resolvable, or the `codex` binary itself
+    rejecting it. Never raises."""
+    thread_id = resolve_codex_thread_id(rec)
+    if not thread_id:
+        return False
+    result = run("codex", "queue", "--thread", thread_id, "--message", message, check=False)
+    return result.returncode == 0
 def session_send(name, message, verify=False):
     """Send `message` to a managed session via the agent-appropriate
     key-injection sequence. With `verify`, confirm it was actually submitted
