@@ -26,9 +26,51 @@ curl -fsSL https://raw.githubusercontent.com/JoMe92/nogging/v2.1.0/scripts/boots
 
 Always pin a tagged release in that URL, never `main`/`develop`, for the same
 reason the `npx` command above is pinned: what you run should be reviewable
-and reproducible.
+and reproducible. This piped form always stays **non-interactive** — stdin is
+connected to the pipe, not a terminal, so the fully-automated flow below runs
+regardless of what terminal you're typing into. This is unaffected by the
+interactive wizard described next.
 
-What it does, in order: checks the host is a supported platform
+### Interactive wizard
+
+Download the script first, then run it, to get a guided, Nogging-styled
+terminal wizard instead:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/JoMe92/nogging/v2.1.0/scripts/bootstrap -o bootstrap
+bash bootstrap
+```
+
+With both stdin and stdout attached to a real terminal (true in this
+download-then-run form, never true for the piped one-liner above), and
+[`whiptail`](https://en.wikipedia.org/wiki/Newt_(programming_library))
+available or installable via `apt`, `scripts/bootstrap` shows:
+
+1. A welcome screen with the Nogging wordmark and a confirmation of the
+   install target before anything happens.
+2. An install-path prompt (default: `--repo` if given, else the current
+   directory).
+3. A checklist of optional components (Pi agent support, the systemd sync
+   timer, git hooks, Beads init) — pre-checked to match today's actual
+   install defaults exactly, and mapped onto the same flags documented below;
+   the wizard adds no install logic of its own.
+4. An authentication step: for each of GitHub, Codex, and Claude Code,
+   already-authenticated tools are skipped silently; an unauthenticated one
+   offers to log in now, handing the terminal straight to that tool's own
+   login command (`gh auth login`, `codex login`, or `claude`). Nogging never
+   asks for or handles a credential itself.
+5. A closing summary naming what was installed, what was skipped, and the
+   next command to run.
+
+Force one mode or the other with `--interactive` / `--non-interactive`
+regardless of what's detected. If `whiptail` is missing and can't be
+installed (no `apt`, no network, no `sudo`), `scripts/bootstrap` prints a
+NOTE and falls back to the fully-automated flow rather than failing the
+whole install over a cosmetic layer.
+
+What it does, in order (identically for both invocation shapes — the wizard
+only changes how the install target and options are chosen, never what
+`init` actually does): checks the host is a supported platform
 (Debian/Ubuntu-family Linux, x86_64 or aarch64 — see the
 [compatibility matrix](compatibility.md)) and refuses clearly otherwise;
 provisions Node via `nvm` if an existing Node does not already satisfy the
@@ -46,6 +88,12 @@ Flags:
 - `--with-pi` — also install the optional Pi coding agent CLI (pinned
   version), after first raising the Node floor to satisfy Pi's stricter
   `>= 22.19` requirement. Not installed by default.
+- `--no-beads`, `--no-hooks`, `--no-systemd` — forwarded straight to `init`
+  (see below); every flag works identically whether typed directly or chosen
+  through the wizard's checklist.
+- `--interactive` / `--non-interactive` — force the wizard, or the
+  fully-automated flow, regardless of what stdin/stdout detection would
+  otherwise choose.
 
 **Idempotent.** Re-running the script checks each tool's installed version
 against the pin first and only installs or upgrades what's missing or out of
