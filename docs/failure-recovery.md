@@ -151,6 +151,22 @@ the reap and the cleanup in one step.
   `tmux -L nogg attach -t <name>` and killed with `tmux -L nogg
   kill-session -t <name>`.
 
+## A session hit its usage limit
+
+`scripts/nogg session watch` classifies a session that has hit an account-wide
+usage limit as `limit`, carrying the resolved reset time as `until=<ISO8601>`
+in the event. `scripts/nogg session resume-when-ready <name>` waits out that
+timestamp (never a tight poll loop) and sends a resume instruction once the
+limit clears — no operator action required.
+
+**Switching models does not clear this.** A usage limit observed in
+production is account-wide, not per-model: picking a cheaper or faster model
+does not bypass it (confirmed twice in production, GitHub issue #20).
+`resume-when-ready` dismisses a residual "switch model?" prompt by keeping the
+current model, never by switching to one. If a session is stuck on a usage
+limit, wait it out (or run `resume-when-ready`) — do not spend a session-cycle
+retrying with a different model.
+
 ## `openspec/` stuck read-only or stuck writable
 
 The OpenSpec write boundary is a sentinel file,
