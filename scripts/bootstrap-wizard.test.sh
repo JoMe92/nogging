@@ -70,3 +70,80 @@ with_interactive=$(run_gate --interactive 2>&1) \
 rm -rf "$gate_scratch"
 trap - EXIT
 printf 'no behavior change for existing flag combinations: ok\n'
+
+# --- TASK-IBT-002: decide_post_whiptail_mode (pure decision logic) ---------
+post_mode() {
+  # post_mode <run_mode> <whiptail_ready>
+  NOGGING_BOOTSTRAP_NO_MAIN=1 bash -c '. "$1" && decide_post_whiptail_mode "$2" "$3"' \
+    _ "$bootstrap" "$1" "$2"
+}
+
+[ "$(post_mode interactive 1)" = "interactive" ] \
+  || fail "a ready whiptail did not keep interactive mode"
+[ "$(post_mode interactive 0)" = "non-interactive" ] \
+  || fail "a failed whiptail install did not fall back to non-interactive"
+[ "$(post_mode non-interactive 0)" = "non-interactive" ] \
+  || fail "non-interactive was not stable with whiptail not ready"
+[ "$(post_mode non-interactive 1)" = "non-interactive" ] \
+  || fail "a ready whiptail wrongly upgraded non-interactive mode"
+printf 'decide_post_whiptail_mode: ok\n'
+
+# --- TASK-IBT-002: ensure_whiptail wiring, whiptail stubbed on PATH --------
+# Real apt/sudo must never run in a test (same discipline as
+# scripts/compatibility.test.sh's platform gate): PATH is narrowed to a
+# scratch dir holding only stand-in binaries, so `command -v whiptail` and
+# any `sudo`/`apt-get` call resolve to stubs, never the real tools. `bash`
+# itself is resolved to an absolute path first — a PATH prefix assignment on
+# the invoking command line affects that command's own lookup too, so a
+# narrowed PATH must not be relied on to still contain `bash`.
+real_bash=$(command -v bash)
+stub_dir=$(mktemp -d)
+trap 'rm -rf "$stub_dir"' EXIT
+
+whiptail_present_dir="$stub_dir/present"
+mkdir -p "$whiptail_present_dir"
+cat > "$whiptail_present_dir/whiptail" <<'STUB'
+#!/bin/sh
+exit 0
+STUB
+chmod +x "$whiptail_present_dir/whiptail"
+
+already_present_out=$(PATH="$whiptail_present_dir" \
+  NOGGING_BOOTSTRAP_NO_MAIN=1 "$real_bash" -c '. "$1" && ensure_whiptail' _ "$bootstrap")
+echo "$already_present_out" | grep -q 'whiptail .*skipped' \
+  || fail "ensure_whiptail did not report an already-present whiptail as skipped"
+
+missing_install_fails_dir="$stub_dir/missing-install-fails"
+mkdir -p "$missing_install_fails_dir"
+cat > "$missing_install_fails_dir/sudo" <<'STUB'
+#!/bin/sh
+exit 1
+STUB
+chmod +x "$missing_install_fails_dir/sudo"
+
+set +e
+fail_out=$(PATH="$missing_install_fails_dir" \
+  NOGGING_BOOTSTRAP_NO_MAIN=1 "$real_bash" -c '. "$1" && ensure_whiptail' _ "$bootstrap" 2>&1)
+fail_status=$?
+set -e
+[ "$fail_status" -ne 0 ] \
+  || fail "ensure_whiptail returned success when the apt install failed"
+echo "$fail_out" | grep -q 'NOTE: could not install whiptail' \
+  || fail "ensure_whiptail did not print the fallback NOTE on a failed install"
+
+missing_install_ok_dir="$stub_dir/missing-install-ok"
+mkdir -p "$missing_install_ok_dir"
+cat > "$missing_install_ok_dir/sudo" <<'STUB'
+#!/bin/sh
+exit 0
+STUB
+chmod +x "$missing_install_ok_dir/sudo"
+
+install_ok_out=$(PATH="$missing_install_ok_dir" \
+  NOGGING_BOOTSTRAP_NO_MAIN=1 "$real_bash" -c '. "$1" && ensure_whiptail' _ "$bootstrap")
+echo "$install_ok_out" | grep -q 'whiptail .*installed' \
+  || fail "ensure_whiptail did not report a successful install"
+
+rm -rf "$stub_dir"
+trap - EXIT
+printf 'ensure_whiptail wiring: ok\n'
