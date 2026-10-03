@@ -9,6 +9,58 @@ and GitHub Releases for that history.
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-10-03
+
+### Added
+
+- `scripts/nogg session watch`: agent-neutral session-state observability for
+  Claude Code and Codex sessions (`working` / `waiting_background` / `idle` /
+  `needs_input` / `limit` / `stalled` / `ended`), via per-agent adapters
+  (patterns as data, not free-text keyword matching) plus an optional Claude
+  `Stop`/`Notification` hook events layer. Usage-limit messages are recognized
+  and resolved to an absolute reset timestamp. `scripts/nogg session
+  resume-when-ready` waits out a detected limit and nudges the session to
+  continue without switching models. `scripts/nogg session send --verify`
+  confirms a message was actually submitted, not left sitting in an input box.
+- Opt-in multi-machine Beads sync: `"multi_machine": true` in
+  `.nogging/config.json` makes a `trusted`/orchestrator session `bd dolt pull`
+  at session start and `bd dolt push` before ending if it wrote a Bead;
+  `doctor` reports unpushed local Dolt state. Default stays off.
+- Cloud session (Claude Code on the web) branch discipline: the managed
+  instruction block states the assigned `claude/*` branch is never a PR
+  source; an optional `SessionStart` hook template bootstraps `bd`/Dolt and
+  git hooks in a fresh cloud container; `check-branch-name` gives a
+  cloud-specific hint.
+- `scripts/nogg task-done <bead-id>` ticks a closed Bead's `tasks.md` line
+  immediately; `doctor` reports a change ready to archive once every mapped
+  Bead is closed; `/plan`'s sequence gained a conditional archive step.
+- `scripts/bootstrap`: a standalone, pinned-version bootstrap installer for
+  the whole supported toolchain (Node via `nvm`, Claude Code, Codex, the
+  OpenSpec CLI, `bd`, Dolt, `git`/`tmux`/`gh`) on Debian/Ubuntu Linux, runnable
+  via `curl | bash` with no prerequisite but a shell. Idempotent; a
+  pin-consistency test keeps it from drifting against `docs/compatibility.md`.
+- A per-persona commit identity roster (Planner, Lead, Orchestrator, Sync, and
+  each specialist) in `.nogging/config.json`'s `personas` key. A session's
+  worktree carries its persona's `user.name`/`user.email`, isolated per
+  worktree via `extensions.worktreeConfig`; the Lead Agent delegation protocol
+  credits an incorporated specialist's work with a `Co-authored-by:` trailer.
+  Tier 1 only (plain git identity) in this release — real GitHub `[bot]`
+  identities via a registered GitHub App remain a documented, opt-in
+  follow-up.
+
+### Fixed
+
+- `EnterWorktree`'s relocation-approval prompt blocked every autonomous Lead
+  session on its first worktree entry; the autonomous launch prompt now
+  instructs a plain `cd` instead, which Claude Code does not gate the same way.
+- The `trusted` launch profile's `defaultMode` is now `auto`, not
+  `acceptEdits`: an unattended `--full-access` session no longer hangs on its
+  first qualifying Bash command waiting for an operator to approve it.
+- A Codex session's `workspace-write` sandbox now includes the shared
+  checkout (`--add-dir`) at every authority level, so a session running from
+  an implementation/planning worktree can reach the shared `.git`/`.beads` it
+  needs for `git commit`/`push` and `bd`/`scripts/nogg`.
+
 ## [2.0.2] - 2026-09-16
 
 Documentation-only release: no installed CLI behavior changes.
