@@ -1840,6 +1840,24 @@ def reconciled_state(rec, live):
     if state in SESSION_ACTIVE_STATES and rec.get("name") not in live:
         return "failed"
     return state
+def blocked_running_sessions_notes():
+    """NOTE per currently `running` Lead/specialist session whose Bead now has
+    an unmet dependency — the retroactive case: a dependency recorded against
+    the Bead after this session already launched. Read-only, like every other
+    `doctor` NOTE: never stops or otherwise changes the flagged session."""
+    live = tmux_sessions()
+    out = []
+    for _, rec in session_records():
+        role = rec.get("role") or ""
+        if role != "lead" and not role.startswith("specialist:"): continue
+        if reconciled_state(rec, live) != "running": continue
+        bead_id = rec.get("bead_id")
+        if not bead_id: continue
+        blocking = unmet_dependencies(bead_id)
+        if blocking:
+            out.append(f"session {rec.get('name')} (Bead {bead_id}) now has an "
+                        f"unmet dependency on {', '.join(blocking)}")
+    return out
 def session_list():
     """Read every metadata record and print it with live-state reconciliation.
     Read-only: it never attaches, never starts tmux, and never rewrites a
@@ -2838,6 +2856,7 @@ def doctor(audit=False, with_recover=False):
                  + (f" — {', '.join(rattention)}" if rattention else " (nothing in flight)"))
     notes.extend(persona_mismatch_notes())
     notes.extend(launch_profile_notes())
+    notes.extend(blocked_running_sessions_notes())
     for note in notes: print(f"NOTE  {note}")
     recover_lines = []
     if with_recover:
