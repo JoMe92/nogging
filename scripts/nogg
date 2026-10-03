@@ -2147,6 +2147,15 @@ def _pane_input_pending(name, agent):
     if agent == "codex":
         return classify(session_pane_text(name), CODEX_ADAPTER) == "needs_input"
     return bool(pending_input_text(name, agent))
+def _require_running(name):
+    """Return `(path, rec)` for `name`, refusing with no tmux key-sending
+    unless its reconciled state is `running`. Shared by `nudge` and
+    `kickoff`, which both must never touch a non-running session's pane."""
+    path, rec = load_session(name)
+    state = reconciled_state(rec, tmux_sessions())
+    if state != "running":
+        raise RuntimeError(f"{name} is not running (state: {state}); refusing")
+    return path, rec
 def _codex_rollout_files():
     """Every rollout file Codex has written under `<codex_home>/sessions/`.
     Each file's first line is a `session_meta` record carrying the thread's
@@ -2242,6 +2251,24 @@ def session_send(name, message, verify=False):
         if _pane_input_pending(name, agent):
             raise RuntimeError(f"{name}: message still unsubmitted after a retry")
     print(f"sent to {name}")
+def session_nudge(name, message=None):
+    """Reliably submit a session's pane regardless of what was already
+    sitting there: clear the input line, then resend. With `message`, always
+    clears first and sends that text, overriding whatever the pane showed.
+    With no `message`, reads back the pane's pending text *before* clearing
+    it and resends exactly that; if there was none, the `C-u` still runs but
+    nothing further is sent, and that is reported rather than left silent."""
+    _, rec = _require_running(name)
+    agent = rec.get("agent") or "claude"
+    pending = None if message else pending_input_text(name, agent)
+    tmux("send-keys", "-t", name, "C-u")
+    text = message or pending
+    if not text:
+        print(f"{name}: nothing to nudge (pane input was empty)")
+        return
+    tmux("send-keys", "-t", name, "-l", text)
+    _submit_pane_input(name, agent)
+    print(f"nudged {name}")
 # --- session observability: resume-when-ready -------------------------
 DEFAULT_RESUME_MESSAGE = ("the usage limit has reset, continue exactly where "
                           "you left off per your original instructions")
@@ -2936,6 +2963,8 @@ def main():
     ssend = ssub.add_parser("send")
     ssend.add_argument("name"); ssend.add_argument("message")
     ssend.add_argument("--verify", action="store_true")
+    snud = ssub.add_parser("nudge")
+    snud.add_argument("name"); snud.add_argument("--message")
     srw = ssub.add_parser("resume-when-ready")
     srw.add_argument("name"); srw.add_argument("--message")
     semit = ssub.add_parser("emit")
@@ -2994,6 +3023,8 @@ def session_cmd(args):
         session_watch(args.names, args.interval, args.stall_after, args.format, args.once)
     elif args.session_command == "send":
         session_send(args.name, args.message, args.verify)
+    elif args.session_command == "nudge":
+        session_nudge(args.name, args.message)
     elif args.session_command == "resume-when-ready":
         session_resume_when_ready(args.name, args.message)
     elif args.session_command == "emit":
