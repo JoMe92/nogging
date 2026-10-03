@@ -5,7 +5,7 @@ you want to adopt the operating model.
 
 ```bash
 cd /path/to/your-repo
-npx github:JoMe92/nogging#v2.0.2 init
+npx github:JoMe92/nogging#v2.1.0 init
 ```
 
 Always pin a released tag; do not install an unpinned default branch. Until the
@@ -21,7 +21,7 @@ provisions the whole stack — pinned to the versions in the
 [compatibility matrix](compatibility.md) — and then runs `init` for you:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/JoMe92/nogging/v2.0.2/scripts/bootstrap | bash
+curl -fsSL https://raw.githubusercontent.com/JoMe92/nogging/v2.1.0/scripts/bootstrap | bash
 ```
 
 Always pin a tagged release in that URL, never `main`/`develop`, for the same

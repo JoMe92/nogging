@@ -68,7 +68,7 @@ whole toolchain (Node via `nvm`, the agent CLIs, `bd`, Dolt, `git`/`tmux`/`gh`)
 and then runs `init` for you:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/JoMe92/nogging/v2.0.2/scripts/bootstrap | bash
+curl -fsSL https://raw.githubusercontent.com/JoMe92/nogging/v2.1.0/scripts/bootstrap | bash
 ```
 
 Always pin a tagged release in that URL, never `main`/`develop`. Add
@@ -84,7 +84,7 @@ existing Git repository instead. The command is pinned because the initial
 distribution is GitHub-only:
 
 ```bash
-npx github:JoMe92/nogging#v2.0.2 init --no-systemd
+npx github:JoMe92/nogging#v2.1.0 init --no-systemd
 ./scripts/nogg doctor
 ./scripts/nogg validate
 ```
@@ -138,7 +138,7 @@ Nogging GitHub tag instead:
 
 ```bash
 cd /path/to/your-repo
-npx github:JoMe92/nogging#v2.0.2 init      # then: update, doctor
+npx github:JoMe92/nogging#v2.1.0 init      # then: update, doctor
 ```
 
 `init` copies the tool files verbatim, writes an OpenSpec scaffold only where one
