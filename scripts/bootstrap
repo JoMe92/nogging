@@ -238,6 +238,40 @@ ensure_bd() {
   report_step "bd" "$action" "now $(bd version 2>/dev/null | head -n1) (was: ${installed:-none})"
 }
 
+# --- Step 5.5: whiptail availability for the interactive wizard -------------
+# Same "check first, install only what's missing" pattern as
+# ensure_system_packages below. Failure here must never be a hard failure —
+# the wizard is a nicer experience, never a new hard requirement (design.md,
+# Decision 2) — so this returns non-zero on failure for the caller to fall
+# back on, rather than exiting.
+ensure_whiptail() {
+  if command -v whiptail >/dev/null 2>&1; then
+    report_step "whiptail" "skipped" "already present"
+    return 0
+  fi
+  echo "bootstrap: whiptail missing — installing via apt for the interactive wizard; sudo will prompt for your password"
+  if sudo apt-get update && sudo apt-get install -y whiptail; then
+    report_step "whiptail" "installed" "installed for the interactive wizard"
+    return 0
+  fi
+  echo "bootstrap: NOTE: could not install whiptail — continuing non-interactively" >&2
+  return 1
+}
+
+# decide_post_whiptail_mode <run_mode> <whiptail_ready> -> run_mode after
+# accounting for a failed/skipped whiptail install (design.md, Decision 2):
+# interactive downgrades to non-interactive when whiptail could not be made
+# available; non-interactive is never upgraded. Pure decision logic
+# (design.md, Decision 5) — testable without actually installing anything.
+decide_post_whiptail_mode() {
+  mode="$1"; ready="$2"
+  if [ "$mode" = "interactive" ] && [ "$ready" != "1" ]; then
+    echo non-interactive
+  else
+    echo "$mode"
+  fi
+}
+
 # --- Step 5: git, tmux, gh via the system package manager -------------------
 # Checked first; installs only what's missing, with a clear message before
 # invoking sudo — never a silent privilege escalation.
@@ -314,12 +348,19 @@ main() {
   tty_result=0
   is_interactive_tty && tty_result=1
   run_mode=$(decide_run_mode "$interactive_flag" "$tty_result")
-  # The wizard itself (whiptail availability, dialogs) arrives in later
-  # TASK-IBT-00{2..6} slices; for now `run_mode` is computed but unused, so
-  # every existing invocation (including a real TTY) is byte-for-byte
-  # unchanged until the wizard is actually wired in.
 
   check_platform
+
+  if [ "$run_mode" = "interactive" ]; then
+    whiptail_ready=0
+    ensure_whiptail && whiptail_ready=1
+    run_mode=$(decide_post_whiptail_mode "$run_mode" "$whiptail_ready")
+  fi
+  # The wizard's actual dialogs (welcome/confirm, install-path, checklist,
+  # auth, summary) arrive in later TASK-IBT-00{3..6} slices; for now
+  # `run_mode` reaching "interactive" here changes nothing further yet, so
+  # every existing non-interactive invocation stays byte-for-byte unchanged.
+
   ensure_node
   ensure_npm_global "@anthropic-ai/claude-code" "$CLAUDE_CODE_VERSION" claude
   ensure_npm_global "@openai/codex" "$CODEX_VERSION" codex
