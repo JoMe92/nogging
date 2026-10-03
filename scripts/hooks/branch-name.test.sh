@@ -55,6 +55,22 @@ run pass "develop accepted"                          "develop"
 run fail "empty ref fails closed"                    ""
 run fail "detached HEAD fails closed"                "HEAD"
 
+# TASK-CSB-003: a rejected claude/* ref gets the cloud-session hint.
+out=$(cd "$repo" && "$script" "claude/some-session" 2>&1) || true
+if [[ "$out" == *"cloud session branch: push the worktree branch from"*"nogg worktree implement"*"instead."* ]]; then
+  echo "ok   - rejected claude/* ref prints the cloud-session hint"
+else
+  echo "FAIL - rejected claude/* ref prints the cloud-session hint (got: $out)"
+  fail=1
+fi
+out=$(cd "$repo" && "$script" "feat/example-feature" 2>&1) || true
+if [[ "$out" != *"cloud session branch"* ]]; then
+  echo "ok   - accepted non-claude ref prints no cloud-session hint"
+else
+  echo "FAIL - accepted non-claude ref prints no cloud-session hint (got: $out)"
+  fail=1
+fi
+
 if [[ $fail -ne 0 ]]; then
   echo "check-branch-name checks failed" >&2
   exit 1

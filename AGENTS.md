@@ -193,6 +193,9 @@ the subsection for the tool you are running as, and ignore the others.
   `test-runner` — invoked **in process through the Task tool**. The Lead Agent
   delegation model is the *Lead Agent delegation* section of `CLAUDE.md`.
 - **Operator entry points.** `.claude/commands/{plan,discovery-review,sync-now}.md`.
+- **Cloud sessions.** The assigned `claude/*` branch is never a PR source:
+  push the branch `nogg worktree implement` / `worktree plan` allocated, and
+  open the pull request from that branch instead.
 
 ### Codex
 

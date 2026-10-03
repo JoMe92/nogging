@@ -142,3 +142,35 @@ The three Git hooks (`pre-commit`, `commit-msg`, and `pre-push`) only run from `
 fire. `init` detects this and prints a warning; the hook sources stay in
 `scripts/hooks/` for you to wire into the active hooks directory. The
 `PreToolUse` OpenSpec guard in `.claude/settings.json` is unaffected.
+
+## Cloud sessions
+
+A Claude Code cloud session's assigned `claude/*` branch is never a valid pull
+request source — push the branch `nogg worktree implement` / `worktree plan`
+allocated and open the PR from that branch instead; see `AGENTS.md`'s
+Claude Code tool notes.
+
+A fresh cloud container also starts from whatever the repository clone
+carries, with no locally-configured `core.hooksPath` and no initialized Beads
+database. `init` ships `scripts/hooks/session-start-cloud-bootstrap` — guarded
+to a no-op outside `CLAUDE_CODE_REMOTE=true` — that installs the pinned
+`bd`/Dolt versions from [`docs/nogging/compatibility.md`](compatibility.md),
+activates `core.hooksPath`, and runs `bd bootstrap`. It is **not** wired into
+`.claude/settings.json` by default: a `SessionStart` hook runs real setup work
+with real time cost on every session start, so a repository that uses cloud
+sessions opts in deliberately by adding it to the `SessionStart` array:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/scripts/hooks/session-start-cloud-bootstrap" }
+        ]
+      }
+    ]
+  }
+}
+```

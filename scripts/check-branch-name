@@ -55,6 +55,9 @@ fi
 
 if ! [[ "$ref" =~ ^($types)/([a-z0-9]+(-[a-z0-9]+)*)$ ]]; then
   echo "Nogging: branch '$ref' does not match <type>/<slug>." >&2
+  if [[ "$ref" =~ ^claude/ ]]; then
+    echo "  cloud session branch: push the worktree branch from \`nogg worktree implement\` instead." >&2
+  fi
   usage
   exit 1
 fi

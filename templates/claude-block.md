@@ -20,5 +20,8 @@ detail specific to Claude Code.
   Orchestration Agent* and `docs/nogging/operating-model.md` have the persona
   and its scope; `scripts/nogg orchestrator {run,status,stop,restart}` and
   `.claude/commands/orchestrate.md` drive it.
+- **Claude-only:** cloud sessions — the assigned `claude/*` branch is never a
+  PR source; push the branch `nogg worktree implement`/`worktree plan`
+  allocated and open the PR from that.
 
 Update Nogging with `npx github:JoMe92/nogging update`.
