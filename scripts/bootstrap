@@ -485,6 +485,39 @@ run_auth_step() {
   offer_login "Claude Code" check_claude_auth claude
 }
 
+# --- Closing summary (design.md, Decision 3/5) -------------------------------
+# build_closing_summary <repo> <with_pi> <no_beads> <no_hooks> <no_systemd>
+# <auth_summary> -> the summary text on stdout, naming what was installed,
+# what was skipped, and the next command to run. Pure decision logic
+# (design.md, Decision 5) — no whiptail call, directly unit-testable; reads
+# the same with_pi/no_beads/no_hooks/no_systemd the checklist produced
+# (Decision 3), never a second source of truth about what got installed.
+build_closing_summary() {
+  repo="$1"; with_pi="$2"; no_beads="$3"; no_hooks="$4"; no_systemd="$5"; auth_summary="$6"
+
+  installed_list="the core toolchain and Nogging itself"
+  [ "$with_pi" -eq 1 ] && installed_list="${installed_list}, the Pi coding agent"
+  [ "$no_beads" -eq 0 ] && installed_list="${installed_list}, Beads issue tracking"
+  [ "$no_hooks" -eq 0 ] && installed_list="${installed_list}, git hooks"
+  [ "$no_systemd" -eq 0 ] && installed_list="${installed_list}, the systemd sync timer"
+
+  skipped_list=""
+  [ "$with_pi" -eq 0 ] && skipped_list="${skipped_list}the Pi coding agent, "
+  [ "$no_beads" -eq 1 ] && skipped_list="${skipped_list}Beads issue tracking, "
+  [ "$no_hooks" -eq 1 ] && skipped_list="${skipped_list}git hooks, "
+  [ "$no_systemd" -eq 1 ] && skipped_list="${skipped_list}the systemd sync timer, "
+  skipped_list="${skipped_list%, }"
+  [ -n "$skipped_list" ] || skipped_list="nothing"
+
+  printf 'Installed: %s\n\nSkipped: %s\n\nAuthentication:\n%s\nNext: cd %s && ./scripts/nogg doctor\n' \
+    "$installed_list" "$skipped_list" "$auth_summary" "$repo"
+}
+
+show_closing_summary() {
+  text="$1"
+  whiptail --title "Nogging" --msgbox "$text" 20 70
+}
+
 main() {
   with_pi=0
   repo="."
@@ -543,8 +576,7 @@ main() {
   # After this point the wizard has built the exact same with_pi/repo/
   # no_beads/no_hooks/no_systemd a direct non-interactive invocation would
   # have set via flags (design.md, Decision 3) — every step below runs
-  # identically either way. The closing summary arrives in the later
-  # TASK-IBT-006 slice.
+  # identically either way, closing summary included.
 
   ensure_node
   ensure_npm_global "@anthropic-ai/claude-code" "$CLAUDE_CODE_VERSION" claude
@@ -557,7 +589,16 @@ main() {
   ensure_dolt
   ensure_bd
   ensure_system_packages
-  run_nogging_init "$repo" "$no_beads" "$no_hooks" "$no_systemd"
+
+  init_status=0
+  run_nogging_init "$repo" "$no_beads" "$no_hooks" "$no_systemd" || init_status=$?
+
+  if [ "$run_mode" = "interactive" ]; then
+    summary_text=$(build_closing_summary "$repo" "$with_pi" "$no_beads" "$no_hooks" "$no_systemd" "${auth_summary:-}")
+    show_closing_summary "$summary_text"
+  fi
+
+  return "$init_status"
 }
 
 # NOGGING_BOOTSTRAP_NO_MAIN lets scripts/compatibility.test.sh source this

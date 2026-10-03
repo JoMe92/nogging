@@ -473,3 +473,59 @@ echo "$no_summary" | grep -q 'GitHub: skipped' \
 rm -rf "$auth_stub_dir"
 trap - EXIT
 printf 'offer_login: unauthenticated tool offers and hands off login: ok\n'
+
+# --- TASK-IBT-006: build_closing_summary (pure decision logic) ------------
+summary_text() {
+  # summary_text <with_pi> <no_beads> <no_hooks> <no_systemd> <auth_summary>
+  NOGGING_BOOTSTRAP_NO_MAIN=1 "$real_bash" -c \
+    '. "$1" && build_closing_summary /opt/repo "$2" "$3" "$4" "$5" "$6"' \
+    _ "$bootstrap" "$1" "$2" "$3" "$4" "$5"
+}
+
+all_installed=$(summary_text 1 0 0 0 'GitHub: already authenticated
+')
+echo "$all_installed" | grep -q 'Installed:.*Pi coding agent' \
+  || fail "closing summary did not list Pi as installed when with_pi=1"
+echo "$all_installed" | grep -q 'Installed:.*Beads issue tracking' \
+  || fail "closing summary did not list Beads as installed when no_beads=0"
+echo "$all_installed" | grep -q '^Skipped: nothing$' \
+  || fail "closing summary did not report 'nothing' skipped when every component was installed"
+echo "$all_installed" | grep -q 'GitHub: already authenticated' \
+  || fail "closing summary did not include the auth step's own summary"
+echo "$all_installed" | grep -q 'Next: cd /opt/repo && ./scripts/nogg doctor' \
+  || fail "closing summary did not name the next command to run"
+
+all_skipped=$(summary_text 0 1 1 1 '')
+echo "$all_skipped" | grep -q 'Skipped:.*Pi coding agent' \
+  || fail "closing summary did not list Pi as skipped when with_pi=0"
+echo "$all_skipped" | grep -q 'Skipped:.*Beads issue tracking' \
+  || fail "closing summary did not list Beads as skipped when no_beads=1"
+echo "$all_skipped" | grep -q 'Skipped:.*git hooks' \
+  || fail "closing summary did not list git hooks as skipped when no_hooks=1"
+echo "$all_skipped" | grep -q 'Skipped:.*systemd sync timer' \
+  || fail "closing summary did not list the systemd timer as skipped when no_systemd=1"
+printf 'build_closing_summary: ok\n'
+
+# --- TASK-IBT-006: show_closing_summary wiring -----------------------------
+summary_stub_dir=$(mktemp -d)
+trap 'rm -rf "$summary_stub_dir"' EXIT
+cat > "$summary_stub_dir/whiptail" <<'STUB'
+#!/bin/sh
+printf '%s\n' "$*" >> "$WHIPTAIL_STUB_LOG"
+exit 0
+STUB
+chmod +x "$summary_stub_dir/whiptail"
+summary_log="$summary_stub_dir/calls.log"
+: > "$summary_log"
+
+PATH="$summary_stub_dir" WHIPTAIL_STUB_LOG="$summary_log" \
+  NOGGING_BOOTSTRAP_NO_MAIN=1 "$real_bash" -c \
+  '. "$1" && show_closing_summary "Installed: everything"' _ "$bootstrap"
+grep -q -- '--msgbox' "$summary_log" \
+  || fail "show_closing_summary did not call whiptail --msgbox"
+grep -q 'Installed: everything' "$summary_log" \
+  || fail "show_closing_summary did not pass the summary text to whiptail"
+
+rm -rf "$summary_stub_dir"
+trap - EXIT
+printf 'show_closing_summary wiring: ok\n'
