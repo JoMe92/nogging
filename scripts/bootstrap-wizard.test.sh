@@ -152,7 +152,7 @@ printf 'ensure_whiptail wiring: ok\n'
 banner_out=$(NOGGING_BOOTSTRAP_NO_MAIN=1 "$real_bash" -c '. "$1" && print_welcome_banner' _ "$bootstrap")
 # Tagline is letter-spaced (tracked small-caps style), so match the
 # collapsed form rather than the literal spaced text.
-echo "$banner_out" | tr -d ' ' | grep -Fq "structureforwhat'snext." \
+echo "$banner_out" | tr -d ' ' | grep -Fq "structureforateamofagents." \
   || fail "print_welcome_banner did not print the tagline"
 # The block-art wordmark is 7 rows tall; check row count+width rather than
 # literal text since each letter is drawn, not spelled.

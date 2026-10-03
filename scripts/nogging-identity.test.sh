@@ -22,7 +22,7 @@ grep -q 'github.com/gastownhall/beads' "$identity" || fail "Beads link is missin
 grep -q 'only component' "$identity" || fail "Beads-only adoption boundary is missing"
 grep -q 'independent implementation' "$identity" || fail "independent implementation statement is missing"
 grep -q 'not affiliated with or' "$identity" || fail "non-affiliation statement is missing"
-grep -q 'a local-first delivery system that carries approved intent' "$identity" || fail "concept statement is missing"
+grep -q 'structure for a team of agents' "$identity" || fail "concept statement is missing"
 grep -q '## Technical identifier inventory' "$identity" || fail "technical identifier inventory is missing"
 grep -q 'require no' "$identity" || fail "no-migration lifecycle decision is missing"
 

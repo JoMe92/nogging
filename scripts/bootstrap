@@ -365,7 +365,7 @@ print_welcome_banner() {
   printf '%s%s#   # #   # #   # #   #   #   #   # #   #%s\n' "$dark" "$bold" "$reset"
   printf '%s%s#   #  ###   ####  #### ##### #   #  ####%s\n' "$dark" "$bold" "$reset"
   printf '\n'
-  printf "%ss t r u c t u r e   f o r   w h a t ' s   n e x t .%s\n" "$sage" "$reset"
+  printf '%ss t r u c t u r e   f o r   a   t e a m   o f   a g e n t s .%s\n' "$sage" "$reset"
   printf '\n'
 }
 
