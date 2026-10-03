@@ -28,5 +28,6 @@
     "frontend-engineer": {"name": "Nogging Frontend Engineer", "email": "frontend-engineer@nogging.bot"},
     "code-reviewer": {"name": "Nogging Code Reviewer", "email": "code-reviewer@nogging.bot"},
     "test-runner": {"name": "Nogging Test Runner", "email": "test-runner@nogging.bot"}
-  }
+  },
+  "multi_machine": false
 }

@@ -491,6 +491,36 @@ def boundary_state_line():
     if (LOCKS / "planning.lock").exists() and not fresh:
         return "openspec write boundary: LOCKED (stale planning lock present — run plan-end --force)"
     return "openspec write boundary: LOCKED"
+def dolt_ahead_of_remote():
+    """Local Dolt commits on the current branch not present on its configured
+    remote, read entirely from local Dolt refs (no network call) — `None` when
+    there is no configured remote or the comparison cannot be made (a remote
+    never fetched/pushed yet has no local `remotes/<name>/<branch>` ref)."""
+    try:
+        remotes = json.loads(run(CFG["beads_command"], "dolt", "remote", "list",
+                                  "--json", check=False).stdout or "[]")
+    except ValueError:
+        return None
+    if not remotes:
+        return None
+    remote_name = remotes[0].get("name")
+    branch = "main"
+    branches = run(CFG["beads_command"], "branch", check=False).stdout
+    for line in branches.splitlines():
+        line = line.strip()
+        if line.startswith("*"):
+            branch = line.lstrip("*").strip() or branch
+            break
+    query = (f"SELECT COUNT(*) AS ahead FROM dolt_log('{branch}') WHERE commit_hash "
+             f"NOT IN (SELECT commit_hash FROM dolt_log('remotes/{remote_name}/{branch}'))")
+    result = run(CFG["beads_command"], "sql", "--json", query, check=False)
+    if result.returncode:
+        return None
+    try:
+        rows = json.loads(result.stdout or "[]")
+        return int(rows[0]["ahead"])
+    except (ValueError, KeyError, IndexError, TypeError):
+        return None
 _PREFIX_RULE_RE = re.compile(r"^\s*(?:prefix_rule|regex_rule)\s*\(")
 def _codex_rule_files():
     """Every Codex execpolicy `.rules` file that could apply here: the user
@@ -1130,6 +1160,7 @@ _SECRET_ASSIGN_RE = re.compile(
     r"(\"[^\"]*\"|'[^']*'|\S+)", re.I)
 
 def scfg(key, default): return CFG.get(key, default)
+def multi_machine_enabled(): return bool(scfg("multi_machine", False))
 # A short, fixed deny-list unioned into `permissions.deny` of every launch
 # profile — named, default, or a path the operator supplied — before the
 # effective settings file is written. No profile can grant these. It is a
@@ -2285,6 +2316,14 @@ def doctor(audit=False, with_recover=False):
         if srec.get("reason"):
             notes.append(f"last sync skipped: {srec['reason']} "
                          f"({humanize_age(srec.get('at'))})")
+    # multi_machine is opt-in (default false): never checked, never a FAIL,
+    # never changes the exit code — just visibility into an unpushed local
+    # Dolt history per design.md Decision 2.
+    if multi_machine_enabled():
+        ahead = dolt_ahead_of_remote()
+        if ahead:
+            notes.append(f"multi-machine: local Dolt is {ahead} commit(s) "
+                         f"ahead of its remote — run `bd dolt push` before ending this session")
     codex_present = tool_on_path("codex")
     notes.append("codex available" if codex_present
                  else "codex not installed; only needed for the Codex agent path")

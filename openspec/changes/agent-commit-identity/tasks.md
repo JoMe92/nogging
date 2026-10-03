@@ -2,25 +2,25 @@
 
 ## Tier 1 — no external dependency
 
-- [ ] TASK-ACI-001 Add the persona roster (`design.md` table) as data —
+- [x] TASK-ACI-001 Add the persona roster (`design.md` table) as data —
       `.nogging/config.json`'s new `personas` key or a dedicated
       `.nogging/personas.json`, whichever fits the existing config-loading
       code more cleanly. Each entry: slug, `user.name`, Tier-1
       `user.email`, optional (absent by default) `github_app` block.
 
-- [ ] TASK-ACI-002 In `worktree plan`/`worktree implement`, set
+- [x] TASK-ACI-002 In `worktree plan`/`worktree implement`, set
       `git config extensions.worktreeConfig true` on the shared repo if not
       already set (idempotent, checked first), then
       `git config --worktree user.name/user.email` for the matching persona
       (`planner` for a planning worktree, `lead` for an implementation
       worktree) inside the worktree just allocated.
 
-- [ ] TASK-ACI-003 Set the `Nogging Orchestrator` identity
+- [x] TASK-ACI-003 Set the `Nogging Orchestrator` identity
       (`design.md`, Decision 5) at `scripts/nogg orchestrator run` startup
       on the shared checkout, after confirming
       `extensions.worktreeConfig` there too.
 
-- [ ] TASK-ACI-004 Give `sync()`'s existing mirror commit the `Nogging Sync`
+- [x] TASK-ACI-004 Give `sync()`'s existing mirror commit the `Nogging Sync`
       identity (it already carries `Nogging-Writer: sync`; add the matching
       `user.name`/`user.email` at the point it commits, scoped the same
       worktree-config way if `sync` runs from a worktree, or directly via

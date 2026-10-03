@@ -69,6 +69,26 @@ show it as `FULL-ACCESS`. It writes `openspec/` or code only under an explicit
 `/orchestrate takeover {plan|code}` instruction (one task, then back), and it
 never signs an acceptance report. See `docs/nogging/operating-model.md`.
 
+### Multi-machine mode
+
+When `.nogging/config.json` sets `"multi_machine": true` (default `false`), a
+`trusted` or orchestrator session runs `bd dolt pull` once at session start —
+before reading any Beads state — and `bd dolt push` before the session ends,
+if it made any Bead write (create, update, claim, close). This keeps Beads
+state synchronized across machines that share one Dolt remote.
+
+`restricted` sessions are unaffected and need no change: they already cannot
+run `bd dolt push`/`pull` (no remote Dolt sync in their authority level), and
+a `restricted` session's local Bead writes land in Dolt history exactly as
+before — they reach the remote via the same machine's next
+`trusted`/orchestrator session push, which pushes every pending local commit,
+not only its own.
+
+`./scripts/nogg doctor` separately prints a NOTE (never a failure) when local
+Dolt is ahead of its configured remote. See
+`docs/nogging/failure-recovery.md` for the recovery path if two machines
+write before either has pulled.
+
 ### Tool notes
 
 - **Claude Code.** `openspec/` writes are also blocked by a `PreToolUse` hook

@@ -1,6 +1,6 @@
 # Tasks — unblock autonomous sessions
 
-- [ ] TASK-UAS-001 In `.nogging/launch-prompts/autonomous.md`, beside the
+- [x] TASK-UAS-001 In `.nogging/launch-prompts/autonomous.md`, beside the
       existing worktree-allocation bullet ("Before implementation, allocate a
       dedicated worktree from updated `develop` using `scripts/nogg worktree
       implement <bead> <branch>` and work only there"), add an explicit
@@ -12,7 +12,7 @@
       (see `design.md`, Decision 1, for why it does not need the same
       instruction). Closes GitHub issue #15.
 
-- [ ] TASK-UAS-002 In `.nogging/launch-profiles/trusted.json`, change
+- [x] TASK-UAS-002 In `.nogging/launch-profiles/trusted.json`, change
       `permissions.defaultMode` from `"acceptEdits"` to `"auto"`. Update the
       three places that describe the `trusted` profile's default mode as
       `acceptEdits`: `docs/operating-model.md` (the "Launch profiles"
@@ -26,7 +26,7 @@
       configured default, and is unaffected by this change. Closes GitHub
       issue #16.
 
-- [ ] TASK-UAS-003 In `scripts/session-launch`'s `codex)` branch, compute the
+- [x] TASK-UAS-003 In `scripts/session-launch`'s `codex)` branch, compute the
       shared checkout root (the directory the script itself lives under,
       resolved the same way regardless of the session's `--cwd`) and append
       `--add-dir "$repo_root"` to the Codex invocation, unconditionally,
@@ -37,7 +37,7 @@
       writable via `--add-dir`, alongside the existing sandbox/approval/
       network/can-push columns. Closes GitHub issue #17.
 
-- [ ] TASK-UAS-004 Run `scripts/test` and confirm it passes with all three
+- [x] TASK-UAS-004 Run `scripts/test` and confirm it passes with all three
       changes in place. Manually verify TASK-UAS-003 by launching
       `scripts/nogg session launch --role lead --bead <any open Bead>
       --agent codex --cwd <a worktree>` and confirming the resulting Codex
