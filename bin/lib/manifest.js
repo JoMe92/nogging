@@ -28,6 +28,7 @@ module.exports = {
     'scripts/hooks/session-start-cloud-bootstrap',
     'scripts/hooks/commit-msg.test.sh',
     'scripts/hooks/branch-name.test.sh',
+    'scripts/hooks/pre-tool-use-lead-launch-guard.test.sh',
     'scripts/hooks/session-start-cloud-bootstrap.test.sh',
   ],
 
