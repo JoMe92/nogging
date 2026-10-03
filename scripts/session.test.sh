@@ -447,7 +447,7 @@ name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.setting
 rec="$root/.nogging/state/sessions/$name.json"
 eff="$(record "$rec" effective_settings_path)"
 cp "$eff" "$out"
-check "lp-named: trusted defaultMode carried through" '"defaultMode": "auto"'
+check "lp-named: trusted defaultMode carried through" '"defaultMode": "bypassPermissions"'
 check "lp-named: trusted still allows git push" 'Bash(git push:*)'
 check "lp-named: floor unioned into deny (sudo)" 'Bash(sudo:*)'
 check "lp-named: floor unioned into deny (rm -rf)" 'Bash(rm -rf:*)'
@@ -537,7 +537,9 @@ grep -qE -- "--prompt [^ ]*/autonomous\.md" "$TMUX_STUB_DIR/calls.log" \
   && echo "ok   - lp-full: selects the autonomous prompt" \
   || { echo "FAIL - lp-full: autonomous prompt not passed"; fail=1; }
 cp "$(record "$rec" effective_settings_path)" "$out"
-check "lp-full: floored trusted settings written" '"defaultMode": "auto"'
+check "lp-full: floored trusted settings written" '"defaultMode": "bypassPermissions"'
+check "lp-full: disclaimer-skip key carried into effective settings" \
+  '"skipDangerousModePermissionPrompt": true'
 unset NOGGING_ROOT
 
 # ===========================================================================
