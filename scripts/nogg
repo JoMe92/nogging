@@ -218,6 +218,40 @@ def persona_mismatch_notes():
             notes.append(f"worktree {Path(location).name} ({record['kind']}) user.name is "
                          f"{actual or '(unset)'}, expected {expected_name}")
     return notes
+LAUNCH_PROFILE_EXPECTED_MODE = {"trusted.json": "bypassPermissions", "orchestrator.json": "bypassPermissions"}
+def launch_profile_notes():
+    """A NOTE (never a FAIL) for each Claude launch-profile JSON directly under
+    `.nogging/launch-profiles/` that sets `permissions.defaultMode:
+    bypassPermissions` without also setting a top-level
+    `skipDangerousModePermissionPrompt: true` (an interactive session would
+    then block on the bypass-permissions disclaimer), and a separate NOTE when
+    a shipped `trusted.json`/`orchestrator.json` carries a `defaultMode` other
+    than the value docs/security-model.md documents for it. `.codex.toml` /
+    `.pi.toml` siblings never match the `*.json` glob, so they are skipped
+    without any special-casing."""
+    notes = []
+    profile_dir = ROOT / CFG.get("session_launch_profile_dir", ".nogging/launch-profiles")
+    if not profile_dir.is_dir():
+        return notes
+    for path in sorted(profile_dir.glob("*.json")):
+        try:
+            profile = json.loads(path.read_text())
+        except (ValueError, OSError) as exc:
+            notes.append(f"launch profile {path.name} could not be read: {exc}")
+            continue
+        mode = (profile.get("permissions") or {}).get("defaultMode")
+        if mode == "bypassPermissions" and profile.get("skipDangerousModePermissionPrompt") is not True:
+            notes.append(
+                f"launch profile {path.name} sets permissions.defaultMode: "
+                f"bypassPermissions without a top-level "
+                f"skipDangerousModePermissionPrompt: true — an interactive session "
+                f"will block on the bypass-permissions disclaimer")
+        expected = LAUNCH_PROFILE_EXPECTED_MODE.get(path.name)
+        if expected is not None and mode != expected:
+            notes.append(
+                f"launch profile {path.name} has permissions.defaultMode "
+                f"{mode!r}, expected {expected!r} per docs/security-model.md")
+    return notes
 def cleanup_worktree(record_name):
     """Retire only a clean recorded worktree whose branch reached develop."""
     path = WORKTREE_STATE / record_name
@@ -2784,6 +2818,7 @@ def doctor(audit=False, with_recover=False):
     notes.append(f"recover: {len(rattention)} item(s) need attention"
                  + (f" — {', '.join(rattention)}" if rattention else " (nothing in flight)"))
     notes.extend(persona_mismatch_notes())
+    notes.extend(launch_profile_notes())
     for note in notes: print(f"NOTE  {note}")
     recover_lines = []
     if with_recover:
