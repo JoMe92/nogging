@@ -79,7 +79,7 @@ agents, resolved differently:
 | Level | Claude | Codex |
 | --- | --- | --- |
 | `restricted` (default) | `restricted.json` settings — deny `git push`, Dolt sync, destructive shell, network | `--sandbox workspace-write --ask-for-approval on-request`, network access off |
-| `trusted` | `trusted.json` — `acceptEdits`, allows `git push`/`merge`/… | `--sandbox workspace-write --ask-for-approval never`, network access off |
+| `trusted` | `trusted.json` — `auto`, allows `git push`/`merge`/… | `--sandbox workspace-write --ask-for-approval never`, network access off |
 
 So a Codex session is governed by Codex's own **sandbox mode** and **approval
 policy** rather than a Claude `permissions` file — there is no per-session
@@ -146,7 +146,7 @@ a whole change unattended — commit per Bead, push its branch, merge to
 
 `--full-access` is shorthand for `--profile trusted --prompt autonomous`:
 
-- **`trusted`** starts in `acceptEdits` and allows `git push`, `git merge`,
+- **`trusted`** starts in `auto` and allows `git push`, `git merge`,
   `git switch`, `git rebase`, `bd`, `openspec` (read commands), `npx` and
   `scripts/*`. It still denies `sudo`, `systemctl`, `curl`/`wget` and
   `WebFetch`.
