@@ -42,6 +42,8 @@ check "dry-run writes nothing" [ -z "$(find "$repo" -type f -not -path '*/.git/*
 check "tool bridge installed"      test -f "$repo/scripts/nogg"
 check "install-hooks installed"    test -f "$repo/scripts/install-hooks"
 check "boundary hook installed"    test -f "$repo/scripts/hooks/pre-tool-use-openspec-guard"
+check "lead-launch guard hook installed" test -f "$repo/scripts/hooks/pre-tool-use-lead-launch-guard"
+check "lead-launch guard hook is executable" test -x "$repo/scripts/hooks/pre-tool-use-lead-launch-guard"
 check "bridge is executable"       test -x "$repo/scripts/nogg"
 check "skills copied"              test -f "$repo/.agents/skills/openspec-propose/SKILL.md"
 check "all Claude agents installed" diff -qr "$root/.claude/agents" "$repo/.claude/agents"
@@ -154,6 +156,39 @@ guard_count=$(node -e "
   process.stdout.write(String(n));
 ")
 check "guard hook added exactly once" [ "$guard_count" = "1" ]
+
+# --- TASK-DAL-002/004: the Bash-matcher Lead-launch guard is a sibling entry,
+# inserted exactly once, leaving the Edit|Write guard entry untouched -------
+launch_guard_count=$(node -e "
+  const s = require('$merged/.claude/settings.json');
+  const pre = (s.hooks && s.hooks.PreToolUse) || [];
+  let n = 0;
+  for (const e of pre) for (const h of (e.hooks||[])) if ((h.command||'').includes('pre-tool-use-lead-launch-guard')) n++;
+  process.stdout.write(String(n));
+")
+check "lead-launch guard hook added exactly once" [ "$launch_guard_count" = "1" ]
+
+launch_guard_matcher=$(node -e "
+  const s = require('$merged/.claude/settings.json');
+  const pre = (s.hooks && s.hooks.PreToolUse) || [];
+  const entry = pre.find(e => (e.hooks||[]).some(h => (h.command||'').includes('pre-tool-use-lead-launch-guard')));
+  process.stdout.write((entry && entry.matcher) || '');
+")
+check "lead-launch guard entry matches Bash" [ "$launch_guard_matcher" = "Bash" ]
+
+openspec_guard_matcher=$(node -e "
+  const s = require('$merged/.claude/settings.json');
+  const pre = (s.hooks && s.hooks.PreToolUse) || [];
+  const entry = pre.find(e => (e.hooks||[]).some(h => (h.command||'').includes('pre-tool-use-openspec-guard')));
+  process.stdout.write((entry && entry.matcher) || '');
+")
+check "openspec guard entry still matches Edit|Write (untouched)" [ "$openspec_guard_matcher" = "Edit|Write" ]
+
+pre_tool_use_count=$(node -e "
+  const s = require('$merged/.claude/settings.json');
+  process.stdout.write(String(((s.hooks && s.hooks.PreToolUse) || []).length));
+")
+check "exactly two PreToolUse entries after a second update run" [ "$pre_tool_use_count" = "2" ]
 
 sess_kept=$(node -e "
   const s = require('$merged/.claude/settings.json');

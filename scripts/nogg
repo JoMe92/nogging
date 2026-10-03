@@ -1431,6 +1431,20 @@ def bead_exists(bead_id):
     records = decoded.get("issues", decoded) if isinstance(decoded, dict) else decoded
     if isinstance(records, dict): records = [records]
     return any(str(issue_id(r)) == str(bead_id) for r in records if isinstance(r, dict))
+def unmet_dependencies(bead_id):
+    """Return the blocking Bead IDs for `bead_id` (`bd dep list <id> --json`,
+    default `--direction down` — "what this Bead depends on") whose own
+    `status` is not `closed`. Empty list when the Bead has no recorded
+    dependency, or every recorded dependency is already closed. Mirrors
+    `bd ready`'s own notion of readiness."""
+    res = run(CFG["beads_command"], "dep", "list", bead_id, "--json", check=False)
+    if res.returncode != 0: return []
+    try: decoded = json.loads(res.stdout.strip() or "[]")
+    except ValueError: return []
+    records = decoded.get("issues", decoded) if isinstance(decoded, dict) else decoded
+    if isinstance(records, dict): records = [records]
+    return [str(issue_id(r)) for r in records
+            if isinstance(r, dict) and r.get("status") != "closed"]
 def session_name_in_use(name):
     """A name is in use if the metadata store already has a record or log for
     it, or a tmux session by that name exists on the dedicated server."""
@@ -1674,6 +1688,11 @@ def session_launch(role, bead, cwd, read_only, owner,
             openspec_readonly = False
     if not is_orchestrator and not bead_exists(bead):
         raise RuntimeError(f"Bead {bead} does not exist; launch refused")
+    if not is_orchestrator:
+        blocking = unmet_dependencies(bead)
+        if blocking:
+            raise RuntimeError(
+                f"Bead {bead} has an unmet dependency on {', '.join(blocking)}; launch refused")
     live = tmux_sessions()
     for _, rec in session_records():
         if is_orchestrator:
@@ -1821,6 +1840,24 @@ def reconciled_state(rec, live):
     if state in SESSION_ACTIVE_STATES and rec.get("name") not in live:
         return "failed"
     return state
+def blocked_running_sessions_notes():
+    """NOTE per currently `running` Lead/specialist session whose Bead now has
+    an unmet dependency — the retroactive case: a dependency recorded against
+    the Bead after this session already launched. Read-only, like every other
+    `doctor` NOTE: never stops or otherwise changes the flagged session."""
+    live = tmux_sessions()
+    out = []
+    for _, rec in session_records():
+        role = rec.get("role") or ""
+        if role != "lead" and not role.startswith("specialist:"): continue
+        if reconciled_state(rec, live) != "running": continue
+        bead_id = rec.get("bead_id")
+        if not bead_id: continue
+        blocking = unmet_dependencies(bead_id)
+        if blocking:
+            out.append(f"session {rec.get('name')} (Bead {bead_id}) now has an "
+                        f"unmet dependency on {', '.join(blocking)}")
+    return out
 def session_list():
     """Read every metadata record and print it with live-state reconciliation.
     Read-only: it never attaches, never starts tmux, and never rewrites a
@@ -2819,6 +2856,7 @@ def doctor(audit=False, with_recover=False):
                  + (f" — {', '.join(rattention)}" if rattention else " (nothing in flight)"))
     notes.extend(persona_mismatch_notes())
     notes.extend(launch_profile_notes())
+    notes.extend(blocked_running_sessions_notes())
     for note in notes: print(f"NOTE  {note}")
     recover_lines = []
     if with_recover:
