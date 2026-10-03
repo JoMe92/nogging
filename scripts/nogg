@@ -2161,15 +2161,29 @@ def _submit_pane_input(name, agent):
         # Known quirk: Claude Code requires a second bare Enter to actually
         # submit a multi-line paste.
         tmux("send-keys", "-t", name, "Enter")
+def pending_input_text(name, agent):
+    """The text currently sitting unsubmitted at a session's pane prompt, or
+    '' if there is none. Captures the pane (`session_pane_text`, the same
+    helper `watch`/`classify` use) and takes its last non-empty line; for a
+    Claude session, strips a leading `❯` prompt marker plus any following
+    whitespace before treating the remainder as pending text (a bare `❯` or
+    blank line yields ''). Shared by `session nudge`, `_pane_input_pending`'s
+    Claude branch, and `session sweep`'s `has-unsent-input` check."""
+    lines = [ln for ln in session_pane_text(name).splitlines() if ln.strip()]
+    if not lines:
+        return ""
+    last = lines[-1]
+    if agent == "claude":
+        last = re.sub(r"^❯\s*", "", last)
+    return last.strip()
 def _pane_input_pending(name, agent):
     """Whether a just-sent message is still sitting unsubmitted. For codex
     this is exactly the adapter's `needs_input` (`undelivered_input`) signal
-    (design.md); claude has no such structural signal yet, so this is always
-    False for it — the second bare Enter above is the known fix, not a
-    condition `send --verify` can detect and branch on."""
-    if agent != "codex":
-        return False
-    return classify(session_pane_text(name), CODEX_ADAPTER) == "needs_input"
+    (design.md); for claude this is `pending_input_text` returning non-empty
+    — a real structural signal, not the previous hardcoded False."""
+    if agent == "codex":
+        return classify(session_pane_text(name), CODEX_ADAPTER) == "needs_input"
+    return bool(pending_input_text(name, agent))
 def _codex_rollout_files():
     """Every rollout file Codex has written under `<codex_home>/sessions/`.
     Each file's first line is a `session_meta` record carrying the thread's
