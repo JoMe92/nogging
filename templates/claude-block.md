@@ -13,6 +13,12 @@ detail specific to Claude Code.
   (`AGENTS.md` hard rule 3) writes `tasks.md` directly from Bash and is
   unaffected by this hook, exactly like `sync()` already is — no override is
   needed to run it.
+- **Claude-only:** specialists (`.claude/agents/*.md`) run in process through
+  the Task tool. When a specialist's delegated, incorporated work
+  contributes to a commit, per `AGENTS.md`'s *Specialist delegation* section,
+  add a `Co-authored-by: <specialist persona name> <specialist persona
+  email>` trailer naming it (roster in `.nogging/config.json`'s `personas`
+  key).
 - **Claude-only:** the **Orchestration Agent** — the always-on
   `nogg-orchestrator-<slug>` session above Planning and the Main Worker,
   orchestrate-only by default, floor- and boundary-lifted for `--role

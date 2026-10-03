@@ -42,6 +42,35 @@ def require_kebab(value, label):
     if not KEBAB_RE.fullmatch(value or ""):
         raise RuntimeError(f"{label} must be a non-empty kebab-case value")
     return value
+PERSONAS = CFG.get("personas", {})
+def persona_identity(slug):
+    """The `(name, email)` commit identity for a roster persona `slug`, from
+    `.nogging/config.json`'s `personas` table. Raises if the slug is missing
+    or incomplete — an unconfigured persona must fail loudly rather than let
+    a commit land under no identity or the operator's own."""
+    entry = PERSONAS.get(slug)
+    if not isinstance(entry, dict) or not entry.get("name") or not entry.get("email"):
+        raise RuntimeError(f"persona roster has no complete entry for '{slug}'")
+    return entry["name"], entry["email"]
+def ensure_worktree_config_extension(path):
+    """Idempotently enable `extensions.worktreeConfig` for the repository at
+    `path` (a linked worktree or the main checkout) so a later
+    `git config --worktree` call scopes to that one worktree/checkout instead
+    of the shared `.git/config`."""
+    current = run("git", "-C", str(path), "config", "--get",
+                  "extensions.worktreeConfig", check=False)
+    if current.stdout.strip() != "true":
+        run("git", "-C", str(path), "config", "extensions.worktreeConfig", "true")
+def set_persona_identity(path, slug):
+    """Set the worktree-scoped `user.name`/`user.email` at `path` (a linked
+    worktree or the main checkout) to the roster identity for `slug`, so
+    every commit made there for the rest of its life carries the right
+    author automatically (design.md Decision 1) — no per-commit flag an
+    agent could forget to pass."""
+    ensure_worktree_config_extension(path)
+    name, email = persona_identity(slug)
+    run("git", "-C", str(path), "config", "--worktree", "user.name", name)
+    run("git", "-C", str(path), "config", "--worktree", "user.email", email)
 def worktree_record_path(kind, identifier, description):
     return WORKTREE_STATE / f"{kind}--{identifier}--{description}.json"
 def write_worktree_record(path, record):
@@ -122,6 +151,7 @@ def planning_worktree(planning_id, description, location=None):
     # diagnosable rather than silently losing the allocation request.
     write_worktree_record(record_path, record)
     run("git", "worktree", "add", "-b", branch, str(location), base)
+    set_persona_identity(location, "planner")
     record["state"] = "allocated"
     record["allocated_at"] = now()
     write_worktree_record(record_path, record)
@@ -157,11 +187,36 @@ def implementation_worktree(bead_id, branch, location=None):
               "kind": "implementation", "path": str(location), "state": "allocating", "base_ref": base}
     write_worktree_record(record_path, record)
     run("git", "worktree", "add", "-b", branch, str(location), base)
+    set_persona_identity(location, "lead")
     record["state"], record["allocated_at"] = "allocated", now()
     write_worktree_record(record_path, record)
     print(f"implementation worktree allocated: {location}")
     print(f"branch: {branch} (from {base}; Bead {bead_id})")
     print(f"record: {record_path.relative_to(ROOT)}")
+WORKTREE_KIND_PERSONA = {"planning": "planner", "implementation": "lead"}
+def persona_mismatch_notes():
+    """A NOTE (never a FAIL) for each recorded, still-registered worktree
+    whose `user.name` does not match its role's expected persona — catches a
+    worktree created before this change, or one where identity-setting
+    silently failed."""
+    notes = []
+    known = git_worktree_paths()
+    for _path, record in worktree_records():
+        if not isinstance(record, dict):
+            continue
+        slug = WORKTREE_KIND_PERSONA.get(record.get("kind"))
+        location = record.get("path")
+        if not slug or not isinstance(location, str) or location not in known:
+            continue
+        try:
+            expected_name, _expected_email = persona_identity(slug)
+        except RuntimeError:
+            continue
+        actual = run("git", "-C", location, "config", "--get", "user.name", check=False).stdout.strip()
+        if actual != expected_name:
+            notes.append(f"worktree {Path(location).name} ({record['kind']}) user.name is "
+                         f"{actual or '(unset)'}, expected {expected_name}")
+    return notes
 def cleanup_worktree(record_name):
     """Retire only a clean recorded worktree whose branch reached develop."""
     path = WORKTREE_STATE / record_name
@@ -925,10 +980,18 @@ def sync(on_request=False):
             if tick_task_line(f, task): changed.append(f)
         if changed:
             run("git", "add", *sorted({str(p.relative_to(ROOT)) for p in changed}))
+            # `sync`'s working directory is whatever branch the timer finds
+            # checked out — commonly the shared checkout, which may also host
+            # the orchestrator's own `git config --worktree` identity. A
+            # direct author/committer override here avoids fighting over that
+            # shared `--worktree` config with whichever persona set it last.
+            sync_name, sync_email = persona_identity("sync")
             run("git", "commit",
                 "-m", "chore(sync): mirror Beads execution evidence",
                 "-m", "Nogging-Writer: sync",
-                env={**os.environ, "NOGGING_WRITER": "sync"})
+                env={**os.environ, "NOGGING_WRITER": "sync",
+                     "GIT_AUTHOR_NAME": sync_name, "GIT_AUTHOR_EMAIL": sync_email,
+                     "GIT_COMMITTER_NAME": sync_name, "GIT_COMMITTER_EMAIL": sync_email})
             print(f"synced {len(set(changed))} file(s)")
         else: print("sync: no changes")
         prev = read_last_success()
@@ -1799,6 +1862,7 @@ def orchestrator_run(force=False):
     signal.signal(signal.SIGTERM, _term)
     name = orchestrator_session_name()
     workdir = str(ROOT)
+    set_persona_identity(ROOT, "orchestrator")
     acquire_orchestrator_lock(force)
     try:
         if tmux_has_session(name):
@@ -2285,6 +2349,7 @@ def doctor(audit=False, with_recover=False):
         notes.append(f"recover checks could not run: {exc}")
     notes.append(f"recover: {len(rattention)} item(s) need attention"
                  + (f" — {', '.join(rattention)}" if rattention else " (nothing in flight)"))
+    notes.extend(persona_mismatch_notes())
     for note in notes: print(f"NOTE  {note}")
     recover_lines = []
     if with_recover:

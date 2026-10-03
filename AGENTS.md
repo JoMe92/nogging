@@ -85,6 +85,12 @@ specialist works exactly one already-claimed Bead, returns a structured result,
 and never claims, closes, re-statuses, or commits. A plan-relevant finding from
 a specialist is recorded as a discovery by the Main Worker, not the specialist.
 
+When a specialist's delegated, incorporated work contributes to a commit, the
+Main Worker adds a `Co-authored-by: <specialist persona name> <specialist
+persona email>` trailer naming that specialist (roster in
+`.nogging/config.json`'s `personas` key), in addition to the Bead-ID token and
+evidence note above.
+
 How a specialist run is dispatched depends on the tool (see *Tool notes*): an
 in-process subagent where the runtime has one, otherwise a separate supervised
 session or inline work under the same constraints.
