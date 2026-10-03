@@ -44,7 +44,7 @@
       `design.md`, Decision 1, for why that tradeoff was rejected as the
       shipped default).
 
-- [ ] TASK-HTA-005 Update the `launch-profiles` spec delta (see
+- [x] TASK-HTA-005 Update the `launch-profiles` spec delta (see
       `specs/launch-profiles/spec.md` in this change) and run
       `scripts/nogg validate`. Add/extend `scripts/session.test.sh` and
       `scripts/nogg.test.sh` cases: `trusted.json` carries
