@@ -1445,6 +1445,22 @@ def unmet_dependencies(bead_id):
     if isinstance(records, dict): records = [records]
     return [str(issue_id(r)) for r in records
             if isinstance(r, dict) and r.get("status") != "closed"]
+def bead_change(bead_id):
+    """The `openspec:change:` label value on `bead_id`, or None if the Bead
+    does not exist or carries no such label. Read-only (`bd show --json`)."""
+    res = run(CFG["beads_command"], "show", bead_id, "--json", check=False)
+    if res.returncode != 0:
+        return None
+    try:
+        decoded = json.loads(res.stdout.strip() or "[]")
+    except ValueError:
+        return None
+    records = decoded.get("issues", decoded) if isinstance(decoded, dict) else decoded
+    if isinstance(records, dict): records = [records]
+    if not records:
+        return None
+    change, _task = mapping(records[0])
+    return change
 def session_name_in_use(name):
     """A name is in use if the metadata store already has a record or log for
     it, or a tmux session by that name exists on the dedicated server."""
@@ -1630,7 +1646,7 @@ def resolve_agent(agent):
     return resolved
 def session_launch(role, bead, cwd, read_only, owner,
                    profile=None, prompt=None, full_access=False, agent=None,
-                   resume=None):
+                   resume=None, kickoff=False):
     """Start a supervised agent session for a Bead.
 
     `resume`, when truthy, is the specific prior Claude conversation's session
@@ -1832,6 +1848,12 @@ def session_launch(role, bead, cwd, read_only, owner,
     print(f"  bead={bead or '-'} role={role_meta} cwd={workdir}")
     print(f"  log={log_path}")
     print(f"  attach: {tmux_bin()} -L {tmux_socket()} attach -t {name}  (or: nogg session attach {name})")
+    if kickoff:
+        session_kickoff(name)
+    else:
+        print(f"  kickoff: this session will not act until you send it a first "
+              f"message — run `nogg session kickoff {name}` or attach and type "
+              f"one yourself.")
 
 def reconciled_state(rec, live):
     """The state to report: an active record whose tmux session has vanished is
@@ -2306,6 +2328,32 @@ def session_nudge(name, message=None):
     tmux("send-keys", "-t", name, "-l", text)
     _submit_pane_input(name, agent)
     print(f"nudged {name}")
+def _compose_kickoff_message(bead_id, change):
+    return (f"Claim Bead {bead_id} and work change {change} end to end: "
+            f"claim {bead_id}, then work every Bead the {change} change "
+            f"scopes in tasks.md order.")
+def session_kickoff(name, message=None):
+    """Deliver a session's first turn. Refuses, sending nothing, unless the
+    session is `running`. With `message`, sends it verbatim via
+    `session_send`. With no `message`, composes one from the session's own
+    `bead_id` and that Bead's `openspec:change:` label — refusing (sending
+    nothing) when either is missing, which excludes `orchestrator` sessions:
+    they carry no `bead_id` and are never kicked off this way."""
+    _, rec = _require_running(name)
+    if message:
+        session_send(name, message)
+        return
+    bead_id = rec.get("bead_id")
+    if not bead_id:
+        raise RuntimeError(
+            f"kickoff: {name} carries no bead_id; pass --message to kick it "
+            f"off explicitly (an orchestrator session always needs one)")
+    change = bead_change(bead_id)
+    if not change:
+        raise RuntimeError(
+            f"kickoff: Bead {bead_id} carries no openspec:change: label; "
+            f"pass --message to kick off {name} explicitly")
+    session_send(name, _compose_kickoff_message(bead_id, change))
 # --- session observability: resume-when-ready -------------------------
 DEFAULT_RESUME_MESSAGE = ("the usage limit has reset, continue exactly where "
                           "you left off per your original instructions")
@@ -2981,6 +3029,8 @@ def main():
     sl.add_argument("--prompt", help="named launch prompt or a path to a system-prompt file")
     sl.add_argument("--full-access", action="store_true",
                     help="shorthand for --profile trusted --prompt autonomous")
+    sl.add_argument("--kickoff", action="store_true",
+                    help="send the session its first message immediately after launch")
     ssub.add_parser("list")
     sa = ssub.add_parser("attach"); sa.add_argument("name"); sa.add_argument("--read-only", action="store_true")
     slg = ssub.add_parser("log"); slg.add_argument("name"); slg.add_argument("--follow", action="store_true")
@@ -3003,6 +3053,8 @@ def main():
     ssend.add_argument("--verify", action="store_true")
     snud = ssub.add_parser("nudge")
     snud.add_argument("name"); snud.add_argument("--message")
+    skick = ssub.add_parser("kickoff")
+    skick.add_argument("name"); skick.add_argument("--message")
     srw = ssub.add_parser("resume-when-ready")
     srw.add_argument("name"); srw.add_argument("--message")
     semit = ssub.add_parser("emit")
@@ -3042,7 +3094,8 @@ def main():
 def session_cmd(args):
     if args.session_command == "launch":
         session_launch(args.role, args.bead, args.cwd, args.read_only, args.owner,
-                       args.profile, args.prompt, args.full_access, args.agent)
+                       args.profile, args.prompt, args.full_access, args.agent,
+                       kickoff=args.kickoff)
     elif args.session_command == "list":
         session_list()
     elif args.session_command == "attach":
@@ -3063,6 +3116,8 @@ def session_cmd(args):
         session_send(args.name, args.message, args.verify)
     elif args.session_command == "nudge":
         session_nudge(args.name, args.message)
+    elif args.session_command == "kickoff":
+        session_kickoff(args.name, args.message)
     elif args.session_command == "resume-when-ready":
         session_resume_when_ready(args.name, args.message)
     elif args.session_command == "emit":
