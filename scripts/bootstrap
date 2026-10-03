@@ -426,6 +426,65 @@ apply_checklist_answer() {
   case " $answer " in *'"systemd"'*) no_systemd=0 ;; esac
 }
 
+# --- Authentication step (design.md, Decision 4) -----------------------------
+# Nogging's own hard rule ("never echo a credential or token value") extends
+# here: these only ever *detect* and *offer*, never touch a token. Each
+# check function doubles as the decision itself (design.md, Decision 5) — a
+# tool's already-authenticated status is the real command's own exit
+# status/text, so stubbing gh/codex/$HOME on PATH in a test exercises the
+# actual wiring rather than a separate pure abstraction layered on top.
+check_gh_auth() {
+  gh auth status >/dev/null 2>&1
+}
+
+check_codex_auth() {
+  codex_status_out=$(codex login status 2>&1) || return 1
+  case "$codex_status_out" in
+    *"Logged in"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+check_claude_auth() {
+  [ -f "${HOME:-}/.claude/.credentials.json" ]
+}
+
+# offer_login <label> <check-fn> <login-cmd...> -> runs <check-fn> first and
+# returns silently, with no dialog shown at all, when already authenticated
+# (Decision 4: "skipped silently when already satisfied"). Otherwise offers
+# a whiptail --yesno; a "yes" hands the terminal directly to <login-cmd...>,
+# waits for it to exit, and re-checks via <check-fn> — never parsing or
+# storing anything the login command produces. Appends one line to
+# $auth_summary for the closing summary (TASK-IBT-006).
+offer_login() {
+  label="$1"; check_fn="$2"; shift 2
+  if "$check_fn"; then
+    auth_summary="${auth_summary:-}${label}: already authenticated
+"
+    return
+  fi
+  if whiptail --title "Nogging" --yesno "$label is not authenticated.\n\nLog in now?" 10 60; then
+    "$@"
+    if "$check_fn"; then
+      auth_summary="${auth_summary:-}${label}: logged in just now
+"
+    else
+      auth_summary="${auth_summary:-}${label}: still not authenticated
+"
+    fi
+  else
+    auth_summary="${auth_summary:-}${label}: skipped
+"
+  fi
+}
+
+run_auth_step() {
+  auth_summary=""
+  offer_login "GitHub" check_gh_auth gh auth login
+  offer_login "Codex" check_codex_auth codex login
+  offer_login "Claude Code" check_claude_auth claude
+}
+
 main() {
   with_pi=0
   repo="."
@@ -478,12 +537,14 @@ main() {
       exit 0
     }
     apply_checklist_answer "$checklist_answer"
+
+    run_auth_step
   fi
   # After this point the wizard has built the exact same with_pi/repo/
   # no_beads/no_hooks/no_systemd a direct non-interactive invocation would
   # have set via flags (design.md, Decision 3) — every step below runs
-  # identically either way. The auth step and closing summary arrive in
-  # later TASK-IBT-00{5,6} slices.
+  # identically either way. The closing summary arrives in the later
+  # TASK-IBT-006 slice.
 
   ensure_node
   ensure_npm_global "@anthropic-ai/claude-code" "$CLAUDE_CODE_VERSION" claude

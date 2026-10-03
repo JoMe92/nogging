@@ -332,3 +332,144 @@ echo "$init_call" | grep -q -- '--no-systemd' || fail "run_nogging_init dropped 
 rm -rf "$init_stub_dir"
 trap - EXIT
 printf 'run_nogging_init flag forwarding: ok\n'
+
+# --- TASK-IBT-005: auth checks, exercised against the real CLIs ------------
+# gh/codex are genuinely installed on this host; these checks are read-only
+# (an auth *status* query, never a login), so they are run for real here
+# rather than only stubbed — proving the wiring against the actual CLIs
+# whiptail's own dialog can't be exercised without a TTY, but the decision
+# logic underneath it can.
+if command -v gh > /dev/null 2>&1; then
+  NOGGING_BOOTSTRAP_NO_MAIN=1 "$real_bash" -c '. "$1" && check_gh_auth' _ "$bootstrap" \
+    || fail "check_gh_auth reported not-authenticated against a real, already-logged-in gh"
+  printf 'check_gh_auth (real gh): ok\n'
+else
+  printf 'check_gh_auth (real gh): skipped — gh not on PATH\n'
+fi
+
+if command -v codex > /dev/null 2>&1; then
+  NOGGING_BOOTSTRAP_NO_MAIN=1 "$real_bash" -c '. "$1" && check_codex_auth' _ "$bootstrap" \
+    || fail "check_codex_auth reported not-authenticated against a real, already-logged-in codex"
+  printf 'check_codex_auth (real codex): ok\n'
+else
+  printf 'check_codex_auth (real codex): skipped — codex not on PATH\n'
+fi
+
+claude_auth_result=$(NOGGING_BOOTSTRAP_NO_MAIN=1 "$real_bash" -c \
+  '. "$1" && if check_claude_auth; then echo yes; else echo no; fi' _ "$bootstrap")
+real_claude_creds="$HOME/.claude/.credentials.json"
+if [ -f "$real_claude_creds" ]; then
+  [ "$claude_auth_result" = "yes" ] \
+    || fail "check_claude_auth said no despite $real_claude_creds existing"
+else
+  [ "$claude_auth_result" = "no" ] \
+    || fail "check_claude_auth said yes despite $real_claude_creds not existing"
+fi
+printf 'check_claude_auth (real HOME): ok\n'
+
+# --- TASK-IBT-005: an already-authenticated tool shows no dialog ----------
+# HOME is overridden to a scratch dir so check_claude_auth is deterministic
+# regardless of the real host's credential state.
+auth_stub_dir=$(mktemp -d)
+trap 'rm -rf "$auth_stub_dir"' EXIT
+
+already_authed_bin="$auth_stub_dir/already-authed"
+mkdir -p "$already_authed_bin"
+cat > "$already_authed_bin/gh" <<'STUB'
+#!/bin/sh
+exit 0
+STUB
+cat > "$already_authed_bin/codex" <<'STUB'
+#!/bin/sh
+echo "Logged in using ChatGPT"
+exit 0
+STUB
+cat > "$already_authed_bin/whiptail" <<'STUB'
+#!/bin/sh
+printf '%s\n' "$*" >> "$WHIPTAIL_STUB_LOG"
+exit 1
+STUB
+chmod +x "$already_authed_bin/gh" "$already_authed_bin/codex" "$already_authed_bin/whiptail"
+
+auth_home="$auth_stub_dir/home"
+mkdir -p "$auth_home/.claude"
+: > "$auth_home/.claude/.credentials.json"
+
+auth_log="$auth_stub_dir/calls.log"
+: > "$auth_log"
+already_authed_summary=$(PATH="$already_authed_bin" HOME="$auth_home" \
+  WHIPTAIL_STUB_LOG="$auth_log" \
+  NOGGING_BOOTSTRAP_NO_MAIN=1 "$real_bash" -c \
+  '. "$1" && run_auth_step && printf "%s" "$auth_summary"' _ "$bootstrap")
+
+[ ! -s "$auth_log" ] \
+  || fail "run_auth_step showed a dialog for an already-authenticated tool: $(cat "$auth_log")"
+echo "$already_authed_summary" | grep -q 'GitHub: already authenticated' \
+  || fail "run_auth_step summary missing the already-authenticated GitHub line"
+echo "$already_authed_summary" | grep -q 'Codex: already authenticated' \
+  || fail "run_auth_step summary missing the already-authenticated Codex line"
+echo "$already_authed_summary" | grep -q 'Claude Code: already authenticated' \
+  || fail "run_auth_step summary missing the already-authenticated Claude Code line"
+printf 'offer_login: already-authenticated tools show no dialog: ok\n'
+
+# --- TASK-IBT-005: an unauthenticated tool offers, then hands off, login --
+not_authed_bin="$auth_stub_dir/not-authed"
+mkdir -p "$not_authed_bin"
+cat > "$not_authed_bin/gh" <<'STUB'
+#!/bin/sh
+# Stateful stub: starts unauthenticated, becomes authenticated once
+# `auth login` has been called — so a re-check after the hand-off actually
+# reflects the login happening, the same as the real CLI would.
+if [ "$1" = "auth" ] && [ "$2" = "status" ]; then
+  [ -f "$LOGGED_IN_MARKER" ] && exit 0
+  exit 1
+fi
+if [ "$1" = "auth" ] && [ "$2" = "login" ]; then
+  printf 'gh auth login\n' >> "$LOGIN_CALL_LOG"
+  : > "$LOGGED_IN_MARKER"
+  exit 0
+fi
+exit 1
+STUB
+cat > "$not_authed_bin/whiptail" <<'STUB'
+#!/bin/sh
+printf '%s\n' "$*" >> "$WHIPTAIL_STUB_LOG"
+exit "${WHIPTAIL_STUB_EXIT:-0}"
+STUB
+chmod +x "$not_authed_bin/gh" "$not_authed_bin/whiptail"
+
+empty_home="$auth_stub_dir/empty-home"
+mkdir -p "$empty_home"
+login_log="$auth_stub_dir/login-calls.log"
+dialog_log="$auth_stub_dir/dialog-calls.log"
+logged_in_marker="$auth_stub_dir/logged-in-marker"
+
+: > "$login_log"; : > "$dialog_log"; rm -f "$logged_in_marker"
+yes_summary=$(PATH="$not_authed_bin" HOME="$empty_home" \
+  LOGIN_CALL_LOG="$login_log" LOGGED_IN_MARKER="$logged_in_marker" \
+  WHIPTAIL_STUB_LOG="$dialog_log" WHIPTAIL_STUB_EXIT=0 \
+  NOGGING_BOOTSTRAP_NO_MAIN=1 "$real_bash" -c \
+  '. "$1" && offer_login GitHub check_gh_auth gh auth login && printf "%s" "$auth_summary"' \
+  _ "$bootstrap")
+grep -q -- '--yesno' "$dialog_log" \
+  || fail "offer_login did not show a dialog for an unauthenticated tool"
+grep -q 'gh auth login' "$login_log" \
+  || fail "offer_login did not hand off to the login command on a Yes answer"
+echo "$yes_summary" | grep -q 'GitHub: logged in just now' \
+  || fail "offer_login summary did not report a successful just-now login"
+
+: > "$login_log"; : > "$dialog_log"; rm -f "$logged_in_marker"
+no_summary=$(PATH="$not_authed_bin" HOME="$empty_home" \
+  LOGIN_CALL_LOG="$login_log" LOGGED_IN_MARKER="$logged_in_marker" \
+  WHIPTAIL_STUB_LOG="$dialog_log" WHIPTAIL_STUB_EXIT=1 \
+  NOGGING_BOOTSTRAP_NO_MAIN=1 "$real_bash" -c \
+  '. "$1" && offer_login GitHub check_gh_auth gh auth login && printf "%s" "$auth_summary"' \
+  _ "$bootstrap")
+[ ! -s "$login_log" ] \
+  || fail "offer_login ran the login command despite a No answer"
+echo "$no_summary" | grep -q 'GitHub: skipped' \
+  || fail "offer_login summary did not report a declined login as skipped"
+
+rm -rf "$auth_stub_dir"
+trap - EXIT
+printf 'offer_login: unauthenticated tool offers and hands off login: ok\n'
