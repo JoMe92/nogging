@@ -338,18 +338,35 @@ printf 'run_nogging_init flag forwarding: ok\n'
 # (an auth *status* query, never a login), so they are run for real here
 # rather than only stubbed — proving the wiring against the actual CLIs
 # whiptail's own dialog can't be exercised without a TTY, but the decision
-# logic underneath it can.
+# logic underneath it can. Authentication state itself is NOT assumed (a
+# dev host may be logged in; a CI runner ships gh/codex preinstalled but
+# unauthenticated by default) — each check is compared against the real
+# command's own ground-truth outcome, the same way the check_claude_auth
+# block below it already does via real file existence.
 if command -v gh > /dev/null 2>&1; then
+  expected_gh=no
+  gh auth status > /dev/null 2>&1 && expected_gh=yes
+  actual_gh=no
   NOGGING_BOOTSTRAP_NO_MAIN=1 "$real_bash" -c '. "$1" && check_gh_auth' _ "$bootstrap" \
-    || fail "check_gh_auth reported not-authenticated against a real, already-logged-in gh"
+    > /dev/null 2>&1 && actual_gh=yes
+  [ "$actual_gh" = "$expected_gh" ] \
+    || fail "check_gh_auth ($actual_gh) disagreed with gh auth status ($expected_gh)"
   printf 'check_gh_auth (real gh): ok\n'
 else
   printf 'check_gh_auth (real gh): skipped — gh not on PATH\n'
 fi
 
 if command -v codex > /dev/null 2>&1; then
+  codex_real_out=$(codex login status 2>&1); codex_real_exit=$?
+  expected_codex=no
+  case "$codex_real_out" in
+    *"Logged in"*) [ "$codex_real_exit" -eq 0 ] && expected_codex=yes ;;
+  esac
+  actual_codex=no
   NOGGING_BOOTSTRAP_NO_MAIN=1 "$real_bash" -c '. "$1" && check_codex_auth' _ "$bootstrap" \
-    || fail "check_codex_auth reported not-authenticated against a real, already-logged-in codex"
+    > /dev/null 2>&1 && actual_codex=yes
+  [ "$actual_codex" = "$expected_codex" ] \
+    || fail "check_codex_auth ($actual_codex) disagreed with codex login status ($expected_codex)"
   printf 'check_codex_auth (real codex): ok\n'
 else
   printf 'check_codex_auth (real codex): skipped — codex not on PATH\n'
