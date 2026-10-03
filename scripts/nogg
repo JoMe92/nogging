@@ -2388,27 +2388,33 @@ def _idle_minutes(rec):
     if newest is None:
         return None
     return max(0, int((time.time() - newest) // 60))
+def _sweep_state(rec):
+    """`change-complete` / `bead-blocked (<id>)` / `active` for one running,
+    Bead-assigned session — the classification half of a sweep line, shared
+    with `doctor`'s NOTEs (design.md Decision 4: one detection function, two
+    call sites)."""
+    change = bead_change(rec.get("bead_id"))
+    if not change:
+        return "active"
+    change_set = change_beads(change)
+    blocked = next((b for b in change_set if b.get("status") == "blocked"), None)
+    if blocked is not None:
+        return f"bead-blocked ({issue_id(blocked)})"
+    if change_set and all(b.get("status") == "closed" for b in change_set):
+        branch = _session_worktree_branch(rec)
+        pr_state = _pr_state_for_branch(branch) if branch else None
+        if pr_state is None or pr_state == "MERGED":
+            return "change-complete"
+    return "active"
 def _sweep_line(rec):
     """One `session sweep` report line for a single running, Bead-assigned
     session (design.md Decision 4)."""
-    name, bead_id = rec.get("name"), rec.get("bead_id")
+    name = rec.get("name")
     agent = rec.get("agent") or "claude"
     pending = "yes" if pending_input_text(name, agent) else "no"
     idle_m = _idle_minutes(rec)
     idle_s = f"{idle_m}m" if idle_m is not None else "unknown"
-    state = "active"
-    change = bead_change(bead_id)
-    if change:
-        change_set = change_beads(change)
-        blocked = next((b for b in change_set if b.get("status") == "blocked"), None)
-        if blocked is not None:
-            state = f"bead-blocked ({issue_id(blocked)})"
-        elif change_set and all(b.get("status") == "closed" for b in change_set):
-            branch = _session_worktree_branch(rec)
-            pr_state = _pr_state_for_branch(branch) if branch else None
-            if pr_state is None or pr_state == "MERGED":
-                state = "change-complete"
-    return f"{name}: {state}  has-unsent-input={pending}  idle for {idle_s}"
+    return f"{name}: {_sweep_state(rec)}  has-unsent-input={pending}  idle for {idle_s}"
 def session_sweep():
     """Read-only per-session liveness detection (design.md Decision 4): for
     every `running` session with a `bead_id`, report `change-complete`,
@@ -3003,6 +3009,25 @@ def doctor(audit=False, with_recover=False):
                      else "cloud session: core.hooksPath is not set")
         notes.append("cloud session: bd is on PATH" if tool_on_path(CFG["beads_command"])
                      else "cloud session: bd is not on PATH")
+    # Flagged running sessions (TASK-SLK-005/006/007): one NOTE per session
+    # that is awaiting_manual_approval, change-complete, or bead-blocked —
+    # the single-command version of a per-session manual tmux audit. Shares
+    # `_sweep_state`/`classify_session` with `session sweep` itself, never a
+    # shell-out; `has-unsent-input` and the idle-duration figure stay
+    # `sweep`-only detail (design.md Decision 4).
+    live_sessions = tmux_sessions()
+    for _path, rec in session_records():
+        if reconciled_state(rec, live_sessions) != "running":
+            continue
+        sess_name = rec.get("name")
+        if rec.get("bead_id"):
+            state = _sweep_state(rec)
+            if state != "active":
+                notes.append(f"session {sess_name}: {state}")
+        cstate, _pane = classify_session(rec, live_sessions)
+        if cstate == "awaiting_manual_approval":
+            notes.append(f"session {sess_name}: awaiting_manual_approval "
+                         f"(idle in manual mode; needs a human to approve each step)")
     # The interrupted-run checks: doctor always prints a one-line summary
     # (`recover` folds the full report). Read-only, like the rest of doctor.
     try:
