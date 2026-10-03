@@ -149,6 +149,17 @@ and resolves what it reports with the
 playbook — exactly as `AGENTS.md` § "Resuming a run" describes. The protocol is
 tool-neutral; nothing about it is Claude- or Codex-specific.
 
+## A Codex session hit its usage limit
+
+`scripts/nogg session watch` and `scripts/nogg session resume-when-ready` work
+the same way for a Codex session as for a Claude one (the `codex` adapter has
+its own pattern table). **Switching models does not clear a genuine
+account-wide usage limit** — this was confirmed twice in production (GitHub
+issue #20) and holds regardless of which agent hit the limit. Do not retry
+with a different model as a workaround; wait it out, or run
+`resume-when-ready <name>`, which dismisses a residual "switch model?" prompt
+by keeping the current model rather than switching.
+
 ## Specialists
 
 Codex has **no in-process subagent mechanism** — there is no Codex equivalent

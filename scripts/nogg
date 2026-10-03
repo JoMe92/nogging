@@ -6,6 +6,7 @@ It intentionally contains no LLM call and makes no semantic product decision.
 from __future__ import annotations
 
 import argparse, datetime as dt, getpass, json, os, re, shlex, shutil, signal, socket, subprocess, sys, time, uuid
+from dataclasses import dataclass, field
 from pathlib import Path
 
 # ROOT is the repository the bridge operates on. It defaults to the checkout the
@@ -1139,6 +1140,68 @@ def sync_now():
         # The timer grabbed the lock between the check above and sync()'s own
         # acquire. Same outcome: report, do not retry.
         print(f"{exc}; the timer is mid-pass — not retrying")
+# --- session observability: per-agent state adapters -----------------------
+# An Adapter is a plain data record, not a single global keyword table: an
+# `ignore` pattern list (benign chrome stripped before classifying) plus
+# ordered per-state pattern lists. This is a direct fix for the hand-rolled
+# predecessor's false-positive problem — every Claude pane permanently
+# showing `Auto-update failed: no write permission to npm prefix`, which a
+# bare `failed` keyword match flagged as needing attention forever (#23).
+@dataclass
+class Adapter:
+    name: str
+    ignore: list = field(default_factory=list)
+    working: list = field(default_factory=list)
+    waiting_bg: list = field(default_factory=list)
+    needs_input: list = field(default_factory=list)
+    limit: list = field(default_factory=list)
+    idle: list = field(default_factory=list)
+
+def _pats(*patterns, flags=0):
+    return [re.compile(p, flags) for p in patterns]
+
+# Patterns are shipped verbatim from design.md's production-observed tables
+# (#23) — not re-derived — because re-guessing them would re-risk the exact
+# false-positive class this change exists to fix.
+CLAUDE_ADAPTER = Adapter(
+    name="claude",
+    ignore=_pats(r"Auto-update failed", r"Tip:"),
+    working=_pats(r"esc to interrupt"),
+    waiting_bg=_pats(r"\d+ shells?( still running)?", r"\d+ monitors?"),
+    needs_input=_pats(r"Do you want to proceed", r"Allow this", r"❯ 1\. Yes"),
+    limit=_pats(r"usage limit reached", r"rate limit", flags=re.I),
+    idle=_pats(r"❯\s*$"),
+)
+CODEX_ADAPTER = Adapter(
+    name="codex",
+    working=_pats(r"Working \("),
+    idle=_pats(r"Ask Codex to do anything"),
+    # `undelivered_input`: `Pasted Content` sitting visible is the lost-
+    # message failure mode itself (#23) — pane text otherwise reads idle.
+    needs_input=_pats(r"Pasted Content"),
+)
+ADAPTERS = {"claude": CLAUDE_ADAPTER, "codex": CODEX_ADAPTER}
+# Classification precedence, fixed: `limit` > `needs_input` > `working` >
+# `waiting_background` > `idle`, else `unknown`.
+_CLASSIFY_ORDER = (
+    ("limit", "limit"), ("needs_input", "needs_input"),
+    ("working", "working"), ("waiting_bg", "waiting_background"),
+    ("idle", "idle"),
+)
+def classify(pane_text, adapter):
+    """Classify `pane_text` (a captured tmux pane) under `adapter`.
+
+    Reads only the last ~15 lines (never full scrollback), strips lines
+    matching `adapter.ignore` first, then checks states in the fixed
+    precedence order above. Returns `unknown` when nothing matches."""
+    lines = (pane_text or "").splitlines()[-15:]
+    kept = [ln for ln in lines
+            if not any(p.search(ln) for p in adapter.ignore)]
+    for attr, state in _CLASSIFY_ORDER:
+        patterns = getattr(adapter, attr)
+        if patterns and any(p.search(ln) for ln in kept for p in patterns):
+            return state
+    return "unknown"
 # --- session supervision ---------------------------------------------------
 # A thin, mechanical layer that runs each Nogging-launched Claude Code
 # session inside a named tmux session on a dedicated server socket, tracks it
@@ -1199,6 +1262,26 @@ def deny_openspec_writes(settings):
         if entry not in deny:
             deny.append(entry)
     perms["deny"] = deny
+    return result
+# Claude Layer 2 (design.md Decision 4): one `Stop` and one `Notification`
+# hook entry, each invoking `session emit` so `watch` can prefer a structured
+# events file over pane-scraping. Appended into `hooks.<event>` by
+# merge_observability_hooks() below — never replacing or reordering an
+# existing entry for that event, exactly like FLOOR_DENY / OPENSPEC_READONLY_DENY.
+OBSERVABILITY_HOOKS = {
+    "Stop": {"hooks": [{"type": "command", "command": "scripts/nogg session emit turn_end"}]},
+    "Notification": {"hooks": [{"type": "command", "command": "scripts/nogg session emit needs_input"}]},
+}
+def merge_observability_hooks(settings):
+    """Return a deep copy of `settings` with the Layer-2 Stop/Notification
+    hook entries appended to `hooks.<event>` — appended, never replacing or
+    reordering any existing entry for that event. Input never mutated."""
+    result = json.loads(json.dumps(settings))
+    hooks = result.setdefault("hooks", {})
+    for event, entry in OBSERVABILITY_HOOKS.items():
+        existing = list(hooks.get(event) or [])
+        existing.append(entry)
+        hooks[event] = existing
     return result
 def resolve_launch_file(value, dir_key, default_dir, suffix):
     """Resolve a `--profile` / `--prompt` value to a concrete file.
@@ -1616,6 +1699,7 @@ def session_launch(role, bead, cwd, read_only, owner,
         settings_out = base_settings if floor_lifted else merge_floor(base_settings)
         if openspec_readonly:
             settings_out = deny_openspec_writes(settings_out)
+        settings_out = merge_observability_hooks(settings_out)
         effective_path.write_text(json.dumps(settings_out, indent=2) + "\n")
         effective_settings_path = str(effective_path)
         inner[1:1] = ["--settings", effective_settings_path]
@@ -1675,7 +1759,12 @@ def session_launch(role, bead, cwd, read_only, owner,
     with log_path.open("a") as fh:                        # append-only log before exec
         fh.write(f"# nogg session {name} for {bead or 'no bead'} ({role_meta}) started {record['started_at']}\n")
     try:
-        tmux("new-session", "-d", "-s", name, "-c", workdir, "--", *inner)
+        # -e NOGG_SESSION_NAME=<name> is agent-neutral session environment
+        # (every process tmux starts in this session inherits it), the only
+        # way a `session emit` hook invocation — a bare, argument-less
+        # command line (design.md Decision 4) — can know its own session name.
+        tmux("new-session", "-d", "-s", name, "-c", workdir,
+             "-e", f"NOGG_SESSION_NAME={name}", "--", *inner)
         writer = str((ROOT / "scripts/session-log-writer").resolve())
         max_bytes = int(scfg("session_log_max_bytes", 1048576))
         depth = int(scfg("session_log_rotation_depth", 3))
@@ -1829,6 +1918,312 @@ def session_log(name, follow):
     if follow:
         os.execvp("tail", ["tail", "-n", "+1", "-F", str(lp)])
     sys.stdout.write(lp.read_text())
+# --- session observability: watch -------------------------------------
+# `watch` polls each tracked session's pane, classifies it per-agent
+# (Decision 1), and emits one event per state transition plus `stalled`
+# (Decision 3) — never a firehose, never a daemon; it is a foreground
+# command run under whatever already supervises the operator.
+_DURATION_RE = re.compile(r"^(\d+(?:\.\d+)?)\s*([smh]?)$")
+_DURATION_UNITS = {"s": 1, "m": 60, "h": 3600, "": 1}
+def parse_duration(spec):
+    """Parse a bounded duration like `30`, `30s`, `15m`, `2h` to seconds."""
+    m = _DURATION_RE.match(str(spec).strip())
+    if not m:
+        raise RuntimeError(f"not a duration: {spec!r} (expected e.g. 30, 30s, 15m, 2h)")
+    return float(m.group(1)) * _DURATION_UNITS[m.group(2)]
+_CLOCK_TIME_RE = re.compile(r"\b(\d{1,2}):(\d{2})\s*([AaPp][Mm])?\b")
+def resolve_clock_time(text, now=None):
+    """Resolve the first bare `HH:MM` / `H:MM AM/PM` token in `text` to an
+    absolute ISO 8601 timestamp against `now`'s local date (design.md
+    Decision 2), rolling to the next day when the parsed time precedes
+    `now`. Returns None when no time-like token is found or it does not
+    resolve to a valid time."""
+    m = _CLOCK_TIME_RE.search(text or "")
+    if not m:
+        return None
+    now = now or dt.datetime.now()
+    hour, minute, ampm = int(m.group(1)), int(m.group(2)), m.group(3)
+    if not (0 <= minute < 60):
+        return None
+    if ampm:
+        if not (1 <= hour <= 12):
+            return None
+        hour = hour % 12
+        if ampm.lower() == "pm":
+            hour += 12
+    elif not (0 <= hour < 24):
+        return None
+    candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if candidate < now:
+        candidate += dt.timedelta(days=1)
+    return candidate.isoformat()
+def session_pane_text(name):
+    """The session's current visible pane (no scrollback), or '' if its tmux
+    session does not exist."""
+    res = tmux("capture-pane", "-p", "-t", name, check=False)
+    return res.stdout if res.returncode == 0 else ""
+def session_events_path(name):
+    return sessions_dir() / f"{name}.events.jsonl"
+def session_emit(event):
+    """Append one structured JSON line to the calling session's own
+    `<name>.events.jsonl` (design.md Decision 4). The session name is read
+    from `NOGG_SESSION_NAME`, set as session environment by `session_launch`
+    for exactly this purpose — a bare `Stop`/`Notification` hook command
+    carries no arguments identifying which session it fired in."""
+    name = os.environ.get("NOGG_SESSION_NAME")
+    if not name:
+        raise RuntimeError(
+            "session emit: NOGG_SESSION_NAME is not set (not running inside "
+            "a session `scripts/nogg session launch` started)")
+    with session_events_path(name).open("a") as fh:
+        fh.write(json.dumps({"timestamp": now(), "session": name, "event": event}) + "\n")
+# A Layer-2 hook event maps onto one of classify()'s Layer-1 states: `Stop`
+# fires once Claude finishes a turn (idle, awaiting the next input); the
+# `Notification` hook this change wires fires on a permission prompt
+# (needs_input). Any other event name (future hook) classifies as `unknown`
+# rather than silently reusing a stale state.
+EVENT_STATE_MAP = {"turn_end": "idle", "needs_input": "needs_input"}
+def _layer2_state(name):
+    """The most recent Layer-2 state for a Claude session's events file, or
+    None when that file does not exist or has no lines yet — the signal
+    `classify_session` uses to fall back to Layer-1 pane-scraping (Decision 4:
+    Layer 2 is additive, never required)."""
+    path = session_events_path(name)
+    if not path.exists() or path.stat().st_size == 0:
+        return None
+    last_event = None
+    with path.open() as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                last_event = json.loads(line).get("event")
+            except ValueError:
+                continue
+    if last_event is None:
+        return None
+    return EVENT_STATE_MAP.get(last_event, "unknown")
+def classify_session(rec, live=None):
+    """One-shot state classification for a managed session record: Layer 2
+    (the session's own `<name>.events.jsonl`) when present and non-empty for
+    a Claude session, else Layer-1 pane-scraping. Returns `(state,
+    pane_text)` — `pane_text` is still the real pane capture even on a
+    Layer-2 hit, so callers needing it (e.g. a `limit` reset time) are
+    unaffected; Layer 2 never reports `limit` so this never matters there."""
+    name = rec.get("name")
+    live = tmux_sessions() if live is None else live
+    if name not in live:
+        return "ended", ""
+    agent = rec.get("agent") or "claude"
+    pane = session_pane_text(name)
+    if agent == "claude":
+        layer2 = _layer2_state(name)
+        if layer2 is not None:
+            return layer2, pane
+    adapter = ADAPTERS.get(agent)
+    if adapter is None:
+        return "unknown", ""
+    return classify(pane, adapter), pane
+def _watch_targets(names):
+    if names:
+        return list(names)
+    live = tmux_sessions()
+    return [rec["name"] for _, rec in session_records()
+            if reconciled_state(rec, live) in SESSION_ACTIVE_STATES]
+def _emit_watch_event(fmt, name, event, **fields):
+    if fmt == "jsonl":
+        print(json.dumps({"time": now(), "session": name, "event": event, **fields}))
+    else:
+        extra = " ".join(f"{k}={v}" for k, v in fields.items() if v is not None)
+        line = f"{now()} {name} {event}"
+        print(f"{line} {extra}" if extra else line)
+    sys.stdout.flush()
+def watch_poll_once(tracked, stall_secs, fmt):
+    """One polling pass over every session in `tracked`, a mutable
+    `{name: {"state": str|None, "stalled": bool}}` map the caller carries
+    across polls. Emits an event only on a state change, plus one `stalled`
+    event (not repeated) when a `working` session's pane and log are both
+    unchanged for `stall_secs`. Factored out of `session_watch`'s loop so it
+    is testable without a real `sleep`."""
+    live = tmux_sessions()
+    for name, st in tracked.items():
+        try:
+            _, rec = load_session(name)
+        except RuntimeError:
+            continue
+        state, pane = classify_session(rec, live)
+        prev = st.get("state")
+        if state != prev:
+            fields = {}
+            if state == "limit":
+                until = resolve_clock_time(pane)
+                if until:
+                    fields["until"] = until
+            _emit_watch_event(fmt, name, state, **fields)
+            st["state"], st["stalled"] = state, False
+        elif state == "working" and not st.get("stalled"):
+            log_path = Path(rec.get("log_path") or "")
+            if log_path.exists() and (time.time() - log_path.stat().st_mtime) >= stall_secs:
+                _emit_watch_event(fmt, name, "stalled")
+                st["stalled"] = True
+def session_watch(names, interval, stall_after, fmt, once=False):
+    stall_secs = parse_duration(stall_after)
+    tracked = {name: {"state": None, "stalled": False} for name in _watch_targets(names)}
+    if not tracked:
+        print("no sessions to watch"); return
+    try:
+        while True:
+            if not names:   # re-resolve "every live session" each pass
+                for nm in _watch_targets(names):
+                    tracked.setdefault(nm, {"state": None, "stalled": False})
+            watch_poll_once(tracked, stall_secs, fmt)
+            if once:
+                return
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        return
+# --- session observability: send --------------------------------------
+def _submit_pane_input(name, agent):
+    tmux("send-keys", "-t", name, "Enter")
+    if agent == "claude":
+        # Known quirk: Claude Code requires a second bare Enter to actually
+        # submit a multi-line paste.
+        tmux("send-keys", "-t", name, "Enter")
+def _pane_input_pending(name, agent):
+    """Whether a just-sent message is still sitting unsubmitted. For codex
+    this is exactly the adapter's `needs_input` (`undelivered_input`) signal
+    (design.md); claude has no such structural signal yet, so this is always
+    False for it — the second bare Enter above is the known fix, not a
+    condition `send --verify` can detect and branch on."""
+    if agent != "codex":
+        return False
+    return classify(session_pane_text(name), CODEX_ADAPTER) == "needs_input"
+def _codex_rollout_files():
+    """Every rollout file Codex has written under `<codex_home>/sessions/`.
+    Each file's first line is a `session_meta` record carrying the thread's
+    own id, cwd, and creation timestamp — the only place that mapping
+    exists, since a plain `codex` launch has no flag to pin a known thread
+    id up front (TASK-SOB-006)."""
+    root = codex_home() / "sessions"
+    return sorted(root.glob("*/*/*/rollout-*.jsonl")) if root.is_dir() else []
+def _codex_rollout_session_meta(path):
+    try:
+        with path.open() as fh:
+            line = json.loads(fh.readline())
+    except (OSError, ValueError):
+        return None
+    if line.get("type") != "session_meta":
+        return None
+    payload = line.get("payload") or {}
+    thread_id, cwd, ts = payload.get("id"), payload.get("cwd"), payload.get("timestamp")
+    return (thread_id, cwd, ts) if (thread_id and cwd and ts) else None
+def resolve_codex_thread_id(rec):
+    """Discover and cache the Codex-internal thread UUID for a codex session
+    `scripts/nogg` launched, by matching the session's `working_dir` against
+    the `session_meta` header Codex writes at the top of its own rollout file
+    (`<codex_home>/sessions/<Y>/<M>/<D>/rollout-*-<uuid>.jsonl`). Codex
+    assigns this id itself, lazily, once its own session actually starts
+    (there is no cold-start flag to pin it, unlike Claude's `--session-id`),
+    so this is a discover-after-the-fact lookup, not something
+    `session_launch` can record up front. Among unclaimed same-cwd rollouts
+    no older than this session's own `started_at`, picks the earliest — the
+    one this launch itself produced. Caches the result on the session record
+    once found. Returns None (never raises) when no match exists yet — the
+    thread may simply not have started (e.g. still sitting at Codex's
+    hook-trust prompt)."""
+    if rec.get("codex_thread_id"):
+        return rec["codex_thread_id"]
+    try:
+        started = parse_iso(rec["started_at"]) - dt.timedelta(seconds=5)
+    except (KeyError, ValueError):
+        return None
+    claimed = {r.get("codex_thread_id") for _, r in session_records() if r.get("codex_thread_id")}
+    candidates = []
+    for path in _codex_rollout_files():
+        meta = _codex_rollout_session_meta(path)
+        if not meta:
+            continue
+        thread_id, cwd, ts = meta
+        if thread_id in claimed or cwd != rec.get("working_dir"):
+            continue
+        try:
+            ts_dt = parse_iso(ts)
+        except ValueError:
+            continue
+        if ts_dt < started:
+            continue
+        candidates.append((ts_dt, thread_id))
+    if not candidates:
+        return None
+    candidates.sort()
+    thread_id = candidates[0][1]
+    rec["codex_thread_id"] = thread_id
+    write_session(sessions_dir() / f"{rec['name']}.json", rec)
+    return thread_id
+def codex_queue_send(rec, message):
+    """Primary send path for a codex session: `codex queue --thread <THREAD>
+    --message <TEXT>`, against the thread id `resolve_codex_thread_id` finds.
+    TASK-SOB-006 confirmed live that this delivers straight into the
+    session's pane and submits immediately — no `_submit_pane_input` quirk
+    to apply, unlike the Layer-1 path. Returns True if it delivered (the
+    caller then skips the Layer-1 pane-based send entirely), False to fall
+    back — a thread id not yet resolvable, or the `codex` binary itself
+    rejecting it. Never raises."""
+    thread_id = resolve_codex_thread_id(rec)
+    if not thread_id:
+        return False
+    result = run("codex", "queue", "--thread", thread_id, "--message", message, check=False)
+    return result.returncode == 0
+def session_send(name, message, verify=False):
+    """Send `message` to a managed session via the agent-appropriate
+    key-injection sequence. With `verify`, confirm it was actually submitted
+    (not left sitting in the input box) and retry the submit step once if
+    not (design.md's `send --verify` requirement)."""
+    _, rec = load_session(name)
+    if not tmux_has_session(name):
+        raise RuntimeError(f"{name} has no live tmux session; cannot send")
+    agent = rec.get("agent") or "claude"
+    if agent == "codex" and codex_queue_send(rec, message):
+        print(f"sent to {name} (codex queue)")
+        return
+    tmux("send-keys", "-t", name, "-l", message)
+    _submit_pane_input(name, agent)
+    if verify and _pane_input_pending(name, agent):
+        _submit_pane_input(name, agent)             # retry the submit step once
+        if _pane_input_pending(name, agent):
+            raise RuntimeError(f"{name}: message still unsubmitted after a retry")
+    print(f"sent to {name}")
+# --- session observability: resume-when-ready -------------------------
+DEFAULT_RESUME_MESSAGE = ("the usage limit has reset, continue exactly where "
+                          "you left off per your original instructions")
+_SWITCH_MODEL_RE = re.compile(r"switch.*model", re.I)
+def session_resume_when_ready(name, message=None, poll_interval=60):
+    """Wait out a `limit` state using its resolved reset timestamp (never a
+    tight spin-loop — falls back to a bounded `poll_interval` cadence when
+    the timestamp could not be parsed), dismiss a residual model-switch
+    prompt by keeping the current model (design.md Decision 2: switching
+    models never clears a genuine account-wide limit), then send the resume
+    instruction via `session_send`."""
+    message = message or DEFAULT_RESUME_MESSAGE
+    while True:
+        _, rec = load_session(name)
+        state, pane = classify_session(rec)
+        if state != "limit":
+            break
+        until_iso = resolve_clock_time(pane)
+        if until_iso:
+            wait = (dt.datetime.fromisoformat(until_iso) - dt.datetime.now()).total_seconds()
+            time.sleep(max(0.0, min(wait, poll_interval)) if wait > poll_interval else max(0.0, wait))
+        else:
+            time.sleep(poll_interval)
+    pane = session_pane_text(name)
+    if _SWITCH_MODEL_RE.search(pane):
+        # Dismiss the residual "switch model?" prompt without acting on it —
+        # Escape cancels the prompt and leaves the current model selected.
+        tmux("send-keys", "-t", name, "Escape")
+    session_send(name, message, verify=True)
+    print(f"resumed {name}")
 # --- orchestrator: the always-on supervisor ------------------------------
 # `orchestrator run` is the idempotent process the systemd user service starts.
 # The thing kept alive is a normal supervised Claude session (a durable record,
@@ -2480,6 +2875,22 @@ def main():
     scl = ssub.add_parser("cleanup"); scl.add_argument("name", nargs="?")
     scl.add_argument("--reap", action="store_true",
                      help="first move vanished active sessions to failed, then clean up")
+    sw = ssub.add_parser("watch")
+    sw.add_argument("names", nargs="*", default=[])
+    sw.add_argument("--all-running", action="store_true",
+                    help="watch every live session (the default when no names are given)")
+    sw.add_argument("--interval", type=float, default=30)
+    sw.add_argument("--stall-after", default="15m")
+    sw.add_argument("--format", choices=("lines", "jsonl"), default="lines")
+    sw.add_argument("--once", action="store_true",
+                    help="run exactly one polling pass then exit (scripting/testing)")
+    ssend = ssub.add_parser("send")
+    ssend.add_argument("name"); ssend.add_argument("message")
+    ssend.add_argument("--verify", action="store_true")
+    srw = ssub.add_parser("resume-when-ready")
+    srw.add_argument("name"); srw.add_argument("--message")
+    semit = ssub.add_parser("emit")
+    semit.add_argument("event")
     args = p.parse_args()
     if args.command == "plan-begin":
         lock("planning", CFG["planning_lock_ttl_seconds"], args.force)
@@ -2528,6 +2939,16 @@ def session_cmd(args):
         session_reap()
     elif args.session_command == "cleanup":
         session_cleanup(args.name, args.reap)
+    elif args.session_command == "watch":
+        if args.names and args.all_running:
+            raise RuntimeError("session watch: pass session names or --all-running, not both")
+        session_watch(args.names, args.interval, args.stall_after, args.format, args.once)
+    elif args.session_command == "send":
+        session_send(args.name, args.message, args.verify)
+    elif args.session_command == "resume-when-ready":
+        session_resume_when_ready(args.name, args.message)
+    elif args.session_command == "emit":
+        session_emit(args.event)
 if __name__ == "__main__":
     try: main()
     except Exception as exc: print(f"nogg: {exc}", file=sys.stderr); sys.exit(1)
