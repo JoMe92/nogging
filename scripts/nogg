@@ -2371,6 +2371,95 @@ def session_kickoff(name, message=None):
             f"kickoff: Bead {bead_id} carries no openspec:change: label; "
             f"pass --message to kick off {name} explicitly")
     session_send(name, _compose_kickoff_message(bead_id, change))
+# --- session observability: sweep --------------------------------------
+def change_beads(change):
+    """Every Bead materialized under `openspec:change:<change>`, across all
+    statuses (not just the open default). Empty on any `bd` or decode
+    failure — sweep is best-effort detection, never a hard dependency."""
+    res = run(CFG["beads_command"], "list", "--label", f"openspec:change:{change}",
+              "--status", BEAD_STATUSES, "--limit", "0", "--json", check=False)
+    if res.returncode != 0:
+        return []
+    try:
+        decoded = json.loads(res.stdout.strip() or "[]")
+    except ValueError:
+        return []
+    issues = decoded.get("issues", decoded) if isinstance(decoded, dict) else decoded
+    return issues if isinstance(issues, list) else []
+def _session_worktree_branch(rec):
+    """The current branch checked out in a session's own working directory,
+    or None if it cannot be determined (not a git checkout, or the command
+    fails) — the caller then simply has no PR to check."""
+    res = run("git", "-C", rec.get("working_dir") or ".", "branch", "--show-current", check=False)
+    return res.stdout.strip() or None if res.returncode == 0 else None
+def _pr_state_for_branch(branch):
+    """The `state` of a pull request headed at `branch`, or None if `gh`
+    found none or the lookup failed — e.g. a branch never pushed yet."""
+    res = run("gh", "pr", "list", "--head", branch, "--json", "state", check=False)
+    if res.returncode != 0:
+        return None
+    try:
+        rows = json.loads(res.stdout or "[]")
+    except ValueError:
+        return None
+    return rows[0].get("state") if rows else None
+def _idle_minutes(rec):
+    """Minutes since a session's worktree or log file last changed, whichever
+    is more recent. None if neither can be determined — the caller then
+    reports the figure as unknown rather than a bogus zero."""
+    newest = None
+    log_path = Path(rec.get("log_path") or "")
+    if log_path.exists():
+        newest = log_path.stat().st_mtime
+    workdir = Path(rec.get("working_dir") or "")
+    if workdir.is_dir():
+        for entry in workdir.rglob("*"):
+            if ".git" in entry.parts:
+                continue
+            try:
+                mtime = entry.stat().st_mtime
+            except OSError:
+                continue
+            if newest is None or mtime > newest:
+                newest = mtime
+    if newest is None:
+        return None
+    return max(0, int((time.time() - newest) // 60))
+def _sweep_line(rec):
+    """One `session sweep` report line for a single running, Bead-assigned
+    session (design.md Decision 4)."""
+    name, bead_id = rec.get("name"), rec.get("bead_id")
+    agent = rec.get("agent") or "claude"
+    pending = "yes" if pending_input_text(name, agent) else "no"
+    idle_m = _idle_minutes(rec)
+    idle_s = f"{idle_m}m" if idle_m is not None else "unknown"
+    state = "active"
+    change = bead_change(bead_id)
+    if change:
+        change_set = change_beads(change)
+        blocked = next((b for b in change_set if b.get("status") == "blocked"), None)
+        if blocked is not None:
+            state = f"bead-blocked ({issue_id(blocked)})"
+        elif change_set and all(b.get("status") == "closed" for b in change_set):
+            branch = _session_worktree_branch(rec)
+            pr_state = _pr_state_for_branch(branch) if branch else None
+            if pr_state is None or pr_state == "MERGED":
+                state = "change-complete"
+    return f"{name}: {state}  has-unsent-input={pending}  idle for {idle_s}"
+def session_sweep():
+    """Read-only per-session liveness detection (design.md Decision 4): for
+    every `running` session with a `bead_id`, report `change-complete`,
+    `bead-blocked`, or `active`, alongside `has-unsent-input` and an
+    idle-duration figure. Never stops, nudges, or otherwise mutates a
+    session or Bead."""
+    live = tmux_sessions()
+    running = [rec for _path, rec in session_records()
+               if reconciled_state(rec, live) == "running" and rec.get("bead_id")]
+    if not running:
+        print("no running sessions with an assigned Bead")
+        return
+    for rec in running:
+        print(_sweep_line(rec))
 # --- session observability: resume-when-ready -------------------------
 DEFAULT_RESUME_MESSAGE = ("the usage limit has reset, continue exactly where "
                           "you left off per your original instructions")
@@ -3072,6 +3161,7 @@ def main():
     snud.add_argument("name"); snud.add_argument("--message")
     skick = ssub.add_parser("kickoff")
     skick.add_argument("name"); skick.add_argument("--message")
+    ssub.add_parser("sweep")
     srw = ssub.add_parser("resume-when-ready")
     srw.add_argument("name"); srw.add_argument("--message")
     semit = ssub.add_parser("emit")
@@ -3135,6 +3225,8 @@ def session_cmd(args):
         session_nudge(args.name, args.message)
     elif args.session_command == "kickoff":
         session_kickoff(args.name, args.message)
+    elif args.session_command == "sweep":
+        session_sweep()
     elif args.session_command == "resume-when-ready":
         session_resume_when_ready(args.name, args.message)
     elif args.session_command == "emit":
