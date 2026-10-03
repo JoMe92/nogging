@@ -38,6 +38,11 @@ Isolated implementation or review work may be delegated to a specialist, but
 claiming a Bead, closing it, writing the evidence note, and committing stay
 with the Main Worker, and no delegated context may write `openspec/`.
 
+When a specialist's delegated, incorporated work contributes to a commit, add
+a `Co-authored-by: <specialist persona name> <specialist persona email>`
+trailer naming that specialist (roster in `.nogging/config.json`'s `personas`
+key).
+
 ### Planning only
 
 The Planning Agent first allocates `./scripts/nogg worktree plan
