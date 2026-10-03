@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Claude Code PreToolUse hook: refuse a `scripts/nogg session launch` Bash
+# tool call for a Lead or specialist Bead that still has an unmet recorded
+# dependency. The tool call arguments arrive as JSON on stdin; the command
+# string is at .tool_input.command (the Bash tool's own field, not
+# .tool_input.file_path, which is what the sibling
+# pre-tool-use-openspec-guard reads for Edit/Write). Exit 2 blocks the tool
+# call and shows stderr to the model.
+#
+# This is a fast, Claude-only backstop on top of the tool-agnostic check
+# `scripts/nogg session launch` itself now runs (session_launch()'s
+# unmet_dependencies() helper) — the same layering
+# pre-tool-use-openspec-guard already uses for the openspec/ boundary. It
+# duplicates the dependency check inline (shells out to `bd dep list`
+# directly) rather than calling `scripts/nogg`, so a blocked launch is
+# caught before the underlying Bash tool call — and therefore before
+# `scripts/nogg` itself — ever runs.
+#
+# Matching is simple substring/argument scanning, not a full shell parse —
+# the same level of rigor pre-tool-use-openspec-guard applies to its own
+# file-path case.
+
+root="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+config="$root/.nogging/config.json"
+
+command=$(jq -r '.tool_input.command // empty')
+[[ -z "$command" ]] && exit 0
+
+case "$command" in
+  *"scripts/nogg session launch"*) ;;
+  *) exit 0 ;;
+esac
+
+case "$command" in
+  *"--role lead"*|*"--role specialist:"*) ;;
+  *) exit 0 ;;
+esac
+
+bead=""
+read -ra words <<<"$command"
+for i in "${!words[@]}"; do
+  if [[ "${words[$i]}" == "--bead" ]]; then
+    bead="${words[$((i + 1))]:-}"
+    break
+  fi
+done
+[[ -z "$bead" ]] && exit 0
+
+beads_command=$(jq -r '.beads_command // "bd"' "$config" 2>/dev/null || echo "bd")
+
+dep_json=$("$beads_command" dep list "$bead" --json 2>/dev/null) || dep_json="[]"
+blocking=$(printf '%s' "$dep_json" \
+  | jq -r '[.[]? | select(.status != "closed") | .id] | join(", ")' 2>/dev/null || true)
+
+if [[ -n "$blocking" ]]; then
+  {
+    echo "Nogging: $bead has an unmet dependency on: $blocking"
+    echo "This session launch is blocked. The blocking Bead(s) must be closed before"
+    echo "a Lead or specialist session can be launched for $bead."
+  } >&2
+  exit 2
+fi
+
+exit 0
