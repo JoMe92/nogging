@@ -147,3 +147,54 @@ echo "$install_ok_out" | grep -q 'whiptail .*installed' \
 rm -rf "$stub_dir"
 trap - EXIT
 printf 'ensure_whiptail wiring: ok\n'
+
+# --- TASK-IBT-003: print_welcome_banner / confirm_install_target ----------
+banner_out=$(NOGGING_BOOTSTRAP_NO_MAIN=1 "$real_bash" -c '. "$1" && print_welcome_banner' _ "$bootstrap")
+# Tagline is letter-spaced (tracked small-caps style), so match the
+# collapsed form rather than the literal spaced text.
+echo "$banner_out" | tr -d ' ' | grep -Fq "structureforwhat'snext." \
+  || fail "print_welcome_banner did not print the tagline"
+# The block-art wordmark is 7 rows tall; check row count+width rather than
+# literal text since each letter is drawn, not spelled.
+banner_art_rows=$(printf '%s\n' "$banner_out" | grep -c '####')
+[ "$banner_art_rows" -ge 2 ] \
+  || fail "print_welcome_banner's block-art wordmark looks malformed (expected multiple '####' rows, got $banner_art_rows)"
+
+# confirm_install_target is a thin pass-through to `whiptail --yesno`'s own
+# exit status (design.md, Decision 5) — stub whiptail on PATH to prove the
+# call is wired (title/target passed through, exit status propagated),
+# never stubbing the decision itself since there is none to factor out here.
+confirm_stub_dir=$(mktemp -d)
+trap 'rm -rf "$confirm_stub_dir"' EXIT
+
+cat > "$confirm_stub_dir/whiptail" <<'STUB'
+#!/bin/sh
+# Records the full invocation so the test can assert on title/content, and
+# exits with the code named by WHIPTAIL_STUB_EXIT (defaulting to 0/"Yes").
+printf '%s\n' "$*" >> "$WHIPTAIL_STUB_LOG"
+exit "${WHIPTAIL_STUB_EXIT:-0}"
+STUB
+chmod +x "$confirm_stub_dir/whiptail"
+
+confirm_log="$confirm_stub_dir/calls.log"
+: > "$confirm_log"
+PATH="$confirm_stub_dir" WHIPTAIL_STUB_LOG="$confirm_log" WHIPTAIL_STUB_EXIT=0 \
+  NOGGING_BOOTSTRAP_NO_MAIN=1 "$real_bash" -c \
+  '. "$1" && confirm_install_target /tmp/fake-target' _ "$bootstrap" \
+  || fail "confirm_install_target returned failure for a whiptail 'Yes' answer (exit 0)"
+grep -q -- '--yesno' "$confirm_log" \
+  || fail "confirm_install_target did not call whiptail --yesno"
+grep -q 'Install Nogging into: /tmp/fake-target' "$confirm_log" \
+  || fail "confirm_install_target did not pass the install target to whiptail"
+
+: > "$confirm_log"
+if PATH="$confirm_stub_dir" WHIPTAIL_STUB_LOG="$confirm_log" WHIPTAIL_STUB_EXIT=1 \
+    NOGGING_BOOTSTRAP_NO_MAIN=1 "$real_bash" -c \
+    '. "$1" && confirm_install_target /tmp/fake-target' _ "$bootstrap"
+then
+  fail "confirm_install_target returned success for a whiptail 'No' answer (exit 1)"
+fi
+
+rm -rf "$confirm_stub_dir"
+trap - EXIT
+printf 'confirm_install_target wiring: ok\n'

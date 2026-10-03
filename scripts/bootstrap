@@ -329,6 +329,45 @@ run_nogging_init() {
   return "$doctor_status"
 }
 
+# --- Step 6: the interactive wizard (design.md, Decisions 1-5) --------------
+# print_welcome_banner/confirm_install_target are the first wizard screen:
+# an ASCII wordmark approximating docs/brand/nogging-logo.png (dark
+# forest-green "studs", sage-green "nogging" braces — literally the
+# timber-framing motif the project is named for), the tagline, then a
+# whiptail --yesno confirming the install target before anything happens.
+print_welcome_banner() {
+  dark=$(printf '\033[38;5;22m')
+  sage=$(printf '\033[38;5;108m')
+  bold=$(printf '\033[1m')
+  reset=$(printf '\033[0m')
+
+  printf '\n'
+  printf '%s%s |  |   |  |%s\n' "$sage" "$bold" "$reset"
+  printf '%s%s=+==+= =+==+=%s\n' "$sage" "$bold" "$reset"
+  printf '%s%s |  |   |  |%s\n' "$sage" "$bold" "$reset"
+  printf '\n'
+  printf '%s%s#   #  ###   ####  #### ##### #   #  ####%s\n' "$dark" "$bold" "$reset"
+  printf '%s%s##  # #   # #     #       #   ##  # #    %s\n' "$dark" "$bold" "$reset"
+  printf '%s%s# # # #   # #     #       #   # # # #    %s\n' "$dark" "$bold" "$reset"
+  printf '%s%s#  ## #   # #  ## #  ##   #   #  ## #  ##%s\n' "$dark" "$bold" "$reset"
+  printf '%s%s#   # #   # #   # #   #   #   #   # #   #%s\n' "$dark" "$bold" "$reset"
+  printf '%s%s#   # #   # #   # #   #   #   #   # #   #%s\n' "$dark" "$bold" "$reset"
+  printf '%s%s#   #  ###   ####  #### ##### #   #  ####%s\n' "$dark" "$bold" "$reset"
+  printf '\n'
+  printf "%ss t r u c t u r e   f o r   w h a t ' s   n e x t .%s\n" "$sage" "$reset"
+  printf '\n'
+}
+
+# confirm_install_target <target> -> calls whiptail --yesno and returns its
+# exit status directly (0 = Yes, 1 = No, 255 = Esc/cancelled) so the wiring
+# can be exercised with a stubbed whiptail on PATH (design.md, Decision 5)
+# without the decision ("proceed or abort") living inside this function.
+confirm_install_target() {
+  target="$1"
+  whiptail --title "Nogging" --yesno \
+    "Install Nogging into: $target\n\nContinue?" 10 60
+}
+
 main() {
   with_pi=0
   repo="."
@@ -356,10 +395,18 @@ main() {
     ensure_whiptail && whiptail_ready=1
     run_mode=$(decide_post_whiptail_mode "$run_mode" "$whiptail_ready")
   fi
-  # The wizard's actual dialogs (welcome/confirm, install-path, checklist,
-  # auth, summary) arrive in later TASK-IBT-00{3..6} slices; for now
-  # `run_mode` reaching "interactive" here changes nothing further yet, so
-  # every existing non-interactive invocation stays byte-for-byte unchanged.
+
+  if [ "$run_mode" = "interactive" ]; then
+    print_welcome_banner
+    if ! confirm_install_target "$repo"; then
+      echo "bootstrap: cancelled — nothing has been installed"
+      exit 0
+    fi
+  fi
+  # The install-path dialog, optional-components checklist, auth step, and
+  # closing summary arrive in later TASK-IBT-00{4..6} slices; for now a
+  # confirmed interactive run continues straight into the same flow a
+  # non-interactive invocation would have taken.
 
   ensure_node
   ensure_npm_global "@anthropic-ai/claude-code" "$CLAUDE_CODE_VERSION" claude
