@@ -9,7 +9,10 @@ detail specific to Claude Code.
   wired in `.claude/settings.json`) blocks `Edit`/`Write` under `openspec/`
   unless the planning lock is held. It is a fast in-editor backstop to the
   tool-neutral write boundary described in `AGENTS.md`; the boundary holds
-  without it.
+  without it. The close-protocol step `./scripts/nogg task-done <id>`
+  (`AGENTS.md` hard rule 3) writes `tasks.md` directly from Bash and is
+  unaffected by this hook, exactly like `sync()` already is — no override is
+  needed to run it.
 - **Claude-only:** the **Orchestration Agent** — the always-on
   `nogg-orchestrator-<slug>` session above Planning and the Main Worker,
   orchestrate-only by default, floor- and boundary-lifted for `--role

@@ -9,8 +9,12 @@ the rest applies to every runtime — Claude Code, Codex, or another.
 
 1. Execution agents (Main Worker and specialists) must not edit `openspec/`.
 2. Work only on a Bead that has been claimed by the Main Worker.
-3. Before closing, run relevant validation, commit with a Conventional Commit
-   containing the Bead ID, and add a Bead note with the commit SHA and evidence.
+3. Before closing a Bead, run relevant validation. Close it (`bd close <id>`),
+   then immediately run `./scripts/nogg task-done <id>` to tick its mapped
+   `tasks.md` line (it refuses unless the Bead is already closed). Commit with
+   a Conventional Commit containing the Bead ID (e.g. `[SPEC-abc]`), bundling
+   that `tasks.md` tick into the same commit as the Bead's own execution
+   change, and add a Bead note with the commit SHA and evidence.
 4. Record every material discovery on the active Bead with the native Beads
    `discovery` label plus a required human-readable note. Never encode the
    discovery as serialized data (no JSON, no key/value block). An execution
