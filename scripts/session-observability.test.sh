@@ -330,6 +330,61 @@ rm -f "$out_s"
 unset NOGGING_ROOT
 
 # ===========================================================================
+# TASK-SOB-006: codex queue --thread <uuid> resolves against a
+# scripts/nogg-launched session (verified live against codex-cli 0.158.0) and
+# becomes session send's primary path for --agent codex, with the Layer-1
+# pane-based send-keys path skipped entirely. The thread id is discovered
+# from Codex's own rollout-file `session_meta` header (no cold-start flag
+# exists to pin it) and cached on the session record.
+# ===========================================================================
+root="$work/send-codex-queue"; make_obs_root "$root"
+export NOGGING_ROOT="$root"
+export TMUX_STUB_DIR="$work/send-codex-queue-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export CODEX_HOME="$work/codex-home-queue"
+export BD_KNOWN="SPEC-s03"
+"$nogg" session launch --role lead --bead SPEC-s03 --agent codex --profile restricted >/dev/null 2>&1
+name="$(sess_name "$root")"
+cwd="$(python3 -c "import pathlib,sys; print(pathlib.Path(sys.argv[1]).resolve())" "$root")"
+rollout_dir="$CODEX_HOME/sessions/2026/10/02"
+mkdir -p "$rollout_dir"
+thread_id="11111111-1111-1111-1111-111111111111"
+ts="$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
+printf '{"type":"session_meta","payload":{"id":"%s","cwd":"%s","timestamp":"%s"}}\n' \
+  "$thread_id" "$cwd" "$ts" >"$rollout_dir/rollout-2026-10-02T00-00-00-$thread_id.jsonl"
+
+cat >"$work/bin/codex" <<STUB
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "\$*" >>"$work/codex-queue-calls.log"
+if [[ "\${1:-}" == "queue" ]]; then
+  echo "Queued message fake-msg-id for thread \${3:-}."
+  exit 0
+fi
+echo "stub codex: unexpected call: \$*" >&2
+exit 1
+STUB
+chmod +x "$work/bin/codex"
+: >"$work/codex-queue-calls.log"
+: >"$TMUX_STUB_DIR/calls.log"
+
+"$nogg" session send "$name" "continue please" --verify >"$out_s" 2>&1 \
+  || { echo "FAIL - send (codex queue): errored"; cat "$out_s"; fail=1; }
+grep -qF "sent to $name (codex queue)" "$out_s" \
+  && ok "send: a resolvable codex thread uses codex queue as the primary path" \
+  || { echo "FAIL - send: expected the codex-queue confirmation"; cat "$out_s"; fail=1; }
+grep -qF -- "queue --thread $thread_id --message continue please" "$work/codex-queue-calls.log" \
+  && ok "send: codex queue is invoked with the resolved thread id" \
+  || { echo "FAIL - send: codex queue was not invoked as expected"; cat "$work/codex-queue-calls.log"; fail=1; }
+! grep -qF "send-keys" "$TMUX_STUB_DIR/calls.log" \
+  && ok "send: the Layer-1 pane-based send-keys path is skipped entirely" \
+  || { echo "FAIL - send: expected no tmux send-keys calls"; cat "$TMUX_STUB_DIR/calls.log"; fail=1; }
+grep -qF "\"codex_thread_id\": \"$thread_id\"" "$root/.nogging/state/sessions/$name.json" \
+  && ok "send: the resolved thread id is cached on the session record" \
+  || { echo "FAIL - send: codex_thread_id not cached on the session record"; fail=1; }
+rm -f "$out_s" "$work/bin/codex"
+unset NOGGING_ROOT CODEX_HOME
+
+# ===========================================================================
 # TASK-SOB-004: resume-when-ready — waits out `limit`, dismisses a residual
 # switch-model prompt without switching, then sends the resume instruction
 # (classify_session/session_pane_text/session_send/tmux monkeypatched; pure)
