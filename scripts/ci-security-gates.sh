@@ -40,7 +40,49 @@ PY
 }
 
 package_scan() { (cd "$root" && bash scripts/package-manifest.test.sh); }
-dependency_scan() { (cd "$root" && npm audit --audit-level=high); }
+
+# Advisories accepted as unfixable-for-now rather than ignored silently:
+# every one must have a reason and a removal condition, checked below by its
+# GHSA URL so a *different* high-severity finding still fails the gate.
+#
+# - GHSA-vfj7-8cjw-p6xm (braces, devDependency-only via @fission-ai/openspec's
+#   fast-glob/micromatch): no patched braces release exists on the npm
+#   registry as of 2026-10-03 (confirmed: `npm view braces versions` tops out
+#   at 3.0.3; the advisory's own fix guidance resolves to an older,
+#   differently-scoped @fission-ai/openspec release, not a real upgrade
+#   path). Exposure is local/CI tooling only, never shipped to a Nogging
+#   consumer. Remove this entry once a patched `braces` lands.
+ACCEPTED_ADVISORIES=(
+  "https://github.com/advisories/GHSA-vfj7-8cjw-p6xm"
+)
+
+dependency_scan() {
+  local report
+  report=$(cd "$root" && npm audit --audit-level=high --json) || true
+  NOGGING_AUDIT_REPORT="$report" NOGGING_ACCEPTED_ADVISORIES="$(printf '%s\n' "${ACCEPTED_ADVISORIES[@]}")" \
+    python3 <<'PY'
+import json, os, sys
+accepted = set(os.environ["NOGGING_ACCEPTED_ADVISORIES"].strip().splitlines())
+try:
+    data = json.loads(os.environ["NOGGING_AUDIT_REPORT"])
+except ValueError:
+    print("dependency vulnerability scan: npm audit did not return parseable JSON", file=sys.stderr)
+    raise SystemExit(1)
+unaccepted = []
+for name, v in data.get("vulnerabilities", {}).items():
+    if v.get("severity") not in ("high", "critical"):
+        continue
+    urls = {via.get("url") for via in v.get("via", []) if isinstance(via, dict) and via.get("url")}
+    # A package with no direct advisory of its own (only pulled in through a
+    # vulnerable dependency) is covered by that dependency's own entry.
+    if urls and not (urls <= accepted):
+        unaccepted.append((name, sorted(urls - accepted)))
+if unaccepted:
+    for name, urls in unaccepted:
+        print(f"{name}: {', '.join(urls)}", file=sys.stderr)
+    raise SystemExit("dependency vulnerability scan failed: unaccepted high/critical advisory")
+PY
+}
 
 case "$gate" in
   secrets) secret_scan ;;
