@@ -29,7 +29,9 @@ trap 'rm -f "$out"; rm -rf "$work"' EXIT
 mkdir -p "$work/bin"
 
 # bd: `show <id> --json` returns a record for any id under $BD_KNOWN (space
-# separated); every other call is logged to $BD_MUTATION_LOG and fails.
+# separated); `dep list <id> --json` returns $BD_DEP_LIST_JSON (default `[]`,
+# i.e. no recorded dependency) for any id; every other call is logged to
+# $BD_MUTATION_LOG and fails.
 cat >"$work/bin/bd" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -39,6 +41,10 @@ if [[ "${1:-}" == "show" ]]; then
     if [[ "$k" == "$id" ]]; then printf '[{"id":"%s","title":"stub bead"}]\n' "$id"; exit 0; fi
   done
   echo '[]'; exit 1
+fi
+if [[ "${1:-}" == "dep" && "${2:-}" == "list" ]]; then
+  printf '%s\n' "${BD_DEP_LIST_JSON:-[]}"
+  exit 0
 fi
 printf 'bd %s\n' "$*" >>"${BD_MUTATION_LOG:-/dev/null}"
 echo "stub bd: refusing mutation in session tests: $*" >&2
