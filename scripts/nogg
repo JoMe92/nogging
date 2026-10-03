@@ -1232,6 +1232,26 @@ def deny_openspec_writes(settings):
             deny.append(entry)
     perms["deny"] = deny
     return result
+# Claude Layer 2 (design.md Decision 4): one `Stop` and one `Notification`
+# hook entry, each invoking `session emit` so `watch` can prefer a structured
+# events file over pane-scraping. Appended into `hooks.<event>` by
+# merge_observability_hooks() below — never replacing or reordering an
+# existing entry for that event, exactly like FLOOR_DENY / OPENSPEC_READONLY_DENY.
+OBSERVABILITY_HOOKS = {
+    "Stop": {"hooks": [{"type": "command", "command": "scripts/nogg session emit turn_end"}]},
+    "Notification": {"hooks": [{"type": "command", "command": "scripts/nogg session emit needs_input"}]},
+}
+def merge_observability_hooks(settings):
+    """Return a deep copy of `settings` with the Layer-2 Stop/Notification
+    hook entries appended to `hooks.<event>` — appended, never replacing or
+    reordering any existing entry for that event. Input never mutated."""
+    result = json.loads(json.dumps(settings))
+    hooks = result.setdefault("hooks", {})
+    for event, entry in OBSERVABILITY_HOOKS.items():
+        existing = list(hooks.get(event) or [])
+        existing.append(entry)
+        hooks[event] = existing
+    return result
 def resolve_launch_file(value, dir_key, default_dir, suffix):
     """Resolve a `--profile` / `--prompt` value to a concrete file.
 
@@ -1648,6 +1668,7 @@ def session_launch(role, bead, cwd, read_only, owner,
         settings_out = base_settings if floor_lifted else merge_floor(base_settings)
         if openspec_readonly:
             settings_out = deny_openspec_writes(settings_out)
+        settings_out = merge_observability_hooks(settings_out)
         effective_path.write_text(json.dumps(settings_out, indent=2) + "\n")
         effective_settings_path = str(effective_path)
         inner[1:1] = ["--settings", effective_settings_path]
@@ -1707,7 +1728,12 @@ def session_launch(role, bead, cwd, read_only, owner,
     with log_path.open("a") as fh:                        # append-only log before exec
         fh.write(f"# nogg session {name} for {bead or 'no bead'} ({role_meta}) started {record['started_at']}\n")
     try:
-        tmux("new-session", "-d", "-s", name, "-c", workdir, "--", *inner)
+        # -e NOGG_SESSION_NAME=<name> is agent-neutral session environment
+        # (every process tmux starts in this session inherits it), the only
+        # way a `session emit` hook invocation — a bare, argument-less
+        # command line (design.md Decision 4) — can know its own session name.
+        tmux("new-session", "-d", "-s", name, "-c", workdir,
+             "-e", f"NOGG_SESSION_NAME={name}", "--", *inner)
         writer = str((ROOT / "scripts/session-log-writer").resolve())
         max_bytes = int(scfg("session_log_max_bytes", 1048576))
         depth = int(scfg("session_log_rotation_depth", 3))
@@ -1905,18 +1931,68 @@ def session_pane_text(name):
     session does not exist."""
     res = tmux("capture-pane", "-p", "-t", name, check=False)
     return res.stdout if res.returncode == 0 else ""
+def session_events_path(name):
+    return sessions_dir() / f"{name}.events.jsonl"
+def session_emit(event):
+    """Append one structured JSON line to the calling session's own
+    `<name>.events.jsonl` (design.md Decision 4). The session name is read
+    from `NOGG_SESSION_NAME`, set as session environment by `session_launch`
+    for exactly this purpose — a bare `Stop`/`Notification` hook command
+    carries no arguments identifying which session it fired in."""
+    name = os.environ.get("NOGG_SESSION_NAME")
+    if not name:
+        raise RuntimeError(
+            "session emit: NOGG_SESSION_NAME is not set (not running inside "
+            "a session `scripts/nogg session launch` started)")
+    with session_events_path(name).open("a") as fh:
+        fh.write(json.dumps({"timestamp": now(), "session": name, "event": event}) + "\n")
+# A Layer-2 hook event maps onto one of classify()'s Layer-1 states: `Stop`
+# fires once Claude finishes a turn (idle, awaiting the next input); the
+# `Notification` hook this change wires fires on a permission prompt
+# (needs_input). Any other event name (future hook) classifies as `unknown`
+# rather than silently reusing a stale state.
+EVENT_STATE_MAP = {"turn_end": "idle", "needs_input": "needs_input"}
+def _layer2_state(name):
+    """The most recent Layer-2 state for a Claude session's events file, or
+    None when that file does not exist or has no lines yet — the signal
+    `classify_session` uses to fall back to Layer-1 pane-scraping (Decision 4:
+    Layer 2 is additive, never required)."""
+    path = session_events_path(name)
+    if not path.exists() or path.stat().st_size == 0:
+        return None
+    last_event = None
+    with path.open() as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                last_event = json.loads(line).get("event")
+            except ValueError:
+                continue
+    if last_event is None:
+        return None
+    return EVENT_STATE_MAP.get(last_event, "unknown")
 def classify_session(rec, live=None):
-    """One-shot Layer-1 (pane-scraping) state classification for a managed
-    session record. Returns `(state, pane_text)`."""
+    """One-shot state classification for a managed session record: Layer 2
+    (the session's own `<name>.events.jsonl`) when present and non-empty for
+    a Claude session, else Layer-1 pane-scraping. Returns `(state,
+    pane_text)` — `pane_text` is still the real pane capture even on a
+    Layer-2 hit, so callers needing it (e.g. a `limit` reset time) are
+    unaffected; Layer 2 never reports `limit` so this never matters there."""
     name = rec.get("name")
     live = tmux_sessions() if live is None else live
     if name not in live:
         return "ended", ""
     agent = rec.get("agent") or "claude"
+    pane = session_pane_text(name)
+    if agent == "claude":
+        layer2 = _layer2_state(name)
+        if layer2 is not None:
+            return layer2, pane
     adapter = ADAPTERS.get(agent)
     if adapter is None:
         return "unknown", ""
-    pane = session_pane_text(name)
     return classify(pane, adapter), pane
 def _watch_targets(names):
     if names:
@@ -2774,6 +2850,8 @@ def main():
     ssend.add_argument("--verify", action="store_true")
     srw = ssub.add_parser("resume-when-ready")
     srw.add_argument("name"); srw.add_argument("--message")
+    semit = ssub.add_parser("emit")
+    semit.add_argument("event")
     args = p.parse_args()
     if args.command == "plan-begin":
         lock("planning", CFG["planning_lock_ttl_seconds"], args.force)
@@ -2830,6 +2908,8 @@ def session_cmd(args):
         session_send(args.name, args.message, args.verify)
     elif args.session_command == "resume-when-ready":
         session_resume_when_ready(args.name, args.message)
+    elif args.session_command == "emit":
+        session_emit(args.event)
 if __name__ == "__main__":
     try: main()
     except Exception as exc: print(f"nogg: {exc}", file=sys.stderr); sys.exit(1)
