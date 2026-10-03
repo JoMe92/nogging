@@ -13,7 +13,10 @@ the `session_agent` value from `.specforge/config.json`, defaulting to
 `claude`. The chosen agent SHALL be recorded in the session metadata and
 SHALL be shown by `session list`. A launch with `--agent claude`, or with no
 agent selection and the default config, SHALL behave exactly as it did
-before this capability existed.
+before this capability existed. A Claude Code launch SHALL additionally wire
+`Stop` and `Notification` hooks into the per-session effective-settings file
+that invoke `session emit` to append structured state events, without
+removing or reordering any existing hook entry already in that file.
 
 #### Scenario: Default launch is unchanged
 
@@ -38,6 +41,14 @@ before this capability existed.
 - **WHEN** a session has been launched with `--agent codex`
 - **AND** an operator runs `session list`
 - **THEN** the listing shows that the session runs `codex`
+
+#### Scenario: A Claude launch wires the observability hooks
+
+- **WHEN** `session launch` runs with `--agent claude` (or no `--agent`)
+- **THEN** the per-session effective-settings file contains `Stop` and
+  `Notification` hook entries invoking `session emit`
+- **AND** every hook entry the selected profile already specified is still
+  present and in its original order
 
 ### Requirement: Authority levels resolve per agent
 
