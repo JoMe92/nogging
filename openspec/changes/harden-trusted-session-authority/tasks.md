@@ -1,6 +1,6 @@
 # Tasks — harden trusted session authority
 
-- [ ] TASK-HTA-001 In `.nogging/launch-profiles/trusted.json`, change
+- [x] TASK-HTA-001 In `.nogging/launch-profiles/trusted.json`, change
       `permissions.defaultMode` from `"auto"` to `"bypassPermissions"` and
       add a top-level `"skipDangerousModePermissionPrompt": true` key
       (sibling to `permissions`, matching exactly how
@@ -8,7 +8,7 @@
       `allow`/`deny`/`additionalDirectories` unchanged. Closes GitHub issue
       #40.
 
-- [ ] TASK-HTA-002 In `scripts/nogg` (Python), add a `doctor` check: for every
+- [x] TASK-HTA-002 In `scripts/nogg` (Python), add a `doctor` check: for every
       `.json` file directly under `.nogging/launch-profiles/` (skip
       `*.codex.toml`/`*.pi.toml` siblings), load it and print a `NOTE` when
       (a) `permissions.defaultMode == "bypassPermissions"` and the top-level
@@ -19,7 +19,7 @@
       TASK-HTA-001). Never raises these to a failure — `NOTE`-level only, same
       as every other `doctor` advisory.
 
-- [ ] TASK-HTA-003 Update the three places that describe `trusted`'s default
+- [x] TASK-HTA-003 Update the three places that describe `trusted`'s default
       mode as `auto`:
       `docs/operating-model.md` (*Launch profiles* section, the
       `` `trusted` (`auto`; allows ...) `` parenthetical) and
@@ -32,7 +32,7 @@
       an attached session, not `trusted.json`'s configured default, and is
       unaffected by this change.
 
-- [ ] TASK-HTA-004 Add a short paragraph to `docs/security-model.md`'s
+- [x] TASK-HTA-004 Add a short paragraph to `docs/security-model.md`'s
       *Vendor-specific limits* section, beside the existing "The orchestrator
       deliberately uses bypass-permission mode" sentence, extending it to
       `trusted`: both profiles ship `bypassPermissions` with
