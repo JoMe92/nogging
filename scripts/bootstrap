@@ -42,13 +42,18 @@ NOGGING_TAG="v2.1.0"
 
 usage() {
   cat <<'EOF'
-Usage: bootstrap [--repo <path>] [--with-pi] [--non-interactive|--interactive]
+Usage: bootstrap [--repo <path>] [--with-pi] [--no-beads] [--no-hooks]
+                  [--no-systemd] [--non-interactive|--interactive]
 
   --repo <path>      target repository to initialize Nogging into (default:
                      .) created and `git init`-ed first if it does not exist
                      yet.
   --with-pi          also install the optional Pi coding agent CLI (pinned
                      version); not installed by default.
+  --no-beads         skip the default `bd init` (forwarded to `init`).
+  --no-hooks         skip installing the git hooks (forwarded to `init`).
+  --no-systemd       skip rendering the systemd sync unit (forwarded to
+                     `init`).
   --non-interactive  force the fully-automated flow even on a real TTY.
   --interactive      force the whiptail wizard even without a detected TTY.
 EOF
@@ -302,16 +307,22 @@ ensure_system_packages() {
   report_step "git/tmux/gh" "installed" "installed:$missing"
 }
 
-# --- Step 6: the Nogging payload itself, then doctor -------------------------
+# --- Step 7: the Nogging payload itself, then doctor -------------------------
 run_nogging_init() {
-  repo="$1"
+  # run_nogging_init <repo> <no_beads 0|1> <no_hooks 0|1> <no_systemd 0|1>
+  repo="$1"; no_beads="$2"; no_hooks="$3"; no_systemd="$4"
   if [ ! -d "$repo" ]; then
     mkdir -p "$repo"
   fi
   if [ ! -d "$repo/.git" ]; then
     git -C "$repo" init
   fi
-  ( cd "$repo" && npx --yes "github:JoMe92/nogging#${NOGGING_TAG}" init )
+  init_flags=""
+  [ "$no_beads" -eq 1 ] && init_flags="$init_flags --no-beads"
+  [ "$no_hooks" -eq 1 ] && init_flags="$init_flags --no-hooks"
+  [ "$no_systemd" -eq 1 ] && init_flags="$init_flags --no-systemd"
+  # shellcheck disable=SC2086
+  ( cd "$repo" && npx --yes "github:JoMe92/nogging#${NOGGING_TAG}" init $init_flags )
 
   doctor_status=0
   if [ -x "$repo/scripts/nogg" ]; then
@@ -368,15 +379,68 @@ confirm_install_target() {
     "Install Nogging into: $target\n\nContinue?" 10 60
 }
 
+# prompt_install_path <default_path> -> the chosen path on stdout, whiptail's
+# own exit status (0 = OK, 1 = Cancel, 255 = Esc). The classic
+# `3>&1 1>&2 2>&3` dance is whiptail's own documented idiom for getting an
+# --inputbox's answer (normally written to stderr) onto stdout instead.
+prompt_install_path() {
+  default_path="$1"
+  whiptail --title "Nogging" --inputbox \
+    "Install path:" 10 60 "$default_path" \
+    3>&1 1>&2 2>&3
+}
+
+# prompt_optional_components <with_pi> <no_beads> <no_hooks> <no_systemd> ->
+# whiptail's own checklist answer (quoted, space-separated tags) on stdout.
+# Checkbox default state mirrors the *current* with_pi/no_beads/no_hooks/
+# no_systemd values exactly (design.md, Decision 3/4's "match today's actual
+# flag defaults" requirement) rather than a hardcoded default, so a --repo/
+# --with-pi/--no-* combination passed alongside --interactive still shows
+# the dialog pre-seeded with what was asked for.
+prompt_optional_components() {
+  with_pi="$1"; no_beads="$2"; no_hooks="$3"; no_systemd="$4"
+  pi_state=OFF; [ "$with_pi" -eq 1 ] && pi_state=ON
+  beads_state=ON; [ "$no_beads" -eq 1 ] && beads_state=OFF
+  hooks_state=ON; [ "$no_hooks" -eq 1 ] && hooks_state=OFF
+  systemd_state=ON; [ "$no_systemd" -eq 1 ] && systemd_state=OFF
+  whiptail --title "Nogging" --checklist \
+    "Optional components (Space to toggle, Enter to confirm):" 15 70 4 \
+    "pi" "Pi coding agent support" "$pi_state" \
+    "systemd" "systemd sync timer" "$systemd_state" \
+    "hooks" "git hooks" "$hooks_state" \
+    "beads" "Beads issue tracker init" "$beads_state" \
+    3>&1 1>&2 2>&3
+}
+
+# apply_checklist_answer <answer> -> sets with_pi/no_beads/no_hooks/
+# no_systemd globals from a whiptail --checklist answer (space-separated,
+# individually double-quoted tags of the *checked* items). Pure decision
+# logic (design.md, Decision 5): takes an already-known answer string, no
+# whiptail call, so it is directly unit-testable against canned answers.
+apply_checklist_answer() {
+  answer="$1"
+  with_pi=0; no_beads=1; no_hooks=1; no_systemd=1
+  case " $answer " in *'"pi"'*) with_pi=1 ;; esac
+  case " $answer " in *'"beads"'*) no_beads=0 ;; esac
+  case " $answer " in *'"hooks"'*) no_hooks=0 ;; esac
+  case " $answer " in *'"systemd"'*) no_systemd=0 ;; esac
+}
+
 main() {
   with_pi=0
   repo="."
+  no_beads=0
+  no_hooks=0
+  no_systemd=0
   interactive_flag=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --with-pi) with_pi=1; shift ;;
       --repo) repo="${2:?--repo needs a path}"; shift 2 ;;
       --repo=*) repo="${1#--repo=}"; shift ;;
+      --no-beads) no_beads=1; shift ;;
+      --no-hooks) no_hooks=1; shift ;;
+      --no-systemd) no_systemd=1; shift ;;
       --interactive) interactive_flag=1; shift ;;
       --non-interactive) interactive_flag=0; shift ;;
       -h|--help) usage; exit 0 ;;
@@ -402,11 +466,24 @@ main() {
       echo "bootstrap: cancelled — nothing has been installed"
       exit 0
     fi
+
+    chosen_path=$(prompt_install_path "$repo") || {
+      echo "bootstrap: cancelled — nothing has been installed"
+      exit 0
+    }
+    repo="$chosen_path"
+
+    checklist_answer=$(prompt_optional_components "$with_pi" "$no_beads" "$no_hooks" "$no_systemd") || {
+      echo "bootstrap: cancelled — nothing has been installed"
+      exit 0
+    }
+    apply_checklist_answer "$checklist_answer"
   fi
-  # The install-path dialog, optional-components checklist, auth step, and
-  # closing summary arrive in later TASK-IBT-00{4..6} slices; for now a
-  # confirmed interactive run continues straight into the same flow a
-  # non-interactive invocation would have taken.
+  # After this point the wizard has built the exact same with_pi/repo/
+  # no_beads/no_hooks/no_systemd a direct non-interactive invocation would
+  # have set via flags (design.md, Decision 3) — every step below runs
+  # identically either way. The auth step and closing summary arrive in
+  # later TASK-IBT-00{5,6} slices.
 
   ensure_node
   ensure_npm_global "@anthropic-ai/claude-code" "$CLAUDE_CODE_VERSION" claude
@@ -419,7 +496,7 @@ main() {
   ensure_dolt
   ensure_bd
   ensure_system_packages
-  run_nogging_init "$repo"
+  run_nogging_init "$repo" "$no_beads" "$no_hooks" "$no_systemd"
 }
 
 # NOGGING_BOOTSTRAP_NO_MAIN lets scripts/compatibility.test.sh source this
