@@ -41,6 +41,18 @@ requests a single planning or code takeover.
   routine authority, but trust and bypass-permission dialogs are vendor
   controls. The orchestrator deliberately uses bypass-permission mode. Trust
   the workspace only after reviewing it.
+
+  `trusted` ships the same `bypassPermissions` +
+  `skipDangerousModePermissionPrompt: true` pairing, so that a genuinely
+  unattended `--full-access` session never stalls on an interactive approval,
+  a classifier review, or the first-run disclaimer. For either profile, the
+  real boundary is the project's `deny` list and its fixed command floor, not
+  the permission mode — `bypassPermissions` has no classifier reviewing
+  actions beyond what those deny. A project that wants the `auto`-mode
+  classifier's extra review back can set its own copy of `trusted` to `auto`,
+  trading away the unattended reliability `--full-access` otherwise promises
+  (see `design.md`, Decision 1, for why that tradeoff was rejected as the
+  shipped default).
 - **Codex:** restricted sessions use Codex's sandbox with outbound network off;
   trusted sessions use workspace-write with approvals disabled and network on.
   The repository execpolicy floor loads only after Codex trusts the `.codex/`
