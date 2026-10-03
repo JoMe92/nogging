@@ -10,11 +10,13 @@ TBD - created by archiving change planning-and-discovery-commands. Update Purpos
 The project SHALL provide a `/plan` command that creates an isolated planning
 worktree and a dedicated planning branch from current `develop`, injects the
 Planning Agent persona there, and drives one planning session in a fixed order:
-acquire the planning lock, review pending discoveries, hold the design dialogue,
-author or revise the OpenSpec change, validate it, commit the `openspec/`
-changes as the `planning` writer, materialize its Beads, integrate the committed
-planning branch into `develop`, and release the planning lock. The command SHALL
-NOT perform execution work, write planning artifacts in the caller's shared
+acquire the planning lock, review pending discoveries, archive any change
+`doctor` reports as ready (merging its `specs/` deltas and validating before
+any new change content is authored), hold the design dialogue, author or
+revise the OpenSpec change, validate it, commit the `openspec/` changes as the
+`planning` writer, materialize its Beads, integrate the committed planning
+branch into `develop`, and release the planning lock. The command SHALL NOT
+perform execution work, write planning artifacts in the caller's shared
 checkout, force a planning lock that another session holds, or remove a dirty
 or unintegrated planning worktree.
 
@@ -33,6 +35,19 @@ or unintegrated planning worktree.
 - **AND** the committed planning branch is integrated into `develop` before a
   clean planning worktree is eligible for removal
 - **AND** the planning lock is released at the end of the session
+
+#### Scenario: A completed change is archived before new content is authored
+
+- **WHEN** `/plan` is invoked and `doctor` reports a change ready to archive
+- **THEN** that change is archived — its `specs/` deltas merged and the
+  archive validated — before any new `openspec/` content is written for this
+  session's own change
+
+#### Scenario: Nothing is ready to archive
+
+- **WHEN** `/plan` is invoked and `doctor` reports no change ready to archive
+- **THEN** the session proceeds directly to the design dialogue with no
+  archive step performed
 
 #### Scenario: The planning lock is already held
 

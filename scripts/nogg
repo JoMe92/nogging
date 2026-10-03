@@ -5,7 +5,8 @@ It intentionally contains no LLM call and makes no semantic product decision.
 """
 from __future__ import annotations
 
-import argparse, datetime as dt, getpass, json, os, re, shlex, shutil, signal, socket, subprocess, sys, time
+import argparse, datetime as dt, getpass, json, os, re, shlex, shutil, signal, socket, subprocess, sys, time, uuid
+from dataclasses import dataclass, field
 from pathlib import Path
 
 # ROOT is the repository the bridge operates on. It defaults to the checkout the
@@ -42,6 +43,35 @@ def require_kebab(value, label):
     if not KEBAB_RE.fullmatch(value or ""):
         raise RuntimeError(f"{label} must be a non-empty kebab-case value")
     return value
+PERSONAS = CFG.get("personas", {})
+def persona_identity(slug):
+    """The `(name, email)` commit identity for a roster persona `slug`, from
+    `.nogging/config.json`'s `personas` table. Raises if the slug is missing
+    or incomplete — an unconfigured persona must fail loudly rather than let
+    a commit land under no identity or the operator's own."""
+    entry = PERSONAS.get(slug)
+    if not isinstance(entry, dict) or not entry.get("name") or not entry.get("email"):
+        raise RuntimeError(f"persona roster has no complete entry for '{slug}'")
+    return entry["name"], entry["email"]
+def ensure_worktree_config_extension(path):
+    """Idempotently enable `extensions.worktreeConfig` for the repository at
+    `path` (a linked worktree or the main checkout) so a later
+    `git config --worktree` call scopes to that one worktree/checkout instead
+    of the shared `.git/config`."""
+    current = run("git", "-C", str(path), "config", "--get",
+                  "extensions.worktreeConfig", check=False)
+    if current.stdout.strip() != "true":
+        run("git", "-C", str(path), "config", "extensions.worktreeConfig", "true")
+def set_persona_identity(path, slug):
+    """Set the worktree-scoped `user.name`/`user.email` at `path` (a linked
+    worktree or the main checkout) to the roster identity for `slug`, so
+    every commit made there for the rest of its life carries the right
+    author automatically (design.md Decision 1) — no per-commit flag an
+    agent could forget to pass."""
+    ensure_worktree_config_extension(path)
+    name, email = persona_identity(slug)
+    run("git", "-C", str(path), "config", "--worktree", "user.name", name)
+    run("git", "-C", str(path), "config", "--worktree", "user.email", email)
 def worktree_record_path(kind, identifier, description):
     return WORKTREE_STATE / f"{kind}--{identifier}--{description}.json"
 def write_worktree_record(path, record):
@@ -122,6 +152,7 @@ def planning_worktree(planning_id, description, location=None):
     # diagnosable rather than silently losing the allocation request.
     write_worktree_record(record_path, record)
     run("git", "worktree", "add", "-b", branch, str(location), base)
+    set_persona_identity(location, "planner")
     record["state"] = "allocated"
     record["allocated_at"] = now()
     write_worktree_record(record_path, record)
@@ -157,11 +188,36 @@ def implementation_worktree(bead_id, branch, location=None):
               "kind": "implementation", "path": str(location), "state": "allocating", "base_ref": base}
     write_worktree_record(record_path, record)
     run("git", "worktree", "add", "-b", branch, str(location), base)
+    set_persona_identity(location, "lead")
     record["state"], record["allocated_at"] = "allocated", now()
     write_worktree_record(record_path, record)
     print(f"implementation worktree allocated: {location}")
     print(f"branch: {branch} (from {base}; Bead {bead_id})")
     print(f"record: {record_path.relative_to(ROOT)}")
+WORKTREE_KIND_PERSONA = {"planning": "planner", "implementation": "lead"}
+def persona_mismatch_notes():
+    """A NOTE (never a FAIL) for each recorded, still-registered worktree
+    whose `user.name` does not match its role's expected persona — catches a
+    worktree created before this change, or one where identity-setting
+    silently failed."""
+    notes = []
+    known = git_worktree_paths()
+    for _path, record in worktree_records():
+        if not isinstance(record, dict):
+            continue
+        slug = WORKTREE_KIND_PERSONA.get(record.get("kind"))
+        location = record.get("path")
+        if not slug or not isinstance(location, str) or location not in known:
+            continue
+        try:
+            expected_name, _expected_email = persona_identity(slug)
+        except RuntimeError:
+            continue
+        actual = run("git", "-C", location, "config", "--get", "user.name", check=False).stdout.strip()
+        if actual != expected_name:
+            notes.append(f"worktree {Path(location).name} ({record['kind']}) user.name is "
+                         f"{actual or '(unset)'}, expected {expected_name}")
+    return notes
 def cleanup_worktree(record_name):
     """Retire only a clean recorded worktree whose branch reached develop."""
     path = WORKTREE_STATE / record_name
@@ -294,6 +350,48 @@ def task_map_at_ref(ref, include_archived=False):
             if task in found: duplicates.append(task)
             found[task] = {"change": change, "file": None, "title": title, "ref": ref}
     return found, duplicates
+def tick_task_line(path, task):
+    """Flip the one unticked `- [ ] <task>` line in `path` to `- [x]`.
+
+    The single implementation of "what ticking means" for both `sync()` (via
+    its closed-Bead mirror pass) and `task-done` (a Lead's explicit, synchronous
+    call). Naturally idempotent: the regex only matches the unticked form, so a
+    line already ticked by either caller is a no-op for the other, in either
+    order. Returns True if the file changed.
+    """
+    text = path.read_text()
+    updated = re.sub(rf"^- \[ \] ({re.escape(task)}\b)", r"- [x] \1", text, flags=re.M)
+    if updated == text: return False
+    path.write_text(updated)
+    return True
+def task_done(bead_id):
+    """`scripts/nogg task-done <bead-id>`: tick the Bead's mapped `tasks.md`
+    line. Called by the Lead Agent's close protocol immediately after `bd
+    close`, bundled into the same execution commit. Never writes
+    `execution-log.md` — that stays `sync()`'s job (design.md, Decision 2).
+    """
+    out = run(CFG["beads_command"], "show", bead_id, "--json").stdout.strip()
+    decoded = json.loads(out or "[]")
+    records = decoded.get("issues", decoded) if isinstance(decoded, dict) else decoded
+    if isinstance(records, dict): records = [records]
+    if not records:
+        raise RuntimeError(f"task-done: no such Bead {bead_id}")
+    issue = records[0]
+    if issue.get("status") != "closed":
+        raise RuntimeError(f"task-done: {bead_id} is not closed (status: "
+                            f"{issue.get('status')!r}); run `bd close {bead_id}` first")
+    _change, task = mapping(issue)
+    if not task:
+        raise RuntimeError(f"task-done: {bead_id} carries no openspec:task: label")
+    tasks, _duplicates = task_map()
+    entry = tasks.get(task)
+    if entry is None or entry.get("archived"):
+        print(f"task-done: {task} not found in a live tasks.md; nothing to tick")
+        return
+    if tick_task_line(entry["file"], task):
+        print(f"task-done: ticked {task} in {entry['file'].relative_to(ROOT)}")
+    else:
+        print(f"task-done: {task} already ticked in {entry['file'].relative_to(ROOT)}")
 def beads():
     out = run(CFG["beads_command"], "list", "--status", BEAD_STATUSES, "--limit", "0", "--json").stdout.strip()
     decoded = json.loads(out or "[]")
@@ -394,6 +492,36 @@ def boundary_state_line():
     if (LOCKS / "planning.lock").exists() and not fresh:
         return "openspec write boundary: LOCKED (stale planning lock present — run plan-end --force)"
     return "openspec write boundary: LOCKED"
+def dolt_ahead_of_remote():
+    """Local Dolt commits on the current branch not present on its configured
+    remote, read entirely from local Dolt refs (no network call) — `None` when
+    there is no configured remote or the comparison cannot be made (a remote
+    never fetched/pushed yet has no local `remotes/<name>/<branch>` ref)."""
+    try:
+        remotes = json.loads(run(CFG["beads_command"], "dolt", "remote", "list",
+                                  "--json", check=False).stdout or "[]")
+    except ValueError:
+        return None
+    if not remotes:
+        return None
+    remote_name = remotes[0].get("name")
+    branch = "main"
+    branches = run(CFG["beads_command"], "branch", check=False).stdout
+    for line in branches.splitlines():
+        line = line.strip()
+        if line.startswith("*"):
+            branch = line.lstrip("*").strip() or branch
+            break
+    query = (f"SELECT COUNT(*) AS ahead FROM dolt_log('{branch}') WHERE commit_hash "
+             f"NOT IN (SELECT commit_hash FROM dolt_log('remotes/{remote_name}/{branch}'))")
+    result = run(CFG["beads_command"], "sql", "--json", query, check=False)
+    if result.returncode:
+        return None
+    try:
+        rows = json.loads(result.stdout or "[]")
+        return int(rows[0]["ahead"])
+    except (ValueError, KeyError, IndexError, TypeError):
+        return None
 _PREFIX_RULE_RE = re.compile(r"^\s*(?:prefix_rule|regex_rule)\s*\(")
 def _codex_rule_files():
     """Every Codex execpolicy `.rules` file that could apply here: the user
@@ -652,6 +780,24 @@ def validate(fallback_ref=None):
             if not issue or issue.get("status") != "closed": problems.append(f"checked task {task} has no closed Bead")
     warnings.extend(limbo_warnings(issues))
     return tasks, issues, problems, warnings
+def archive_ready_changes(tasks, issues):
+    """Live (non-archived) changes whose every live task has a closed mapped
+    Bead — candidates `doctor` reports as ready for `/plan`'s archive step.
+
+    Uses the same closed-inclusive `issues` (from `beads()`, via `validate()`)
+    that `sync()`/`materialize()` already read, not the default closed-
+    excluding `bd list`. A change with any task that has no mapped Bead yet,
+    or whose mapped Bead is not closed, is excluded — this never fires for a
+    change still in progress or not yet materialized.
+    """
+    by_change = {}
+    for task, info in tasks.items():
+        if info.get("archived"): continue
+        by_change.setdefault(info["change"], set()).add(task)
+    closed_tasks = {mapping(i)[1] for i in issues
+                    if mapping(i)[1] and i.get("status") == "closed"}
+    return sorted(change for change, task_ids in by_change.items()
+                  if task_ids <= closed_tasks)
 def materialize(change):
     tasks, issues, problems, _warnings = validate()
     if problems: raise AuditError("validation failed:\n- " + "\n- ".join(problems))
@@ -861,14 +1007,22 @@ def sync(on_request=False):
             if key not in current:
                 log.write_text(current + "\n" + execution_log_entry(issue, task))
                 changed.append(log)
-            f = tasks[task]["file"]; text = f.read_text(); updated = re.sub(rf"^- \[ \] ({re.escape(task)}\b)", r"- [x] \1", text, flags=re.M)
-            if updated != text: f.write_text(updated); changed.append(f)
+            f = tasks[task]["file"]
+            if tick_task_line(f, task): changed.append(f)
         if changed:
             run("git", "add", *sorted({str(p.relative_to(ROOT)) for p in changed}))
+            # `sync`'s working directory is whatever branch the timer finds
+            # checked out — commonly the shared checkout, which may also host
+            # the orchestrator's own `git config --worktree` identity. A
+            # direct author/committer override here avoids fighting over that
+            # shared `--worktree` config with whichever persona set it last.
+            sync_name, sync_email = persona_identity("sync")
             run("git", "commit",
                 "-m", "chore(sync): mirror Beads execution evidence",
                 "-m", "Nogging-Writer: sync",
-                env={**os.environ, "NOGGING_WRITER": "sync"})
+                env={**os.environ, "NOGGING_WRITER": "sync",
+                     "GIT_AUTHOR_NAME": sync_name, "GIT_AUTHOR_EMAIL": sync_email,
+                     "GIT_COMMITTER_NAME": sync_name, "GIT_COMMITTER_EMAIL": sync_email})
             print(f"synced {len(set(changed))} file(s)")
         else: print("sync: no changes")
         prev = read_last_success()
@@ -986,6 +1140,68 @@ def sync_now():
         # The timer grabbed the lock between the check above and sync()'s own
         # acquire. Same outcome: report, do not retry.
         print(f"{exc}; the timer is mid-pass — not retrying")
+# --- session observability: per-agent state adapters -----------------------
+# An Adapter is a plain data record, not a single global keyword table: an
+# `ignore` pattern list (benign chrome stripped before classifying) plus
+# ordered per-state pattern lists. This is a direct fix for the hand-rolled
+# predecessor's false-positive problem — every Claude pane permanently
+# showing `Auto-update failed: no write permission to npm prefix`, which a
+# bare `failed` keyword match flagged as needing attention forever (#23).
+@dataclass
+class Adapter:
+    name: str
+    ignore: list = field(default_factory=list)
+    working: list = field(default_factory=list)
+    waiting_bg: list = field(default_factory=list)
+    needs_input: list = field(default_factory=list)
+    limit: list = field(default_factory=list)
+    idle: list = field(default_factory=list)
+
+def _pats(*patterns, flags=0):
+    return [re.compile(p, flags) for p in patterns]
+
+# Patterns are shipped verbatim from design.md's production-observed tables
+# (#23) — not re-derived — because re-guessing them would re-risk the exact
+# false-positive class this change exists to fix.
+CLAUDE_ADAPTER = Adapter(
+    name="claude",
+    ignore=_pats(r"Auto-update failed", r"Tip:"),
+    working=_pats(r"esc to interrupt"),
+    waiting_bg=_pats(r"\d+ shells?( still running)?", r"\d+ monitors?"),
+    needs_input=_pats(r"Do you want to proceed", r"Allow this", r"❯ 1\. Yes"),
+    limit=_pats(r"usage limit reached", r"rate limit", flags=re.I),
+    idle=_pats(r"❯\s*$"),
+)
+CODEX_ADAPTER = Adapter(
+    name="codex",
+    working=_pats(r"Working \("),
+    idle=_pats(r"Ask Codex to do anything"),
+    # `undelivered_input`: `Pasted Content` sitting visible is the lost-
+    # message failure mode itself (#23) — pane text otherwise reads idle.
+    needs_input=_pats(r"Pasted Content"),
+)
+ADAPTERS = {"claude": CLAUDE_ADAPTER, "codex": CODEX_ADAPTER}
+# Classification precedence, fixed: `limit` > `needs_input` > `working` >
+# `waiting_background` > `idle`, else `unknown`.
+_CLASSIFY_ORDER = (
+    ("limit", "limit"), ("needs_input", "needs_input"),
+    ("working", "working"), ("waiting_bg", "waiting_background"),
+    ("idle", "idle"),
+)
+def classify(pane_text, adapter):
+    """Classify `pane_text` (a captured tmux pane) under `adapter`.
+
+    Reads only the last ~15 lines (never full scrollback), strips lines
+    matching `adapter.ignore` first, then checks states in the fixed
+    precedence order above. Returns `unknown` when nothing matches."""
+    lines = (pane_text or "").splitlines()[-15:]
+    kept = [ln for ln in lines
+            if not any(p.search(ln) for p in adapter.ignore)]
+    for attr, state in _CLASSIFY_ORDER:
+        patterns = getattr(adapter, attr)
+        if patterns and any(p.search(ln) for ln in kept for p in patterns):
+            return state
+    return "unknown"
 # --- session supervision ---------------------------------------------------
 # A thin, mechanical layer that runs each Nogging-launched Claude Code
 # session inside a named tmux session on a dedicated server socket, tracks it
@@ -1007,6 +1223,7 @@ _SECRET_ASSIGN_RE = re.compile(
     r"(\"[^\"]*\"|'[^']*'|\S+)", re.I)
 
 def scfg(key, default): return CFG.get(key, default)
+def multi_machine_enabled(): return bool(scfg("multi_machine", False))
 # A short, fixed deny-list unioned into `permissions.deny` of every launch
 # profile — named, default, or a path the operator supplied — before the
 # effective settings file is written. No profile can grant these. It is a
@@ -1045,6 +1262,26 @@ def deny_openspec_writes(settings):
         if entry not in deny:
             deny.append(entry)
     perms["deny"] = deny
+    return result
+# Claude Layer 2 (design.md Decision 4): one `Stop` and one `Notification`
+# hook entry, each invoking `session emit` so `watch` can prefer a structured
+# events file over pane-scraping. Appended into `hooks.<event>` by
+# merge_observability_hooks() below — never replacing or reordering an
+# existing entry for that event, exactly like FLOOR_DENY / OPENSPEC_READONLY_DENY.
+OBSERVABILITY_HOOKS = {
+    "Stop": {"hooks": [{"type": "command", "command": "scripts/nogg session emit turn_end"}]},
+    "Notification": {"hooks": [{"type": "command", "command": "scripts/nogg session emit needs_input"}]},
+}
+def merge_observability_hooks(settings):
+    """Return a deep copy of `settings` with the Layer-2 Stop/Notification
+    hook entries appended to `hooks.<event>` — appended, never replacing or
+    reordering any existing entry for that event. Input never mutated."""
+    result = json.loads(json.dumps(settings))
+    hooks = result.setdefault("hooks", {})
+    for event, entry in OBSERVABILITY_HOOKS.items():
+        existing = list(hooks.get(event) or [])
+        existing.append(entry)
+        hooks[event] = existing
     return result
 def resolve_launch_file(value, dir_key, default_dir, suffix):
     """Resolve a `--profile` / `--prompt` value to a concrete file.
@@ -1345,8 +1582,15 @@ def resolve_agent(agent):
     return resolved
 def session_launch(role, bead, cwd, read_only, owner,
                    profile=None, prompt=None, full_access=False, agent=None,
-                   resume=False):
+                   resume=None):
     """Start a supervised agent session for a Bead.
+
+    `resume`, when truthy, is the specific prior Claude conversation's session
+    ID to continue via `--resume <id>` — never a bare `--continue`, which
+    resumes whichever conversation is most recent for `cwd` and can pick up an
+    unrelated one (SPEC-nfz8). Falsy `resume` cold-starts a Claude agent with a
+    freshly generated `--session-id`, recorded as `claude_session_id` so a
+    later launch can resume this exact conversation.
 
     This function performs NO Beads mutation. The only `bd` call it makes is
     the read-only `bd show` inside bead_exists(); it never claims, starts, or
@@ -1429,8 +1673,20 @@ def session_launch(role, bead, cwd, read_only, owner,
     inner = [wrapper, "--prompt", str(prompt_path), "--cwd", workdir]
     if bead:
         inner += ["--bead", bead]
-    if resume and agent == "claude":
-        inner.append("--continue")
+    claude_session_id = None
+    if agent == "claude":
+        if resume:
+            inner += ["--resume", resume]
+            claude_session_id = resume
+        else:
+            claude_session_id = str(uuid.uuid4())
+            inner += ["--session-id", claude_session_id]
+        if is_orchestrator:
+            # The "reachable from a phone" requirement is Remote Control, which
+            # `claude` only turns on when asked — it is never automatic. Without
+            # this the orchestrator's own docs (docs/operating-model.md:
+            # "the launched session registers with Remote Control") were false.
+            inner += ["--remote-control", name]
     if agent == "claude":
         # Write the merged, floored settings for THIS session and pass that file
         # to Claude — never the source profile, which is left untouched. The
@@ -1443,6 +1699,7 @@ def session_launch(role, bead, cwd, read_only, owner,
         settings_out = base_settings if floor_lifted else merge_floor(base_settings)
         if openspec_readonly:
             settings_out = deny_openspec_writes(settings_out)
+        settings_out = merge_observability_hooks(settings_out)
         effective_path.write_text(json.dumps(settings_out, indent=2) + "\n")
         effective_settings_path = str(effective_path)
         inner[1:1] = ["--settings", effective_settings_path]
@@ -1496,13 +1753,18 @@ def session_launch(role, bead, cwd, read_only, owner,
         "read_only": bool(read_only), "ended_at": None, "exit_reason": None,
         "profile": profile_label, "effective_settings_path": effective_settings_path,
         "agent": agent, "openspec_readonly": bool(openspec_readonly),
-        "floor_lifted": bool(floor_lifted),
+        "floor_lifted": bool(floor_lifted), "claude_session_id": claude_session_id,
     }
     write_session(rec_path, record)                       # metadata before exec
     with log_path.open("a") as fh:                        # append-only log before exec
         fh.write(f"# nogg session {name} for {bead or 'no bead'} ({role_meta}) started {record['started_at']}\n")
     try:
-        tmux("new-session", "-d", "-s", name, "-c", workdir, "--", *inner)
+        # -e NOGG_SESSION_NAME=<name> is agent-neutral session environment
+        # (every process tmux starts in this session inherits it), the only
+        # way a `session emit` hook invocation — a bare, argument-less
+        # command line (design.md Decision 4) — can know its own session name.
+        tmux("new-session", "-d", "-s", name, "-c", workdir,
+             "-e", f"NOGG_SESSION_NAME={name}", "--", *inner)
         writer = str((ROOT / "scripts/session-log-writer").resolve())
         max_bytes = int(scfg("session_log_max_bytes", 1048576))
         depth = int(scfg("session_log_rotation_depth", 3))
@@ -1656,6 +1918,312 @@ def session_log(name, follow):
     if follow:
         os.execvp("tail", ["tail", "-n", "+1", "-F", str(lp)])
     sys.stdout.write(lp.read_text())
+# --- session observability: watch -------------------------------------
+# `watch` polls each tracked session's pane, classifies it per-agent
+# (Decision 1), and emits one event per state transition plus `stalled`
+# (Decision 3) — never a firehose, never a daemon; it is a foreground
+# command run under whatever already supervises the operator.
+_DURATION_RE = re.compile(r"^(\d+(?:\.\d+)?)\s*([smh]?)$")
+_DURATION_UNITS = {"s": 1, "m": 60, "h": 3600, "": 1}
+def parse_duration(spec):
+    """Parse a bounded duration like `30`, `30s`, `15m`, `2h` to seconds."""
+    m = _DURATION_RE.match(str(spec).strip())
+    if not m:
+        raise RuntimeError(f"not a duration: {spec!r} (expected e.g. 30, 30s, 15m, 2h)")
+    return float(m.group(1)) * _DURATION_UNITS[m.group(2)]
+_CLOCK_TIME_RE = re.compile(r"\b(\d{1,2}):(\d{2})\s*([AaPp][Mm])?\b")
+def resolve_clock_time(text, now=None):
+    """Resolve the first bare `HH:MM` / `H:MM AM/PM` token in `text` to an
+    absolute ISO 8601 timestamp against `now`'s local date (design.md
+    Decision 2), rolling to the next day when the parsed time precedes
+    `now`. Returns None when no time-like token is found or it does not
+    resolve to a valid time."""
+    m = _CLOCK_TIME_RE.search(text or "")
+    if not m:
+        return None
+    now = now or dt.datetime.now()
+    hour, minute, ampm = int(m.group(1)), int(m.group(2)), m.group(3)
+    if not (0 <= minute < 60):
+        return None
+    if ampm:
+        if not (1 <= hour <= 12):
+            return None
+        hour = hour % 12
+        if ampm.lower() == "pm":
+            hour += 12
+    elif not (0 <= hour < 24):
+        return None
+    candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if candidate < now:
+        candidate += dt.timedelta(days=1)
+    return candidate.isoformat()
+def session_pane_text(name):
+    """The session's current visible pane (no scrollback), or '' if its tmux
+    session does not exist."""
+    res = tmux("capture-pane", "-p", "-t", name, check=False)
+    return res.stdout if res.returncode == 0 else ""
+def session_events_path(name):
+    return sessions_dir() / f"{name}.events.jsonl"
+def session_emit(event):
+    """Append one structured JSON line to the calling session's own
+    `<name>.events.jsonl` (design.md Decision 4). The session name is read
+    from `NOGG_SESSION_NAME`, set as session environment by `session_launch`
+    for exactly this purpose — a bare `Stop`/`Notification` hook command
+    carries no arguments identifying which session it fired in."""
+    name = os.environ.get("NOGG_SESSION_NAME")
+    if not name:
+        raise RuntimeError(
+            "session emit: NOGG_SESSION_NAME is not set (not running inside "
+            "a session `scripts/nogg session launch` started)")
+    with session_events_path(name).open("a") as fh:
+        fh.write(json.dumps({"timestamp": now(), "session": name, "event": event}) + "\n")
+# A Layer-2 hook event maps onto one of classify()'s Layer-1 states: `Stop`
+# fires once Claude finishes a turn (idle, awaiting the next input); the
+# `Notification` hook this change wires fires on a permission prompt
+# (needs_input). Any other event name (future hook) classifies as `unknown`
+# rather than silently reusing a stale state.
+EVENT_STATE_MAP = {"turn_end": "idle", "needs_input": "needs_input"}
+def _layer2_state(name):
+    """The most recent Layer-2 state for a Claude session's events file, or
+    None when that file does not exist or has no lines yet — the signal
+    `classify_session` uses to fall back to Layer-1 pane-scraping (Decision 4:
+    Layer 2 is additive, never required)."""
+    path = session_events_path(name)
+    if not path.exists() or path.stat().st_size == 0:
+        return None
+    last_event = None
+    with path.open() as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                last_event = json.loads(line).get("event")
+            except ValueError:
+                continue
+    if last_event is None:
+        return None
+    return EVENT_STATE_MAP.get(last_event, "unknown")
+def classify_session(rec, live=None):
+    """One-shot state classification for a managed session record: Layer 2
+    (the session's own `<name>.events.jsonl`) when present and non-empty for
+    a Claude session, else Layer-1 pane-scraping. Returns `(state,
+    pane_text)` — `pane_text` is still the real pane capture even on a
+    Layer-2 hit, so callers needing it (e.g. a `limit` reset time) are
+    unaffected; Layer 2 never reports `limit` so this never matters there."""
+    name = rec.get("name")
+    live = tmux_sessions() if live is None else live
+    if name not in live:
+        return "ended", ""
+    agent = rec.get("agent") or "claude"
+    pane = session_pane_text(name)
+    if agent == "claude":
+        layer2 = _layer2_state(name)
+        if layer2 is not None:
+            return layer2, pane
+    adapter = ADAPTERS.get(agent)
+    if adapter is None:
+        return "unknown", ""
+    return classify(pane, adapter), pane
+def _watch_targets(names):
+    if names:
+        return list(names)
+    live = tmux_sessions()
+    return [rec["name"] for _, rec in session_records()
+            if reconciled_state(rec, live) in SESSION_ACTIVE_STATES]
+def _emit_watch_event(fmt, name, event, **fields):
+    if fmt == "jsonl":
+        print(json.dumps({"time": now(), "session": name, "event": event, **fields}))
+    else:
+        extra = " ".join(f"{k}={v}" for k, v in fields.items() if v is not None)
+        line = f"{now()} {name} {event}"
+        print(f"{line} {extra}" if extra else line)
+    sys.stdout.flush()
+def watch_poll_once(tracked, stall_secs, fmt):
+    """One polling pass over every session in `tracked`, a mutable
+    `{name: {"state": str|None, "stalled": bool}}` map the caller carries
+    across polls. Emits an event only on a state change, plus one `stalled`
+    event (not repeated) when a `working` session's pane and log are both
+    unchanged for `stall_secs`. Factored out of `session_watch`'s loop so it
+    is testable without a real `sleep`."""
+    live = tmux_sessions()
+    for name, st in tracked.items():
+        try:
+            _, rec = load_session(name)
+        except RuntimeError:
+            continue
+        state, pane = classify_session(rec, live)
+        prev = st.get("state")
+        if state != prev:
+            fields = {}
+            if state == "limit":
+                until = resolve_clock_time(pane)
+                if until:
+                    fields["until"] = until
+            _emit_watch_event(fmt, name, state, **fields)
+            st["state"], st["stalled"] = state, False
+        elif state == "working" and not st.get("stalled"):
+            log_path = Path(rec.get("log_path") or "")
+            if log_path.exists() and (time.time() - log_path.stat().st_mtime) >= stall_secs:
+                _emit_watch_event(fmt, name, "stalled")
+                st["stalled"] = True
+def session_watch(names, interval, stall_after, fmt, once=False):
+    stall_secs = parse_duration(stall_after)
+    tracked = {name: {"state": None, "stalled": False} for name in _watch_targets(names)}
+    if not tracked:
+        print("no sessions to watch"); return
+    try:
+        while True:
+            if not names:   # re-resolve "every live session" each pass
+                for nm in _watch_targets(names):
+                    tracked.setdefault(nm, {"state": None, "stalled": False})
+            watch_poll_once(tracked, stall_secs, fmt)
+            if once:
+                return
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        return
+# --- session observability: send --------------------------------------
+def _submit_pane_input(name, agent):
+    tmux("send-keys", "-t", name, "Enter")
+    if agent == "claude":
+        # Known quirk: Claude Code requires a second bare Enter to actually
+        # submit a multi-line paste.
+        tmux("send-keys", "-t", name, "Enter")
+def _pane_input_pending(name, agent):
+    """Whether a just-sent message is still sitting unsubmitted. For codex
+    this is exactly the adapter's `needs_input` (`undelivered_input`) signal
+    (design.md); claude has no such structural signal yet, so this is always
+    False for it — the second bare Enter above is the known fix, not a
+    condition `send --verify` can detect and branch on."""
+    if agent != "codex":
+        return False
+    return classify(session_pane_text(name), CODEX_ADAPTER) == "needs_input"
+def _codex_rollout_files():
+    """Every rollout file Codex has written under `<codex_home>/sessions/`.
+    Each file's first line is a `session_meta` record carrying the thread's
+    own id, cwd, and creation timestamp — the only place that mapping
+    exists, since a plain `codex` launch has no flag to pin a known thread
+    id up front (TASK-SOB-006)."""
+    root = codex_home() / "sessions"
+    return sorted(root.glob("*/*/*/rollout-*.jsonl")) if root.is_dir() else []
+def _codex_rollout_session_meta(path):
+    try:
+        with path.open() as fh:
+            line = json.loads(fh.readline())
+    except (OSError, ValueError):
+        return None
+    if line.get("type") != "session_meta":
+        return None
+    payload = line.get("payload") or {}
+    thread_id, cwd, ts = payload.get("id"), payload.get("cwd"), payload.get("timestamp")
+    return (thread_id, cwd, ts) if (thread_id and cwd and ts) else None
+def resolve_codex_thread_id(rec):
+    """Discover and cache the Codex-internal thread UUID for a codex session
+    `scripts/nogg` launched, by matching the session's `working_dir` against
+    the `session_meta` header Codex writes at the top of its own rollout file
+    (`<codex_home>/sessions/<Y>/<M>/<D>/rollout-*-<uuid>.jsonl`). Codex
+    assigns this id itself, lazily, once its own session actually starts
+    (there is no cold-start flag to pin it, unlike Claude's `--session-id`),
+    so this is a discover-after-the-fact lookup, not something
+    `session_launch` can record up front. Among unclaimed same-cwd rollouts
+    no older than this session's own `started_at`, picks the earliest — the
+    one this launch itself produced. Caches the result on the session record
+    once found. Returns None (never raises) when no match exists yet — the
+    thread may simply not have started (e.g. still sitting at Codex's
+    hook-trust prompt)."""
+    if rec.get("codex_thread_id"):
+        return rec["codex_thread_id"]
+    try:
+        started = parse_iso(rec["started_at"]) - dt.timedelta(seconds=5)
+    except (KeyError, ValueError):
+        return None
+    claimed = {r.get("codex_thread_id") for _, r in session_records() if r.get("codex_thread_id")}
+    candidates = []
+    for path in _codex_rollout_files():
+        meta = _codex_rollout_session_meta(path)
+        if not meta:
+            continue
+        thread_id, cwd, ts = meta
+        if thread_id in claimed or cwd != rec.get("working_dir"):
+            continue
+        try:
+            ts_dt = parse_iso(ts)
+        except ValueError:
+            continue
+        if ts_dt < started:
+            continue
+        candidates.append((ts_dt, thread_id))
+    if not candidates:
+        return None
+    candidates.sort()
+    thread_id = candidates[0][1]
+    rec["codex_thread_id"] = thread_id
+    write_session(sessions_dir() / f"{rec['name']}.json", rec)
+    return thread_id
+def codex_queue_send(rec, message):
+    """Primary send path for a codex session: `codex queue --thread <THREAD>
+    --message <TEXT>`, against the thread id `resolve_codex_thread_id` finds.
+    TASK-SOB-006 confirmed live that this delivers straight into the
+    session's pane and submits immediately — no `_submit_pane_input` quirk
+    to apply, unlike the Layer-1 path. Returns True if it delivered (the
+    caller then skips the Layer-1 pane-based send entirely), False to fall
+    back — a thread id not yet resolvable, or the `codex` binary itself
+    rejecting it. Never raises."""
+    thread_id = resolve_codex_thread_id(rec)
+    if not thread_id:
+        return False
+    result = run("codex", "queue", "--thread", thread_id, "--message", message, check=False)
+    return result.returncode == 0
+def session_send(name, message, verify=False):
+    """Send `message` to a managed session via the agent-appropriate
+    key-injection sequence. With `verify`, confirm it was actually submitted
+    (not left sitting in the input box) and retry the submit step once if
+    not (design.md's `send --verify` requirement)."""
+    _, rec = load_session(name)
+    if not tmux_has_session(name):
+        raise RuntimeError(f"{name} has no live tmux session; cannot send")
+    agent = rec.get("agent") or "claude"
+    if agent == "codex" and codex_queue_send(rec, message):
+        print(f"sent to {name} (codex queue)")
+        return
+    tmux("send-keys", "-t", name, "-l", message)
+    _submit_pane_input(name, agent)
+    if verify and _pane_input_pending(name, agent):
+        _submit_pane_input(name, agent)             # retry the submit step once
+        if _pane_input_pending(name, agent):
+            raise RuntimeError(f"{name}: message still unsubmitted after a retry")
+    print(f"sent to {name}")
+# --- session observability: resume-when-ready -------------------------
+DEFAULT_RESUME_MESSAGE = ("the usage limit has reset, continue exactly where "
+                          "you left off per your original instructions")
+_SWITCH_MODEL_RE = re.compile(r"switch.*model", re.I)
+def session_resume_when_ready(name, message=None, poll_interval=60):
+    """Wait out a `limit` state using its resolved reset timestamp (never a
+    tight spin-loop — falls back to a bounded `poll_interval` cadence when
+    the timestamp could not be parsed), dismiss a residual model-switch
+    prompt by keeping the current model (design.md Decision 2: switching
+    models never clears a genuine account-wide limit), then send the resume
+    instruction via `session_send`."""
+    message = message or DEFAULT_RESUME_MESSAGE
+    while True:
+        _, rec = load_session(name)
+        state, pane = classify_session(rec)
+        if state != "limit":
+            break
+        until_iso = resolve_clock_time(pane)
+        if until_iso:
+            wait = (dt.datetime.fromisoformat(until_iso) - dt.datetime.now()).total_seconds()
+            time.sleep(max(0.0, min(wait, poll_interval)) if wait > poll_interval else max(0.0, wait))
+        else:
+            time.sleep(poll_interval)
+    pane = session_pane_text(name)
+    if _SWITCH_MODEL_RE.search(pane):
+        # Dismiss the residual "switch model?" prompt without acting on it —
+        # Escape cancels the prompt and leaves the current model selected.
+        tmux("send-keys", "-t", name, "Escape")
+    session_send(name, message, verify=True)
+    print(f"resumed {name}")
 # --- orchestrator: the always-on supervisor ------------------------------
 # `orchestrator run` is the idempotent process the systemd user service starts.
 # The thing kept alive is a normal supervised Claude session (a durable record,
@@ -1664,15 +2232,20 @@ def session_log(name, follow):
 # generic `session` commands.
 def orchestrator_slug(): return repo_slug()
 def orchestrator_session_name(): return f"nogg-orchestrator-{orchestrator_slug()}"
+def claude_conversation_transcript_exists(workdir, session_id):
+    """True when Claude Code has a stored transcript for this exact
+    `session_id` under `workdir`'s project directory — the precise,
+    session-scoped check `orchestrator run` uses before trusting a recorded
+    `claude_session_id` enough to `--resume` it. A record can carry a
+    `claude_session_id` for a conversation that never actually started (e.g.
+    the process was killed before Claude wrote anything); resuming a
+    nonexistent ID makes `claude` exit immediately, which would crash-loop
+    under the systemd unit's `Restart=always`. (SPEC-nfz8: the prior check
+    here looked for *any* transcript in the directory, which could resume an
+    unrelated conversation instead of catching this.)"""
+    d = Path.home() / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(workdir))
+    return (d / f"{session_id}.jsonl").is_file()
 def orchestrator_unit(): return f"nogg-orchestrator-{orchestrator_slug()}.service"
-def _claude_project_dir(workdir):
-    return Path.home() / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(workdir))
-def claude_conversation_exists(workdir):
-    """True when Claude Code already has a stored conversation for `workdir` —
-    the signal that `orchestrator run` should resume with `claude --continue`
-    rather than start cold."""
-    d = _claude_project_dir(workdir)
-    return d.is_dir() and any(d.glob("*.jsonl"))
 def claude_project_trusted(workdir):
     """Whether `~/.claude.json` records `hasTrustDialogAccepted` for `workdir`.
     The orchestrator tmux pane is an interactive Claude session, which blocks on
@@ -1705,8 +2278,9 @@ def orchestrator_live_session():
     return None
 def orchestrator_run(force=False):
     """Acquire the lock; adopt a live orchestrator tmux session or start one
-    (`claude --continue` when a prior conversation exists, else a cold start
-    with the persona prompt and the floor-lifted settings); refresh the record;
+    (`claude --resume <id>` of this orchestrator's own last recorded
+    conversation when one exists, else a cold start with the persona prompt
+    and the floor-lifted settings); refresh the record;
     block until the tmux session exits; release the lock; exit non-zero so
     `Restart=always` brings it back unless `orchestrator stop` disabled the
     unit."""
@@ -1714,6 +2288,7 @@ def orchestrator_run(force=False):
     signal.signal(signal.SIGTERM, _term)
     name = orchestrator_session_name()
     workdir = str(ROOT)
+    set_persona_identity(ROOT, "orchestrator")
     acquire_orchestrator_lock(force)
     try:
         if tmux_has_session(name):
@@ -1746,10 +2321,19 @@ def orchestrator_run(force=False):
                     f"once here and accept the prompt (or set "
                     f"projects['{workdir}'].hasTrustDialogAccepted in ~/.claude.json), "
                     f"then retry.")
-            resume = (claude_conversation_exists(workdir)
-                      or (sessions_dir() / f"{name}.json").exists())
+            prior_rec_path = sessions_dir() / f"{name}.json"
+            prior_session_id = None
+            if prior_rec_path.exists():
+                try:
+                    prior_session_id = json.loads(prior_rec_path.read_text()).get("claude_session_id")
+                except (json.JSONDecodeError, OSError):
+                    prior_session_id = None
+                if prior_session_id and not claude_conversation_transcript_exists(
+                        workdir, prior_session_id):
+                    prior_session_id = None
             session_launch("orchestrator", None, workdir, False, None,
-                           profile="orchestrator", prompt="orchestrator", resume=resume)
+                           profile="orchestrator", prompt="orchestrator",
+                           resume=prior_session_id)
         poll = float(scfg("orchestrator_poll_seconds", 5))
         while tmux_has_session(name):
             time.sleep(poll)
@@ -2094,7 +2678,8 @@ def doctor(audit=False, with_recover=False):
     for cmd in ("git", "python3", CFG["beads_command"], "dolt"):
         checks.append((cmd, tool_on_path(cmd)))
     warnings = []
-    try: _, _, problems, warnings = validate()
+    tasks, issues = {}, []
+    try: tasks, issues, problems, warnings = validate()
     except Exception as exc: problems = [str(exc)]
     checks.extend((p, False) for p in problems)
     if FAILURE_RECORD.exists():
@@ -2115,12 +2700,25 @@ def doctor(audit=False, with_recover=False):
              "compatibility baseline: Node 18/20/22, Python 3.9-3.13, "
              "Git 2.30+, Bash 4.4+, OpenSpec 1.11.x, Beads 1.2.x, Dolt 2.3.x "
              "(docs/nogging/compatibility.md)"]
+    # Advisory only, like every other NOTE here: never a FAIL, never changes
+    # doctor's exit code. `/plan`'s archive step (TASK-TCC-004) is what
+    # actually archives a change; doctor only surfaces readiness.
+    for change in archive_ready_changes(tasks, issues):
+        notes.append(f"change ready to archive: {change} (every mapped Bead is closed)")
     if SKIP_RECORD.exists():
         try: srec = json.loads(SKIP_RECORD.read_text())
         except (ValueError, OSError): srec = {}
         if srec.get("reason"):
             notes.append(f"last sync skipped: {srec['reason']} "
                          f"({humanize_age(srec.get('at'))})")
+    # multi_machine is opt-in (default false): never checked, never a FAIL,
+    # never changes the exit code — just visibility into an unpushed local
+    # Dolt history per design.md Decision 2.
+    if multi_machine_enabled():
+        ahead = dolt_ahead_of_remote()
+        if ahead:
+            notes.append(f"multi-machine: local Dolt is {ahead} commit(s) "
+                         f"ahead of its remote — run `bd dolt push` before ending this session")
     codex_present = tool_on_path("codex")
     notes.append("codex available" if codex_present
                  else "codex not installed; only needed for the Codex agent path")
@@ -2167,6 +2765,15 @@ def doctor(audit=False, with_recover=False):
                              f"`loginctl enable-linger {getpass.getuser()}`")
     else:
         notes.append("systemctl not available; orchestrator service state not checked")
+    # Cloud session visibility: informational only, like every other
+    # environment-presence check above — never a FAIL, never changes the exit
+    # code, and silent outside a cloud session (CLAUDE_CODE_REMOTE unset).
+    if os.environ.get("CLAUDE_CODE_REMOTE") == "true":
+        hooks_path = run("git", "config", "--get", "core.hooksPath", check=False).stdout.strip()
+        notes.append(f"cloud session: core.hooksPath is {hooks_path!r}" if hooks_path
+                     else "cloud session: core.hooksPath is not set")
+        notes.append("cloud session: bd is on PATH" if tool_on_path(CFG["beads_command"])
+                     else "cloud session: bd is not on PATH")
     # The interrupted-run checks: doctor always prints a one-line summary
     # (`recover` folds the full report). Read-only, like the rest of doctor.
     try:
@@ -2176,6 +2783,7 @@ def doctor(audit=False, with_recover=False):
         notes.append(f"recover checks could not run: {exc}")
     notes.append(f"recover: {len(rattention)} item(s) need attention"
                  + (f" — {', '.join(rattention)}" if rattention else " (nothing in flight)"))
+    notes.extend(persona_mismatch_notes())
     for note in notes: print(f"NOTE  {note}")
     recover_lines = []
     if with_recover:
@@ -2212,6 +2820,9 @@ def main():
     b = sub.add_parser("plan-begin"); b.add_argument("--force", action="store_true")
     e = sub.add_parser("plan-end"); e.add_argument("--force", action="store_true")
     m = sub.add_parser("materialize"); m.add_argument("change")
+    td = sub.add_parser("task-done",
+        help="tick the closed Bead's mapped tasks.md line (Lead close protocol)")
+    td.add_argument("bead_id")
     cpl = sub.add_parser("codex-prompts-link",
         help="symlink .codex/prompts/*.md into <CODEX_HOME>/prompts/ as nogging-<name>.md")
     cpl.add_argument("--unlink", action="store_true",
@@ -2264,6 +2875,22 @@ def main():
     scl = ssub.add_parser("cleanup"); scl.add_argument("name", nargs="?")
     scl.add_argument("--reap", action="store_true",
                      help="first move vanished active sessions to failed, then clean up")
+    sw = ssub.add_parser("watch")
+    sw.add_argument("names", nargs="*", default=[])
+    sw.add_argument("--all-running", action="store_true",
+                    help="watch every live session (the default when no names are given)")
+    sw.add_argument("--interval", type=float, default=30)
+    sw.add_argument("--stall-after", default="15m")
+    sw.add_argument("--format", choices=("lines", "jsonl"), default="lines")
+    sw.add_argument("--once", action="store_true",
+                    help="run exactly one polling pass then exit (scripting/testing)")
+    ssend = ssub.add_parser("send")
+    ssend.add_argument("name"); ssend.add_argument("message")
+    ssend.add_argument("--verify", action="store_true")
+    srw = ssub.add_parser("resume-when-ready")
+    srw.add_argument("name"); srw.add_argument("--message")
+    semit = ssub.add_parser("emit")
+    semit.add_argument("event")
     args = p.parse_args()
     if args.command == "plan-begin":
         lock("planning", CFG["planning_lock_ttl_seconds"], args.force)
@@ -2281,6 +2908,7 @@ def main():
         write_sentinel()
         print("openspec write boundary closed")
     elif args.command == "materialize": materialize(args.change)
+    elif args.command == "task-done": task_done(args.bead_id)
     elif args.command == "codex-prompts-link": codex_prompts_link(args.unlink)
     elif args.command == "worktree":
         if args.worktree_command == "plan": planning_worktree(args.planning_id, args.description, args.path)
@@ -2311,6 +2939,16 @@ def session_cmd(args):
         session_reap()
     elif args.session_command == "cleanup":
         session_cleanup(args.name, args.reap)
+    elif args.session_command == "watch":
+        if args.names and args.all_running:
+            raise RuntimeError("session watch: pass session names or --all-running, not both")
+        session_watch(args.names, args.interval, args.stall_after, args.format, args.once)
+    elif args.session_command == "send":
+        session_send(args.name, args.message, args.verify)
+    elif args.session_command == "resume-when-ready":
+        session_resume_when_ready(args.name, args.message)
+    elif args.session_command == "emit":
+        session_emit(args.event)
 if __name__ == "__main__":
     try: main()
     except Exception as exc: print(f"nogg: {exc}", file=sys.stderr); sys.exit(1)

@@ -9,8 +9,12 @@ the rest applies to every runtime — Claude Code, Codex, or another.
 
 1. Execution agents (Main Worker and specialists) must not edit `openspec/`.
 2. Work only on a Bead that has been claimed by the Main Worker.
-3. Before closing, run relevant validation, commit with a Conventional Commit
-   containing the Bead ID, and add a Bead note with the commit SHA and evidence.
+3. Before closing a Bead, run relevant validation. Close it (`bd close <id>`),
+   then immediately run `./scripts/nogg task-done <id>` to tick its mapped
+   `tasks.md` line (it refuses unless the Bead is already closed). Commit with
+   a Conventional Commit containing the Bead ID (e.g. `[SPEC-abc]`), bundling
+   that `tasks.md` tick into the same commit as the Bead's own execution
+   change, and add a Bead note with the commit SHA and evidence.
 4. Record every material discovery on the active Bead with the native Beads
    `discovery` label plus a required human-readable note. Never encode the
    discovery as serialized data (no JSON, no key/value block). An execution
@@ -81,6 +85,12 @@ specialist works exactly one already-claimed Bead, returns a structured result,
 and never claims, closes, re-statuses, or commits. A plan-relevant finding from
 a specialist is recorded as a discovery by the Main Worker, not the specialist.
 
+When a specialist's delegated, incorporated work contributes to a commit, the
+Main Worker adds a `Co-authored-by: <specialist persona name> <specialist
+persona email>` trailer naming that specialist (roster in
+`.nogging/config.json`'s `personas` key), in addition to the Bead-ID token and
+evidence note above.
+
 How a specialist run is dispatched depends on the tool (see *Tool notes*): an
 in-process subagent where the runtime has one, otherwise a separate supervised
 session or inline work under the same constraints.
@@ -141,6 +151,26 @@ crash and reboot; it is reachable from a phone via Remote Control). It is
 
 See `docs/operating-model.md` *Orchestration* and `docs/architecture.md`.
 
+## Multi-machine mode
+
+When `.nogging/config.json` sets `"multi_machine": true` (default `false`), a
+`trusted` or orchestrator session runs `bd dolt pull` once at session start —
+before reading any Beads state — and `bd dolt push` before the session ends,
+if it made any Bead write (create, update, claim, close). This keeps Beads
+state synchronized across machines that share one Dolt remote.
+
+`restricted` sessions are unaffected and need no change: they already cannot
+run `bd dolt push`/`pull` (no remote Dolt sync in their authority level, see
+*Supervised sessions* above), and a `restricted` session's local Bead writes
+land in Dolt history exactly as before — they reach the remote via the same
+machine's next `trusted`/orchestrator session push, which pushes every
+pending local commit, not only its own.
+
+`./scripts/nogg doctor` separately prints a NOTE (never a failure) when
+local Dolt is ahead of its configured remote. See
+`docs/failure-recovery.md` for the recovery path if two machines write
+before either has pulled.
+
 ## Commands
 
 The operator entry points are `/plan`, `/discovery-review` and `/sync-now`
@@ -189,6 +219,9 @@ the subsection for the tool you are running as, and ignore the others.
   `test-runner` — invoked **in process through the Task tool**. The Lead Agent
   delegation model is the *Lead Agent delegation* section of `CLAUDE.md`.
 - **Operator entry points.** `.claude/commands/{plan,discovery-review,sync-now}.md`.
+- **Cloud sessions.** The assigned `claude/*` branch is never a PR source:
+  push the branch `nogg worktree implement` / `worktree plan` allocated, and
+  open the pull request from that branch instead.
 
 ### Codex
 

@@ -180,6 +180,62 @@ else
   bad "planning flow: commit-before-materialize order is inconsistent (see output above)"
 fi
 
+# --- 4b. /plan's conditional archive step sits after discovery review and --
+#     before the design dialogue, naming `doctor` as the readiness signal
+#     (TASK-TCC-004), and is never phrased as mandatory.
+if python3 - <<'PY'
+import re, sys
+bad = 0
+for f in (".claude/commands/plan.md", ".codex/prompts/plan.md"):
+    t = open(f).read()
+    discoveries = t.find("Review pending discoveries")
+    archive = t.find("Archive any change")
+    dialogue = t.find("Hold the design dialogue")
+    if not (0 <= discoveries < archive < dialogue):
+        print(f"{f}: archive step missing or out of order "
+              f"(discoveries={discoveries}, archive={archive}, dialogue={dialogue})")
+        bad = 1
+        continue
+    if "doctor" not in t[archive:dialogue]:
+        print(f"{f}: archive step does not name doctor as the readiness signal"); bad = 1
+    if "openspec archive" not in t[archive:dialogue]:
+        print(f"{f}: archive step does not call openspec archive"); bad = 1
+
+row = next((ln for ln in open("docs/operating-model.md") if "`/plan` (`plan.md`)" in ln), "")
+if "conditional archive" not in row or "doctor" not in row:
+    print("docs/operating-model.md /plan row is missing the conditional archive step"); bad = 1
+disc_pos = row.find("discovery review")
+arch_pos = row.find("conditional archive")
+dlg_pos = row.find("design dialogue")
+if not (0 <= disc_pos < arch_pos < dlg_pos):
+    print("docs/operating-model.md /plan row: archive step out of order"); bad = 1
+sys.exit(bad)
+PY
+then
+  ok "/plan: conditional archive step present, ordered, and doctor-gated in plan.md + operating-model.md"
+else
+  bad "/plan: conditional archive step missing or misplaced (see output above)"
+fi
+
+# --- 4c. the Orchestration Agent directs archive-readiness to planning -----
+#     (TASK-TCC-005): never runs `openspec archive` itself.
+for f in .nogging/launch-prompts/orchestrator.md docs/operating-model.md; do
+  grep -q 'ready to archive' "$f" \
+    && ok "$f names doctor's archive-readiness NOTE" \
+    || bad "$f does not mention doctor's archive-readiness NOTE"
+  grep -q 'planning session' "$f" \
+    && echo "$f" | grep -q . \
+    && grep -A2 'ready to archive' "$f" | grep -qi 'planning session' \
+    && ok "$f directs a planning session to handle it" \
+    || bad "$f does not direct a planning session to handle archive-readiness"
+done
+orch_flat="$(tr '\n' ' ' < .nogging/launch-prompts/orchestrator.md)"
+if [[ "$orch_flat" =~ never\ runs?\ .openspec\ archive.\ (your|it)self ]]; then
+  ok "orchestrator.md: the Orchestration Agent never runs openspec archive itself"
+else
+  bad "orchestrator.md: missing the explicit 'never runs openspec archive itself' rule"
+fi
+
 # --- 5. the resumption protocol + playbook exist (TASK-RIR-007) ----------
 if python3 - <<'PY'
 import re, sys

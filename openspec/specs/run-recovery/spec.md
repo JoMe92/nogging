@@ -120,3 +120,53 @@ it from system profile scripts.
 - **WHEN** a tool is available via the invoking process's `PATH`, but a login
   shell's profile scripts would reset `PATH` and hide it
 - **THEN** `doctor` still reports the tool as present
+
+### Requirement: doctor reports a change ready to archive
+
+`doctor` SHALL report, as a NOTE, every live (non-archived) change under
+`openspec/changes/` whose every mapped Bead is closed, determined using the
+same closed-inclusive Beads enumeration the sync and materialize mechanisms
+use rather than a closed-excluding listing. This NOTE SHALL NOT fail
+`doctor` or change its exit code, matching every other advisory NOTE `doctor`
+already prints.
+
+#### Scenario: A fully-closed change is surfaced
+
+- **WHEN** every Bead mapped to a live change's tasks is closed
+- **AND** `doctor` runs
+- **THEN** it prints a NOTE naming that change as ready to archive
+- **AND** `doctor`'s exit code is unchanged
+
+#### Scenario: A partially-closed change is not surfaced
+
+- **WHEN** a live change has at least one open or in-progress mapped Bead
+- **AND** `doctor` runs
+- **THEN** it does not report that change as ready to archive
+
+### Requirement: doctor reports unpushed local Dolt state under multi-machine mode
+
+When `multi_machine` is enabled and the local Dolt history has commits not
+present on the configured remote, `doctor` SHALL report a NOTE naming how
+many. This NOTE SHALL NOT fail `doctor` or change its exit code, and SHALL
+NOT appear when `multi_machine` is disabled.
+
+#### Scenario: Unpushed Dolt state is surfaced
+
+- **WHEN** `multi_machine` is enabled
+- **AND** local Dolt has commits the configured remote does not have
+- **AND** `doctor` runs
+- **THEN** it prints a NOTE naming the count
+- **AND** `doctor`'s exit code is unchanged
+
+#### Scenario: Nothing to report when fully pushed
+
+- **WHEN** `multi_machine` is enabled
+- **AND** local Dolt has no commits the remote lacks
+- **AND** `doctor` runs
+- **THEN** it prints no unpushed-state NOTE
+
+#### Scenario: The check is silent when the mode is off
+
+- **WHEN** `multi_machine` is disabled
+- **AND** `doctor` runs
+- **THEN** it prints no unpushed-state NOTE regardless of local Dolt state

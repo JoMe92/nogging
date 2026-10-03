@@ -35,17 +35,27 @@ reorder.
    ones that need no spec change with
    `scripts/nogg discoveries --ack <bead-id>...` so they stop resurfacing.
 
-4. **Hold the design dialogue** with the Product Owner. Resolve every ambiguity
+4. **Archive any change `doctor` reports ready.** Run `scripts/nogg doctor`
+   and look for its `NOTE change ready to archive: <change>` lines. For each
+   one, before authoring any new change content: run
+   `openspec archive <change>`, review the merged `specs/<capability>/spec.md`
+   result, run `scripts/nogg validate` and resolve anything it reports, then
+   commit as the `planning` writer (same commit form as step 8 below).
+   `doctor` only reports readiness — archiving is always this session's own
+   explicit action, never automatic. Nothing to archive is the common case;
+   skip straight to the design dialogue.
+
+5. **Hold the design dialogue** with the Product Owner. Resolve every ambiguity
    before writing anything under `openspec/`.
 
-5. **Author or revise the change folder** — `proposal.md`, `design.md`,
+6. **Author or revise the change folder** — `proposal.md`, `design.md`,
    `tasks.md`, and `specs/<capability>/spec.md` — under
    `openspec/changes/<change>/`.
 
-6. **Validate.** Run `scripts/nogg validate` and resolve every problem it
+7. **Validate.** Run `scripts/nogg validate` and resolve every problem it
    reports before continuing.
 
-7. **Commit the `openspec/` changes as the `planning` writer.** Use a
+8. **Commit the `openspec/` changes as the `planning` writer.** Use a
    Conventional subject (`docs(openspec): …` or `chore(openspec): …`) and set
    the writer, either way works:
 
@@ -57,19 +67,19 @@ reorder.
    A planning commit needs no Beads ID token but still needs the Conventional
    subject and the `Nogging-Writer: planning` trailer (or the env var).
 
-8. **Materialize the Beads.** Run `scripts/nogg materialize <change>`.
+9. **Materialize the Beads.** Run `scripts/nogg materialize <change>`.
    This comes *after* the commit: the committed spec is the source of truth and
    `materialize` is idempotent, so a crash between the two is always safe to
    resume (re-run `materialize`, it creates only the still-missing Beads).
 
-9. **Integrate and clean up safely.** From a clean, unclaimed integration
+10. **Integrate and clean up safely.** From a clean, unclaimed integration
    checkout on `develop`, fast-forward merge the planning branch. Only after
    that succeeds, and only when the planning worktree is clean, remove that
    worktree and delete its retired branch. If it is dirty or not integrated,
    stop and leave it intact for recovery.
 
-10. **Release the planning lock.** Run `scripts/nogg plan-end` from the
-    planning worktree once the session is complete.
+11. **Release the planning lock.** Run `scripts/nogg plan-end` from the
+   planning worktree once the session is complete.
 
 ## Lock already held
 

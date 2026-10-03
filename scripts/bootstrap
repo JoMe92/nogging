@@ -1,0 +1,297 @@
+#!/usr/bin/env sh
+# Nogging bootstrap installer.
+#
+# Provisions the whole Nogging toolchain on a fresh machine: Node (via nvm),
+# the npm-distributed agent CLIs, `bd` and `dolt`, the `git`/`tmux`/`gh`
+# system packages, then runs the Nogging payload installer against a target
+# repository and `scripts/nogg doctor`. Idempotent: every step checks the
+# pinned version first and skips whatever already satisfies it, so re-running
+# this script (e.g. after a partial failure) is safe.
+#
+# Usage:
+#   curl -fsSL https://raw.githubusercontent.com/JoMe92/nogging/<tag>/scripts/bootstrap | bash
+#   scripts/bootstrap [--repo <path>] [--with-pi]
+#
+# This script intentionally avoids bash-only syntax (arrays, [[ ]], etc.) so
+# it stays POSIX-sh compatible, even though the documented one-liner above
+# pipes it into `bash`.
+set -eu
+
+# --- Pinned versions --------------------------------------------------------
+# Kept in sync with docs/compatibility.md's validated baseline. Checked by
+# scripts/compatibility.test.sh's pin-consistency assertion — bump both
+# together, never just one.
+NVM_VERSION="v0.40.1"
+NODE_LTS_PIN="22"
+NODE_LTS_LINE="18 20 22"
+CLAUDE_CODE_VERSION="2.1.260"
+CODEX_VERSION="0.148.0"
+OPENSPEC_VERSION="1.11.0"
+PI_VERSION="0.85.0"
+BD_VERSION="1.2.2"
+DOLT_VERSION="2.3.1"
+NOGGING_TAG="v2.1.0"
+
+usage() {
+  cat <<'EOF'
+Usage: bootstrap [--repo <path>] [--with-pi]
+
+  --repo <path>  target repository to initialize Nogging into (default: .)
+                 created and `git init`-ed first if it does not exist yet.
+  --with-pi      also install the optional Pi coding agent CLI (pinned
+                 version); not installed by default.
+EOF
+}
+
+report_step() {
+  # report_step <tool> <skipped|installed|upgraded> <detail>
+  printf 'bootstrap: %-28s %-9s %s\n' "$1" "$2" "$3"
+}
+
+# --- Step 1: platform gate ---------------------------------------------------
+# docs/compatibility.md: supported is Debian/Ubuntu-family Linux, x86_64 or
+# aarch64, only. This must run and fail before anything else is touched.
+check_platform() {
+  # Overridable only for scripts/compatibility.test.sh's gate check; a real
+  # run always reads the live files/commands (the defaults below).
+  os_release_file="${NOGGING_BOOTSTRAP_OS_RELEASE:-/etc/os-release}"
+  arch="${NOGGING_BOOTSTRAP_UNAME_M:-}"
+  [ -n "$arch" ] || arch=$(uname -m)
+
+  os_id="" os_id_like=""
+  if [ -r "$os_release_file" ]; then
+    os_id=$(. "$os_release_file" && printf '%s' "${ID:-}")
+    os_id_like=$(. "$os_release_file" && printf '%s' "${ID_LIKE:-}")
+  fi
+  platform_ok=0
+  case " $os_id $os_id_like " in
+    *" debian "*|*" ubuntu "*) platform_ok=1 ;;
+  esac
+  arch_ok=0
+  case "$arch" in
+    x86_64|aarch64) arch_ok=1 ;;
+  esac
+  if [ "$platform_ok" -ne 1 ] || [ "$arch_ok" -ne 1 ]; then
+    cat >&2 <<EOF
+Nogging bootstrap supports Debian/Ubuntu-family Linux on x86_64 or aarch64
+only (see docs/compatibility.md). Detected: ID="$os_id" ID_LIKE="$os_id_like"
+arch="$arch". Other Linux distributions/architectures are experimental, not
+installable by this script; macOS, Windows, and WSL are unsupported for
+2.0.x. Nothing has been installed.
+EOF
+    exit 1
+  fi
+}
+
+# --- Step 2: Node via nvm ----------------------------------------------------
+# docs/compatibility.md's baseline is Node 18/20/22 LTS; any of the three is
+# satisfying (Decision 4: a range match, not an exact patch match). A
+# missing or non-satisfying Node is provisioned via nvm, pinned to the
+# baseline's current LTS line (NODE_LTS_PIN), installing nvm itself first
+# (via its own official installer, pinned to NVM_VERSION) only if not
+# already present.
+ensure_node() {
+  current_major=0
+  if command -v node >/dev/null 2>&1; then
+    current_major=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)
+  fi
+  satisfies=0
+  case " $NODE_LTS_LINE " in
+    *" $current_major "*) satisfies=1 ;;
+  esac
+  if [ "$satisfies" -eq 1 ]; then
+    report_step "node" "skipped" "existing node $(node --version) already in the $NODE_LTS_LINE LTS line"
+    return
+  fi
+
+  nvm_dir="${NVM_DIR:-$HOME/.nvm}"
+  if [ ! -s "$nvm_dir/nvm.sh" ]; then
+    curl -fsSL "https://raw.githubusercontent.com/nvm-sh/nvm/${NVM_VERSION}/install.sh" | bash
+  fi
+  export NVM_DIR="$nvm_dir"
+  # shellcheck disable=SC1091
+  . "$nvm_dir/nvm.sh"
+  nvm install "$NODE_LTS_PIN"
+  nvm alias default "$NODE_LTS_PIN" >/dev/null
+  nvm use "$NODE_LTS_PIN" >/dev/null
+
+  action="installed"
+  [ "$current_major" -ne 0 ] && action="upgraded"
+  report_step "node" "$action" "now $(node --version) via nvm (pinned LTS $NODE_LTS_PIN)"
+}
+
+# --- Step 3: npm-distributed CLI installs ------------------------------------
+# Each checked against an existing install's version first (skip if it
+# already equals the pin, install/upgrade otherwise). `npm install -g
+# pkg@<pin>` is npm's own exact-version pinning mechanism.
+ensure_npm_global() {
+  # ensure_npm_global <npm-package> <pinned-version> <binary-on-path>
+  pkg="$1"; pin="$2"; bin="$3"
+  installed=""
+  if command -v "$bin" >/dev/null 2>&1; then
+    installed=$("$bin" --version 2>/dev/null | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)
+  fi
+  if [ "$installed" = "$pin" ]; then
+    report_step "$pkg" "skipped" "$bin $installed already satisfies $pin"
+    return
+  fi
+  npm install -g "${pkg}@${pin}" >/dev/null
+  action="installed"
+  [ -n "$installed" ] && action="upgraded"
+  report_step "$pkg" "$action" "$bin now $("$bin" --version 2>/dev/null | head -n1) (was: ${installed:-none})"
+}
+
+# Pi needs Node >= 22.19, stricter than the core baseline; only enforced
+# when --with-pi is requested, so the default path never forces this.
+ensure_node_floor_for_pi() {
+  pi_major=0
+  if command -v node >/dev/null 2>&1; then
+    pi_major=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)
+  fi
+  if [ "$pi_major" -ge 22 ] 2>/dev/null; then
+    return
+  fi
+  nvm_dir="${NVM_DIR:-$HOME/.nvm}"
+  export NVM_DIR="$nvm_dir"
+  if [ -s "$nvm_dir/nvm.sh" ]; then
+    # shellcheck disable=SC1091
+    . "$nvm_dir/nvm.sh"
+    nvm install 22 >/dev/null
+    nvm alias default 22 >/dev/null
+    nvm use 22 >/dev/null
+    report_step "node (for --with-pi)" "upgraded" "now $(node --version) to satisfy Pi's Node >= 22.19 floor"
+  else
+    echo "bootstrap: --with-pi needs Node >= 22.19 and nvm is unavailable" >&2
+    exit 1
+  fi
+}
+
+# --- Step 4: bd and dolt, via each project's own install script -------------
+# Orchestrates each project's own official, already-audited installer at an
+# exact pinned release tag, rather than reimplementing arch detection and
+# binary download/checksum logic (Decision 3).
+ensure_dolt() {
+  installed=""
+  if command -v dolt >/dev/null 2>&1; then
+    installed=$(dolt version 2>/dev/null | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)
+  fi
+  case "$installed" in
+    2.3.*) report_step "dolt" "skipped" "dolt $installed already satisfies 2.3.x"; return ;;
+  esac
+  # Pinned to dolt's own exact release-tag install script, never "latest".
+  curl -fsSL "https://github.com/dolthub/dolt/releases/download/v${DOLT_VERSION}/install.sh" | bash
+  action="installed"
+  [ -n "$installed" ] && action="upgraded"
+  report_step "dolt" "$action" "now $(dolt version 2>/dev/null | head -n1) (was: ${installed:-none})"
+}
+
+ensure_bd() {
+  installed=""
+  if command -v bd >/dev/null 2>&1; then
+    installed=$(bd version 2>/dev/null | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)
+  fi
+  case "$installed" in
+    1.2.*) report_step "bd" "skipped" "bd $installed already satisfies 1.2.x"; return ;;
+  esac
+  # Beads' own install script does not publish a per-tag URL the way dolt
+  # does (confirmed during planning: only its `main`-branch raw path
+  # resolves); the version pin is passed through VERSION for the script to
+  # honor itself.
+  curl -fsSL "https://raw.githubusercontent.com/gastownhall/beads/main/scripts/install.sh" \
+    | VERSION="$BD_VERSION" bash
+  action="installed"
+  [ -n "$installed" ] && action="upgraded"
+  report_step "bd" "$action" "now $(bd version 2>/dev/null | head -n1) (was: ${installed:-none})"
+}
+
+# --- Step 5: git, tmux, gh via the system package manager -------------------
+# Checked first; installs only what's missing, with a clear message before
+# invoking sudo — never a silent privilege escalation.
+ensure_system_packages() {
+  missing=""
+  for tool in git tmux gh; do
+    command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"
+  done
+  if [ -z "$missing" ]; then
+    report_step "git/tmux/gh" "skipped" "all already present"
+    return
+  fi
+  echo "bootstrap: missing$missing — installing via apt; sudo will prompt for your password to do this"
+  if ! command -v gh >/dev/null 2>&1 && ! apt-cache show gh >/dev/null 2>&1; then
+    # gh is absent from the base repos on some older Debian/Ubuntu releases;
+    # add GitHub CLI's own official apt source first, as documented at
+    # https://github.com/cli/cli/blob/trunk/docs/install_linux.md.
+    sudo mkdir -p -m 755 /etc/apt/keyrings
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      | sudo tee /etc/apt/keyrings/githubcli-archive-keyring.gpg >/dev/null
+    sudo chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+      | sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null
+  fi
+  sudo apt-get update
+  # shellcheck disable=SC2086
+  sudo apt-get install -y $missing
+  report_step "git/tmux/gh" "installed" "installed:$missing"
+}
+
+# --- Step 6: the Nogging payload itself, then doctor -------------------------
+run_nogging_init() {
+  repo="$1"
+  if [ ! -d "$repo" ]; then
+    mkdir -p "$repo"
+  fi
+  if [ ! -d "$repo/.git" ]; then
+    git -C "$repo" init
+  fi
+  ( cd "$repo" && npx --yes "github:JoMe92/nogging#${NOGGING_TAG}" init )
+
+  doctor_status=0
+  if [ -x "$repo/scripts/nogg" ]; then
+    ( cd "$repo" && ./scripts/nogg doctor ) || doctor_status=$?
+  else
+    echo "bootstrap: scripts/nogg not found in $repo after init" >&2
+    doctor_status=1
+  fi
+
+  if [ "$doctor_status" -eq 0 ]; then
+    echo "bootstrap: done — scripts/nogg doctor reports every required tool present and in range"
+  else
+    echo "bootstrap: done, but scripts/nogg doctor reported problems above (exit $doctor_status) — see FAIL/WARN lines" >&2
+  fi
+  return "$doctor_status"
+}
+
+main() {
+  with_pi=0
+  repo="."
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --with-pi) with_pi=1; shift ;;
+      --repo) repo="${2:?--repo needs a path}"; shift 2 ;;
+      --repo=*) repo="${1#--repo=}"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) echo "bootstrap: unknown argument: $1" >&2; usage >&2; exit 1 ;;
+    esac
+  done
+
+  check_platform
+  ensure_node
+  ensure_npm_global "@anthropic-ai/claude-code" "$CLAUDE_CODE_VERSION" claude
+  ensure_npm_global "@openai/codex" "$CODEX_VERSION" codex
+  ensure_npm_global "@fission-ai/openspec" "$OPENSPEC_VERSION" openspec
+  if [ "$with_pi" -eq 1 ]; then
+    ensure_node_floor_for_pi
+    ensure_npm_global "@earendil-works/pi-coding-agent" "$PI_VERSION" pi
+  fi
+  ensure_dolt
+  ensure_bd
+  ensure_system_packages
+  run_nogging_init "$repo"
+}
+
+# NOGGING_BOOTSTRAP_NO_MAIN lets scripts/compatibility.test.sh source this
+# file to unit-check individual functions (e.g. check_platform) without
+# running the real installer.
+if [ "${NOGGING_BOOTSTRAP_NO_MAIN:-0}" != "1" ]; then
+  main "$@"
+fi
