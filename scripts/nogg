@@ -1190,6 +1190,9 @@ class Adapter:
     needs_input: list = field(default_factory=list)
     limit: list = field(default_factory=list)
     idle: list = field(default_factory=list)
+    # Checked only when `idle` would otherwise be reported (Claude-only — no
+    # equivalent permission-mode status line exists for Codex).
+    manual_mode: list = field(default_factory=list)
 
 def _pats(*patterns, flags=0):
     return [re.compile(p, flags) for p in patterns]
@@ -1205,6 +1208,7 @@ CLAUDE_ADAPTER = Adapter(
     needs_input=_pats(r"Do you want to proceed", r"Allow this", r"❯ 1\. Yes"),
     limit=_pats(r"usage limit reached", r"rate limit", flags=re.I),
     idle=_pats(r"❯\s*$"),
+    manual_mode=_pats(r"⏸ manual mode on"),
 )
 CODEX_ADAPTER = Adapter(
     name="codex",
@@ -1216,7 +1220,8 @@ CODEX_ADAPTER = Adapter(
 )
 ADAPTERS = {"claude": CLAUDE_ADAPTER, "codex": CODEX_ADAPTER}
 # Classification precedence, fixed: `limit` > `needs_input` > `working` >
-# `waiting_background` > `idle`, else `unknown`.
+# `waiting_background` > `idle` (narrowed to `awaiting_manual_approval` when
+# `adapter.manual_mode` also matches), else `unknown`.
 _CLASSIFY_ORDER = (
     ("limit", "limit"), ("needs_input", "needs_input"),
     ("working", "working"), ("waiting_bg", "waiting_background"),
@@ -1227,13 +1232,19 @@ def classify(pane_text, adapter):
 
     Reads only the last ~15 lines (never full scrollback), strips lines
     matching `adapter.ignore` first, then checks states in the fixed
-    precedence order above. Returns `unknown` when nothing matches."""
+    precedence order above. An `idle` hit is narrowed to
+    `awaiting_manual_approval` when `adapter.manual_mode` also matches one of
+    the kept lines (Claude-only: `CODEX_ADAPTER.manual_mode` is empty, so
+    this never fires for Codex). Returns `unknown` when nothing matches."""
     lines = (pane_text or "").splitlines()[-15:]
     kept = [ln for ln in lines
             if not any(p.search(ln) for p in adapter.ignore)]
     for attr, state in _CLASSIFY_ORDER:
         patterns = getattr(adapter, attr)
         if patterns and any(p.search(ln) for ln in kept for p in patterns):
+            if state == "idle" and any(
+                    p.search(ln) for ln in kept for p in adapter.manual_mode):
+                return "awaiting_manual_approval"
             return state
     return "unknown"
 # --- session supervision ---------------------------------------------------
@@ -1829,6 +1840,12 @@ def session_launch(role, bead, cwd, read_only, owner,
     print(f"  bead={bead or '-'} role={role_meta} cwd={workdir}")
     print(f"  log={log_path}")
     print(f"  attach: {tmux_bin()} -L {tmux_socket()} attach -t {name}  (or: nogg session attach {name})")
+    if (role_meta == "lead" or role_meta.startswith("specialist:")) and not (
+            profile or prompt or full_access):
+        print(f"⚠ {name} launched in restricted/manual mode — it will not act "
+              f"without a human attached to approve each step; pass "
+              f"--full-access (or an explicit --profile/--prompt) for "
+              f"unattended operation.")
     if kickoff:
         session_kickoff(name)
     else:
