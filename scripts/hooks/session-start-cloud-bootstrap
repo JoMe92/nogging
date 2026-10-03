@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Optional Claude Code SessionStart hook template for cloud sessions.
+#
+# A fresh cloud container clones only the repository itself — it carries none
+# of the one-time, environment-specific setup a local checkout already has
+# from scripts/install-hooks / `bd init` (the Beads core.hooksPath activation,
+# a bootstrapped tracker). This hook brings a cloud session's environment up
+# to that same baseline.
+#
+# Guarded to a no-op everywhere else: a SessionStart hook runs real setup work
+# with real time cost on every session start, so a repository wires this in
+# deliberately rather than getting it by default (see
+# docs/nogging/installation.md, "Cloud sessions"). It is not auto-wired into
+# .claude/settings.json by the installer.
+if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then
+  exit 0
+fi
+
+root="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+
+# Pinned versions tracked in docs/nogging/compatibility.md — update both
+# together when the compatibility baseline moves.
+bd_version="1.2.2"
+dolt_version="2.3.1"
+
+if ! command -v dolt >/dev/null 2>&1; then
+  echo "nogging: installing dolt v${dolt_version}..." >&2
+  curl -fsSL "https://github.com/dolthub/dolt/releases/download/v${dolt_version}/install.sh" | bash
+fi
+
+if ! command -v bd >/dev/null 2>&1; then
+  echo "nogging: installing bd v${bd_version}..." >&2
+  curl -fsSL "https://raw.githubusercontent.com/gastownhall/beads/main/scripts/install.sh" | bash
+fi
+
+# Matches the Beads integration's own convention (docs/architecture.md,
+# "core.hooksPath points Git at .beads/hooks in this repository").
+git -C "$root" config core.hooksPath "$root/.beads/hooks"
+
+bd bootstrap
