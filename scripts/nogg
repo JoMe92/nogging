@@ -5,7 +5,7 @@ It intentionally contains no LLM call and makes no semantic product decision.
 """
 from __future__ import annotations
 
-import argparse, datetime as dt, getpass, json, os, re, shlex, shutil, signal, socket, subprocess, sys, time
+import argparse, datetime as dt, getpass, json, os, re, shlex, shutil, signal, socket, subprocess, sys, time, uuid
 from pathlib import Path
 
 # ROOT is the repository the bridge operates on. It defaults to the checkout the
@@ -1345,8 +1345,15 @@ def resolve_agent(agent):
     return resolved
 def session_launch(role, bead, cwd, read_only, owner,
                    profile=None, prompt=None, full_access=False, agent=None,
-                   resume=False):
+                   resume=None):
     """Start a supervised agent session for a Bead.
+
+    `resume`, when truthy, is the specific prior Claude conversation's session
+    ID to continue via `--resume <id>` — never a bare `--continue`, which
+    resumes whichever conversation is most recent for `cwd` and can pick up an
+    unrelated one (SPEC-nfz8). Falsy `resume` cold-starts a Claude agent with a
+    freshly generated `--session-id`, recorded as `claude_session_id` so a
+    later launch can resume this exact conversation.
 
     This function performs NO Beads mutation. The only `bd` call it makes is
     the read-only `bd show` inside bead_exists(); it never claims, starts, or
@@ -1429,8 +1436,20 @@ def session_launch(role, bead, cwd, read_only, owner,
     inner = [wrapper, "--prompt", str(prompt_path), "--cwd", workdir]
     if bead:
         inner += ["--bead", bead]
-    if resume and agent == "claude":
-        inner.append("--continue")
+    claude_session_id = None
+    if agent == "claude":
+        if resume:
+            inner += ["--resume", resume]
+            claude_session_id = resume
+        else:
+            claude_session_id = str(uuid.uuid4())
+            inner += ["--session-id", claude_session_id]
+        if is_orchestrator:
+            # The "reachable from a phone" requirement is Remote Control, which
+            # `claude` only turns on when asked — it is never automatic. Without
+            # this the orchestrator's own docs (docs/operating-model.md:
+            # "the launched session registers with Remote Control") were false.
+            inner += ["--remote-control", name]
     if agent == "claude":
         # Write the merged, floored settings for THIS session and pass that file
         # to Claude — never the source profile, which is left untouched. The
@@ -1496,7 +1515,7 @@ def session_launch(role, bead, cwd, read_only, owner,
         "read_only": bool(read_only), "ended_at": None, "exit_reason": None,
         "profile": profile_label, "effective_settings_path": effective_settings_path,
         "agent": agent, "openspec_readonly": bool(openspec_readonly),
-        "floor_lifted": bool(floor_lifted),
+        "floor_lifted": bool(floor_lifted), "claude_session_id": claude_session_id,
     }
     write_session(rec_path, record)                       # metadata before exec
     with log_path.open("a") as fh:                        # append-only log before exec
@@ -1664,15 +1683,20 @@ def session_log(name, follow):
 # generic `session` commands.
 def orchestrator_slug(): return repo_slug()
 def orchestrator_session_name(): return f"nogg-orchestrator-{orchestrator_slug()}"
+def claude_conversation_transcript_exists(workdir, session_id):
+    """True when Claude Code has a stored transcript for this exact
+    `session_id` under `workdir`'s project directory — the precise,
+    session-scoped check `orchestrator run` uses before trusting a recorded
+    `claude_session_id` enough to `--resume` it. A record can carry a
+    `claude_session_id` for a conversation that never actually started (e.g.
+    the process was killed before Claude wrote anything); resuming a
+    nonexistent ID makes `claude` exit immediately, which would crash-loop
+    under the systemd unit's `Restart=always`. (SPEC-nfz8: the prior check
+    here looked for *any* transcript in the directory, which could resume an
+    unrelated conversation instead of catching this.)"""
+    d = Path.home() / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(workdir))
+    return (d / f"{session_id}.jsonl").is_file()
 def orchestrator_unit(): return f"nogg-orchestrator-{orchestrator_slug()}.service"
-def _claude_project_dir(workdir):
-    return Path.home() / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(workdir))
-def claude_conversation_exists(workdir):
-    """True when Claude Code already has a stored conversation for `workdir` —
-    the signal that `orchestrator run` should resume with `claude --continue`
-    rather than start cold."""
-    d = _claude_project_dir(workdir)
-    return d.is_dir() and any(d.glob("*.jsonl"))
 def claude_project_trusted(workdir):
     """Whether `~/.claude.json` records `hasTrustDialogAccepted` for `workdir`.
     The orchestrator tmux pane is an interactive Claude session, which blocks on
@@ -1705,8 +1729,9 @@ def orchestrator_live_session():
     return None
 def orchestrator_run(force=False):
     """Acquire the lock; adopt a live orchestrator tmux session or start one
-    (`claude --continue` when a prior conversation exists, else a cold start
-    with the persona prompt and the floor-lifted settings); refresh the record;
+    (`claude --resume <id>` of this orchestrator's own last recorded
+    conversation when one exists, else a cold start with the persona prompt
+    and the floor-lifted settings); refresh the record;
     block until the tmux session exits; release the lock; exit non-zero so
     `Restart=always` brings it back unless `orchestrator stop` disabled the
     unit."""
@@ -1746,10 +1771,19 @@ def orchestrator_run(force=False):
                     f"once here and accept the prompt (or set "
                     f"projects['{workdir}'].hasTrustDialogAccepted in ~/.claude.json), "
                     f"then retry.")
-            resume = (claude_conversation_exists(workdir)
-                      or (sessions_dir() / f"{name}.json").exists())
+            prior_rec_path = sessions_dir() / f"{name}.json"
+            prior_session_id = None
+            if prior_rec_path.exists():
+                try:
+                    prior_session_id = json.loads(prior_rec_path.read_text()).get("claude_session_id")
+                except (json.JSONDecodeError, OSError):
+                    prior_session_id = None
+                if prior_session_id and not claude_conversation_transcript_exists(
+                        workdir, prior_session_id):
+                    prior_session_id = None
             session_launch("orchestrator", None, workdir, False, None,
-                           profile="orchestrator", prompt="orchestrator", resume=resume)
+                           profile="orchestrator", prompt="orchestrator",
+                           resume=prior_session_id)
         poll = float(scfg("orchestrator_poll_seconds", 5))
         while tmux_has_session(name):
             time.sleep(poll)
