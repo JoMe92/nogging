@@ -385,6 +385,113 @@ rm -f "$out_s" "$work/bin/codex"
 unset NOGGING_ROOT CODEX_HOME
 
 # ===========================================================================
+# TASK-SOB-007: Claude Layer 2 (design.md Decision 4) — `session launch`
+# wires Stop/Notification hooks into the per-session effective-settings file
+# additively (no existing hook entry removed or reordered); `session emit
+# <event>` appends one line to <name>.events.jsonl, keyed off
+# NOGG_SESSION_NAME in the environment; `watch` prefers that file over
+# pane-scraping for a Claude session once it has at least one line.
+# ===========================================================================
+root="$work/sob007-hooks"; make_obs_root "$root"
+export NOGGING_ROOT="$root"
+export TMUX_STUB_DIR="$work/sob007-hooks-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-h01"
+cat >"$work/preexisting-hooks-profile.json" <<'JSON'
+{
+  "permissions": {"defaultMode": "default", "deny": []},
+  "hooks": {
+    "Stop": [{"hooks": [{"type": "command", "command": "echo pre-existing-stop"}]}],
+    "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "echo guard"}]}]
+  }
+}
+JSON
+"$nogg" session launch --role lead --bead SPEC-h01 \
+  --profile "$work/preexisting-hooks-profile.json" >/dev/null 2>&1
+name="$(sess_name "$root")"
+settings="$root/.nogging/state/sessions/$name.settings.json"
+hook_check=$(python3 - "$settings" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+hooks = d.get("hooks", {})
+stop = hooks.get("Stop", [])
+notif = hooks.get("Notification", [])
+pretool = hooks.get("PreToolUse", [])
+ok = (
+    len(stop) == 2
+    and stop[0]["hooks"][0]["command"] == "echo pre-existing-stop"
+    and stop[1]["hooks"][0]["command"] == "scripts/nogg session emit turn_end"
+    and len(notif) == 1
+    and notif[0]["hooks"][0]["command"] == "scripts/nogg session emit needs_input"
+    and len(pretool) == 1
+    and pretool[0]["hooks"][0]["command"] == "echo guard"
+)
+print("ok" if ok else "FAIL:" + json.dumps(hooks))
+PY
+)
+[[ "$hook_check" == "ok" ]] \
+  && ok "launch: Stop/Notification hooks appended, pre-existing Stop/PreToolUse hooks kept and not reordered" \
+  || { echo "FAIL - launch: hook merge did not append as expected: $hook_check"; fail=1; }
+unset NOGGING_ROOT
+
+root="$work/sob007-emit"; make_obs_root "$root"
+export NOGGING_ROOT="$root"
+events_path="$root/.nogging/state/sessions/s1.events.jsonl"
+mkdir -p "$(dirname "$events_path")"
+got=$(NOGG_SESSION_NAME=s1 run_py "m.session_emit('turn_end')")
+[[ -f "$events_path" ]] \
+  && ok "emit: appends to <name>.events.jsonl" \
+  || bad "emit: $events_path was not created"
+grep -qF '"session": "s1"' "$events_path" && grep -qF '"event": "turn_end"' "$events_path" \
+  && ok "emit: the line carries the session name (from the environment) and the event" \
+  || { echo "FAIL - emit: unexpected line content"; cat "$events_path" 2>/dev/null; fail=1; }
+got=$(run_py "
+try:
+    m.session_emit('turn_end')
+    print('no-error')
+except RuntimeError:
+    print('raised')
+")
+[[ "$got" == "raised" ]] \
+  && ok "emit: refuses without NOGG_SESSION_NAME set" \
+  || bad "emit: expected a RuntimeError with no NOGG_SESSION_NAME, got $got"
+unset NOGGING_ROOT
+
+root="$work/sob007-watch-layer2"; make_obs_root "$root"
+export NOGGING_ROOT="$root"
+mkdir -p "$root/.nogging/state/sessions"
+printf '{"timestamp":"2026-10-03T00:00:00Z","session":"s1","event":"turn_end"}\n' \
+  >"$root/.nogging/state/sessions/s1.events.jsonl"
+got=$(run_py "
+m.tmux_sessions = lambda: {'s1'}
+m.session_pane_text = lambda name: 'esc to interrupt'
+print(m.classify_session({'name': 's1', 'agent': 'claude'})[0])
+")
+[[ "$got" == "idle" ]] \
+  && ok "watch: a Claude session with a non-empty events file is classified via Layer 2 (idle), not the conflicting pane text" \
+  || bad "watch: Layer-2-preferred classification was $got, expected idle"
+
+printf '{"timestamp":"2026-10-03T00:00:01Z","session":"s1","event":"needs_input"}\n' \
+  >>"$root/.nogging/state/sessions/s1.events.jsonl"
+got=$(run_py "
+m.tmux_sessions = lambda: {'s1'}
+m.session_pane_text = lambda name: '> '
+print(m.classify_session({'name': 's1', 'agent': 'claude'})[0])
+")
+[[ "$got" == "needs_input" ]] \
+  && ok "watch: Layer 2 follows the most recent event (needs_input after turn_end)" \
+  || bad "watch: expected needs_input from the latest event, got $got"
+
+got=$(run_py "
+m.tmux_sessions = lambda: {'s2'}
+m.session_pane_text = lambda name: 'esc to interrupt'
+print(m.classify_session({'name': 's2', 'agent': 'claude'})[0])
+")
+[[ "$got" == "working" ]] \
+  && ok "watch: falls back to Layer 1 pane-scraping when the events file has no lines yet" \
+  || bad "watch: expected Layer-1 fallback (working), got $got"
+unset NOGGING_ROOT
+
+# ===========================================================================
 # TASK-SOB-004: resume-when-ready — waits out `limit`, dismisses a residual
 # switch-model prompt without switching, then sends the resume instruction
 # (classify_session/session_pane_text/session_send/tmux monkeypatched; pure)
