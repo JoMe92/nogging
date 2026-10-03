@@ -1492,5 +1492,43 @@ rm -f "$work/bin/codex"
 "$nogg" codex-prompts-link --unlink >/dev/null 2>&1 || true
 unset NOGGING_ROOT BD_FIXTURE BD_STUB_DIR CODEX_HOME
 
+# ===========================================================================
+# Scenario: doctor flags a misconfigured or drifted bypass-permissions launch
+# profile (TASK-HTA-002/005) — a NOTE only, never a FAIL, and silent for the
+# real shipped files.
+# ===========================================================================
+root="$work/hta-doctor"; make_root "$root"
+export NOGGING_ROOT="$root"
+export BD_FIXTURE="$work/hta-doctor-beads.json"; printf '[]\n' >"$BD_FIXTURE"
+mkdir -p "$root/.nogging/launch-profiles"
+cp "$repo_root/.nogging/launch-profiles/trusted.json" "$root/.nogging/launch-profiles/trusted.json"
+cp "$repo_root/.nogging/launch-profiles/orchestrator.json" "$root/.nogging/launch-profiles/orchestrator.json"
+grep -qF '"defaultMode": "bypassPermissions"' "$root/.nogging/launch-profiles/trusted.json" \
+  && echo "ok   - hta-shipped: trusted.json carries defaultMode bypassPermissions" \
+  || { echo "FAIL - hta-shipped: trusted.json defaultMode is not bypassPermissions"; fail=1; }
+grep -qF '"skipDangerousModePermissionPrompt": true' "$root/.nogging/launch-profiles/trusted.json" \
+  && echo "ok   - hta-shipped: trusted.json carries skipDangerousModePermissionPrompt: true" \
+  || { echo "FAIL - hta-shipped: trusted.json is missing skipDangerousModePermissionPrompt: true"; fail=1; }
+cat >"$root/.nogging/launch-profiles/missing-key.json" <<'JSON'
+{ "permissions": { "defaultMode": "bypassPermissions", "allow": [], "deny": [] } }
+JSON
+"$nogg" doctor >"$out" 2>&1 || true
+check "hta-doctor: missing-key fixture flagged" \
+  "launch profile missing-key.json sets permissions.defaultMode: bypassPermissions without a top-level skipDangerousModePermissionPrompt: true"
+refute "hta-doctor: real trusted.json is silent" "launch profile trusted.json"
+refute "hta-doctor: real orchestrator.json is silent" "launch profile orchestrator.json"
+rm -f "$root/.nogging/launch-profiles/missing-key.json"
+python3 -c "
+import json, sys
+p = '$root/.nogging/launch-profiles/trusted.json'
+d = json.load(open(p))
+d['permissions']['defaultMode'] = 'auto'
+json.dump(d, open(p, 'w'))
+"
+"$nogg" doctor >"$out" 2>&1 || true
+check "hta-doctor: drifted trusted.json fixture flagged" \
+  "launch profile trusted.json has permissions.defaultMode 'auto', expected 'bypassPermissions'"
+unset NOGGING_ROOT BD_FIXTURE
+
 if [[ $fail -ne 0 ]]; then echo "nogg checks failed" >&2; exit 1; fi
 echo "all nogg checks passed"
