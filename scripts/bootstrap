@@ -10,7 +10,15 @@
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/JoMe92/nogging/<tag>/scripts/bootstrap | bash
-#   scripts/bootstrap [--repo <path>] [--with-pi]
+#   scripts/bootstrap [--repo <path>] [--with-pi] [--non-interactive]
+#
+# Interactive mode (design.md, Decision 1): when both stdin and stdout are a
+# real terminal, the script runs a `whiptail`-based wizard instead of the
+# fully-automated flow below. The piped one-liner above is unaffected by
+# default (stdin is not a TTY in that exact invocation shape); pass
+# `--non-interactive` to force the automated flow even on a real TTY, or
+# `--interactive` to force the wizard even when stdin/stdout aren't detected
+# as a TTY (mainly for testing).
 #
 # This script intentionally avoids bash-only syntax (arrays, [[ ]], etc.) so
 # it stays POSIX-sh compatible, even though the documented one-liner above
@@ -34,13 +42,44 @@ NOGGING_TAG="v2.1.0"
 
 usage() {
   cat <<'EOF'
-Usage: bootstrap [--repo <path>] [--with-pi]
+Usage: bootstrap [--repo <path>] [--with-pi] [--no-beads] [--no-hooks]
+                  [--no-systemd] [--non-interactive|--interactive]
 
-  --repo <path>  target repository to initialize Nogging into (default: .)
-                 created and `git init`-ed first if it does not exist yet.
-  --with-pi      also install the optional Pi coding agent CLI (pinned
-                 version); not installed by default.
+  --repo <path>      target repository to initialize Nogging into (default:
+                     .) created and `git init`-ed first if it does not exist
+                     yet.
+  --with-pi          also install the optional Pi coding agent CLI (pinned
+                     version); not installed by default.
+  --no-beads         skip the default `bd init` (forwarded to `init`).
+  --no-hooks         skip installing the git hooks (forwarded to `init`).
+  --no-systemd       skip rendering the systemd sync unit (forwarded to
+                     `init`).
+  --non-interactive  force the fully-automated flow even on a real TTY.
+  --interactive      force the whiptail wizard even without a detected TTY.
 EOF
+}
+
+# --- Interactive-mode detection (design.md, Decision 1) ---------------------
+# Both stdin and stdout must be a real terminal for the wizard to make sense
+# (a piped one-liner never has a stdin TTY, so it is automatically excluded).
+is_interactive_tty() {
+  [ -t 0 ] && [ -t 1 ]
+}
+
+# decide_run_mode <interactive_flag> <tty_result> -> "interactive" or
+# "non-interactive" on stdout. Pure decision logic (design.md, Decision 5):
+# takes already-known inputs, no I/O, so it is directly unit-testable.
+#   interactive_flag: "" (auto-detect) | "1" (--interactive) | "0" (--non-interactive)
+#   tty_result:        "1" if is_interactive_tty succeeded, else "0"
+decide_run_mode() {
+  flag="$1"; tty="$2"
+  case "$flag" in
+    1) echo interactive ;;
+    0) echo non-interactive ;;
+    *)
+      if [ "$tty" = "1" ]; then echo interactive; else echo non-interactive; fi
+      ;;
+  esac
 }
 
 report_step() {
@@ -204,6 +243,40 @@ ensure_bd() {
   report_step "bd" "$action" "now $(bd version 2>/dev/null | head -n1) (was: ${installed:-none})"
 }
 
+# --- Step 5.5: whiptail availability for the interactive wizard -------------
+# Same "check first, install only what's missing" pattern as
+# ensure_system_packages below. Failure here must never be a hard failure —
+# the wizard is a nicer experience, never a new hard requirement (design.md,
+# Decision 2) — so this returns non-zero on failure for the caller to fall
+# back on, rather than exiting.
+ensure_whiptail() {
+  if command -v whiptail >/dev/null 2>&1; then
+    report_step "whiptail" "skipped" "already present"
+    return 0
+  fi
+  echo "bootstrap: whiptail missing — installing via apt for the interactive wizard; sudo will prompt for your password"
+  if sudo apt-get update && sudo apt-get install -y whiptail; then
+    report_step "whiptail" "installed" "installed for the interactive wizard"
+    return 0
+  fi
+  echo "bootstrap: NOTE: could not install whiptail — continuing non-interactively" >&2
+  return 1
+}
+
+# decide_post_whiptail_mode <run_mode> <whiptail_ready> -> run_mode after
+# accounting for a failed/skipped whiptail install (design.md, Decision 2):
+# interactive downgrades to non-interactive when whiptail could not be made
+# available; non-interactive is never upgraded. Pure decision logic
+# (design.md, Decision 5) — testable without actually installing anything.
+decide_post_whiptail_mode() {
+  mode="$1"; ready="$2"
+  if [ "$mode" = "interactive" ] && [ "$ready" != "1" ]; then
+    echo non-interactive
+  else
+    echo "$mode"
+  fi
+}
+
 # --- Step 5: git, tmux, gh via the system package manager -------------------
 # Checked first; installs only what's missing, with a clear message before
 # invoking sudo — never a silent privilege escalation.
@@ -234,16 +307,22 @@ ensure_system_packages() {
   report_step "git/tmux/gh" "installed" "installed:$missing"
 }
 
-# --- Step 6: the Nogging payload itself, then doctor -------------------------
+# --- Step 7: the Nogging payload itself, then doctor -------------------------
 run_nogging_init() {
-  repo="$1"
+  # run_nogging_init <repo> <no_beads 0|1> <no_hooks 0|1> <no_systemd 0|1>
+  repo="$1"; no_beads="$2"; no_hooks="$3"; no_systemd="$4"
   if [ ! -d "$repo" ]; then
     mkdir -p "$repo"
   fi
   if [ ! -d "$repo/.git" ]; then
     git -C "$repo" init
   fi
-  ( cd "$repo" && npx --yes "github:JoMe92/nogging#${NOGGING_TAG}" init )
+  init_flags=""
+  [ "$no_beads" -eq 1 ] && init_flags="$init_flags --no-beads"
+  [ "$no_hooks" -eq 1 ] && init_flags="$init_flags --no-hooks"
+  [ "$no_systemd" -eq 1 ] && init_flags="$init_flags --no-systemd"
+  # shellcheck disable=SC2086
+  ( cd "$repo" && npx --yes "github:JoMe92/nogging#${NOGGING_TAG}" init $init_flags )
 
   doctor_status=0
   if [ -x "$repo/scripts/nogg" ]; then
@@ -261,20 +340,244 @@ run_nogging_init() {
   return "$doctor_status"
 }
 
+# --- Step 6: the interactive wizard (design.md, Decisions 1-5) --------------
+# print_welcome_banner/confirm_install_target are the first wizard screen:
+# an ASCII wordmark approximating docs/brand/nogging-logo.png (dark
+# forest-green "studs", sage-green "nogging" braces — literally the
+# timber-framing motif the project is named for), the tagline, then a
+# whiptail --yesno confirming the install target before anything happens.
+print_welcome_banner() {
+  dark=$(printf '\033[38;5;22m')
+  sage=$(printf '\033[38;5;108m')
+  bold=$(printf '\033[1m')
+  reset=$(printf '\033[0m')
+
+  printf '\n'
+  printf '%s%s |  |   |  |%s\n' "$sage" "$bold" "$reset"
+  printf '%s%s=+==+= =+==+=%s\n' "$sage" "$bold" "$reset"
+  printf '%s%s |  |   |  |%s\n' "$sage" "$bold" "$reset"
+  printf '\n'
+  printf '%s%s#   #  ###   ####  #### ##### #   #  ####%s\n' "$dark" "$bold" "$reset"
+  printf '%s%s##  # #   # #     #       #   ##  # #    %s\n' "$dark" "$bold" "$reset"
+  printf '%s%s# # # #   # #     #       #   # # # #    %s\n' "$dark" "$bold" "$reset"
+  printf '%s%s#  ## #   # #  ## #  ##   #   #  ## #  ##%s\n' "$dark" "$bold" "$reset"
+  printf '%s%s#   # #   # #   # #   #   #   #   # #   #%s\n' "$dark" "$bold" "$reset"
+  printf '%s%s#   # #   # #   # #   #   #   #   # #   #%s\n' "$dark" "$bold" "$reset"
+  printf '%s%s#   #  ###   ####  #### ##### #   #  ####%s\n' "$dark" "$bold" "$reset"
+  printf '\n'
+  printf "%ss t r u c t u r e   f o r   w h a t ' s   n e x t .%s\n" "$sage" "$reset"
+  printf '\n'
+}
+
+# confirm_install_target <target> -> calls whiptail --yesno and returns its
+# exit status directly (0 = Yes, 1 = No, 255 = Esc/cancelled) so the wiring
+# can be exercised with a stubbed whiptail on PATH (design.md, Decision 5)
+# without the decision ("proceed or abort") living inside this function.
+confirm_install_target() {
+  target="$1"
+  whiptail --title "Nogging" --yesno \
+    "Install Nogging into: $target\n\nContinue?" 10 60
+}
+
+# prompt_install_path <default_path> -> the chosen path on stdout, whiptail's
+# own exit status (0 = OK, 1 = Cancel, 255 = Esc). The classic
+# `3>&1 1>&2 2>&3` dance is whiptail's own documented idiom for getting an
+# --inputbox's answer (normally written to stderr) onto stdout instead.
+prompt_install_path() {
+  default_path="$1"
+  whiptail --title "Nogging" --inputbox \
+    "Install path:" 10 60 "$default_path" \
+    3>&1 1>&2 2>&3
+}
+
+# prompt_optional_components <with_pi> <no_beads> <no_hooks> <no_systemd> ->
+# whiptail's own checklist answer (quoted, space-separated tags) on stdout.
+# Checkbox default state mirrors the *current* with_pi/no_beads/no_hooks/
+# no_systemd values exactly (design.md, Decision 3/4's "match today's actual
+# flag defaults" requirement) rather than a hardcoded default, so a --repo/
+# --with-pi/--no-* combination passed alongside --interactive still shows
+# the dialog pre-seeded with what was asked for.
+prompt_optional_components() {
+  with_pi="$1"; no_beads="$2"; no_hooks="$3"; no_systemd="$4"
+  pi_state=OFF; [ "$with_pi" -eq 1 ] && pi_state=ON
+  beads_state=ON; [ "$no_beads" -eq 1 ] && beads_state=OFF
+  hooks_state=ON; [ "$no_hooks" -eq 1 ] && hooks_state=OFF
+  systemd_state=ON; [ "$no_systemd" -eq 1 ] && systemd_state=OFF
+  whiptail --title "Nogging" --checklist \
+    "Optional components (Space to toggle, Enter to confirm):" 15 70 4 \
+    "pi" "Pi coding agent support" "$pi_state" \
+    "systemd" "systemd sync timer" "$systemd_state" \
+    "hooks" "git hooks" "$hooks_state" \
+    "beads" "Beads issue tracker init" "$beads_state" \
+    3>&1 1>&2 2>&3
+}
+
+# apply_checklist_answer <answer> -> sets with_pi/no_beads/no_hooks/
+# no_systemd globals from a whiptail --checklist answer (space-separated,
+# individually double-quoted tags of the *checked* items). Pure decision
+# logic (design.md, Decision 5): takes an already-known answer string, no
+# whiptail call, so it is directly unit-testable against canned answers.
+apply_checklist_answer() {
+  answer="$1"
+  with_pi=0; no_beads=1; no_hooks=1; no_systemd=1
+  case " $answer " in *'"pi"'*) with_pi=1 ;; esac
+  case " $answer " in *'"beads"'*) no_beads=0 ;; esac
+  case " $answer " in *'"hooks"'*) no_hooks=0 ;; esac
+  case " $answer " in *'"systemd"'*) no_systemd=0 ;; esac
+}
+
+# --- Authentication step (design.md, Decision 4) -----------------------------
+# Nogging's own hard rule ("never echo a credential or token value") extends
+# here: these only ever *detect* and *offer*, never touch a token. Each
+# check function doubles as the decision itself (design.md, Decision 5) — a
+# tool's already-authenticated status is the real command's own exit
+# status/text, so stubbing gh/codex/$HOME on PATH in a test exercises the
+# actual wiring rather than a separate pure abstraction layered on top.
+check_gh_auth() {
+  gh auth status >/dev/null 2>&1
+}
+
+check_codex_auth() {
+  codex_status_out=$(codex login status 2>&1) || return 1
+  case "$codex_status_out" in
+    *"Logged in"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+check_claude_auth() {
+  [ -f "${HOME:-}/.claude/.credentials.json" ]
+}
+
+# offer_login <label> <check-fn> <login-cmd...> -> runs <check-fn> first and
+# returns silently, with no dialog shown at all, when already authenticated
+# (Decision 4: "skipped silently when already satisfied"). Otherwise offers
+# a whiptail --yesno; a "yes" hands the terminal directly to <login-cmd...>,
+# waits for it to exit, and re-checks via <check-fn> — never parsing or
+# storing anything the login command produces. Appends one line to
+# $auth_summary for the closing summary (TASK-IBT-006).
+offer_login() {
+  label="$1"; check_fn="$2"; shift 2
+  if "$check_fn"; then
+    auth_summary="${auth_summary:-}${label}: already authenticated
+"
+    return
+  fi
+  if whiptail --title "Nogging" --yesno "$label is not authenticated.\n\nLog in now?" 10 60; then
+    "$@"
+    if "$check_fn"; then
+      auth_summary="${auth_summary:-}${label}: logged in just now
+"
+    else
+      auth_summary="${auth_summary:-}${label}: still not authenticated
+"
+    fi
+  else
+    auth_summary="${auth_summary:-}${label}: skipped
+"
+  fi
+}
+
+run_auth_step() {
+  auth_summary=""
+  offer_login "GitHub" check_gh_auth gh auth login
+  offer_login "Codex" check_codex_auth codex login
+  offer_login "Claude Code" check_claude_auth claude
+}
+
+# --- Closing summary (design.md, Decision 3/5) -------------------------------
+# build_closing_summary <repo> <with_pi> <no_beads> <no_hooks> <no_systemd>
+# <auth_summary> -> the summary text on stdout, naming what was installed,
+# what was skipped, and the next command to run. Pure decision logic
+# (design.md, Decision 5) — no whiptail call, directly unit-testable; reads
+# the same with_pi/no_beads/no_hooks/no_systemd the checklist produced
+# (Decision 3), never a second source of truth about what got installed.
+build_closing_summary() {
+  repo="$1"; with_pi="$2"; no_beads="$3"; no_hooks="$4"; no_systemd="$5"; auth_summary="$6"
+
+  installed_list="the core toolchain and Nogging itself"
+  [ "$with_pi" -eq 1 ] && installed_list="${installed_list}, the Pi coding agent"
+  [ "$no_beads" -eq 0 ] && installed_list="${installed_list}, Beads issue tracking"
+  [ "$no_hooks" -eq 0 ] && installed_list="${installed_list}, git hooks"
+  [ "$no_systemd" -eq 0 ] && installed_list="${installed_list}, the systemd sync timer"
+
+  skipped_list=""
+  [ "$with_pi" -eq 0 ] && skipped_list="${skipped_list}the Pi coding agent, "
+  [ "$no_beads" -eq 1 ] && skipped_list="${skipped_list}Beads issue tracking, "
+  [ "$no_hooks" -eq 1 ] && skipped_list="${skipped_list}git hooks, "
+  [ "$no_systemd" -eq 1 ] && skipped_list="${skipped_list}the systemd sync timer, "
+  skipped_list="${skipped_list%, }"
+  [ -n "$skipped_list" ] || skipped_list="nothing"
+
+  printf 'Installed: %s\n\nSkipped: %s\n\nAuthentication:\n%s\nNext: cd %s && ./scripts/nogg doctor\n' \
+    "$installed_list" "$skipped_list" "$auth_summary" "$repo"
+}
+
+show_closing_summary() {
+  text="$1"
+  whiptail --title "Nogging" --msgbox "$text" 20 70
+}
+
 main() {
   with_pi=0
   repo="."
+  no_beads=0
+  no_hooks=0
+  no_systemd=0
+  interactive_flag=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --with-pi) with_pi=1; shift ;;
       --repo) repo="${2:?--repo needs a path}"; shift 2 ;;
       --repo=*) repo="${1#--repo=}"; shift ;;
+      --no-beads) no_beads=1; shift ;;
+      --no-hooks) no_hooks=1; shift ;;
+      --no-systemd) no_systemd=1; shift ;;
+      --interactive) interactive_flag=1; shift ;;
+      --non-interactive) interactive_flag=0; shift ;;
       -h|--help) usage; exit 0 ;;
       *) echo "bootstrap: unknown argument: $1" >&2; usage >&2; exit 1 ;;
     esac
   done
 
+  tty_result=0
+  is_interactive_tty && tty_result=1
+  run_mode=$(decide_run_mode "$interactive_flag" "$tty_result")
+
   check_platform
+
+  if [ "$run_mode" = "interactive" ]; then
+    whiptail_ready=0
+    ensure_whiptail && whiptail_ready=1
+    run_mode=$(decide_post_whiptail_mode "$run_mode" "$whiptail_ready")
+  fi
+
+  if [ "$run_mode" = "interactive" ]; then
+    print_welcome_banner
+    if ! confirm_install_target "$repo"; then
+      echo "bootstrap: cancelled — nothing has been installed"
+      exit 0
+    fi
+
+    chosen_path=$(prompt_install_path "$repo") || {
+      echo "bootstrap: cancelled — nothing has been installed"
+      exit 0
+    }
+    repo="$chosen_path"
+
+    checklist_answer=$(prompt_optional_components "$with_pi" "$no_beads" "$no_hooks" "$no_systemd") || {
+      echo "bootstrap: cancelled — nothing has been installed"
+      exit 0
+    }
+    apply_checklist_answer "$checklist_answer"
+
+    run_auth_step
+  fi
+  # After this point the wizard has built the exact same with_pi/repo/
+  # no_beads/no_hooks/no_systemd a direct non-interactive invocation would
+  # have set via flags (design.md, Decision 3) — every step below runs
+  # identically either way, closing summary included.
+
   ensure_node
   ensure_npm_global "@anthropic-ai/claude-code" "$CLAUDE_CODE_VERSION" claude
   ensure_npm_global "@openai/codex" "$CODEX_VERSION" codex
@@ -286,7 +589,16 @@ main() {
   ensure_dolt
   ensure_bd
   ensure_system_packages
-  run_nogging_init "$repo"
+
+  init_status=0
+  run_nogging_init "$repo" "$no_beads" "$no_hooks" "$no_systemd" || init_status=$?
+
+  if [ "$run_mode" = "interactive" ]; then
+    summary_text=$(build_closing_summary "$repo" "$with_pi" "$no_beads" "$no_hooks" "$no_systemd" "${auth_summary:-}")
+    show_closing_summary "$summary_text"
+  fi
+
+  return "$init_status"
 }
 
 # NOGGING_BOOTSTRAP_NO_MAIN lets scripts/compatibility.test.sh source this
