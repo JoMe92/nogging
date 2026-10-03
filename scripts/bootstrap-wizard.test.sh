@@ -529,3 +529,83 @@ grep -q 'Installed: everything' "$summary_log" \
 rm -rf "$summary_stub_dir"
 trap - EXIT
 printf 'show_closing_summary wiring: ok\n'
+
+# --- TASK-IBT-007: the full wizard sequence, chained end-to-end ------------
+# Every dialog's decision logic is already factored from the whiptail calls
+# themselves (decide_run_mode, decide_post_whiptail_mode,
+# apply_checklist_answer, build_closing_summary — each tested standalone
+# above). This exercises the exact call order main() uses in interactive
+# mode (confirm -> install path -> checklist -> auth -> summary) against one
+# dispatching whiptail stub, proving the wiring end-to-end rather than
+# function-by-function. The real installers (ensure_node et al.,
+# run_nogging_init) stay out of scope here, same as everywhere else in this
+# file — they are not whiptail/decision-logic concerns.
+e2e_dir=$(mktemp -d)
+trap 'rm -rf "$e2e_dir"' EXIT
+
+cat > "$e2e_dir/whiptail" <<'STUB'
+#!/bin/sh
+printf '%s\n' "$*" >> "$WHIPTAIL_STUB_LOG"
+case "$*" in
+  *--yesno*) exit 0 ;;                                           # confirm: Yes
+  *--inputbox*) printf '%s' "$E2E_CHOSEN_PATH" >&2; exit 0 ;;     # typed path
+  *--checklist*) printf '%s' "$E2E_CHECKLIST_ANSWER" >&2; exit 0 ;;
+  *--msgbox*) exit 0 ;;
+esac
+exit 1
+STUB
+chmod +x "$e2e_dir/whiptail"
+
+cat > "$e2e_dir/gh" <<'STUB'
+#!/bin/sh
+exit 0
+STUB
+cat > "$e2e_dir/codex" <<'STUB'
+#!/bin/sh
+echo "Logged in using ChatGPT"
+exit 0
+STUB
+chmod +x "$e2e_dir/gh" "$e2e_dir/codex"
+
+e2e_home="$e2e_dir/home"
+mkdir -p "$e2e_home/.claude"
+: > "$e2e_home/.claude/.credentials.json"
+
+e2e_log="$e2e_dir/calls.log"
+: > "$e2e_log"
+
+e2e_script=$(cat <<'SCRIPT'
+. "$1"
+if ! confirm_install_target "/default/repo"; then exit 1; fi
+chosen=$(prompt_install_path "/default/repo")
+answer=$(prompt_optional_components 0 0 0 0)
+apply_checklist_answer "$answer"
+run_auth_step
+summary=$(build_closing_summary "$chosen" "$with_pi" "$no_beads" "$no_hooks" "$no_systemd" "$auth_summary")
+show_closing_summary "$summary" > /dev/null
+printf 'REPO=%s WITH_PI=%s NO_BEADS=%s NO_HOOKS=%s NO_SYSTEMD=%s\n' \
+  "$chosen" "$with_pi" "$no_beads" "$no_hooks" "$no_systemd"
+printf '%s' "$summary"
+SCRIPT
+)
+
+e2e_out=$(PATH="$e2e_dir" HOME="$e2e_home" WHIPTAIL_STUB_LOG="$e2e_log" \
+  E2E_CHOSEN_PATH="/chosen/by/user" E2E_CHECKLIST_ANSWER='"pi" "beads"' \
+  NOGGING_BOOTSTRAP_NO_MAIN=1 "$real_bash" -c "$e2e_script" _ "$bootstrap")
+
+echo "$e2e_out" | grep -q 'REPO=/chosen/by/user WITH_PI=1 NO_BEADS=0 NO_HOOKS=1 NO_SYSTEMD=1' \
+  || fail "end-to-end wizard sequence produced unexpected final state: $e2e_out"
+echo "$e2e_out" | grep -q 'GitHub: already authenticated' \
+  || fail "end-to-end wizard sequence summary missing the auth step's GitHub line"
+echo "$e2e_out" | grep -q 'Next: cd /chosen/by/user && ./scripts/nogg doctor' \
+  || fail "end-to-end wizard sequence summary missing the correct next-command line"
+
+# Count distinct dialog *invocations*, not lines in the log — the summary
+# dialog's own text is multi-line.
+dialog_count=$(grep -oE -- '--(yesno|inputbox|checklist|msgbox)' "$e2e_log" | wc -l)
+[ "$dialog_count" -eq 4 ] \
+  || fail "expected exactly 4 whiptail dialogs (confirm, path, checklist, summary), got $dialog_count: $(cat "$e2e_log")"
+
+rm -rf "$e2e_dir"
+trap - EXIT
+printf 'end-to-end wizard sequence (stubbed whiptail): ok\n'
