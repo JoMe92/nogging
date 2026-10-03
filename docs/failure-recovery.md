@@ -92,6 +92,24 @@ Nogging adds no `bd dolt commit` checkpoint of its own in `sync` or
 propagation is a separate concern — that is `bd dolt push` to a remote, which
 the mechanical layer never does.)
 
+## Diverged Dolt histories under multi-machine mode
+
+With `multi_machine: true` (see `AGENTS.md` *Multi-machine mode*), two
+machines writing Beads before either has pulled the other's commits becomes a
+newly *likely* scenario — it was always possible, just unlikely without a
+protocol encouraging concurrent local writes. `bd dolt push`/`pull` already
+detect this and refuse rather than silently lose history: `bd` reports
+**"Local and remote Dolt histories have diverged."**
+
+Nogging does not add a second, parallel recovery procedure for this — follow
+`bd`'s own guidance, printed under **"Recovery (bootstrap from one canonical
+clone):"**: pick one machine's clone as canonical and re-bootstrap the others
+from it. Re-bootstrapping a non-canonical clone discards its unpushed work, so
+export anything not yet pushed from it first (`bd export`) before
+re-bootstrapping. `./scripts/nogg doctor`'s "local Dolt is N commit(s) ahead
+of its remote" NOTE is the earlier warning that heads this off — push from
+each machine before another machine's session starts pulling.
+
 ## Discoveries closed before review
 
 `./scripts/nogg discoveries` lists every `discovery`-labelled Bead
@@ -132,6 +150,22 @@ the reap and the cleanup in one step.
   session. A live tmux session with no record can be inspected directly with
   `tmux -L nogg attach -t <name>` and killed with `tmux -L nogg
   kill-session -t <name>`.
+
+## A session hit its usage limit
+
+`scripts/nogg session watch` classifies a session that has hit an account-wide
+usage limit as `limit`, carrying the resolved reset time as `until=<ISO8601>`
+in the event. `scripts/nogg session resume-when-ready <name>` waits out that
+timestamp (never a tight poll loop) and sends a resume instruction once the
+limit clears — no operator action required.
+
+**Switching models does not clear this.** A usage limit observed in
+production is account-wide, not per-model: picking a cheaper or faster model
+does not bypass it (confirmed twice in production, GitHub issue #20).
+`resume-when-ready` dismisses a residual "switch model?" prompt by keeping the
+current model, never by switching to one. If a session is stuck on a usage
+limit, wait it out (or run `resume-when-ready`) — do not spend a session-cycle
+retrying with a different model.
 
 ## `openspec/` stuck read-only or stuck writable
 

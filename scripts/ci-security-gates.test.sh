@@ -34,6 +34,33 @@ chmod +x "$tmp/dependencies/bin/npm"
 expect_failure dependency env PATH="$tmp/dependencies/bin:$PATH" \
   "$root/scripts/ci-security-gates.sh" dependencies "$tmp/dependencies"
 
+# A real, non-accepted high-severity advisory must still fail the gate --
+# the waiver list is narrow, not a blanket bypass.
+mkdir -p "$tmp/dependencies-unwaived/bin"
+cat >"$tmp/dependencies-unwaived/bin/npm" <<'FAKE'
+#!/usr/bin/env bash
+printf '{"vulnerabilities":{"some-pkg":{"severity":"high","via":[{"url":"https://github.com/advisories/GHSA-0000-0000-0000"}]}}}\n'
+exit 1
+FAKE
+chmod +x "$tmp/dependencies-unwaived/bin/npm"
+expect_failure unwaived-dependency env PATH="$tmp/dependencies-unwaived/bin:$PATH" \
+  "$root/scripts/ci-security-gates.sh" dependencies "$tmp/dependencies-unwaived"
+
+# Only the accepted GHSA-vfj7-8cjw-p6xm advisory present must pass.
+mkdir -p "$tmp/dependencies-waived/bin"
+cat >"$tmp/dependencies-waived/bin/npm" <<'FAKE'
+#!/usr/bin/env bash
+printf '{"vulnerabilities":{"braces":{"severity":"high","via":[{"url":"https://github.com/advisories/GHSA-vfj7-8cjw-p6xm"}]}}}\n'
+exit 1
+FAKE
+chmod +x "$tmp/dependencies-waived/bin/npm"
+if ! env PATH="$tmp/dependencies-waived/bin:$PATH" \
+    "$root/scripts/ci-security-gates.sh" dependencies "$tmp/dependencies-waived" >/dev/null 2>&1; then
+  printf 'FAIL - accepted-only advisory fixture did not pass\n' >&2
+  exit 1
+fi
+printf 'ok   - accepted-only advisory fixture passes, unwaived one still fails\n'
+
 "$root/scripts/ci-security-gates.sh" secrets "$root"
 "$root/scripts/ci-security-gates.sh" links "$root"
 printf 'CI security gate negative fixtures: ok\n'

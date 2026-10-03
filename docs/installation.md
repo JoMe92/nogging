@@ -5,13 +5,56 @@ you want to adopt the operating model.
 
 ```bash
 cd /path/to/your-repo
-npx github:JoMe92/nogging#v2.0.2 init
+npx github:JoMe92/nogging#v2.1.0 init
 ```
 
 Always pin a released tag; do not install an unpinned default branch. Until the
 owner completes public-release acceptance, the repository remains private and
 the command requires GitHub access. Once public, the same pinned command needs
 no private-repository credential.
+
+## Fresh machine: `scripts/bootstrap`
+
+If the target machine does not yet have Node, the agent CLIs, `bd`, Dolt,
+`git`, `tmux`, or `gh`, run the pinned one-line bootstrap installer first. It
+provisions the whole stack — pinned to the versions in the
+[compatibility matrix](compatibility.md) — and then runs `init` for you:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/JoMe92/nogging/v2.1.0/scripts/bootstrap | bash
+```
+
+Always pin a tagged release in that URL, never `main`/`develop`, for the same
+reason the `npx` command above is pinned: what you run should be reviewable
+and reproducible.
+
+What it does, in order: checks the host is a supported platform
+(Debian/Ubuntu-family Linux, x86_64 or aarch64 — see the
+[compatibility matrix](compatibility.md)) and refuses clearly otherwise;
+provisions Node via `nvm` if an existing Node does not already satisfy the
+baseline; `npm install -g` the pinned Claude Code, Codex, and OpenSpec CLIs;
+provisions `bd` and Dolt via each project's own official install script,
+pinned to an exact release tag; ensures `git`, `tmux`, and `gh` are present
+via the system package manager (prompting for `sudo`, never silently); and
+finally runs `init` against the target repository and `./scripts/nogg doctor`.
+
+Flags:
+
+- `--repo <path>` — target repository to initialize Nogging into (default:
+  the current directory). Created and `git init`-ed first if it doesn't
+  exist yet.
+- `--with-pi` — also install the optional Pi coding agent CLI (pinned
+  version), after first raising the Node floor to satisfy Pi's stricter
+  `>= 22.19` requirement. Not installed by default.
+
+**Idempotent.** Re-running the script checks each tool's installed version
+against the pin first and only installs or upgrades what's missing or out of
+range, leaving anything already satisfying the baseline alone. This makes it
+safe to run again after a partial failure, or periodically to confirm a
+machine still matches the baseline.
+
+Already have the whole toolchain? Skip straight to the `npx ... init`
+command above.
 
 ## What `init` writes
 
@@ -142,3 +185,35 @@ The three Git hooks (`pre-commit`, `commit-msg`, and `pre-push`) only run from `
 fire. `init` detects this and prints a warning; the hook sources stay in
 `scripts/hooks/` for you to wire into the active hooks directory. The
 `PreToolUse` OpenSpec guard in `.claude/settings.json` is unaffected.
+
+## Cloud sessions
+
+A Claude Code cloud session's assigned `claude/*` branch is never a valid pull
+request source — push the branch `nogg worktree implement` / `worktree plan`
+allocated and open the PR from that branch instead; see `AGENTS.md`'s
+Claude Code tool notes.
+
+A fresh cloud container also starts from whatever the repository clone
+carries, with no locally-configured `core.hooksPath` and no initialized Beads
+database. `init` ships `scripts/hooks/session-start-cloud-bootstrap` — guarded
+to a no-op outside `CLAUDE_CODE_REMOTE=true` — that installs the pinned
+`bd`/Dolt versions from [`docs/nogging/compatibility.md`](compatibility.md),
+activates `core.hooksPath`, and runs `bd bootstrap`. It is **not** wired into
+`.claude/settings.json` by default: a `SessionStart` hook runs real setup work
+with real time cost on every session start, so a repository that uses cloud
+sessions opts in deliberately by adding it to the `SessionStart` array:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/scripts/hooks/session-start-cloud-bootstrap" }
+        ]
+      }
+    ]
+  }
+}
+```

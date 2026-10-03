@@ -16,5 +16,18 @@
   "session_log_max_bytes": 1048576,
   "session_log_rotation_depth": 3,
   "session_stop_grace_seconds": 10,
-  "session_agent": "claude"
+  "session_agent": "claude",
+  "personas": {
+    "planner": {"name": "Nogging Planner", "email": "planner@nogging.bot"},
+    "lead": {"name": "Nogging Lead", "email": "lead@nogging.bot"},
+    "orchestrator": {"name": "Nogging Orchestrator", "email": "orchestrator@nogging.bot"},
+    "sync": {"name": "Nogging Sync", "email": "sync@nogging.bot"},
+    "architect": {"name": "Nogging Architect", "email": "architect@nogging.bot"},
+    "ux-reviewer": {"name": "Nogging UX Reviewer", "email": "ux-reviewer@nogging.bot"},
+    "backend-engineer": {"name": "Nogging Backend Engineer", "email": "backend-engineer@nogging.bot"},
+    "frontend-engineer": {"name": "Nogging Frontend Engineer", "email": "frontend-engineer@nogging.bot"},
+    "code-reviewer": {"name": "Nogging Code Reviewer", "email": "code-reviewer@nogging.bot"},
+    "test-runner": {"name": "Nogging Test Runner", "email": "test-runner@nogging.bot"}
+  },
+  "multi_machine": false
 }

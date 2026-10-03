@@ -376,6 +376,89 @@ grep -qF -- '- [x] TASK-DEMO-002' "$root/openspec/changes/demo/tasks.md" \
   || { echo "FAIL - sync-bare: checkbox not flipped"; fail=1; }
 unset NOGGING_ROOT
 
+# ===========================================================================
+# task-done (TASK-TCC-001/006): the Lead-invoked synchronous tick, called
+# right after `bd close`. Ticks the mapped tasks.md line, refuses on a Bead
+# that isn't closed yet, and never writes execution-log.md.
+# ===========================================================================
+
+# --- Scenario: happy path ticks the mapped line, then is idempotent --------
+root="$work/task-done-happy"; make_root "$root"
+export NOGGING_ROOT="$root"
+export BD_STUB_DIR="$work/task-done-happy"; mkdir -p "$BD_STUB_DIR"
+printf '[{"id":"SPEC-td1","status":"closed","labels":["openspec:change:demo","openspec:task:TASK-DEMO-001"]}]\n' >"$BD_STUB_DIR/show-SPEC-td1.json"
+"$nogg" task-done SPEC-td1 >"$out" 2>&1 || { echo "FAIL - task-done-happy: errored"; cat "$out"; fail=1; }
+grep -qF -- '- [x] TASK-DEMO-001' "$root/openspec/changes/demo/tasks.md" \
+  && echo "ok   - task-done-happy: ticks the mapped line" \
+  || { echo "FAIL - task-done-happy: line not ticked"; fail=1; }
+check "task-done-happy: reports the tick" "ticked TASK-DEMO-001"
+log="$root/openspec/changes/demo/execution-log.md"
+[[ "$(cat "$log")" == "# Execution log" ]] \
+  && echo "ok   - task-done-happy: never writes execution-log.md" \
+  || { echo "FAIL - task-done-happy: execution-log.md was touched"; cat "$log"; fail=1; }
+"$nogg" task-done SPEC-td1 >"$out" 2>&1 || { echo "FAIL - task-done-happy: second call errored"; cat "$out"; fail=1; }
+check "task-done-happy: second call reports already ticked" "TASK-DEMO-001 already ticked"
+[[ "$(count "$root/openspec/changes/demo/tasks.md" '- [x] TASK-DEMO-001')" == "1" ]] \
+  && echo "ok   - task-done-happy: idempotent, exactly one ticked line" \
+  || { echo "FAIL - task-done-happy: duplicate tick"; fail=1; }
+unset NOGGING_ROOT
+
+# --- Scenario: refuses a Bead that is not yet closed ------------------------
+root="$work/task-done-open"; make_root "$root"
+export NOGGING_ROOT="$root"
+export BD_STUB_DIR="$work/task-done-open"; mkdir -p "$BD_STUB_DIR"
+printf '[{"id":"SPEC-td2","status":"open","labels":["openspec:change:demo","openspec:task:TASK-DEMO-001"]}]\n' >"$BD_STUB_DIR/show-SPEC-td2.json"
+rc=0; "$nogg" task-done SPEC-td2 >"$out" 2>&1 || rc=$?
+[[ "$rc" -ne 0 ]] && echo "ok   - task-done-open: refuses a not-yet-closed Bead" \
+  || { echo "FAIL - task-done-open: should have refused"; fail=1; }
+check "task-done-open: error names the Bead status" "is not closed"
+grep -qF -- '- [ ] TASK-DEMO-001' "$root/openspec/changes/demo/tasks.md" \
+  && echo "ok   - task-done-open: tasks.md left untouched" \
+  || { echo "FAIL - task-done-open: tasks.md was modified"; fail=1; }
+unset NOGGING_ROOT
+
+# --- Scenario: refuses a Bead with no openspec:task label -------------------
+root="$work/task-done-nolabel"; make_root "$root"
+export NOGGING_ROOT="$root"
+export BD_STUB_DIR="$work/task-done-nolabel"; mkdir -p "$BD_STUB_DIR"
+printf '[{"id":"SPEC-td3","status":"closed","labels":["openspec:change:demo"]}]\n' >"$BD_STUB_DIR/show-SPEC-td3.json"
+rc=0; "$nogg" task-done SPEC-td3 >"$out" 2>&1 || rc=$?
+[[ "$rc" -ne 0 ]] && echo "ok   - task-done-nolabel: refuses a Bead with no openspec:task label" \
+  || { echo "FAIL - task-done-nolabel: should have refused"; fail=1; }
+check "task-done-nolabel: error names the missing label" "no openspec:task"
+unset NOGGING_ROOT
+
+# --- Scenario: task-done ticks ahead of sync; sync's later pass is a no-op -
+# (TASK-TCC-006) Verifies Decision 2's idempotency claim mechanically: once
+# `task-done` has ticked a line, `sync()`'s regex (which only matches the
+# unticked form) leaves it alone, while `sync` still writes its own
+# execution-log entry independently.
+root="$work/task-done-then-sync"; make_root "$root"
+export NOGGING_ROOT="$root"
+export BD_STUB_DIR="$work/task-done-then-sync"; mkdir -p "$BD_STUB_DIR"
+export BD_FIXTURE="$work/task-done-then-sync-beads.json"
+cat >"$BD_FIXTURE" <<'JSON'
+[
+  {"id": "SPEC-td4", "status": "closed", "closed_at": "2026-09-03T10:00:00Z",
+   "notes": "did the thing",
+   "labels": ["openspec:change:demo", "openspec:task:TASK-DEMO-001"]}
+]
+JSON
+cp "$BD_FIXTURE" "$BD_STUB_DIR/show-SPEC-td4.json"
+"$nogg" task-done SPEC-td4 >"$out" 2>&1 || { echo "FAIL - task-done-then-sync: task-done errored"; cat "$out"; fail=1; }
+grep -qF -- '- [x] TASK-DEMO-001' "$root/openspec/changes/demo/tasks.md" \
+  && echo "ok   - task-done-then-sync: task-done ticks ahead of sync" \
+  || { echo "FAIL - task-done-then-sync: not ticked"; fail=1; }
+"$nogg" sync >"$out" 2>&1 || { echo "FAIL - task-done-then-sync: sync errored"; cat "$out"; fail=1; }
+log="$root/openspec/changes/demo/execution-log.md"
+[[ "$(count "$log" '<!-- nogg:SPEC-td4:')" == "1" ]] \
+  && echo "ok   - task-done-then-sync: sync still writes the execution-log entry" \
+  || { echo "FAIL - task-done-then-sync: log entry missing"; cat "$log"; fail=1; }
+[[ "$(count "$root/openspec/changes/demo/tasks.md" '- [x] TASK-DEMO-001')" == "1" ]] \
+  && echo "ok   - task-done-then-sync: sync's later pass is a no-op for the already-ticked line" \
+  || { echo "FAIL - task-done-then-sync: duplicate or altered tick"; fail=1; }
+unset NOGGING_ROOT BD_FIXTURE
+
 # --- Scenario: re-running materialize over closed Beads creates nothing ----
 root="$work/mat-idem"; make_root "$root"
 sed -i 's/- \[ \] TASK-DEMO-001/- [x] TASK-DEMO-001/' "$root/openspec/changes/demo/tasks.md"
@@ -913,6 +996,45 @@ check "twb-doctor: stale planning lock named as the reason" \
 # without dolt, e.g. CI) and `set -e` must not see it — hence `|| true`.
 "$nogg" doctor >/dev/null 2>&1 || true
 rm -f "$root/.nogging/locks/planning.lock"
+unset NOGGING_ROOT BD_FIXTURE
+
+# ===========================================================================
+# Scenario: doctor flags a live change whose every mapped Bead is closed
+# (TASK-TCC-003) — a NOTE only, never a FAIL, never changes the exit code.
+# ===========================================================================
+root="$work/tcc-archive"; make_root "$root"
+export NOGGING_ROOT="$root"
+export BD_FIXTURE="$work/tcc-archive-beads.json"
+cat >"$BD_FIXTURE" <<'JSON'
+[
+  {"id": "SPEC-ar1", "status": "closed",
+   "labels": ["openspec:change:demo", "openspec:task:TASK-DEMO-001"]},
+  {"id": "SPEC-ar2", "status": "open",
+   "labels": ["openspec:change:demo", "openspec:task:TASK-DEMO-002"]}
+]
+JSON
+rc_partial=0; "$nogg" doctor >"$out" 2>&1 || rc_partial=$?
+refute "tcc-archive: an in-progress change (open mapped Bead) is not flagged" "ready to archive"
+
+cat >"$BD_FIXTURE" <<'JSON'
+[
+  {"id": "SPEC-ar1", "status": "closed",
+   "labels": ["openspec:change:demo", "openspec:task:TASK-DEMO-001"]},
+  {"id": "SPEC-ar2", "status": "closed",
+   "labels": ["openspec:change:demo", "openspec:task:TASK-DEMO-002"]}
+]
+JSON
+rc_ready=0; "$nogg" doctor >"$out" 2>&1 || rc_ready=$?
+check "tcc-archive: NOTE names the change as ready to archive" \
+  "NOTE  change ready to archive: demo (every mapped Bead is closed)"
+[[ "$rc_partial" == "$rc_ready" ]] \
+  && echo "ok   - tcc-archive: the archive-ready NOTE never changes doctor's exit code ($rc_ready)" \
+  || { echo "FAIL - tcc-archive: exit code changed ($rc_partial -> $rc_ready)"; fail=1; }
+
+# only one of the change's two tasks has a mapped Bead at all -> never flagged
+printf '[{"id":"SPEC-ar1","status":"closed","labels":["openspec:change:demo","openspec:task:TASK-DEMO-001"]}]\n' >"$BD_FIXTURE"
+"$nogg" doctor >"$out" 2>&1 || true
+refute "tcc-archive: a task with no mapped Bead yet is not flagged" "ready to archive"
 unset NOGGING_ROOT BD_FIXTURE
 
 # ===========================================================================

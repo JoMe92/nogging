@@ -98,6 +98,12 @@ cfg["orchestrator_poll_seconds"] = 0.2
 cfg["orchestrator_lock_ttl_seconds"] = 3600
 json.dump(cfg, open(sys.argv[2], "w"), indent=2)
 PY
+  # `orchestrator run` sets its own commit identity on the shared checkout
+  # (TASK-ACI-003), so the fixture needs to actually be a git repository.
+  git -C "$r" init -q
+  git -C "$r" config user.email operator@example.invalid
+  git -C "$r" config user.name 'Operator'
+  git -C "$r" add -A && git -C "$r" commit -q -m 'chore: seed orchestrator fixture [SPEC-000]'
 }
 record() { python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get(sys.argv[2]))" "$1" "$2"; }
 
@@ -147,6 +153,12 @@ for _ in $(seq 1 80); do [[ -f "$TMUX_STUB_DIR/sess-$name" ]] && break; sleep 0.
 [[ "$(record "$root/.nogging/state/sessions/$name.json" floor_lifted)" == "True" ]] \
   && echo "ok   - run: the session record is FULL-ACCESS (floor_lifted)" \
   || { echo "FAIL - run: floor_lifted not set"; fail=1; }
+[[ "$(git -C "$root" config --worktree --get user.name)" == "Nogging Orchestrator" ]] \
+  && echo "ok   - run: sets the Nogging Orchestrator identity on the shared checkout (TASK-ACI-003)" \
+  || { echo "FAIL - run: user.name is $(git -C "$root" config --get user.name 2>/dev/null || echo unset)"; fail=1; }
+[[ "$(git -C "$root" config --worktree --get user.email)" == "orchestrator@nogging.bot" ]] \
+  && echo "ok   - run: sets the orchestrator@nogging.bot identity email" \
+  || { echo "FAIL - run: user.email is $(git -C "$root" config --get user.email 2>/dev/null || echo unset)"; fail=1; }
 rm -f "$TMUX_STUB_DIR/sess-$name"     # the session ends
 for _ in $(seq 1 80); do [[ -f "$work/run.rc" ]] && break; sleep 0.1; done
 [[ "$(cat "$work/run.rc" 2>/dev/null)" == "1" ]] \
