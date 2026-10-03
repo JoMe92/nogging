@@ -198,3 +198,137 @@ fi
 rm -rf "$confirm_stub_dir"
 trap - EXIT
 printf 'confirm_install_target wiring: ok\n'
+
+# --- TASK-IBT-004: apply_checklist_answer (pure decision logic) -----------
+checklist_vars() {
+  # checklist_vars <answer> -> "with_pi no_beads no_hooks no_systemd"
+  NOGGING_BOOTSTRAP_NO_MAIN=1 "$real_bash" -c \
+    '. "$1" && apply_checklist_answer "$2" && echo "$with_pi $no_beads $no_hooks $no_systemd"' \
+    _ "$bootstrap" "$1"
+}
+
+[ "$(checklist_vars '')" = "0 1 1 1" ] \
+  || fail "an empty checklist answer did not map to every flag skipped"
+[ "$(checklist_vars '"pi" "systemd" "hooks" "beads"')" = "1 0 0 0" ] \
+  || fail "a fully-checked checklist answer did not map to every flag enabled"
+[ "$(checklist_vars '"systemd" "beads"')" = "0 0 1 0" ] \
+  || fail "a partial checklist answer was mapped incorrectly"
+printf 'apply_checklist_answer: ok\n'
+
+# --- TASK-IBT-004: checklist default state matches current flag values ----
+# design.md, Decision 3/4: the checklist's default checked/unchecked state
+# must match today's actual flag defaults exactly — verified here by
+# checking prompt_optional_components' own default-ON/OFF wiring for both
+# "nothing requested" and "everything requested" starting points.
+checklist_stub_dir=$(mktemp -d)
+trap 'rm -rf "$checklist_stub_dir"' EXIT
+cat > "$checklist_stub_dir/whiptail" <<'STUB'
+#!/bin/sh
+printf '%s\n' "$*" >> "$WHIPTAIL_STUB_LOG"
+exit 0
+STUB
+chmod +x "$checklist_stub_dir/whiptail"
+checklist_log="$checklist_stub_dir/calls.log"
+
+: > "$checklist_log"
+PATH="$checklist_stub_dir" WHIPTAIL_STUB_LOG="$checklist_log" \
+  NOGGING_BOOTSTRAP_NO_MAIN=1 "$real_bash" -c \
+  '. "$1" && prompt_optional_components 0 0 0 0 >/dev/null' _ "$bootstrap"
+grep -q 'pi Pi coding agent support OFF' "$checklist_log" \
+  || fail "defaults (with_pi=0) did not show the Pi item unchecked"
+grep -q 'systemd systemd sync timer ON' "$checklist_log" \
+  || fail "defaults (no_systemd=0) did not show the systemd item checked"
+grep -q 'hooks git hooks ON' "$checklist_log" \
+  || fail "defaults (no_hooks=0) did not show the hooks item checked"
+grep -q 'beads Beads issue tracker init ON' "$checklist_log" \
+  || fail "defaults (no_beads=0) did not show the beads item checked"
+
+: > "$checklist_log"
+PATH="$checklist_stub_dir" WHIPTAIL_STUB_LOG="$checklist_log" \
+  NOGGING_BOOTSTRAP_NO_MAIN=1 "$real_bash" -c \
+  '. "$1" && prompt_optional_components 1 1 1 1 >/dev/null' _ "$bootstrap"
+grep -q 'pi Pi coding agent support ON' "$checklist_log" \
+  || fail "with_pi=1 did not show the Pi item checked"
+grep -q 'systemd systemd sync timer OFF' "$checklist_log" \
+  || fail "no_systemd=1 did not show the systemd item unchecked"
+grep -q 'hooks git hooks OFF' "$checklist_log" \
+  || fail "no_hooks=1 did not show the hooks item unchecked"
+grep -q 'beads Beads issue tracker init OFF' "$checklist_log" \
+  || fail "no_beads=1 did not show the beads item unchecked"
+
+rm -rf "$checklist_stub_dir"
+trap - EXIT
+printf 'prompt_optional_components default state: ok\n'
+
+# --- TASK-IBT-004: prompt_install_path returns the typed answer -----------
+path_stub_dir=$(mktemp -d)
+trap 'rm -rf "$path_stub_dir"' EXIT
+cat > "$path_stub_dir/whiptail" <<'STUB'
+#!/bin/sh
+# Real whiptail writes its --inputbox answer to its own stderr (fd 2); the
+# caller's `3>&1 1>&2 2>&3` dance routes that back to the captured stdout.
+printf '%s\n' "$*" >> "$WHIPTAIL_STUB_LOG"
+printf '%s' "$WHIPTAIL_STUB_ANSWER" >&2
+exit "${WHIPTAIL_STUB_EXIT:-0}"
+STUB
+chmod +x "$path_stub_dir/whiptail"
+path_log="$path_stub_dir/calls.log"
+: > "$path_log"
+
+typed=$(PATH="$path_stub_dir" WHIPTAIL_STUB_LOG="$path_log" \
+  WHIPTAIL_STUB_ANSWER="/opt/my-repo" WHIPTAIL_STUB_EXIT=0 \
+  NOGGING_BOOTSTRAP_NO_MAIN=1 "$real_bash" -c \
+  '. "$1" && prompt_install_path /default/path' _ "$bootstrap")
+[ "$typed" = "/opt/my-repo" ] \
+  || fail "prompt_install_path did not return the typed answer (got: $typed)"
+grep -q '/default/path' "$path_log" \
+  || fail "prompt_install_path did not pass the default path to whiptail"
+
+if PATH="$path_stub_dir" WHIPTAIL_STUB_LOG="$path_log" WHIPTAIL_STUB_EXIT=1 \
+    NOGGING_BOOTSTRAP_NO_MAIN=1 "$real_bash" -c \
+    '. "$1" && prompt_install_path /default/path' _ "$bootstrap" > /dev/null
+then
+  fail "prompt_install_path returned success for a Cancel answer (exit 1)"
+fi
+
+rm -rf "$path_stub_dir"
+trap - EXIT
+printf 'prompt_install_path wiring: ok\n'
+
+# --- TASK-IBT-004: run_nogging_init forwards the checklist's flags --------
+# Maps answers onto the exact flags `init` already accepts — no new install
+# logic (design.md, Decision 3): a stubbed `npx` proves the --no-beads/
+# --no-hooks/--no-systemd flags reach it exactly when requested.
+init_stub_dir=$(mktemp -d)
+trap 'rm -rf "$init_stub_dir"' EXIT
+cat > "$init_stub_dir/npx" <<'STUB'
+#!/bin/sh
+printf '%s\n' "$*" >> "$NPX_STUB_LOG"
+exit 0
+STUB
+chmod +x "$init_stub_dir/npx"
+init_log="$init_stub_dir/calls.log"
+init_repo="$init_stub_dir/repo"
+mkdir -p "$init_repo/.git"
+
+: > "$init_log"
+NPX_STUB_LOG="$init_log" PATH="$init_stub_dir:$PATH" \
+  NOGGING_BOOTSTRAP_NO_MAIN=1 "$real_bash" -c \
+  '. "$1" && run_nogging_init "$2" 0 0 0' _ "$bootstrap" "$init_repo" > /dev/null 2>&1 || true
+init_call=$(cat "$init_log")
+echo "$init_call" | grep -q -- '--no-beads' && fail "run_nogging_init passed --no-beads when no_beads=0"
+echo "$init_call" | grep -q -- '--no-hooks' && fail "run_nogging_init passed --no-hooks when no_hooks=0"
+echo "$init_call" | grep -q -- '--no-systemd' && fail "run_nogging_init passed --no-systemd when no_systemd=0"
+
+: > "$init_log"
+NPX_STUB_LOG="$init_log" PATH="$init_stub_dir:$PATH" \
+  NOGGING_BOOTSTRAP_NO_MAIN=1 "$real_bash" -c \
+  '. "$1" && run_nogging_init "$2" 1 1 1' _ "$bootstrap" "$init_repo" > /dev/null 2>&1 || true
+init_call=$(cat "$init_log")
+echo "$init_call" | grep -q -- '--no-beads' || fail "run_nogging_init dropped --no-beads when no_beads=1"
+echo "$init_call" | grep -q -- '--no-hooks' || fail "run_nogging_init dropped --no-hooks when no_hooks=1"
+echo "$init_call" | grep -q -- '--no-systemd' || fail "run_nogging_init dropped --no-systemd when no_systemd=1"
+
+rm -rf "$init_stub_dir"
+trap - EXIT
+printf 'run_nogging_init flag forwarding: ok\n'
