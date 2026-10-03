@@ -74,7 +74,7 @@ reimplement the planning lock, discovery sorting, or sync.
 
 | Command | May do | May **not** do |
 | --- | --- | --- |
-| `/plan` (`plan.md`) | Allocate `plan/<planning-id>/<description>` from updated `origin/develop`, then in that isolated worktree run `plan-begin` → discovery review → design dialogue → author/revise → `validate` → commit `openspec/` as the `planning` writer → `materialize <change>` → fast-forward integrate into `develop` → safe cleanup → `plan-end`. The commit precedes `materialize`, so a crash between them never leaves Beads without a committed spec (`materialize` is idempotent). Consult the `architect` specialist for architecture questions. | Write planning artifacts in the shared checkout; force a planning lock another session holds; clean a dirty or unintegrated planning worktree; do execution work; or auto-delete an orphaned Bead. |
+| `/plan` (`plan.md`) | Allocate `plan/<planning-id>/<description>` from updated `origin/develop`, then in that isolated worktree run `plan-begin` → discovery review → conditional archive (if `doctor` reports a change ready — `openspec archive <change>`, review the merged `specs/`, `validate`, commit as `planning`) → design dialogue → author/revise → `validate` → commit `openspec/` as the `planning` writer → `materialize <change>` → fast-forward integrate into `develop` → safe cleanup → `plan-end`. The commit precedes `materialize`, so a crash between them never leaves Beads without a committed spec (`materialize` is idempotent). Consult the `architect` specialist for architecture questions. | Write planning artifacts in the shared checkout; force a planning lock another session holds; clean a dirty or unintegrated planning worktree; do execution work; or auto-delete an orphaned Bead. |
 | `/discovery-review` (`discovery-review.md`) | Run `scripts/nogg discoveries` and render it unchanged (blocking first). Per discovery, offer: carry into a `/plan` session, acknowledge via `scripts/nogg discoveries --ack <id>`, or leave pending. | Acquire the planning lock. Create or modify any file under `openspec/`. |
 | `/sync-now` (`sync-now.md`) | Run `scripts/nogg sync --now`: signal a resident sync daemon if one exists, else run one reconciliation pass directly. | Retry, loop, or `--force` when the 30-second timer holds the sync lock — report the contention and stop. |
 
@@ -105,13 +105,17 @@ shape and staleness rule, independent of the planning lock).
 **Default scope is orchestrate-only.** The Orchestration Agent reads the whole
 state (Beads, OpenSpec, session records and logs, `git`) and drives the loop by
 running `scripts/nogg` — `session launch|attach|log|stop`, `sync --now`,
-`recover`, `discoveries` — plus `bd` and `git` (read, and a local
+`recover`, `discoveries`, `doctor` — plus `bd` and `git` (read, and a local
 fast-forward integration). It does **not** write any file under `openspec/` and
 does **not** edit implementation code. When a spec change is needed it starts or
 directs a planning session; when a change is ready it launches a Lead session
 and steers it through the log and `attach`. It never does the sub-session's Bead
 work itself, and the sub-sessions it launches keep their normal
-`restricted` / `trusted` profiles — only the conductor is unfenced.
+`restricted` / `trusted` profiles — only the conductor is unfenced. When
+`doctor` reports a `NOTE change ready to archive: <change>`, it directs a
+planning session to run `/plan`'s archive step for that change — starting one
+if none is running, or naming the change to one already running — and never
+runs `openspec archive` itself.
 
 **Explicit takeover.** Only on an explicit in-session operator instruction of
 the form `/orchestrate takeover {plan|code} <description>` does it perform one

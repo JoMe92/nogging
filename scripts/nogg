@@ -294,6 +294,48 @@ def task_map_at_ref(ref, include_archived=False):
             if task in found: duplicates.append(task)
             found[task] = {"change": change, "file": None, "title": title, "ref": ref}
     return found, duplicates
+def tick_task_line(path, task):
+    """Flip the one unticked `- [ ] <task>` line in `path` to `- [x]`.
+
+    The single implementation of "what ticking means" for both `sync()` (via
+    its closed-Bead mirror pass) and `task-done` (a Lead's explicit, synchronous
+    call). Naturally idempotent: the regex only matches the unticked form, so a
+    line already ticked by either caller is a no-op for the other, in either
+    order. Returns True if the file changed.
+    """
+    text = path.read_text()
+    updated = re.sub(rf"^- \[ \] ({re.escape(task)}\b)", r"- [x] \1", text, flags=re.M)
+    if updated == text: return False
+    path.write_text(updated)
+    return True
+def task_done(bead_id):
+    """`scripts/nogg task-done <bead-id>`: tick the Bead's mapped `tasks.md`
+    line. Called by the Lead Agent's close protocol immediately after `bd
+    close`, bundled into the same execution commit. Never writes
+    `execution-log.md` — that stays `sync()`'s job (design.md, Decision 2).
+    """
+    out = run(CFG["beads_command"], "show", bead_id, "--json").stdout.strip()
+    decoded = json.loads(out or "[]")
+    records = decoded.get("issues", decoded) if isinstance(decoded, dict) else decoded
+    if isinstance(records, dict): records = [records]
+    if not records:
+        raise RuntimeError(f"task-done: no such Bead {bead_id}")
+    issue = records[0]
+    if issue.get("status") != "closed":
+        raise RuntimeError(f"task-done: {bead_id} is not closed (status: "
+                            f"{issue.get('status')!r}); run `bd close {bead_id}` first")
+    _change, task = mapping(issue)
+    if not task:
+        raise RuntimeError(f"task-done: {bead_id} carries no openspec:task: label")
+    tasks, _duplicates = task_map()
+    entry = tasks.get(task)
+    if entry is None or entry.get("archived"):
+        print(f"task-done: {task} not found in a live tasks.md; nothing to tick")
+        return
+    if tick_task_line(entry["file"], task):
+        print(f"task-done: ticked {task} in {entry['file'].relative_to(ROOT)}")
+    else:
+        print(f"task-done: {task} already ticked in {entry['file'].relative_to(ROOT)}")
 def beads():
     out = run(CFG["beads_command"], "list", "--status", BEAD_STATUSES, "--limit", "0", "--json").stdout.strip()
     decoded = json.loads(out or "[]")
@@ -652,6 +694,24 @@ def validate(fallback_ref=None):
             if not issue or issue.get("status") != "closed": problems.append(f"checked task {task} has no closed Bead")
     warnings.extend(limbo_warnings(issues))
     return tasks, issues, problems, warnings
+def archive_ready_changes(tasks, issues):
+    """Live (non-archived) changes whose every live task has a closed mapped
+    Bead — candidates `doctor` reports as ready for `/plan`'s archive step.
+
+    Uses the same closed-inclusive `issues` (from `beads()`, via `validate()`)
+    that `sync()`/`materialize()` already read, not the default closed-
+    excluding `bd list`. A change with any task that has no mapped Bead yet,
+    or whose mapped Bead is not closed, is excluded — this never fires for a
+    change still in progress or not yet materialized.
+    """
+    by_change = {}
+    for task, info in tasks.items():
+        if info.get("archived"): continue
+        by_change.setdefault(info["change"], set()).add(task)
+    closed_tasks = {mapping(i)[1] for i in issues
+                    if mapping(i)[1] and i.get("status") == "closed"}
+    return sorted(change for change, task_ids in by_change.items()
+                  if task_ids <= closed_tasks)
 def materialize(change):
     tasks, issues, problems, _warnings = validate()
     if problems: raise AuditError("validation failed:\n- " + "\n- ".join(problems))
@@ -861,8 +921,8 @@ def sync(on_request=False):
             if key not in current:
                 log.write_text(current + "\n" + execution_log_entry(issue, task))
                 changed.append(log)
-            f = tasks[task]["file"]; text = f.read_text(); updated = re.sub(rf"^- \[ \] ({re.escape(task)}\b)", r"- [x] \1", text, flags=re.M)
-            if updated != text: f.write_text(updated); changed.append(f)
+            f = tasks[task]["file"]
+            if tick_task_line(f, task): changed.append(f)
         if changed:
             run("git", "add", *sorted({str(p.relative_to(ROOT)) for p in changed}))
             run("git", "commit",
@@ -2128,7 +2188,8 @@ def doctor(audit=False, with_recover=False):
     for cmd in ("git", "python3", CFG["beads_command"], "dolt"):
         checks.append((cmd, tool_on_path(cmd)))
     warnings = []
-    try: _, _, problems, warnings = validate()
+    tasks, issues = {}, []
+    try: tasks, issues, problems, warnings = validate()
     except Exception as exc: problems = [str(exc)]
     checks.extend((p, False) for p in problems)
     if FAILURE_RECORD.exists():
@@ -2149,6 +2210,11 @@ def doctor(audit=False, with_recover=False):
              "compatibility baseline: Node 18/20/22, Python 3.9-3.13, "
              "Git 2.30+, Bash 4.4+, OpenSpec 1.11.x, Beads 1.2.x, Dolt 2.3.x "
              "(docs/nogging/compatibility.md)"]
+    # Advisory only, like every other NOTE here: never a FAIL, never changes
+    # doctor's exit code. `/plan`'s archive step (TASK-TCC-004) is what
+    # actually archives a change; doctor only surfaces readiness.
+    for change in archive_ready_changes(tasks, issues):
+        notes.append(f"change ready to archive: {change} (every mapped Bead is closed)")
     if SKIP_RECORD.exists():
         try: srec = json.loads(SKIP_RECORD.read_text())
         except (ValueError, OSError): srec = {}
@@ -2246,6 +2312,9 @@ def main():
     b = sub.add_parser("plan-begin"); b.add_argument("--force", action="store_true")
     e = sub.add_parser("plan-end"); e.add_argument("--force", action="store_true")
     m = sub.add_parser("materialize"); m.add_argument("change")
+    td = sub.add_parser("task-done",
+        help="tick the closed Bead's mapped tasks.md line (Lead close protocol)")
+    td.add_argument("bead_id")
     cpl = sub.add_parser("codex-prompts-link",
         help="symlink .codex/prompts/*.md into <CODEX_HOME>/prompts/ as nogging-<name>.md")
     cpl.add_argument("--unlink", action="store_true",
@@ -2315,6 +2384,7 @@ def main():
         write_sentinel()
         print("openspec write boundary closed")
     elif args.command == "materialize": materialize(args.change)
+    elif args.command == "task-done": task_done(args.bead_id)
     elif args.command == "codex-prompts-link": codex_prompts_link(args.unlink)
     elif args.command == "worktree":
         if args.worktree_command == "plan": planning_worktree(args.planning_id, args.description, args.path)
