@@ -10,7 +10,15 @@
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/JoMe92/nogging/<tag>/scripts/bootstrap | bash
-#   scripts/bootstrap [--repo <path>] [--with-pi]
+#   scripts/bootstrap [--repo <path>] [--with-pi] [--non-interactive]
+#
+# Interactive mode (design.md, Decision 1): when both stdin and stdout are a
+# real terminal, the script runs a `whiptail`-based wizard instead of the
+# fully-automated flow below. The piped one-liner above is unaffected by
+# default (stdin is not a TTY in that exact invocation shape); pass
+# `--non-interactive` to force the automated flow even on a real TTY, or
+# `--interactive` to force the wizard even when stdin/stdout aren't detected
+# as a TTY (mainly for testing).
 #
 # This script intentionally avoids bash-only syntax (arrays, [[ ]], etc.) so
 # it stays POSIX-sh compatible, even though the documented one-liner above
@@ -34,13 +42,39 @@ NOGGING_TAG="v2.1.0"
 
 usage() {
   cat <<'EOF'
-Usage: bootstrap [--repo <path>] [--with-pi]
+Usage: bootstrap [--repo <path>] [--with-pi] [--non-interactive|--interactive]
 
-  --repo <path>  target repository to initialize Nogging into (default: .)
-                 created and `git init`-ed first if it does not exist yet.
-  --with-pi      also install the optional Pi coding agent CLI (pinned
-                 version); not installed by default.
+  --repo <path>      target repository to initialize Nogging into (default:
+                     .) created and `git init`-ed first if it does not exist
+                     yet.
+  --with-pi          also install the optional Pi coding agent CLI (pinned
+                     version); not installed by default.
+  --non-interactive  force the fully-automated flow even on a real TTY.
+  --interactive      force the whiptail wizard even without a detected TTY.
 EOF
+}
+
+# --- Interactive-mode detection (design.md, Decision 1) ---------------------
+# Both stdin and stdout must be a real terminal for the wizard to make sense
+# (a piped one-liner never has a stdin TTY, so it is automatically excluded).
+is_interactive_tty() {
+  [ -t 0 ] && [ -t 1 ]
+}
+
+# decide_run_mode <interactive_flag> <tty_result> -> "interactive" or
+# "non-interactive" on stdout. Pure decision logic (design.md, Decision 5):
+# takes already-known inputs, no I/O, so it is directly unit-testable.
+#   interactive_flag: "" (auto-detect) | "1" (--interactive) | "0" (--non-interactive)
+#   tty_result:        "1" if is_interactive_tty succeeded, else "0"
+decide_run_mode() {
+  flag="$1"; tty="$2"
+  case "$flag" in
+    1) echo interactive ;;
+    0) echo non-interactive ;;
+    *)
+      if [ "$tty" = "1" ]; then echo interactive; else echo non-interactive; fi
+      ;;
+  esac
 }
 
 report_step() {
@@ -264,15 +298,26 @@ run_nogging_init() {
 main() {
   with_pi=0
   repo="."
+  interactive_flag=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --with-pi) with_pi=1; shift ;;
       --repo) repo="${2:?--repo needs a path}"; shift 2 ;;
       --repo=*) repo="${1#--repo=}"; shift ;;
+      --interactive) interactive_flag=1; shift ;;
+      --non-interactive) interactive_flag=0; shift ;;
       -h|--help) usage; exit 0 ;;
       *) echo "bootstrap: unknown argument: $1" >&2; usage >&2; exit 1 ;;
     esac
   done
+
+  tty_result=0
+  is_interactive_tty && tty_result=1
+  run_mode=$(decide_run_mode "$interactive_flag" "$tty_result")
+  # The wizard itself (whiptail availability, dialogs) arrives in later
+  # TASK-IBT-00{2..6} slices; for now `run_mode` is computed but unused, so
+  # every existing invocation (including a real TTY) is byte-for-byte
+  # unchanged until the wizard is actually wired in.
 
   check_platform
   ensure_node
