@@ -1,15 +1,16 @@
-![Nogging — structure for what's next](docs/brand/nogging-banner.png)
+![Nogging](docs/brand/nogging-banner.png)
 
 # Nogging
 
 [![Nogging validation](https://github.com/JoMe92/nogging/actions/workflows/nogging-validate.yml/badge.svg?branch=main)](https://github.com/JoMe92/nogging/actions/workflows/nogging-validate.yml)
 
-**Structure for what's next.**
+**Structure for a team of agents.**
 
-Nogging is a lean, local-first operating model for agentic software delivery.
-It gives product intent, executable tasks, and implementation evidence clear
-owners so autonomous agents can move quickly without quietly changing the
-plan. The command and installed state are named `nogg`.
+Nogging turns autonomous coding agents into a disciplined team, not a single
+black box: a Planning Agent, a Lead Agent, and specialists, each with a
+defined role and a write boundary. It gives product intent, executable tasks,
+and implementation evidence clear owners so the team can move quickly without
+quietly changing the plan. The command and installed state are named `nogg`.
 OpenSpec owns approved product intent, Beads owns executable work, and Git owns
 the implementation. A deterministic sync process mirrors execution evidence
 back into OpenSpec; it never makes product decisions.
