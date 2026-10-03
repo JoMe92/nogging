@@ -114,7 +114,11 @@ whose tmux session is gone as failed rather than running.
 Each launched session SHALL stream its console output to an append-only log
 file whose path is recorded in the session metadata. The log SHALL be readable
 without attaching to the tmux session. Log file growth SHALL be bounded by a
-configured size limit with rotation.
+configured size limit with rotation. A Claude Code session MAY additionally
+have a structured events file (`<name>.events.jsonl`) written by its own
+hooks; where present, this file supplements the console log and SHALL NOT
+replace it — the console log remains the complete record regardless of
+whether the events file exists.
 
 #### Scenario: Session output is captured to a log
 
@@ -133,6 +137,13 @@ configured size limit with rotation.
 - **WHEN** a session's log file reaches the configured size limit
 - **THEN** it is rotated
 - **AND** the active log file does not grow without bound
+
+#### Scenario: An events file supplements, never replaces, the console log
+
+- **WHEN** a Claude Code session has written at least one line to its
+  `<name>.events.jsonl`
+- **THEN** the session's console log is still complete and still readable on
+  its own
 
 ### Requirement: Attach, stop and cleanup are deliberate operations
 
@@ -242,3 +253,50 @@ SHALL run as a non-privileged user.
 
 - **WHEN** `orchestrator stop` is invoked twice
 - **THEN** the second call succeeds without error and the service stays disabled
+
+### Requirement: A cloud session can bootstrap Beads and hooks via an opt-in hook template
+
+Nogging SHALL ship an optional `SessionStart` hook template that, only when
+`CLAUDE_CODE_REMOTE` is `"true"`, installs the pinned `bd`/Dolt versions, sets
+`core.hooksPath`, and runs `bd bootstrap`. Outside a cloud session the
+template SHALL exit without effect. The template SHALL NOT be wired into a
+consumer's `.claude/settings.json` automatically by the installer — a
+project opts in deliberately.
+
+#### Scenario: The template is inert locally
+
+- **WHEN** the hook template runs with `CLAUDE_CODE_REMOTE` unset or not `"true"`
+- **THEN** it exits without installing anything or changing `core.hooksPath`
+
+#### Scenario: The template bootstraps a fresh cloud container
+
+- **WHEN** the hook template runs with `CLAUDE_CODE_REMOTE=true` in a fresh
+  cloud container
+- **THEN** the pinned `bd`/Dolt versions are installed
+- **AND** `core.hooksPath` is set
+- **AND** `bd bootstrap` has run, so `bd ready` works afterward
+
+#### Scenario: The installer does not wire the hook in automatically
+
+- **WHEN** the installer runs `init` or `update`
+- **THEN** it does not add the cloud `SessionStart` hook to
+  `.claude/settings.json` on its own
+
+### Requirement: doctor reports cloud-session environment readiness
+
+`scripts/nogg doctor` SHALL detect a cloud session via `CLAUDE_CODE_REMOTE`
+and, when running in one, report as a NOTE whether `core.hooksPath` is set
+and whether `bd` is on `PATH`. This check SHALL NOT fail `doctor` or change
+its exit code, and SHALL print nothing when not running in a cloud session.
+
+#### Scenario: A cloud session's readiness is reported
+
+- **WHEN** `doctor` runs with `CLAUDE_CODE_REMOTE=true`
+- **THEN** it prints a NOTE stating whether `core.hooksPath` is set and
+  whether `bd` is available
+- **AND** `doctor`'s exit code is unchanged regardless of what it finds
+
+#### Scenario: The check is silent locally
+
+- **WHEN** `doctor` runs with `CLAUDE_CODE_REMOTE` unset or not `"true"`
+- **THEN** it prints no cloud-session readiness NOTE
