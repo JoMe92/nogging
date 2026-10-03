@@ -300,7 +300,7 @@ session runs under. A bare name resolves under `.nogging/launch-profiles/` /
 `.nogging/launch-prompts/`; anything else is a filesystem path. With neither
 flag the behaviour is exactly as before this existed: `restricted` +
 no-autonomous-claim. Two profiles ship: `restricted` (the default) and
-`trusted` (`auto`; allows `git push`/`merge`/`switch`/`rebase`, `bd`,
+`trusted` (`bypassPermissions`; allows `git push`/`merge`/`switch`/`rebase`, `bd`,
 `openspec`, `npx`, `scripts/*`; still denies `sudo`, `systemctl`, `curl`/
 `wget`, `WebFetch`). Each has a `<level>.codex.toml` sibling for a Codex launch
 (see *The agent is selectable*). `--full-access` is shorthand for `--profile
