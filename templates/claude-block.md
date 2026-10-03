@@ -29,5 +29,8 @@ detail specific to Claude Code.
 - **Claude-only:** cloud sessions — the assigned `claude/*` branch is never a
   PR source; push the branch `nogg worktree implement`/`worktree plan`
   allocated and open the PR from that.
+- Opt-in **Multi-machine mode** (`multi_machine: true` in
+  `.nogging/config.json`) is tool-neutral, not Claude-specific — see
+  `AGENTS.md` *Multi-machine mode*.
 
 Update Nogging with `npx github:JoMe92/nogging update`.

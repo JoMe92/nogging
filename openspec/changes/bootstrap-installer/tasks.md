@@ -1,27 +1,27 @@
 # Tasks — one-command bootstrap installer
 
-- [ ] TASK-BSI-001 Create `scripts/bootstrap`: a standalone POSIX-compatible
+- [x] TASK-BSI-001 Create `scripts/bootstrap`: a standalone POSIX-compatible
       shell script. First action: check `/etc/os-release` and `uname -m`
       against the supported set (Debian/Ubuntu-family Linux, x86_64 or
       aarch64, per `docs/compatibility.md`); on a mismatch, print the exact
       supported-platform statement and exit non-zero before doing anything
       else.
 
-- [ ] TASK-BSI-002 Add Node provisioning via `nvm`: install `nvm` itself
+- [x] TASK-BSI-002 Add Node provisioning via `nvm`: install `nvm` itself
       (its own official installer, pinned to a specific `nvm` release) only
       if not already present; then `nvm install <pinned-LTS>` using the
       current compatibility-baseline LTS line, only if an already-present
       Node does not already satisfy it. Report which action was taken
       (skipped / installed / upgraded).
 
-- [ ] TASK-BSI-003 Add the three npm-distributed CLI installs:
+- [x] TASK-BSI-003 Add the three npm-distributed CLI installs:
       `npm install -g @anthropic-ai/claude-code@<pin>`,
       `@openai/codex@<pin>`, `@fission-ai/openspec@<pin>` — each checked
       against an existing install's version first (skip if satisfying,
       install/upgrade otherwise). Add `@earendil-works/pi-coding-agent@<pin>`
       behind an explicit `--with-pi` flag, not installed by default.
 
-- [ ] TASK-BSI-004 Add `bd` and `dolt` provisioning: call each project's own
+- [x] TASK-BSI-004 Add `bd` and `dolt` provisioning: call each project's own
       official install script at an exact pinned release-tag URL (not
       `latest`), only if an existing install does not already satisfy the
       pinned range. Verify both pinned-tag install script URLs resolve

@@ -120,6 +120,21 @@ environment, allowing the repository hook to accept only its execution mirror.
 If a planner removes a task whose Bead is active, audit fails closed. The Bead
 is retained and reported as orphaned; nothing is deleted or silently closed.
 
+### Multi-machine Beads sync
+
+`multi_machine` (`.nogging/config.json`, default `false`) opts a repository
+into explicit Beads sync across machines that share one Dolt remote. It is
+read with the same `scfg()`-style accessor as every other config key, so an
+install that never sets it behaves exactly as before. When `true`, a
+`trusted` or orchestrator session runs `bd dolt pull` once at session start
+and `bd dolt push` before it ends if it made any Bead write; `restricted`
+sessions are unaffected, since they already cannot reach `bd dolt`
+push/pull — see `AGENTS.md` *Multi-machine mode*. `doctor` separately prints
+a NOTE (never a FAIL) when local Dolt is ahead of its configured remote,
+read from local Dolt refs with no network call — see *Multi-machine mode*
+in `AGENTS.md` and the diverged-history recovery path in
+`docs/failure-recovery.md`.
+
 ## Session supervision
 
 Claude Code sessions that Nogging starts for Lead Agent or specialist work

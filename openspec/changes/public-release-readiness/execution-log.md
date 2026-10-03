@@ -105,3 +105,30 @@
   - Bead note:
     progress: compatibility policy/matrix, packaged installed guide, doctor baseline, 3x3 Node/Python CI matrix, focused regression test, and full scripts/test are complete; next commit, record evidence, close, integrate, and sync.
     Implemented in commit 4a441e6c060fa37a7ad752207f6d09df20c8eb58. Evidence: scripts/compatibility.test.sh and clean package manifest passed; packed install includes compatibility guide; full scripts/test passed; CI matrix declares Node 18/20/22 x Python 3.9/3.11/3.13; git diff --check passed.
+
+<!-- nogg:SPEC-7oau:2026-09-14T20:06:20Z -->
+- 2026-10-02T21:32:09+00:00 — SPEC-7oau closed for TASK-PUB-015 (Bead closed at 2026-09-14T20:06:20Z).
+  - implementation commits: e07586ce091a, bc13e5040df4, 80088fc
+  - Bead note:
+    Plan revision 80088fc: final readiness evidence must verify the SpecForge/Agentsembli/Gas Town/Beads identity and attribution statements added to TASK-PUB-005.
+    Retitled during OpenSpec reconciliation after rename-to-nogging: identity statements now reference Nogging, not SpecForge/Agentsembli.
+    Final report at docs/public-release-readiness-report.md (commit e07586c), delivered on PR #5 (https://github.com/JoMe92/nogging/pull/5), fully green (29 success, 2 skipped, 1 neutral/continue-on-error by design). Found and fixed a real CI environment gap while opening the PR: dependency-review-action requires GitHub Advanced Security's Dependency graph, unavailable on this private repo without an owner-enabled setting; changed to continue-on-error (commit bc13e50) rather than blocking every future PR, documented as an optional owner action in the report. Repository confirmed still private. develop's CI remains red pending PR #5 merge -- reported accurately in the report rather than claimed clean, since the fix (from TASK-PUB-012) lives only on this unmerged branch.
+
+<!-- nogg:SPEC-gbp2:2026-09-14T19:56:37Z -->
+- 2026-10-02T21:32:09+00:00 — SPEC-gbp2 closed for TASK-PUB-014 (Bead closed at 2026-09-14T19:56:37Z).
+  - implementation commits: 156d02da944a, e1facf60e3f0, 470adc62ab73, c3238f650da6, 34889818389
+  - Bead note:
+    Release candidate v2.0.0-rc.2 tagged and pushed on JoMe92/nogging (rc.1 was pushed, found broken by acceptance testing, deleted, superseded by rc.2). Real npx github: install verified for both v1.6.0 (preceding release) and v2.0.0-rc.2. Found and fixed a real upgrade-path bug (commit 470adc6): update refused against a legacy .specforge/ v1.x install; added migrateLegacyStateRoot() to both init and update, with test coverage in scripts/release-lifecycle.test.sh. Verified end-to-end against real tags: v1.6.0 install -> v2.0.0-rc.2 update -> migration correct, owner state preserved -> uninstall preserves state. Rollback across the v1->v2 boundary confirmed unsupported by design (breaking major version), documented not fixed. Full scripts/acceptance.sh (real bd 1.2.2 + dolt 2.3.1 backend) green. Acceptance report committed unsigned at docs/acceptance/2026-09-14-raspberrypi.md (commit 156d02d), CI run 34889818389 green. Signed-off-by intentionally left blank for the Product Owner per docs/acceptance.md step 18.
+
+<!-- nogg:SPEC-3xh9:2026-09-14T19:14:21Z -->
+- 2026-10-02T21:32:09+00:00 — SPEC-3xh9 closed for TASK-PUB-012 (Bead closed at 2026-09-14T19:14:21Z).
+  - implementation commits: c9d840eaadf2, 248e631cccff, 34884779114, 34885546542
+  - Bead note:
+    progress: least-privilege SHA-pinned workflows, Dependabot, dependency review, secret/link/package/audit gates, negative fixtures, npm audit, and full scripts/test are complete; next commit, record evidence, close, integrate, sync, then observe remote CI.
+    Resumed after the executing session hit its usage limit mid-run. The pushed commit 248e631 had failed CI (Nogging validation run 34884779114): scripts/nogg.test.sh's rec-stale-claim assertion failed on the Python 3.9 legs of the new compatibility matrix (18/20/22 x 3.9), passing on 3.11/3.13. Root cause: recover()'s stale-claim age check called datetime.fromisoformat() directly on Beads' Z-suffixed updated_at timestamps; Python added Z-suffix support to fromisoformat only in 3.11, so on 3.9/3.10 the parse silently failed (caught by except ValueError/TypeError) and every claim fell through to 'active' instead of 'stale'. Fixed in commit c9d840e with a shared parse_iso() helper (Z -> +00:00 before parsing), used by both humanize_age() and the stale-claim check; safe no-op on 3.11+. Evidence: local bash scripts/nogg.test.sh and full scripts/test green; pushed run 34885546542 completed with conclusion=success on all jobs including the previously-failing Python 3.9 legs.
+
+<!-- nogg:SPEC-n3si:2026-09-14T19:43:18Z -->
+- 2026-10-02T21:32:09+00:00 — SPEC-n3si closed for TASK-PUB-013 (Bead closed at 2026-09-14T19:43:18Z).
+  - implementation commits: ec365fe8eec3, bb63a5e800bd, 34888497598
+  - Bead note:
+    Implemented on branch test/public-release-readiness: CHANGELOG.md, scripts/release-check, scripts/release-artifacts, scripts/release-smoke-test, docs/releasing.md (commits bb63a5e, ec365fe). Full non-public dry run performed against a throwaway copy: Unreleased->rc heading, version bump, pre-tag check, commit, annotated tag, post-tag check, artifacts (tarball+sha256+CycloneDX SBOM), and an exact-spec install smoke test all verified working end-to-end, then discarded (never pushed). Caught and fixed a real accidental side effect during that dry run: because the worktree shares its .git metadata with the delivery checkout, copying it with cp -R and committing inside the copy actually committed and tagged the real branch; recovered with git tag -d + git reset --soft to the last real commit, verified no trace reached origin. CI: run 34888497598 green (script-tests job required a bd/dolt-optional assertion path, following scripts/cli.test.sh's existing convention, since that job doesn't have bd/dolt on PATH).
