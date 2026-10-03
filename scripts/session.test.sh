@@ -97,6 +97,10 @@ refute() { if grep -qF -- "$2" "$out"; then echo "FAIL - $1 (present: $2)"; cat 
 make_root() {
   local r="$1" grace="${2:-10}"
   mkdir -p "$r/.nogging/state"
+  # A bare, commit-less `git init` is enough for `git worktree list
+  # --porcelain` to succeed — needed by doctor()'s persona_mismatch_notes(),
+  # which this file's dal-doctor scenario exercises via a real `doctor` call.
+  git init -q "$r"
   # the launch profile / prompt files the bridge resolves and now reads
   cp "$repo_root/.nogging/session-launch-profile.json" "$r/.nogging/" 2>/dev/null || true
   cp "$repo_root/.nogging/session-launch-prompt.md" "$r/.nogging/" 2>/dev/null || true
@@ -1008,6 +1012,83 @@ export TMUX_STUB_DIR="$work/orc-codex-tmux"; mkdir -p "$TMUX_STUB_DIR"
   && { echo "FAIL - orc-codex: should be refused"; fail=1; } \
   || echo "ok   - orc-codex: --role orchestrator --agent codex is refused"
 unset NOGGING_ROOT
+
+# ===========================================================================
+# Scenario: a Lead launch is refused for a Bead with a recorded, unmet
+# dependency — no tmux session, no metadata record (TASK-DAL-001/004)
+# ===========================================================================
+root="$work/dal-blocked"; make_root "$root"
+export NOGGING_ROOT="$root"
+export TMUX_STUB_DIR="$work/dal-blocked-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-dal1"
+export BD_DEP_LIST_JSON='[{"id":"SPEC-blocker","status":"open"}]'
+"$nogg" session launch --role lead --bead SPEC-dal1 >"$out" 2>&1 \
+  && { echo "FAIL - dal-blocked: launch should be refused"; fail=1; } \
+  || echo "ok   - dal-blocked: lead launch refused for an unmet dependency"
+check "dal-blocked: the message names the blocking Bead" "SPEC-blocker"
+[[ -z "$(ls "$root/.nogging/state/sessions" 2>/dev/null)" ]] \
+  && echo "ok   - dal-blocked: no session record was created" \
+  || { echo "FAIL - dal-blocked: a session record exists"; fail=1; }
+[[ -z "$(ls "$TMUX_STUB_DIR" 2>/dev/null | grep '^sess-')" ]] \
+  && echo "ok   - dal-blocked: no tmux session was created" \
+  || { echo "FAIL - dal-blocked: a tmux session exists"; fail=1; }
+unset BD_DEP_LIST_JSON NOGGING_ROOT
+
+# ===========================================================================
+# Scenario: the same specialist launch is refused too, then allowed once the
+# dependency is closed (TASK-DAL-001/004)
+# ===========================================================================
+root="$work/dal-specialist"; make_root "$root"
+export NOGGING_ROOT="$root"
+export TMUX_STUB_DIR="$work/dal-specialist-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-dal2"
+export BD_DEP_LIST_JSON='[{"id":"SPEC-blocker2","status":"in_progress"}]'
+"$nogg" session launch --role specialist:backend-engineer --bead SPEC-dal2 >"$out" 2>&1 \
+  && { echo "FAIL - dal-specialist: launch should be refused"; fail=1; } \
+  || echo "ok   - dal-specialist: specialist launch refused for an unmet dependency"
+check "dal-specialist: the message names the blocking Bead" "SPEC-blocker2"
+export BD_DEP_LIST_JSON='[{"id":"SPEC-blocker2","status":"closed"}]'
+"$nogg" session launch --role specialist:backend-engineer --bead SPEC-dal2 >"$out" 2>&1 \
+  || { echo "FAIL - dal-specialist: launch should be allowed once closed"; cat "$out"; fail=1; }
+check "dal-specialist: launch allowed once the dependency is closed" "launched sf-spec-backend-engineer-spec-dal2-"
+unset BD_DEP_LIST_JSON NOGGING_ROOT
+
+# ===========================================================================
+# Scenario: a Bead with zero recorded dependencies, and --role orchestrator,
+# are both unaffected (TASK-DAL-001/004)
+# ===========================================================================
+root="$work/dal-unaffected"; make_root "$root"
+export NOGGING_ROOT="$root"
+export TMUX_STUB_DIR="$work/dal-unaffected-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-dal3"
+export BD_DEP_LIST_JSON='[]'
+"$nogg" session launch --role lead --bead SPEC-dal3 >"$out" 2>&1 \
+  || { echo "FAIL - dal-unaffected: lead launch with no deps should succeed"; cat "$out"; fail=1; }
+check "dal-unaffected: a Bead with zero dependencies launches as before" "launched sf-lead-spec-dal3-"
+export BD_DEP_LIST_JSON='[{"id":"SPEC-whatever","status":"open"}]'
+"$nogg" session launch --role orchestrator --profile orchestrator >"$out" 2>&1 \
+  || { echo "FAIL - dal-unaffected: orchestrator launch should be unaffected"; cat "$out"; fail=1; }
+check "dal-unaffected: --role orchestrator is unaffected by dependency state" "launched nogg-orchestrator-"
+unset BD_DEP_LIST_JSON NOGGING_ROOT
+
+# ===========================================================================
+# Scenario: doctor flags a running Lead session whose Bead became blocked
+# after launch, and stays silent once the dependency is closed (TASK-DAL-003/004)
+# ===========================================================================
+root="$work/dal-doctor"; make_root "$root"
+export NOGGING_ROOT="$root"
+export TMUX_STUB_DIR="$work/dal-doctor-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-dal4"
+export BD_DEP_LIST_JSON='[]'
+"$nogg" session launch --role lead --bead SPEC-dal4 >/dev/null 2>&1 \
+  || { echo "FAIL - dal-doctor: setup launch failed"; fail=1; }
+export BD_DEP_LIST_JSON='[{"id":"SPEC-blocker4","status":"open"}]'
+"$nogg" doctor >"$out" 2>&1 || true
+check "dal-doctor: a retroactively blocked running session is flagged" "now has an unmet dependency on SPEC-blocker4"
+export BD_DEP_LIST_JSON='[{"id":"SPEC-blocker4","status":"closed"}]'
+"$nogg" doctor >"$out" 2>&1 || true
+refute "dal-doctor: the NOTE is gone once the dependency is closed" "now has an unmet dependency"
+unset BD_DEP_LIST_JSON NOGGING_ROOT
 
 if [[ $fail -ne 0 ]]; then echo "session checks failed" >&2; exit 1; fi
 echo "all session checks passed"
