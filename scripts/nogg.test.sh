@@ -1530,5 +1530,44 @@ check "hta-doctor: drifted trusted.json fixture flagged" \
   "launch profile trusted.json has permissions.defaultMode 'auto', expected 'bypassPermissions'"
 unset NOGGING_ROOT BD_FIXTURE
 
+# ===========================================================================
+# TASK-SLK-004/006: bead_change() / change_beads() -- the bd-stub-backed
+# helpers shared by `session kickoff` and `session sweep`.
+# ===========================================================================
+run_py() {
+  python3 - "$nogg" <<PY
+import sys
+from importlib.machinery import SourceFileLoader
+m = SourceFileLoader("sf_nogg_slk", sys.argv[1]).load_module()
+$1
+PY
+}
+
+export BD_STUB_DIR="$work/slk-bd"; mkdir -p "$BD_STUB_DIR"
+printf '[{"id":"SPEC-bc1","labels":["openspec:change:demo-change","openspec:task:TASK-X"]}]\n' \
+  >"$BD_STUB_DIR/show-SPEC-bc1.json"
+printf '[{"id":"SPEC-bc2","labels":["openspec:task:TASK-Y"]}]\n' \
+  >"$BD_STUB_DIR/show-SPEC-bc2.json"
+got=$(run_py "print(m.bead_change('SPEC-bc1'))")
+[[ "$got" == "demo-change" ]] \
+  && echo "ok   - bead_change: resolves the openspec:change: label" \
+  || { echo "FAIL - bead_change: expected demo-change, got $got"; fail=1; }
+got=$(run_py "print(m.bead_change('SPEC-bc2'))")
+[[ "$got" == "None" ]] \
+  && echo "ok   - bead_change: a Bead with no openspec:change: label returns None" \
+  || { echo "FAIL - bead_change: expected None, got $got"; fail=1; }
+got=$(run_py "print(m.bead_change('SPEC-missing'))")
+[[ "$got" == "None" ]] \
+  && echo "ok   - bead_change: a nonexistent Bead returns None" \
+  || { echo "FAIL - bead_change: expected None for a missing Bead, got $got"; fail=1; }
+
+export BD_FIXTURE="$work/slk-change-beads.json"
+printf '[{"id":"SPEC-cb1","status":"closed"},{"id":"SPEC-cb2","status":"blocked"}]\n' >"$BD_FIXTURE"
+got=$(run_py "print(sorted(i['id'] for i in m.change_beads('demo-change')))")
+[[ "$got" == "['SPEC-cb1', 'SPEC-cb2']" ]] \
+  && echo "ok   - change_beads: returns every Bead materialized under the change label" \
+  || { echo "FAIL - change_beads: got $got"; fail=1; }
+unset BD_STUB_DIR BD_FIXTURE
+
 if [[ $fail -ne 0 ]]; then echo "nogg checks failed" >&2; exit 1; fi
 echo "all nogg checks passed"

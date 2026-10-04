@@ -1190,6 +1190,9 @@ class Adapter:
     needs_input: list = field(default_factory=list)
     limit: list = field(default_factory=list)
     idle: list = field(default_factory=list)
+    # Checked only when `idle` would otherwise be reported (Claude-only — no
+    # equivalent permission-mode status line exists for Codex).
+    manual_mode: list = field(default_factory=list)
 
 def _pats(*patterns, flags=0):
     return [re.compile(p, flags) for p in patterns]
@@ -1205,6 +1208,7 @@ CLAUDE_ADAPTER = Adapter(
     needs_input=_pats(r"Do you want to proceed", r"Allow this", r"❯ 1\. Yes"),
     limit=_pats(r"usage limit reached", r"rate limit", flags=re.I),
     idle=_pats(r"❯\s*$"),
+    manual_mode=_pats(r"⏸ manual mode on"),
 )
 CODEX_ADAPTER = Adapter(
     name="codex",
@@ -1216,7 +1220,8 @@ CODEX_ADAPTER = Adapter(
 )
 ADAPTERS = {"claude": CLAUDE_ADAPTER, "codex": CODEX_ADAPTER}
 # Classification precedence, fixed: `limit` > `needs_input` > `working` >
-# `waiting_background` > `idle`, else `unknown`.
+# `waiting_background` > `idle` (narrowed to `awaiting_manual_approval` when
+# `adapter.manual_mode` also matches), else `unknown`.
 _CLASSIFY_ORDER = (
     ("limit", "limit"), ("needs_input", "needs_input"),
     ("working", "working"), ("waiting_bg", "waiting_background"),
@@ -1227,13 +1232,19 @@ def classify(pane_text, adapter):
 
     Reads only the last ~15 lines (never full scrollback), strips lines
     matching `adapter.ignore` first, then checks states in the fixed
-    precedence order above. Returns `unknown` when nothing matches."""
+    precedence order above. An `idle` hit is narrowed to
+    `awaiting_manual_approval` when `adapter.manual_mode` also matches one of
+    the kept lines (Claude-only: `CODEX_ADAPTER.manual_mode` is empty, so
+    this never fires for Codex). Returns `unknown` when nothing matches."""
     lines = (pane_text or "").splitlines()[-15:]
     kept = [ln for ln in lines
             if not any(p.search(ln) for p in adapter.ignore)]
     for attr, state in _CLASSIFY_ORDER:
         patterns = getattr(adapter, attr)
         if patterns and any(p.search(ln) for ln in kept for p in patterns):
+            if state == "idle" and any(
+                    p.search(ln) for ln in kept for p in adapter.manual_mode):
+                return "awaiting_manual_approval"
             return state
     return "unknown"
 # --- session supervision ---------------------------------------------------
@@ -1445,6 +1456,22 @@ def unmet_dependencies(bead_id):
     if isinstance(records, dict): records = [records]
     return [str(issue_id(r)) for r in records
             if isinstance(r, dict) and r.get("status") != "closed"]
+def bead_change(bead_id):
+    """The `openspec:change:` label value on `bead_id`, or None if the Bead
+    does not exist or carries no such label. Read-only (`bd show --json`)."""
+    res = run(CFG["beads_command"], "show", bead_id, "--json", check=False)
+    if res.returncode != 0:
+        return None
+    try:
+        decoded = json.loads(res.stdout.strip() or "[]")
+    except ValueError:
+        return None
+    records = decoded.get("issues", decoded) if isinstance(decoded, dict) else decoded
+    if isinstance(records, dict): records = [records]
+    if not records:
+        return None
+    change, _task = mapping(records[0])
+    return change
 def session_name_in_use(name):
     """A name is in use if the metadata store already has a record or log for
     it, or a tmux session by that name exists on the dedicated server."""
@@ -1630,7 +1657,7 @@ def resolve_agent(agent):
     return resolved
 def session_launch(role, bead, cwd, read_only, owner,
                    profile=None, prompt=None, full_access=False, agent=None,
-                   resume=None):
+                   resume=None, kickoff=False):
     """Start a supervised agent session for a Bead.
 
     `resume`, when truthy, is the specific prior Claude conversation's session
@@ -1832,6 +1859,18 @@ def session_launch(role, bead, cwd, read_only, owner,
     print(f"  bead={bead or '-'} role={role_meta} cwd={workdir}")
     print(f"  log={log_path}")
     print(f"  attach: {tmux_bin()} -L {tmux_socket()} attach -t {name}  (or: nogg session attach {name})")
+    if (role_meta == "lead" or role_meta.startswith("specialist:")) and not (
+            profile or prompt or full_access):
+        print(f"⚠ {name} launched in restricted/manual mode — it will not act "
+              f"without a human attached to approve each step; pass "
+              f"--full-access (or an explicit --profile/--prompt) for "
+              f"unattended operation.")
+    if kickoff:
+        session_kickoff(name)
+    else:
+        print(f"  kickoff: this session will not act until you send it a first "
+              f"message — run `nogg session kickoff {name}` or attach and type "
+              f"one yourself.")
 
 def reconciled_state(rec, live):
     """The state to report: an active record whose tmux session has vanished is
@@ -2161,15 +2200,38 @@ def _submit_pane_input(name, agent):
         # Known quirk: Claude Code requires a second bare Enter to actually
         # submit a multi-line paste.
         tmux("send-keys", "-t", name, "Enter")
+def pending_input_text(name, agent):
+    """The text currently sitting unsubmitted at a session's pane prompt, or
+    '' if there is none. Captures the pane (`session_pane_text`, the same
+    helper `watch`/`classify` use) and takes its last non-empty line; for a
+    Claude session, strips a leading `❯` prompt marker plus any following
+    whitespace before treating the remainder as pending text (a bare `❯` or
+    blank line yields ''). Shared by `session nudge`, `_pane_input_pending`'s
+    Claude branch, and `session sweep`'s `has-unsent-input` check."""
+    lines = [ln for ln in session_pane_text(name).splitlines() if ln.strip()]
+    if not lines:
+        return ""
+    last = lines[-1]
+    if agent == "claude":
+        last = re.sub(r"^❯\s*", "", last)
+    return last.strip()
 def _pane_input_pending(name, agent):
     """Whether a just-sent message is still sitting unsubmitted. For codex
     this is exactly the adapter's `needs_input` (`undelivered_input`) signal
-    (design.md); claude has no such structural signal yet, so this is always
-    False for it — the second bare Enter above is the known fix, not a
-    condition `send --verify` can detect and branch on."""
-    if agent != "codex":
-        return False
-    return classify(session_pane_text(name), CODEX_ADAPTER) == "needs_input"
+    (design.md); for claude this is `pending_input_text` returning non-empty
+    — a real structural signal, not the previous hardcoded False."""
+    if agent == "codex":
+        return classify(session_pane_text(name), CODEX_ADAPTER) == "needs_input"
+    return bool(pending_input_text(name, agent))
+def _require_running(name):
+    """Return `(path, rec)` for `name`, refusing with no tmux key-sending
+    unless its reconciled state is `running`. Shared by `nudge` and
+    `kickoff`, which both must never touch a non-running session's pane."""
+    path, rec = load_session(name)
+    state = reconciled_state(rec, tmux_sessions())
+    if state != "running":
+        raise RuntimeError(f"{name} is not running (state: {state}); refusing")
+    return path, rec
 def _codex_rollout_files():
     """Every rollout file Codex has written under `<codex_home>/sessions/`.
     Each file's first line is a `session_meta` record carrying the thread's
@@ -2265,6 +2327,145 @@ def session_send(name, message, verify=False):
         if _pane_input_pending(name, agent):
             raise RuntimeError(f"{name}: message still unsubmitted after a retry")
     print(f"sent to {name}")
+def session_nudge(name, message=None):
+    """Reliably submit a session's pane regardless of what was already
+    sitting there: clear the input line, then resend. With `message`, always
+    clears first and sends that text, overriding whatever the pane showed.
+    With no `message`, reads back the pane's pending text *before* clearing
+    it and resends exactly that; if there was none, the `C-u` still runs but
+    nothing further is sent, and that is reported rather than left silent."""
+    _, rec = _require_running(name)
+    agent = rec.get("agent") or "claude"
+    pending = None if message else pending_input_text(name, agent)
+    tmux("send-keys", "-t", name, "C-u")
+    text = message or pending
+    if not text:
+        print(f"{name}: nothing to nudge (pane input was empty)")
+        return
+    tmux("send-keys", "-t", name, "-l", text)
+    _submit_pane_input(name, agent)
+    print(f"nudged {name}")
+def _compose_kickoff_message(bead_id, change):
+    return (f"Claim Bead {bead_id} and work change {change} end to end: "
+            f"claim {bead_id}, then work every Bead the {change} change "
+            f"scopes in tasks.md order.")
+def session_kickoff(name, message=None):
+    """Deliver a session's first turn. Refuses, sending nothing, unless the
+    session is `running`. With `message`, sends it verbatim via
+    `session_send`. With no `message`, composes one from the session's own
+    `bead_id` and that Bead's `openspec:change:` label — refusing (sending
+    nothing) when either is missing, which excludes `orchestrator` sessions:
+    they carry no `bead_id` and are never kicked off this way."""
+    _, rec = _require_running(name)
+    if message:
+        session_send(name, message)
+        return
+    bead_id = rec.get("bead_id")
+    if not bead_id:
+        raise RuntimeError(
+            f"kickoff: {name} carries no bead_id; pass --message to kick it "
+            f"off explicitly (an orchestrator session always needs one)")
+    change = bead_change(bead_id)
+    if not change:
+        raise RuntimeError(
+            f"kickoff: Bead {bead_id} carries no openspec:change: label; "
+            f"pass --message to kick off {name} explicitly")
+    session_send(name, _compose_kickoff_message(bead_id, change))
+# --- session observability: sweep --------------------------------------
+def change_beads(change):
+    """Every Bead materialized under `openspec:change:<change>`, across all
+    statuses (not just the open default). Empty on any `bd` or decode
+    failure — sweep is best-effort detection, never a hard dependency."""
+    res = run(CFG["beads_command"], "list", "--label", f"openspec:change:{change}",
+              "--status", BEAD_STATUSES, "--limit", "0", "--json", check=False)
+    if res.returncode != 0:
+        return []
+    try:
+        decoded = json.loads(res.stdout.strip() or "[]")
+    except ValueError:
+        return []
+    issues = decoded.get("issues", decoded) if isinstance(decoded, dict) else decoded
+    return issues if isinstance(issues, list) else []
+def _session_worktree_branch(rec):
+    """The current branch checked out in a session's own working directory,
+    or None if it cannot be determined (not a git checkout, or the command
+    fails) — the caller then simply has no PR to check."""
+    res = run("git", "-C", rec.get("working_dir") or ".", "branch", "--show-current", check=False)
+    return res.stdout.strip() or None if res.returncode == 0 else None
+def _pr_state_for_branch(branch):
+    """The `state` of a pull request headed at `branch`, or None if `gh`
+    found none or the lookup failed — e.g. a branch never pushed yet."""
+    res = run("gh", "pr", "list", "--head", branch, "--json", "state", check=False)
+    if res.returncode != 0:
+        return None
+    try:
+        rows = json.loads(res.stdout or "[]")
+    except ValueError:
+        return None
+    return rows[0].get("state") if rows else None
+def _idle_minutes(rec):
+    """Minutes since a session's worktree or log file last changed, whichever
+    is more recent. None if neither can be determined — the caller then
+    reports the figure as unknown rather than a bogus zero."""
+    newest = None
+    log_path = Path(rec.get("log_path") or "")
+    if log_path.exists():
+        newest = log_path.stat().st_mtime
+    workdir = Path(rec.get("working_dir") or "")
+    if workdir.is_dir():
+        for entry in workdir.rglob("*"):
+            if ".git" in entry.parts:
+                continue
+            try:
+                mtime = entry.stat().st_mtime
+            except OSError:
+                continue
+            if newest is None or mtime > newest:
+                newest = mtime
+    if newest is None:
+        return None
+    return max(0, int((time.time() - newest) // 60))
+def _sweep_state(rec):
+    """`change-complete` / `bead-blocked (<id>)` / `active` for one running,
+    Bead-assigned session — the classification half of a sweep line, shared
+    with `doctor`'s NOTEs (design.md Decision 4: one detection function, two
+    call sites)."""
+    change = bead_change(rec.get("bead_id"))
+    if not change:
+        return "active"
+    change_set = change_beads(change)
+    blocked = next((b for b in change_set if b.get("status") == "blocked"), None)
+    if blocked is not None:
+        return f"bead-blocked ({issue_id(blocked)})"
+    if change_set and all(b.get("status") == "closed" for b in change_set):
+        branch = _session_worktree_branch(rec)
+        pr_state = _pr_state_for_branch(branch) if branch else None
+        if pr_state is None or pr_state == "MERGED":
+            return "change-complete"
+    return "active"
+def _sweep_line(rec):
+    """One `session sweep` report line for a single running, Bead-assigned
+    session (design.md Decision 4)."""
+    name = rec.get("name")
+    agent = rec.get("agent") or "claude"
+    pending = "yes" if pending_input_text(name, agent) else "no"
+    idle_m = _idle_minutes(rec)
+    idle_s = f"{idle_m}m" if idle_m is not None else "unknown"
+    return f"{name}: {_sweep_state(rec)}  has-unsent-input={pending}  idle for {idle_s}"
+def session_sweep():
+    """Read-only per-session liveness detection (design.md Decision 4): for
+    every `running` session with a `bead_id`, report `change-complete`,
+    `bead-blocked`, or `active`, alongside `has-unsent-input` and an
+    idle-duration figure. Never stops, nudges, or otherwise mutates a
+    session or Bead."""
+    live = tmux_sessions()
+    running = [rec for _path, rec in session_records()
+               if reconciled_state(rec, live) == "running" and rec.get("bead_id")]
+    if not running:
+        print("no running sessions with an assigned Bead")
+        return
+    for rec in running:
+        print(_sweep_line(rec))
 # --- session observability: resume-when-ready -------------------------
 DEFAULT_RESUME_MESSAGE = ("the usage limit has reset, continue exactly where "
                           "you left off per your original instructions")
@@ -2845,6 +3046,25 @@ def doctor(audit=False, with_recover=False):
                      else "cloud session: core.hooksPath is not set")
         notes.append("cloud session: bd is on PATH" if tool_on_path(CFG["beads_command"])
                      else "cloud session: bd is not on PATH")
+    # Flagged running sessions (TASK-SLK-005/006/007): one NOTE per session
+    # that is awaiting_manual_approval, change-complete, or bead-blocked —
+    # the single-command version of a per-session manual tmux audit. Shares
+    # `_sweep_state`/`classify_session` with `session sweep` itself, never a
+    # shell-out; `has-unsent-input` and the idle-duration figure stay
+    # `sweep`-only detail (design.md Decision 4).
+    live_sessions = tmux_sessions()
+    for _path, rec in session_records():
+        if reconciled_state(rec, live_sessions) != "running":
+            continue
+        sess_name = rec.get("name")
+        if rec.get("bead_id"):
+            state = _sweep_state(rec)
+            if state != "active":
+                notes.append(f"session {sess_name}: {state}")
+        cstate, _pane = classify_session(rec, live_sessions)
+        if cstate == "awaiting_manual_approval":
+            notes.append(f"session {sess_name}: awaiting_manual_approval "
+                         f"(idle in manual mode; needs a human to approve each step)")
     # The interrupted-run checks: doctor always prints a one-line summary
     # (`recover` folds the full report). Read-only, like the rest of doctor.
     try:
@@ -2940,6 +3160,8 @@ def main():
     sl.add_argument("--prompt", help="named launch prompt or a path to a system-prompt file")
     sl.add_argument("--full-access", action="store_true",
                     help="shorthand for --profile trusted --prompt autonomous")
+    sl.add_argument("--kickoff", action="store_true",
+                    help="send the session its first message immediately after launch")
     ssub.add_parser("list")
     sa = ssub.add_parser("attach"); sa.add_argument("name"); sa.add_argument("--read-only", action="store_true")
     slg = ssub.add_parser("log"); slg.add_argument("name"); slg.add_argument("--follow", action="store_true")
@@ -2960,6 +3182,11 @@ def main():
     ssend = ssub.add_parser("send")
     ssend.add_argument("name"); ssend.add_argument("message")
     ssend.add_argument("--verify", action="store_true")
+    snud = ssub.add_parser("nudge")
+    snud.add_argument("name"); snud.add_argument("--message")
+    skick = ssub.add_parser("kickoff")
+    skick.add_argument("name"); skick.add_argument("--message")
+    ssub.add_parser("sweep")
     srw = ssub.add_parser("resume-when-ready")
     srw.add_argument("name"); srw.add_argument("--message")
     semit = ssub.add_parser("emit")
@@ -2999,7 +3226,8 @@ def main():
 def session_cmd(args):
     if args.session_command == "launch":
         session_launch(args.role, args.bead, args.cwd, args.read_only, args.owner,
-                       args.profile, args.prompt, args.full_access, args.agent)
+                       args.profile, args.prompt, args.full_access, args.agent,
+                       kickoff=args.kickoff)
     elif args.session_command == "list":
         session_list()
     elif args.session_command == "attach":
@@ -3018,6 +3246,12 @@ def session_cmd(args):
         session_watch(args.names, args.interval, args.stall_after, args.format, args.once)
     elif args.session_command == "send":
         session_send(args.name, args.message, args.verify)
+    elif args.session_command == "nudge":
+        session_nudge(args.name, args.message)
+    elif args.session_command == "kickoff":
+        session_kickoff(args.name, args.message)
+    elif args.session_command == "sweep":
+        session_sweep()
     elif args.session_command == "resume-when-ready":
         session_resume_when_ready(args.name, args.message)
     elif args.session_command == "emit":
