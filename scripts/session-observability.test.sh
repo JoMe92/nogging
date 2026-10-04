@@ -13,6 +13,13 @@ nogg="$here/nogg"
 fail=0
 ok() { echo "ok   - $1"; }
 bad() { echo "FAIL - $1"; fail=1; }
+out=$(mktemp)
+check() { # check <description> <expected-substring>  (greps the shared $out)
+  if grep -qF -- "$2" "$out"; then ok "$1"; else bad "$1 (missing: $2)"; cat "$out"; fi
+}
+refute() { # refute <description> <substring-that-must-be-absent>  (greps $out)
+  if grep -qF -- "$2" "$out"; then bad "$1 (present: $2)"; cat "$out"; else ok "$1"; fi
+}
 
 classify() {
   # classify <adapter> <pane-text-stdin>
@@ -81,6 +88,31 @@ got=$(printf '[Pasted Content]\n> Ask Codex to do anything\n' | classify codex)
   || bad "codex: expected needs_input, got $got"
 
 # ===========================================================================
+# TASK-SLK-005: `awaiting_manual_approval` narrows an idle Claude pane when
+# the permission-mode status line reads manual mode; it never fires for
+# Codex (no manual_mode pattern), and never overrides a non-idle state.
+# ===========================================================================
+got=$(printf 'some prior output\n⏸ manual mode on\n❯ \n' | classify claude)
+[[ "$got" == "awaiting_manual_approval" ]] \
+  && ok "claude: an idle pane showing '⏸ manual mode on' classifies awaiting_manual_approval" \
+  || bad "claude: expected awaiting_manual_approval, got $got"
+
+got=$(printf 'some prior output\n⏵⏵ auto mode on\n❯ \n' | classify claude)
+[[ "$got" == "idle" ]] \
+  && ok "claude: an idle pane showing auto mode stays plain idle" \
+  || bad "claude: expected idle for auto mode, got $got"
+
+got=$(printf '⏸ manual mode on\nesc to interrupt\n' | classify claude)
+[[ "$got" == "working" ]] \
+  && ok "claude: manual mode text never overrides a working classification" \
+  || bad "claude: expected working regardless of manual-mode text, got $got"
+
+got=$(printf '⏸ manual mode on\n> Ask Codex to do anything\n' | classify codex)
+[[ "$got" == "idle" ]] \
+  && ok "codex: has no manual_mode pattern, so 'manual mode on' text never triggers awaiting_manual_approval" \
+  || bad "codex: expected plain idle, got $got"
+
+# ===========================================================================
 # TASK-SOB-002: duration parsing (pure) + watch_poll_once transition/stall
 # semantics (pure, classify_session/tmux_sessions/load_session monkeypatched)
 # ===========================================================================
@@ -92,6 +124,42 @@ m = SourceFileLoader("sf_sob_watch", sys.argv[1]).load_module()
 $1
 PY
 }
+
+# ===========================================================================
+# TASK-SLK-002: pending_input_text() -- the shared pane-reading reader behind
+# `nudge`, `send --verify`'s Claude branch, and `sweep`'s has-unsent-input.
+# ===========================================================================
+got=$(run_py "
+m.session_pane_text = lambda name: 'some prior output\n❯ draft a reply and send it\n'
+print(repr(m.pending_input_text('s1', 'claude')))
+")
+[[ "$got" == "'draft a reply and send it'" ]] \
+  && ok "pending_input_text: strips the leading ❯ marker and returns the rest" \
+  || bad "pending_input_text: expected the stripped text, got $got"
+
+got=$(run_py "
+m.session_pane_text = lambda name: 'some prior output\n❯ \n'
+print(repr(m.pending_input_text('s1', 'claude')))
+")
+[[ "$got" == "''" ]] \
+  && ok "pending_input_text: a bare ❯ prompt is empty" \
+  || bad "pending_input_text: expected '', got $got"
+
+got=$(run_py "
+m.session_pane_text = lambda name: ''
+print(repr(m.pending_input_text('s1', 'claude')))
+")
+[[ "$got" == "''" ]] \
+  && ok "pending_input_text: an empty pane is empty" \
+  || bad "pending_input_text: expected '' for an empty pane, got $got"
+
+got=$(run_py "
+m.session_pane_text = lambda name: 'some prior output\n❯ draft a reply\n'
+print(m._pane_input_pending('s1', 'claude'))
+")
+[[ "$got" == "True" ]] \
+  && ok "_pane_input_pending: Claude branch is now a real check, not the previous hardcoded False" \
+  || bad "_pane_input_pending: expected True for pending Claude text, got $got"
 
 got=$(run_py "print(m.parse_duration('30'))")
 [[ "$got" == "30.0" ]] && ok "parse_duration: bare seconds" || bad "parse_duration('30') = $got"
@@ -154,7 +222,7 @@ rm -f "$logf"
 # ===========================================================================
 work=$(mktemp -d)
 repo_root="$(cd "$here/.." && pwd)"
-trap 'rm -rf "$work"' EXIT
+trap 'rm -rf "$work"; rm -f "$out"' EXIT
 
 mkdir -p "$work/bin"
 cat >"$work/bin/bd" <<'STUB'
@@ -162,10 +230,20 @@ cat >"$work/bin/bd" <<'STUB'
 set -euo pipefail
 if [[ "${1:-}" == "show" ]]; then
   id="${2:-}"
+  # TASK-SLK-004/006: a per-id fixture (with labels) takes priority over the
+  # plain BD_KNOWN existence check every earlier test here already relies on.
+  f="${BD_STUB_DIR:-/nonexistent}/show-$id.json"
+  if [[ -f "$f" ]]; then cat "$f"; exit 0; fi
   for k in ${BD_KNOWN:-}; do
     if [[ "$k" == "$id" ]]; then printf '[{"id":"%s","title":"stub bead"}]\n' "$id"; exit 0; fi
   done
   echo '[]'; exit 1
+fi
+if [[ "${1:-}" == "list" ]]; then
+  # TASK-SLK-006: `change_beads()` -- always dumps $BD_FIXTURE, like the
+  # equivalent stub in scripts/nogg.test.sh.
+  cat "${BD_FIXTURE:-/dev/null}" 2>/dev/null || echo '[]'
+  exit 0
 fi
 echo "stub bd: unexpected call in session-observability tests: $*" >&2
 exit 1
@@ -551,6 +629,324 @@ print(any(call[-1] == 'Escape' for call in tmux_calls))
 [[ "$got" == "True" ]] \
   && ok "resume-when-ready: dismisses a residual switch-model prompt (Escape, not a switch)" \
   || bad "resume-when-ready: switch-model dismissal run was: $got"
+
+# ===========================================================================
+# TASK-SLK-003: `session nudge` -- clears the pane (C-u) before sending
+# anything; reads back pending text before clearing when no --message is
+# given; refuses a non-running session with no tmux interaction at all.
+# ===========================================================================
+root="$work/nudge-claude"; make_obs_root "$root"
+export NOGGING_ROOT="$root"
+export TMUX_STUB_DIR="$work/nudge-claude-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-n01"
+"$nogg" session launch --role lead --bead SPEC-n01 >/dev/null 2>&1
+name="$(sess_name "$root")"
+out_n=$(mktemp)
+
+printf 'previous turn output\n❯ draft a reply and send it\n' >"$TMUX_STUB_DIR/pane-$name.txt"
+: >"$TMUX_STUB_DIR/calls.log"
+"$nogg" session nudge "$name" >"$out_n" 2>&1 \
+  || { echo "FAIL - nudge: errored"; cat "$out_n"; fail=1; }
+grep -qF "nudged $name" "$out_n" \
+  && ok "nudge: reports success" \
+  || { echo "FAIL - nudge: missing success message"; cat "$out_n"; fail=1; }
+cu_line=$(grep -nF -- "send-keys -t $name C-u" "$TMUX_STUB_DIR/calls.log" | head -1 | cut -d: -f1)
+resend_line=$(grep -nF -- "send-keys -t $name -l draft a reply and send it" "$TMUX_STUB_DIR/calls.log" | head -1 | cut -d: -f1)
+[[ -n "$cu_line" && -n "$resend_line" && "$cu_line" -lt "$resend_line" ]] \
+  && ok "nudge: clears the pane (C-u) before resending the pending text" \
+  || { echo "FAIL - nudge: C-u/resend ordering wrong"; cat "$TMUX_STUB_DIR/calls.log"; fail=1; }
+
+printf 'previous turn output\n❯ \n' >"$TMUX_STUB_DIR/pane-$name.txt"
+: >"$TMUX_STUB_DIR/calls.log"
+"$nogg" session nudge "$name" >"$out_n" 2>&1 \
+  || { echo "FAIL - nudge (empty): errored"; cat "$out_n"; fail=1; }
+grep -qF "nothing to nudge" "$out_n" \
+  && ok "nudge: an empty pane is reported as nothing to nudge" \
+  || { echo "FAIL - nudge: expected nothing-to-nudge message"; cat "$out_n"; fail=1; }
+grep -qF -- "send-keys -t $name C-u" "$TMUX_STUB_DIR/calls.log" \
+  && ok "nudge: the C-u still runs on an empty pane" \
+  || { echo "FAIL - nudge: C-u missing on empty-pane nudge"; cat "$TMUX_STUB_DIR/calls.log"; fail=1; }
+! grep -qF -- "send-keys -t $name -l" "$TMUX_STUB_DIR/calls.log" \
+  && ok "nudge: nothing further is sent when the pane was empty" \
+  || { echo "FAIL - nudge: unexpected send-keys -l on an empty pane"; cat "$TMUX_STUB_DIR/calls.log"; fail=1; }
+
+printf 'previous turn output\n❯ unrelated stale text\n' >"$TMUX_STUB_DIR/pane-$name.txt"
+: >"$TMUX_STUB_DIR/calls.log"
+"$nogg" session nudge "$name" --message "explicit override" >"$out_n" 2>&1 \
+  || { echo "FAIL - nudge --message: errored"; cat "$out_n"; fail=1; }
+grep -qF -- "send-keys -t $name -l explicit override" "$TMUX_STUB_DIR/calls.log" \
+  && ok "nudge --message: overrides stale pane content" \
+  || { echo "FAIL - nudge --message: expected message not sent"; cat "$TMUX_STUB_DIR/calls.log"; fail=1; }
+! grep -qF -- "unrelated stale text" "$TMUX_STUB_DIR/calls.log" \
+  && ok "nudge --message: the stale pane text is never sent" \
+  || { echo "FAIL - nudge --message: stale text leaked into calls.log"; fail=1; }
+
+python3 - "$root/.nogging/state/sessions/$name.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+rec = json.load(open(p))
+rec['state'] = 'stopped'
+json.dump(rec, open(p, 'w'))
+PY
+: >"$TMUX_STUB_DIR/calls.log"
+"$nogg" session nudge "$name" >"$out_n" 2>&1 \
+  && { echo "FAIL - nudge: should refuse a non-running session"; cat "$out_n"; fail=1; } \
+  || ok "nudge: refuses a non-running session"
+grep -qF "not running" "$out_n" \
+  && ok "nudge: the refusal names the non-running state" \
+  || { echo "FAIL - nudge: unexpected refusal text"; cat "$out_n"; fail=1; }
+! grep -qF "send-keys" "$TMUX_STUB_DIR/calls.log" \
+  && ok "nudge: refusing sends no tmux keys at all" \
+  || { echo "FAIL - nudge: tmux was touched despite the refusal"; cat "$TMUX_STUB_DIR/calls.log"; fail=1; }
+rm -f "$out_n"
+unset NOGGING_ROOT
+
+# ===========================================================================
+# TASK-SLK-004: `session kickoff` -- verbatim with --message; composed from
+# bead_id + openspec:change: label otherwise; refuses a non-running session
+# and a bead-less session with no --message.
+# ===========================================================================
+root="$work/kickoff"; make_obs_root "$root"
+export NOGGING_ROOT="$root"
+export TMUX_STUB_DIR="$work/kickoff-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_STUB_DIR="$work/kickoff-bd"; mkdir -p "$BD_STUB_DIR"
+export BD_KNOWN="SPEC-k01"
+printf '[{"id":"SPEC-k01","labels":["openspec:change:session-liveness-and-kickoff"]}]\n' \
+  >"$BD_STUB_DIR/show-SPEC-k01.json"
+"$nogg" session launch --role lead --bead SPEC-k01 >/dev/null 2>&1
+name="$(sess_name "$root")"
+out_k=$(mktemp)
+
+: >"$TMUX_STUB_DIR/calls.log"
+"$nogg" session kickoff "$name" --message "custom kickoff text" >"$out_k" 2>&1 \
+  || { echo "FAIL - kickoff --message: errored"; cat "$out_k"; fail=1; }
+grep -qF -- "send-keys -t $name -l custom kickoff text" "$TMUX_STUB_DIR/calls.log" \
+  && ok "kickoff --message: sent verbatim" \
+  || { echo "FAIL - kickoff --message: expected text not sent"; cat "$TMUX_STUB_DIR/calls.log"; fail=1; }
+
+: >"$TMUX_STUB_DIR/calls.log"
+"$nogg" session kickoff "$name" >"$out_k" 2>&1 \
+  || { echo "FAIL - kickoff: errored"; cat "$out_k"; fail=1; }
+grep -qF "SPEC-k01" "$TMUX_STUB_DIR/calls.log" \
+  && grep -qF "session-liveness-and-kickoff" "$TMUX_STUB_DIR/calls.log" \
+  && ok "kickoff: the composed message names the Bead and its change" \
+  || { echo "FAIL - kickoff: composed message missing Bead/change"; cat "$TMUX_STUB_DIR/calls.log"; fail=1; }
+grep -qF "tasks.md order" "$TMUX_STUB_DIR/calls.log" \
+  && ok "kickoff: the composed message directs working tasks.md in order" \
+  || { echo "FAIL - kickoff: composed message missing the tasks.md-order instruction"; fail=1; }
+
+python3 - "$root/.nogging/state/sessions/$name.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+rec = json.load(open(p))
+del rec['bead_id']
+json.dump(rec, open(p, 'w'))
+PY
+: >"$TMUX_STUB_DIR/calls.log"
+"$nogg" session kickoff "$name" >"$out_k" 2>&1 \
+  && { echo "FAIL - kickoff: should refuse a bead-less session with no --message"; cat "$out_k"; fail=1; } \
+  || ok "kickoff: refuses a bead-less session with no --message"
+! grep -qF "send-keys" "$TMUX_STUB_DIR/calls.log" \
+  && ok "kickoff: the bead-less refusal sends nothing" \
+  || { echo "FAIL - kickoff: tmux was touched despite the refusal"; cat "$TMUX_STUB_DIR/calls.log"; fail=1; }
+
+python3 - "$root/.nogging/state/sessions/$name.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+rec = json.load(open(p))
+rec['state'] = 'stopped'
+json.dump(rec, open(p, 'w'))
+PY
+: >"$TMUX_STUB_DIR/calls.log"
+"$nogg" session kickoff "$name" --message "doesn't matter" >"$out_k" 2>&1 \
+  && { echo "FAIL - kickoff: should refuse a non-running session"; cat "$out_k"; fail=1; } \
+  || ok "kickoff: refuses a non-running session even with --message"
+! grep -qF "send-keys" "$TMUX_STUB_DIR/calls.log" \
+  && ok "kickoff: the non-running refusal sends nothing" \
+  || { echo "FAIL - kickoff: tmux was touched despite the refusal"; cat "$TMUX_STUB_DIR/calls.log"; fail=1; }
+rm -f "$out_k"
+unset NOGGING_ROOT BD_STUB_DIR
+
+# ===========================================================================
+# TASK-SLK-004: `session launch --kickoff` chains kickoff immediately after a
+# successful launch; a bare launch instead names the missing step.
+# ===========================================================================
+root="$work/launch-kickoff"; make_obs_root "$root"
+export NOGGING_ROOT="$root"
+export TMUX_STUB_DIR="$work/launch-kickoff-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_STUB_DIR="$work/launch-kickoff-bd"; mkdir -p "$BD_STUB_DIR"
+export BD_KNOWN="SPEC-lk1"
+printf '[{"id":"SPEC-lk1","labels":["openspec:change:session-liveness-and-kickoff"]}]\n' \
+  >"$BD_STUB_DIR/show-SPEC-lk1.json"
+"$nogg" session launch --role lead --bead SPEC-lk1 --kickoff >"$out" 2>&1 \
+  || { echo "FAIL - launch --kickoff: errored"; cat "$out"; fail=1; }
+name="$(sess_name "$root")"
+grep -qF "SPEC-lk1" "$TMUX_STUB_DIR/calls.log" 2>/dev/null \
+  && ok "launch --kickoff: the first message is already delivered by the time launch returns" \
+  || { echo "FAIL - launch --kickoff: no kickoff message found in tmux calls"; cat "$TMUX_STUB_DIR/calls.log" 2>/dev/null; fail=1; }
+refute "launch --kickoff: the missing-kickoff-step line is not printed" \
+  "this session will not act until you send it a first message"
+unset NOGGING_ROOT BD_STUB_DIR
+
+root="$work/launch-bare"; make_obs_root "$root"
+export NOGGING_ROOT="$root"
+export TMUX_STUB_DIR="$work/launch-bare-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-lb1"
+"$nogg" session launch --role lead --bead SPEC-lb1 >"$out" 2>&1 \
+  || { echo "FAIL - launch (bare): errored"; cat "$out"; fail=1; }
+check "launch (bare): names the missing kickoff step and the exact follow-up command" \
+  "this session will not act until you send it a first message"
+unset NOGGING_ROOT
+
+# ===========================================================================
+# TASK-SLK-005: the launch-time manual/restricted-mode warning fires for a
+# bare lead/specialist launch, is suppressed by an explicit profile/prompt/
+# full-access, and never fires for --role orchestrator.
+# ===========================================================================
+root="$work/launch-warn-lead"; make_obs_root "$root"
+export NOGGING_ROOT="$root"
+export TMUX_STUB_DIR="$work/launch-warn-lead-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-lw1"
+"$nogg" session launch --role lead --bead SPEC-lw1 >"$out" 2>&1 \
+  || { echo "FAIL - launch-warn: bare lead launch errored"; cat "$out"; fail=1; }
+check "launch-warn: a bare lead launch prints the restricted/manual-mode warning" \
+  "launched in restricted/manual mode"
+unset NOGGING_ROOT
+
+root="$work/launch-warn-full"; make_obs_root "$root"
+export NOGGING_ROOT="$root"
+export TMUX_STUB_DIR="$work/launch-warn-full-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-lw2"
+"$nogg" session launch --role lead --bead SPEC-lw2 --full-access >"$out" 2>&1 \
+  || { echo "FAIL - launch-warn: --full-access launch errored"; cat "$out"; fail=1; }
+refute "launch-warn: --full-access suppresses the warning" "launched in restricted/manual mode"
+unset NOGGING_ROOT
+
+root="$work/launch-warn-orc"; make_obs_root "$root"
+export NOGGING_ROOT="$root"
+export TMUX_STUB_DIR="$work/launch-warn-orc-tmux"; mkdir -p "$TMUX_STUB_DIR"
+"$nogg" session launch --role orchestrator >"$out" 2>&1 \
+  || { echo "FAIL - launch-warn: orchestrator launch errored"; cat "$out"; fail=1; }
+refute "launch-warn: --role orchestrator never warns" "launched in restricted/manual mode"
+unset NOGGING_ROOT
+
+# ===========================================================================
+# TASK-SLK-006: `session sweep` classification (pure, bd/tmux/pending-text/
+# idle-duration monkeypatched) against fixture Beads data.
+# ===========================================================================
+got=$(run_py "
+import contextlib, io
+m.session_records = lambda: [
+    (None, {'name': 'sess-complete', 'bead_id': 'B1', 'agent': 'claude', 'state': 'running'}),
+]
+m.tmux_sessions = lambda: {'sess-complete'}
+m.bead_change = lambda bead_id: 'demo-change'
+m.change_beads = lambda change: [{'id': 'B1', 'status': 'closed'}]
+m._session_worktree_branch = lambda rec: 'feat/demo'
+m._pr_state_for_branch = lambda branch: 'MERGED'
+m.pending_input_text = lambda name, agent: ''
+m._idle_minutes = lambda rec: 5
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    m.session_sweep()
+print(buf.getvalue().strip())
+")
+[[ "$got" == "sess-complete: change-complete  has-unsent-input=no  idle for 5m" ]] \
+  && ok "sweep: every Bead closed + a merged PR reports change-complete" \
+  || bad "sweep: change-complete line was: $got"
+
+got=$(run_py "
+import contextlib, io
+m.session_records = lambda: [
+    (None, {'name': 'sess-blocked', 'bead_id': 'B2', 'agent': 'claude', 'state': 'running'}),
+]
+m.tmux_sessions = lambda: {'sess-blocked'}
+m.bead_change = lambda bead_id: 'demo-change'
+m.change_beads = lambda change: [{'id': 'B2', 'status': 'open'}, {'id': 'B3', 'status': 'blocked'}]
+m.pending_input_text = lambda name, agent: 'draft text'
+m._idle_minutes = lambda rec: None
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    m.session_sweep()
+print(buf.getvalue().strip())
+")
+[[ "$got" == "sess-blocked: bead-blocked (B3)  has-unsent-input=yes  idle for unknown" ]] \
+  && ok "sweep: a blocked sibling Bead reports bead-blocked, naming it" \
+  || bad "sweep: bead-blocked line was: $got"
+
+got=$(run_py "
+import contextlib, io
+m.session_records = lambda: [
+    (None, {'name': 'sess-active', 'bead_id': 'B4', 'agent': 'claude', 'state': 'running'}),
+    (None, {'name': 'sess-orc', 'bead_id': None, 'agent': 'claude', 'state': 'running'}),
+]
+m.tmux_sessions = lambda: {'sess-active', 'sess-orc'}
+m.bead_change = lambda bead_id: 'demo-change'
+m.change_beads = lambda change: [{'id': 'B4', 'status': 'open'}]
+m.pending_input_text = lambda name, agent: ''
+m._idle_minutes = lambda rec: 1
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    m.session_sweep()
+print(buf.getvalue().strip())
+")
+[[ "$got" == "sess-active: active  has-unsent-input=no  idle for 1m" ]] \
+  && ok "sweep: open unblocked Beads report active, and a bead-less session is skipped entirely" \
+  || bad "sweep: active line was: $got"
+
+# ===========================================================================
+# TASK-SLK-007: `doctor` surfaces exactly the three flagged states (reusing
+# the same classification, no shell-out) and nothing else for an active,
+# unflagged session.
+# ===========================================================================
+root="$work/doctor-sweep"; make_obs_root "$root"
+export NOGGING_ROOT="$root"
+got=$(run_py "
+import contextlib, io
+m.session_records = lambda: [
+    (None, {'name': 'sess-complete', 'bead_id': 'B1', 'agent': 'claude', 'state': 'running'}),
+    (None, {'name': 'sess-blocked', 'bead_id': 'B2', 'agent': 'claude', 'state': 'running'}),
+    (None, {'name': 'sess-manual', 'bead_id': 'B3', 'agent': 'claude', 'state': 'running'}),
+    (None, {'name': 'sess-active', 'bead_id': 'B4', 'agent': 'claude', 'state': 'running'}),
+]
+m.tmux_sessions = lambda: {'sess-complete', 'sess-blocked', 'sess-manual', 'sess-active'}
+def fake_change_beads(change):
+    return {
+        'demo-complete': [{'id': 'B1', 'status': 'closed'}],
+        'demo-blocked': [{'id': 'B2', 'status': 'open'}, {'id': 'B5', 'status': 'blocked'}],
+        'demo-manual': [{'id': 'B3', 'status': 'open'}],
+        'demo-active': [{'id': 'B4', 'status': 'open'}],
+    }[change]
+m.change_beads = fake_change_beads
+m.bead_change = lambda bead_id: {
+    'B1': 'demo-complete', 'B2': 'demo-blocked', 'B3': 'demo-manual', 'B4': 'demo-active',
+}[bead_id]
+m._session_worktree_branch = lambda rec: None
+m._pr_state_for_branch = lambda branch: None
+def fake_classify_session(rec, live=None):
+    if rec['name'] == 'sess-manual':
+        return ('awaiting_manual_approval', '')
+    return ('idle', '')
+m.classify_session = fake_classify_session
+m.recover_scan = lambda: ([], [])
+m.validate = lambda: ({}, [], [], [])
+m.boundary_state_line = lambda: 'openspec write boundary: LOCKED'
+m.tool_on_path = lambda name: name in ('git', 'python3', 'bd', 'dolt')
+m.archive_ready_changes = lambda tasks, issues: []
+m.persona_mismatch_notes = lambda: []
+m.multi_machine_enabled = lambda: False
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    m.doctor()
+for line in buf.getvalue().splitlines():
+    if line.startswith('NOTE  session '):
+        print(line)
+")
+want_doctor=$(printf 'NOTE  session sess-complete: change-complete\nNOTE  session sess-blocked: bead-blocked (B5)\nNOTE  session sess-manual: awaiting_manual_approval (idle in manual mode; needs a human to approve each step)')
+[[ "$got" == "$want_doctor" ]] \
+  && ok "doctor: surfaces exactly change-complete, bead-blocked, and awaiting_manual_approval, nothing for the active session" \
+  || bad "doctor: session NOTE lines were: $got"
+unset NOGGING_ROOT
 
 if [[ $fail -ne 0 ]]; then
   echo "session-observability: FAILED" >&2
