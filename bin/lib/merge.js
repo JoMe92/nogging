@@ -17,6 +17,20 @@ const GUARD_ENTRY = {
   ],
 };
 
+// A second, independent PreToolUse layer (TASK-DAL-002): the Bash-matcher
+// backstop for a blocked Lead/specialist `session launch`. Own marker, own
+// entry, inserted once, the Edit|Write guard entry above left untouched.
+const LAUNCH_GUARD_MARKER = 'pre-tool-use-lead-launch-guard';
+const LAUNCH_GUARD_ENTRY = {
+  matcher: 'Bash',
+  hooks: [
+    {
+      type: 'command',
+      command: '"$CLAUDE_PROJECT_DIR"/scripts/hooks/pre-tool-use-lead-launch-guard',
+    },
+  ],
+};
+
 function parseJsonOr(raw, fallback) {
   if (raw == null || raw.trim() === '') return fallback;
   try {
@@ -26,8 +40,9 @@ function parseJsonOr(raw, fallback) {
   }
 }
 
-// Ensure .claude/settings.json wires the PreToolUse OpenSpec guard exactly once,
-// leaving every other setting and hook untouched.
+// Ensure .claude/settings.json wires the PreToolUse OpenSpec guard and the
+// Lead-launch guard exactly once each, leaving every other setting and hook
+// untouched.
 function mergeClaudeSettings(ctx) {
   const rel = '.claude/settings.json';
   const cur = fsops.readTarget(rel, ctx);
@@ -36,17 +51,27 @@ function mergeClaudeSettings(ctx) {
   data.hooks = data.hooks && typeof data.hooks === 'object' ? data.hooks : {};
   const pre = Array.isArray(data.hooks.PreToolUse) ? data.hooks.PreToolUse : [];
 
-  const has = pre.some((entry) =>
-    Array.isArray(entry && entry.hooks) &&
-    entry.hooks.some((h) => h && typeof h.command === 'string' && h.command.includes(GUARD_MARKER)),
-  );
+  const hasMarker = (marker) =>
+    pre.some((entry) =>
+      Array.isArray(entry && entry.hooks) &&
+      entry.hooks.some((h) => h && typeof h.command === 'string' && h.command.includes(marker)),
+    );
 
-  if (has) {
+  let changed = false;
+  if (!hasMarker(GUARD_MARKER)) {
+    pre.push(JSON.parse(JSON.stringify(GUARD_ENTRY)));
+    changed = true;
+  }
+  if (!hasMarker(LAUNCH_GUARD_MARKER)) {
+    pre.push(JSON.parse(JSON.stringify(LAUNCH_GUARD_ENTRY)));
+    changed = true;
+  }
+
+  if (!changed) {
     ctx.log.add('unchanged', rel);
     return;
   }
 
-  pre.push(JSON.parse(JSON.stringify(GUARD_ENTRY)));
   data.hooks.PreToolUse = pre;
   fsops.writeFile(rel, JSON.stringify(data, null, 2) + '\n', ctx);
 }
@@ -181,6 +206,8 @@ function applyMerges(ctx) {
 module.exports = {
   GUARD_MARKER,
   GUARD_ENTRY,
+  LAUNCH_GUARD_MARKER,
+  LAUNCH_GUARD_ENTRY,
   mergeClaudeSettings,
   mergeCodex,
   mergeGitignore,
