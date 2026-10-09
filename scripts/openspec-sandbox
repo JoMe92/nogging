@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+"""Linux mount boundary for supervised execution; mechanical ticks use a broker."""
+import contextlib
+import ctypes
+import io
+import json
+import os
+from pathlib import Path
+import signal
+import socket
+import subprocess
+import sys
+import tempfile
+import threading
+from importlib.machinery import SourceFileLoader
+
+
+def enter(roots, argv):
+    subprocess.run(['mount', '--make-rprivate', '/'], check=True)
+    for root in roots:
+        path = Path(root) / 'openspec'
+        if not path.is_dir() or path.is_symlink():
+            raise RuntimeError(f'OpenSpec filesystem boundary requires a real directory: {path}')
+        subprocess.run(['mount', '--bind', str(path), str(path)], check=True)
+        subprocess.run(['mount', '-o', 'remount,bind,ro,nosuid,nodev', str(path)], check=True)
+    # The launched runtime must not be able to remount its own read-only roots.
+    libc = ctypes.CDLL(None, use_errno=True)
+    for capability in range(64):
+        result = libc.prctl(24, capability, 0, 0, 0)  # PR_CAPBSET_DROP
+        if result and ctypes.get_errno() != 22:
+            raise OSError(ctypes.get_errno(), 'cannot drop mount boundary capability')
+    class Header(ctypes.Structure):
+        _fields_ = [('version', ctypes.c_uint32), ('pid', ctypes.c_int)]
+    class Data(ctypes.Structure):
+        _fields_ = [('effective', ctypes.c_uint32), ('permitted', ctypes.c_uint32), ('inheritable', ctypes.c_uint32)]
+    header, data = Header(0x20080522, 0), (Data * 2)()
+    if libc.capset(ctypes.byref(header), ctypes.byref(data)) or libc.prctl(38, 1, 0, 0, 0):
+        raise OSError(ctypes.get_errno(), 'cannot seal mount boundary')
+    os.environ['NOGG_OPENSPEC_FENCED'] = '1'
+    os.execvp(argv[0], argv)
+
+
+def supervise(argv):
+    helper = Path(__file__).resolve().with_name('nogg')
+    original_root = os.environ.get('NOGGING_ROOT')
+    try:
+        os.environ['NOGGING_ROOT'] = os.getcwd()
+        bridge = SourceFileLoader('nogg_boundary_broker', str(helper)).load_module()
+    finally:
+        if original_root is None:
+            os.environ.pop('NOGGING_ROOT', None)
+        else:
+            os.environ['NOGGING_ROOT'] = original_root
+    roots = bridge.canonical_repository_state(os.getcwd())['checkout_roots']
+    # A private host-side broker exposes only the already-closed Bead tick.
+    # No shell command, pathname, replacement text or general writer is accepted.
+    with tempfile.TemporaryDirectory(prefix='nogg-tick-') as directory:
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        address = str(Path(directory) / 'broker')
+        server.bind(address)
+        os.chmod(address, 0o600)
+        server.listen(4)
+        stopped = threading.Event()
+        def serve():
+            while not stopped.is_set():
+                try:
+                    client, _ = server.accept()
+                except OSError:
+                    return
+                with client:
+                    client.settimeout(5)
+                    try:
+                        raw = b""
+                        while chunk := client.recv(4097 - len(raw)):
+                            raw += chunk
+                            if len(raw) > 4096:
+                                raise RuntimeError("mechanical tick request is too large")
+                        request = json.loads(raw)
+                        if (not isinstance(request, dict) or set(request) != {'bead_id'}
+                                or not isinstance(request['bead_id'], str)
+                                or not bridge.re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,127}', request['bead_id'])):
+                            raise RuntimeError('broker accepts only one closed Bead identifier')
+                        output = io.StringIO()
+                        with contextlib.redirect_stdout(output):
+                            bridge.task_done(request['bead_id'])
+                        response = {'ok': True, 'output': output.getvalue()}
+                    except Exception as exc:
+                        response = {'ok': False, 'error': str(exc)}
+                    try:
+                        client.sendall(json.dumps(response).encode())
+                    except OSError:
+                        pass  # A disconnected requester cannot kill the broker.
+        worker = threading.Thread(target=serve, daemon=True)
+        worker.start()
+        env = {**os.environ, 'NOGG_TASK_DONE_SOCKET': address}
+        child = subprocess.Popen(['unshare', '--user', '--map-root-user', '--mount', '--pid', '--fork', '--kill-child=KILL', '--mount-proc',
+                                  sys.executable, str(Path(__file__).resolve()), '--enter', json.dumps(roots), '--', *argv], env=env)
+        def forward(signum, frame):
+            if child.poll() is None:
+                child.send_signal(signum)
+        signal.signal(signal.SIGTERM, forward)
+        signal.signal(signal.SIGINT, forward)
+        code = child.wait()
+        stopped.set()
+        server.close()
+        return code if code >= 0 else 128 - code
+
+
+if __name__ == '__main__':
+    try:
+        if sys.argv[1:] == ['--contract']:
+            print(json.dumps({'version': 1, 'features': ['readonly-mounts', 'closed-task-broker']}))
+            sys.exit(0)
+        if sys.argv[1:2] == ['--enter']:
+            enter(json.loads(sys.argv[2]), sys.argv[4:])
+        else:
+            sys.exit(supervise(sys.argv[1:]))
+    except Exception as exc:
+        print(f'nogg: OpenSpec filesystem boundary unavailable: {exc}; execution refused', file=sys.stderr)
+        sys.exit(2)

@@ -22,7 +22,7 @@ with tempfile.TemporaryDirectory(prefix='nogg planning kickoff ') as td:
         pid='plan-'+suffix;workdir=root.parent/pid;name='planning-session-'+suffix
         subprocess.run(['git','-C',str(root),'worktree','add','-q','-b',f'plan/{pid}/scope',str(workdir)],check=True)
         m.write_worktree_record(m.worktree_record_path('plan',pid,'scope'),dict(kind='planning',planning_id=pid,description='scope',branch=f'plan/{pid}/scope',path=str(workdir),state='allocated'))
-        record=dict(name=name,role='planning',bead_id=None,planning_id=pid,description='scope',working_dir=str(workdir),state='running')
+        record=dict(name=name,role='planning',bead_id=None,planning_id=pid,description='scope',working_dir=str(workdir),state='running',session_pid=os.getpid(),session_pid_start=m.process_start(os.getpid()))
         m.write_session(m.sessions_dir()/(name+'.json'),record);records.append(record)
     sent=[]
     with patch.object(m,'tmux_sessions',return_value={r['name'] for r in records}),patch.object(m,'session_send',side_effect=lambda name,message:sent.append((name,message))):
@@ -54,7 +54,55 @@ with tempfile.TemporaryDirectory(prefix='nogg planning kickoff ') as td:
     assert (root/'.nogging/locks/planning.lock').exists()
     assert not (root/'.nogging/locks/openspec.readonly').exists()
     env={**os.environ,'NOGGING_ROOT':str(root),'NOGG_SESSION_NAME':winner['name'],'NOGG_SESSION_ROLE':'planning'}
+    lock_path=root/'.nogging/locks/planning.lock'
+    held=json.loads(lock_path.read_text())
+    assert held['session_name']==winner['name'] and held['pid']==os.getpid()
+    assert held['pid_start']==m.process_start(os.getpid()) and held['session_root']==str(root)
+    with patch.dict(os.environ,{'NOGG_SESSION_NAME':winner['name'],'NOGG_SESSION_ROLE':'planning','NOGG_SESSION_ROOT':str(root)}):
+        assert m.openspec_tool_decision(winner['working_dir'],'openspec/proof.md')==(True,True)
+        assert m.openspec_tool_decision(winner['working_dir'],str(Path(loser['working_dir'])/'openspec/proof.md'))==(True,False)
+        with patch.dict(os.environ,{'NOGG_SESSION_NAME':loser['name']}):
+            assert m.openspec_tool_decision(loser['working_dir'],'openspec/proof.md')==(True,False)
+        with patch.dict(os.environ,{'NOGG_SESSION_ROLE':'lead'}):
+            assert m.openspec_tool_decision(winner['working_dir'],'openspec/proof.md')==(True,False)
+    original=lock_path.read_bytes()
+    # An execution stop must be independent even of malformed planning state.
+    lock_path.write_text('{broken')
+    assert m.release_planning_lock(session_record=dict(role='lead',name='other')) is False
+    assert lock_path.read_text()=='{broken'
+    lock_path.write_bytes(original)
+    assert m.release_planning_lock(session_record=loser) is False
+    assert lock_path.read_bytes()==original
+    assert not (root/'.nogging/locks/openspec.readonly').exists()
+    foreign_env={**env,'NOGG_SESSION_NAME':loser['name']}
+    forced=subprocess.run([str(source/'scripts/nogg'),'plan-end','--force'],env=foreign_env,text=True,capture_output=True)
+    assert forced.returncode and 'another live owner cannot be released' in forced.stderr
+    assert lock_path.read_bytes()==original
+    # Terminal ownership closes the boundary immediately, retaining a live
+    # owner record until liveness is proven false. Never unlink a reused PID.
+    assert m.release_planning_lock(session_record=winner) is False
+    assert lock_path.exists() and (root/'.nogging/locks/openspec.readonly').exists()
+    assert not m.planning_lock_live(dict(held,pid_start='different-process-birth'))
+
     subprocess.run([str(source/'scripts/nogg'),'plan-end'],env=env,check=True,stdout=subprocess.DEVNULL)
+    # A failed owner closes the boundary but retains a still-live PID. A
+    # later cleanup removes only that exact record once its birth token dies.
+    lock_path.write_bytes(original)
+    (root/'.nogging/locks/openspec.readonly').unlink()
+    owner_path=m.sessions_dir()/(winner['name']+'.json')
+    m.transition(owner_path,winner,'failed',exit_reason='fixture interrupted kickoff')
+    assert lock_path.exists() and (root/'.nogging/locks/openspec.readonly').exists()
+    dead=json.loads(original);dead['pid_start']='expired-owner-birth'
+    lock_path.write_text(json.dumps(dead))
+    with patch.object(m,'beads',return_value=[]),patch.object(m,'tmux_sessions',return_value={r['name'] for r in records}):
+        sections,attention=m.recover_scan()
+    locks_text='\n'.join(line for title,lines in sections if title=='Locks' for line in lines)
+    assert winner['name'] in locks_text and winner['planning_id'] in locks_text and winner['working_dir'] in locks_text
+    assert any('interrupted planning owner '+winner['name'] in item for item in attention)
+    dead_session=dict(winner,session_pid_start='expired-owner-birth')
+    assert m.release_planning_lock(session_record=dead_session) is True
+    assert not lock_path.exists()
+
     # Specialist default kickoff has one already-claimed task and no Main
     # Worker mutation authority, even if an associated change has siblings.
     claimed=dict(id='SPEC-delegated',status='in_progress',assignee='Nogging Lead')

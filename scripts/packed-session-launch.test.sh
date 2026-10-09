@@ -6,7 +6,7 @@ if ! command -v tmux >/dev/null; then
   exit 0
 fi
 python3 - "$root" <<'PY'
-import json, os, pathlib, shutil, subprocess, sys, tarfile, tempfile, time, uuid
+import datetime, json, os, pathlib, shutil, socket, subprocess, sys, tarfile, tempfile, time, uuid
 
 source = pathlib.Path(sys.argv[1])
 with tempfile.TemporaryDirectory(prefix="nogg packed launch ") as directory:
@@ -15,7 +15,7 @@ with tempfile.TemporaryDirectory(prefix="nogg packed launch ") as directory:
         ["npm", "pack", "--ignore-scripts", "--json", "--pack-destination", str(scratch)],
         cwd=source, text=True))[0]
     inventory = {entry["path"] for entry in packed["files"]}
-    for name in ("nogg", "session-launch", "session-log-writer"):
+    for name in ("nogg", "session-launch", "session-log-writer", "openspec-sandbox"):
         assert "scripts/" + name in inventory
     with tarfile.open(scratch / packed["filename"]) as archive:
         archive.extractall(scratch, **({"filter": "data"} if hasattr(tarfile, "data_filter") else {}))
@@ -38,7 +38,7 @@ with tempfile.TemporaryDirectory(prefix="nogg packed launch ") as directory:
             writer.chmod(0o644)
             subprocess.run(install + ["update"] + flags, cwd=consumer, env=env,
                            stdout=subprocess.DEVNULL, check=True)
-        for name in ("nogg", "session-launch", "session-log-writer"):
+        for name in ("nogg", "session-launch", "session-log-writer", "openspec-sandbox"):
             installed = consumer / "scripts" / name
             assert installed.read_bytes() == (package / "scripts" / name).read_bytes()
             assert os.access(installed, os.X_OK)
@@ -54,6 +54,14 @@ if "--help" in sys.argv:
     print("stub runtime")
     sys.exit(0)
 target = pathlib.Path(os.environ["NOGG_TEST_ARGS_DIR"]) / pathlib.Path(sys.argv[0]).name
+assert os.environ.get("NOGG_OPENSPEC_FENCED") == "1", "runtime lacks filesystem fence"
+for action in [lambda: (pathlib.Path.cwd()/"openspec/forbidden.md").write_text("bad"),
+               lambda: (pathlib.Path.cwd()/"openspec/config.yaml").unlink()]:
+    try: action()
+    except PermissionError: pass
+    except OSError as exc:
+        assert exc.errno == 30, exc
+    else: raise AssertionError("runtime persisted OpenSpec edit")
 target.write_text(json.dumps(sys.argv[1:]))
 print("stub ready", flush=True)
 while True:
@@ -71,6 +79,12 @@ while True:
         env.update(NOGGING_ROOT=str(consumer), NOGG_TEST_ARGS_DIR=str(arguments),
                    PATH=str(binaries) + os.pathsep + env["PATH"])
         nogg = consumer / "scripts/nogg"
+        locks = consumer / ".nogging/locks"
+        (locks / "openspec.readonly").unlink(missing_ok=True)
+        planning_lock = locks / "planning.lock"
+        planning_lock.write_text(json.dumps({"pid": os.getpid(), "host": socket.gethostname(),
+            "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat()}))
+        owner_lock_bytes = planning_lock.read_bytes()
         try:
             for agent in ("claude", "codex", "pi"):
                 result = subprocess.run([str(nogg), "session", "launch", "--role", "lead",
@@ -99,7 +113,9 @@ while True:
                                cwd=consumer, env=env, stdout=subprocess.DEVNULL, check=True, timeout=10)
                 subprocess.run([str(nogg), "session", "cleanup", record["name"]],
                                cwd=consumer, env=env, stdout=subprocess.DEVNULL, check=True, timeout=10)
-                print(f"packed {scenario}: {agent} launch/argv/log/stop/cleanup passed")
+                assert planning_lock.read_bytes() == owner_lock_bytes
+                assert not (locks / "openspec.readonly").exists(), "execution cleanup closed another planner boundary"
+                print(f"packed {scenario}: {agent} launch/fence during planning/argv/log/stop/cleanup passed")
         finally:
             subprocess.run(["tmux", "-L", sock, "kill-server"], capture_output=True)
 PY

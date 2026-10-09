@@ -1,73 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
-# Claude Code PreToolUse hook: block Edit/Write into openspec/ unless a planning
-# session has the boundary open. The tool call arguments arrive as JSON on stdin;
-# the target path is at .tool_input.file_path (verified against Claude Code
-# 2.1.237 in SPEC-1cu). Exit 2 blocks the tool call and shows stderr to the model.
-#
-# This is Layer 1 of the OpenSpec write boundary and the fast Claude Code early
-# signal on top of the tool-agnostic filesystem/sandbox guard. It blocks when:
-#   - the boundary sentinel .nogging/locks/openspec.readonly is present
-#     (plan-end wrote it; a fresh install starts with it), OR
-#   - the planning lock .nogging/locks/planning.lock is absent, OR
-#   - that lock's created_at is older than planning_lock_ttl_seconds — the same
-#     staleness rule scripts/nogg lock() applies (closes crash-resilience
-#     weakness W6: a stale lock blocks plan-begin but used to still permit edits).
-
+# Early Claude tool signal; supervised execution also has an OS mount fence.
 root="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
-
-file_path=$(jq -r '.tool_input.file_path // empty')
-[[ -z "$file_path" ]] && exit 0
-
-case "$file_path" in
-  /*) abs="$file_path" ;;
-  *)  abs="$root/$file_path" ;;
-esac
-
-openspec_dir="$root/openspec"
-
-case "$abs" in
-  "$openspec_dir" | "$openspec_dir"/*) ;;
-  *) exit 0 ;;
-esac
-
 helper="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/nogg"
-state=$(python3 "$helper" repo-state --cwd "$root" 2>/dev/null) || {
-  echo "Nogging: cannot resolve canonical repository state; OpenSpec needs an active planning session." >&2
-  exit 2
-}
-locks=$(jq -er '.locks_dir' <<<"$state") || exit 2
-config=$(jq -er '.config_path' <<<"$state") || exit 2
-sentinel="$locks/openspec.readonly"
-planning_lock="$locks/planning.lock"
-
-reason=""
-if [[ -e "$sentinel" ]]; then
-  reason="The boundary sentinel .nogging/locks/openspec.readonly is present (plan-end closed it)."
-elif [[ ! -e "$planning_lock" ]]; then
-  reason="The planning lock .nogging/locks/planning.lock is absent."
-else
-  ttl=$(jq -r '.planning_lock_ttl_seconds // 7200' "$config" 2>/dev/null || echo 7200)
-  [[ "$ttl" =~ ^[0-9]+$ ]] || ttl=7200
-  created=$(jq -r '.created_at // empty' "$planning_lock" 2>/dev/null || echo "")
-  created_epoch=$(date -u -d "$created" +%s 2>/dev/null || echo "")
-  now_epoch=$(date -u +%s)
-  if [[ -z "$created_epoch" ]]; then
-    reason="The planning lock .nogging/locks/planning.lock has no readable created_at."
-  elif (( now_epoch - created_epoch >= ttl )); then
-    reason="The planning lock .nogging/locks/planning.lock is stale (created_at older than ${ttl}s) — run plan-end --force."
-  fi
-fi
-
-if [[ -n "$reason" ]]; then
-  {
-    echo "Nogging: openspec/ is writable only during an active planning session."
-    echo "$reason"
-    echo "This Edit/Write is blocked. Execution agents record changes in Beads and code;"
-    echo "agreed intent changes go through a planning session (plan-begin … plan-end)."
-  } >&2
-  exit 2
-fi
-
-exit 0
+python3 -c '
+from importlib.machinery import SourceFileLoader
+import json, sys
+try:
+    payload=json.load(sys.stdin)
+    target=payload.get("tool_input",{}).get("file_path")
+    if not target: sys.exit(0)
+    bridge=SourceFileLoader("nogg_tool_guard",sys.argv[1]).load_module()
+    protected,allowed=bridge.openspec_tool_decision(sys.argv[2],target)
+    if not protected or allowed: sys.exit(0)
+except Exception:
+    pass
+print("Nogging: OpenSpec write blocked by a boundary sentinel or a missing, stale, or foreign planning session lock; acquire your own active planning session lock before writing.",file=sys.stderr)
+sys.exit(2)
+' "$helper" "$root"

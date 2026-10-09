@@ -282,7 +282,7 @@ export PATH="$work/bin:$PATH"
 make_obs_root() {
   local r="$1"
   mkdir -p "$r/.nogging/state" "$r/scripts"
-  cp "$repo_root/scripts/session-launch" "$repo_root/scripts/session-log-writer" "$r/scripts/"
+  cp "$repo_root/scripts/session-launch" "$repo_root/scripts/session-log-writer" "$repo_root/scripts/openspec-sandbox" "$r/scripts/"
   cp "$repo_root/.nogging/config.json" "$r/.nogging/"
   cp -r "$repo_root/.nogging/launch-profiles" "$r/.nogging/" 2>/dev/null || true
   cp -r "$repo_root/.nogging/launch-prompts" "$r/.nogging/" 2>/dev/null || true

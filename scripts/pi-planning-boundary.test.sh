@@ -7,9 +7,9 @@ if ! command -v node >/dev/null || ! node -e 'const [a,b]=process.versions.node.
 fi
 node --input-type=module - "$root" <<'NODE'
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync, renameSync, symlinkSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, chmodSync, renameSync, symlinkSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { tmpdir } from "node:os";
+import { tmpdir, hostname } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -89,6 +89,10 @@ try {
   for (const path of ["../../openspec/a.md", join(linked, "openspec/a.md"), "../../spec-link/a.md", join(main, "openspec/a.md")]) {
     assert.equal(mod.isUnderOpenspec(path, nested), true, path);
   }
+  const third = join(scratch, "third checkout");
+  execFileSync("git", ["-C", main, "worktree", "add", "-q", "--detach", third]);
+  assert.equal(mod.isUnderOpenspec(join(third, "openspec/new.md"), nested), true);
+  assert.equal(mod.isUnderOpenspec(join(third, "openspec/new.md"), main), true);
   assert.equal(mod.isUnderOpenspec("../file.ts", nested), false);
   assert.equal(mod.isUnderOpenspec("../../openspec-other/a.md", nested), false);
   writeFileSync(config, "{}");
@@ -106,6 +110,40 @@ try {
   assert.equal(await handler({ toolName: "edit", input: { path: "src/file.ts" } }, ctx), undefined);
   process.env.NOGG_SESSION_ROLE = "planning";
   assert.equal(await handler({ toolName: "write", input: { path: "openspec/project.md" } }, ctx), undefined);
+  const sessions = join(main, ".nogging/state/sessions");
+  mkdirSync(sessions, { recursive: true });
+  const sessionName = "owned-planner", sessionPath = join(sessions, sessionName + ".json");
+  const stat = readFileSync(`/proc/${process.pid}/stat`, "utf8");
+  const birth = stat.slice(stat.lastIndexOf(")") + 2).trim().split(/\s+/)[19];
+  const owned = { ...fresh(), host: hostname(), session_name: sessionName,
+    session_root: main, pid_start: birth, working_dir: linked };
+  const session = { name: sessionName, role: "planning", host: hostname(), state: "running",
+    working_dir: linked, session_pid: process.pid, session_pid_start: birth };
+  const previousName = process.env.NOGG_SESSION_NAME, previousRoot = process.env.NOGG_SESSION_ROOT;
+  try {
+    process.env.NOGG_SESSION_NAME = sessionName;
+    process.env.NOGG_SESSION_ROOT = main;
+    writeFileSync(sessionPath, JSON.stringify(session));
+    put(owned);
+    assert.equal(openspecBoundaryOpen(linked), true);
+    assert.equal(openspecBoundaryOpen(main), false);
+    assert.equal(await handler({ toolName: "write", input: { path: "openspec/own.md" } }, ctx), undefined);
+    assert.equal((await handler({ toolName: "write", input: { path: join(third, "openspec/foreign.md") } }, ctx)).block, true);
+    process.env.NOGG_SESSION_NAME = "other-planner";
+    assert.equal(openspecBoundaryOpen(linked), false);
+    process.env.NOGG_SESSION_NAME = sessionName;
+    for (const invalid of [{ ...session, state: "failed" }, { ...session, session_pid_start: "reused" },
+                           { ...session, role: "lead" }, { ...session, host: "foreign-host" }]) {
+      writeFileSync(sessionPath, JSON.stringify(invalid));
+      assert.equal(openspecBoundaryOpen(linked), false);
+    }
+  } finally {
+    if (previousName === undefined) delete process.env.NOGG_SESSION_NAME;
+    else process.env.NOGG_SESSION_NAME = previousName;
+    if (previousRoot === undefined) delete process.env.NOGG_SESSION_ROOT;
+    else process.env.NOGG_SESSION_ROOT = previousRoot;
+    put(fresh());
+  }
   assert.equal((await handler({ toolName: "bash", input: { command: "sudo true" } }, ctx)).block, true);
   assert.equal(await handler({ toolName: "bash", input: { command: "sed -n '1,5p' openspec/project.md" } }, ctx), undefined);
   console.log("Pi canonical planning authority: missing/stale/malformed/unreadable state, sentinels, roles and tool calls passed");
