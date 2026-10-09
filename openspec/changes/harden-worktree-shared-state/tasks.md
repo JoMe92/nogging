@@ -8,7 +8,7 @@
 
 - [x] TASK-WSS-004 Update doctor, failure-recovery and Pi guidance with canonical state and fail-closed behavior; verify TTL override, path normalization and guard activation from a fresh supervised linked worktree with no standing trust mutation.
 
-- [ ] TASK-WSS-005 Run scripts/test and a scratch linked-worktree acknowledgement/guard integration check; record #48/#55 evidence including negative execution-write cases while a separate planning lock is open.
+- [x] TASK-WSS-005 Run scripts/test and a scratch linked-worktree acknowledgement/guard integration check; record #48/#55 evidence including negative execution-write cases while a separate planning lock is open.
 
 ## Execution contract
 
