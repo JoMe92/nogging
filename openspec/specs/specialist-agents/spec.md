@@ -1,7 +1,8 @@
 # specialist-agents Specification
 
 ## Purpose
-TBD - created by archiving change specialist-agents-and-skills. Update Purpose after archive.
+
+Defines specialist delegation roles and their boundaries for working on one already-claimed task under a Main Worker.
 
 ## Requirements
 

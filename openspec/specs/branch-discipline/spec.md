@@ -1,7 +1,8 @@
 # branch-discipline Specification
 
 ## Purpose
-TBD - created by archiving change enforce-conventional-branching. Update Purpose after archive.
+
+Defines traceable branch names and commit evidence that connect implementation and planning changes to their approved intent.
 
 ## Requirements
 

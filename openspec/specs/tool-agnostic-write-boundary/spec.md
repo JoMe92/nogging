@@ -1,7 +1,8 @@
 # tool-agnostic-write-boundary Specification
 
 ## Purpose
-TBD - created by archiving change tool-agnostic-write-boundary. Update Purpose after archive.
+
+Defines planning-only OpenSpec write authority and its enforcement and diagnosis across supported agent runtimes.
 
 ## Requirements
 

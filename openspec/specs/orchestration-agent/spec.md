@@ -1,7 +1,8 @@
 # orchestration-agent Specification
 
 ## Purpose
-TBD - created by archiving change orchestration-agent. Update Purpose after archive.
+
+Defines the always-on orchestration persona, its supervision lifecycle and delegation boundaries within the Nogging operating model.
 
 ## Requirements
 

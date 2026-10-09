@@ -1,7 +1,8 @@
 # claude-sessions Specification
 
 ## Purpose
-TBD - created by archiving change remote-observable-claude-sessions. Update Purpose after archive.
+
+Defines supervised agent sessions, inspectable lifecycle records and deliberate operator control over launch, logs and cleanup.
 
 ## Requirements
 

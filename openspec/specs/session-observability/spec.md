@@ -1,7 +1,8 @@
 # session-observability Specification
 
 ## Purpose
-TBD - created by archiving change session-observability. Update Purpose after archive.
+
+Defines observable agent activity, operator input delivery and usage-limit recovery for supervised Nogging sessions.
 
 ## Requirements
 

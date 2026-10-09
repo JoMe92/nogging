@@ -1,7 +1,8 @@
 # write-boundary Specification
 
 ## Purpose
-TBD - created by archiving change harden-openspec-write-boundary. Update Purpose after archive.
+
+Defines ownership of product intent and the guard layers that prevent execution agents from changing approved OpenSpec artifacts.
 
 ## Requirements
 

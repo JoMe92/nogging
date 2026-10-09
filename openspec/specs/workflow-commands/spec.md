@@ -1,7 +1,8 @@
 # workflow-commands Specification
 
 ## Purpose
-TBD - created by archiving change planning-and-discovery-commands. Update Purpose after archive.
+
+Defines canonical operator planning, discovery review and synchronization commands over Nogging workflow primitives.
 
 ## Requirements
 

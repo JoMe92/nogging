@@ -1,7 +1,8 @@
 # codex-onboarding Specification
 
 ## Purpose
-TBD - created by archiving change codex-onboarding. Update Purpose after archive.
+
+Defines the installed Codex workflow payload, execution-policy boundaries and supported operator setup for Nogging repositories.
 
 ## Requirements
 

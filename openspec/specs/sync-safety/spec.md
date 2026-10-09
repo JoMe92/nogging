@@ -1,7 +1,8 @@
 # sync-safety Specification
 
 ## Purpose
-TBD - created by archiving change sync-timer-branch-safety. Update Purpose after archive.
+
+Defines when mechanical execution reconciliation may write and commit without interfering with planning or Git operations.
 
 ## Requirements
 
