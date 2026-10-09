@@ -1,6 +1,6 @@
 ## 1. Implementation and validation
 
-- [ ] TASK-BMF-001 Define and implement mapped/follow-up/unmapped classification with typed scoped diagnostics; verify valid pairs, change-only malformed labels, explicit follow-ups, inherited duplicate labels and illegal follow-up-plus-task combinations.
+- [x] TASK-BMF-001 Define and implement mapped/follow-up/unmapped classification with typed scoped diagnostics; verify valid pairs, change-only malformed labels, explicit follow-ups, inherited duplicate labels and illegal follow-up-plus-task combinations.
 
 - [ ] TASK-BMF-002 Scope materialize target validation and sync reconciliation plans by affected change while keeping audit strict; verify malformed change A does not prevent materialize/mirror B and global ambiguity still refuses all writes.
 
