@@ -138,7 +138,8 @@ check(
 );
 
 execFileSync("git", ["-C", fixture, "init", "-q"]);
-check("openspecBoundaryOpen: resolves a Git checkout", openspecBoundaryOpen(fixture) === true);
+check("openspecBoundaryOpen: a checkout alone grants no authorization", openspecBoundaryOpen(fixture) === false);
+check("openspecBoundaryOpen: planning role without a lock denies", openspecBoundaryOpen(fixture, "planning") === false);
 
 mkdirSync(path.join(fixture, ".nogging", "locks"), { recursive: true });
 writeFileSync(path.join(fixture, ".nogging", "locks", "openspec.readonly"), "");
