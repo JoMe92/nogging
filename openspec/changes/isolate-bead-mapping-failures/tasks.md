@@ -8,7 +8,7 @@
 
 - [x] TASK-BMF-004 Persist partial-pass health, complete-success timestamp and per-change failures with a documented degraded exit; verify repeated partial passes are idempotent, repaired mappings clear scoped diagnostics, and doctor names IDs, reasons and age.
 
-- [ ] TASK-BMF-005 Document sanctioned follow-up creation and manual repair without dropping traceability; run scripts/test and a two-change real/stub tracker integration fixture covering malformed, repaired and independently completed work.
+- [x] TASK-BMF-005 Document sanctioned follow-up creation and manual repair without dropping traceability; run scripts/test and a two-change real/stub tracker integration fixture covering malformed, repaired and independently completed work.
 
 ## Execution contract
 
