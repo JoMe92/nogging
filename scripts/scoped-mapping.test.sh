@@ -84,6 +84,9 @@ else:sys.exit(2)
     assert nogg('sync','--now').returncode==0
     assert '[x] TASK-A-001' in files['alpha'].read_text()
     assert strict_problems()==[], 'strict mapping audit still reports repaired scope'
+    assert 'nogg:SPEC-bad:' not in (files['alpha'].parent/'execution-log.md').read_text()
+    assert len(json.loads(tracker.read_text()))==before+1, 'followup invented a mapped Bead'
+    assert files['alpha'].read_text().count('TASK-')==1, 'followup invented a checkbox'
     # Conflicting tracker identities and unreadable tracker responses prevent
     # every reconciliation write, even to an otherwise valid change.
     for corrupted in [issues+[bead('SPEC-b','alpha','TASK-A-001')], {'issues':'unreadable'}]:
