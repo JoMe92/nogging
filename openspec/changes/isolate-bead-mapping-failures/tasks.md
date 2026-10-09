@@ -6,7 +6,7 @@
 
 - [x] TASK-BMF-003 Exclude non-task follow-ups from checkbox mirroring and account for explicit blocking dependency edges in completion/archive readiness; verify no fabricated task, no duplicate Bead and no premature complete classification.
 
-- [ ] TASK-BMF-004 Persist partial-pass health, complete-success timestamp and per-change failures with a documented degraded exit; verify repeated partial passes are idempotent, repaired mappings clear scoped diagnostics, and doctor names IDs, reasons and age.
+- [x] TASK-BMF-004 Persist partial-pass health, complete-success timestamp and per-change failures with a documented degraded exit; verify repeated partial passes are idempotent, repaired mappings clear scoped diagnostics, and doctor names IDs, reasons and age.
 
 - [ ] TASK-BMF-005 Document sanctioned follow-up creation and manual repair without dropping traceability; run scripts/test and a two-change real/stub tracker integration fixture covering malformed, repaired and independently completed work.
 

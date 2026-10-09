@@ -53,6 +53,22 @@ next start — fresh, resumed, or after a tool switch — every agent runs
 
 ## A failed sync
 
+Sync exit status distinguishes a complete/intentional no-op pass (`0`), a
+repository-wide failure (`1`), and a degraded partial pass (`3`). A skipped
+pass does not update the last-complete timestamp; inspect `last-skip.json`.
+
+A partial pass quarantines every identifiable affected change and reconciles
+independent valid changes. It writes `.nogging/state/sync-mapping-health.json`
+with the last partial timestamp, processed/skipped changes, and current
+per-change Bead IDs, reasons, first-seen and last-seen times. `doctor` names
+both last complete and last partial passes and the age of each active scope.
+The separate `last-success.json` changes only after a complete pass. Partial
+passes do not schedule a repository-wide retry or repeat completed mirror
+writes: rerunning is idempotent. After manual repair, rerun sync; only resolved
+scopes clear, while the last partial pass remains as historical evidence.
+Preserve a malformed health file and repair it before retrying: sync refuses
+to overwrite unreadable durable health or mirror new evidence through it.
+
 A failed sync writes `.nogging/state/sync-failure.json` and appends the same
 data to `.nogging/state/sync-failures.jsonl` (a retained history). `doctor`
 prints the active record: its `classification`, the `attempts` / `max_attempts`
@@ -64,8 +80,10 @@ count, and `next_retry_after`.
   `.nogging/config.json`). Usually no action is needed; if it keeps failing,
   read the `error` field and clear the blockage (for example a genuinely stale
   `.nogging/locks/sync.lock`).
-- **`permanent`** — a failed invariant audit, a mapping conflict, or a missing
-  task. Not retried automatically. Run `./scripts/nogg audit`, resolve the
+- **`permanent`** — repository-wide identity ambiguity, duplicate global task
+  definitions, or unreadable durable mapping health. Identifiable mapping
+  conflicts and missing tasks use the scoped degraded result above. Not retried
+  automatically. Run `./scripts/nogg audit`, resolve the
   disagreement in Beads or `openspec/` (a planning session for the latter),
   then rerun `./scripts/nogg sync`.
 

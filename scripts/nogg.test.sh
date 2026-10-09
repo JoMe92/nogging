@@ -536,7 +536,7 @@ export BD_FIXTURE="$work/fail-perm-beads.json"
 cat >"$BD_FIXTURE" <<'JSON'
 [
   {"id": "SPEC-x01", "status": "open",
-   "labels": ["openspec:change:demo", "openspec:task:TASK-DEMO-404"]}
+   "labels": ["openspec:task:TASK-DEMO-404"]}
 ]
 JSON
 rec="$root/.nogging/state/sync-failure.json"
