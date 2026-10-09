@@ -995,7 +995,7 @@ export TMUX_STUB_DIR="$work/orc-bead-tmux"; mkdir -p "$TMUX_STUB_DIR"
 "$nogg" session launch --role lead >"$out" 2>&1 \
   && { echo "FAIL - orc-bead: lead without --bead should fail"; fail=1; } \
   || echo "ok   - orc-bead: lead without --bead is refused"
-check "orc-bead: the message names the orchestrator exception" "except 'orchestrator'"
+check "orc-bead: the message names the Bead-optional roles" "optional for planning and orchestrator"
 unset NOGGING_ROOT
 
 # ===========================================================================

@@ -1,6 +1,6 @@
 ## 1. Implementation and validation
 
-- [ ] TASK-SSP-001 Add canonical planning role, planning-id/description validation and optional Bead with honest session metadata; verify Claude/Codex/Pi parsing, no placeholder Bead and rejection of execution role without a real Bead.
+- [x] TASK-SSP-001 Add canonical planning role, planning-id/description validation and optional Bead with honest session metadata; verify Claude/Codex/Pi parsing, no placeholder Bead and rejection of execution role without a real Bead.
 
 - [ ] TASK-SSP-002 Implement dedicated planning-worktree launch and role-specific prompt/kickoff with no claim or lock on bare launch; verify first kickoff acquires canonical lock itself and a second concurrent planner refuses without writing OpenSpec.
 
