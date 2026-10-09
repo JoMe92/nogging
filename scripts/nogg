@@ -2057,6 +2057,7 @@ def session_launch(role, bead, cwd, read_only, owner,
         # command line (design.md Decision 4) — can know its own session name.
         tmux("new-session", "-d", "-s", name, "-c", workdir,
              "-e", f"NOGG_SESSION_NAME={name}",
+             "-e", f"NOGG_SESSION_ROLE={role_meta}",
              "-e", f"NOGG_STARTUP_LOG={log_path}", "--", *inner)
         writer = str((ROOT / "scripts/session-log-writer").resolve())
         max_bytes = int(scfg("session_log_max_bytes", 1048576))

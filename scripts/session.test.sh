@@ -153,6 +153,9 @@ name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.setting
 grep -qF "new-session " "$TMUX_STUB_DIR/calls.log" \
   && echo "ok   - launch: tmux new-session reached with metadata+log already on disk" \
   || { echo "FAIL - launch: new-session not called"; cat "$TMUX_STUB_DIR/calls.log"; fail=1; }
+grep -qF 'NOGG_SESSION_ROLE=lead' "$TMUX_STUB_DIR/calls.log" \
+  && echo 'ok   - launch: explicit execution role reaches the runtime environment' \
+  || { echo 'FAIL - launch: role context missing'; fail=1; }
 grep -qF "pipe-pane " "$TMUX_STUB_DIR/calls.log" \
   && echo "ok   - launch: pipe-pane log stream started" \
   || { echo "FAIL - launch: pipe-pane not called"; fail=1; }

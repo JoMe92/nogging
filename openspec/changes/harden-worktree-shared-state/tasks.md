@@ -4,7 +4,7 @@
 
 - [x] TASK-WSS-002 Migrate and atomically merge legacy acknowledgement ledgers with concurrent-addition protection and recovery backup; verify acknowledgement from two worktrees, interrupted writes and clean worktree retirement preserve every ID and user-readable review behavior.
 
-- [ ] TASK-WSS-003 Fix Pi OpenSpec authorization to require canonical fresh planning lock, absent sentinel and planning role; verify no lock, stale/malformed lock, unreadable state, non-Git cwd, closed main sentinel and execution role all deny, while authorized planning permits writes.
+- [x] TASK-WSS-003 Fix Pi OpenSpec authorization to require canonical fresh planning lock, absent sentinel and planning role; verify no lock, stale/malformed lock, unreadable state, non-Git cwd, closed main sentinel and execution role all deny, while authorized planning permits writes.
 
 - [ ] TASK-WSS-004 Update doctor, failure-recovery and Pi guidance with canonical state and fail-closed behavior; verify TTL override, path normalization and guard activation from a fresh supervised linked worktree with no standing trust mutation.
 

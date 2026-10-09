@@ -15,7 +15,7 @@
  * an actual safety gap. None of these patterns attempt full shell parsing.
  */
 import { dirname, resolve, sep } from "node:path";
-import { existsSync } from "node:fs";
+import { lstatSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -73,17 +73,39 @@ export function isUnderOpenspec(inputPath: string, cwd: string): boolean {
 	return resolved === openspecRoot || (resolved + sep).startsWith(openspecRoot + sep);
 }
 
-export function openspecBoundaryOpen(cwd: string): boolean {
+export function openspecBoundaryOpen(cwd: string, role = process.env.NOGG_SESSION_ROLE ?? "execution"): boolean {
 	// Reuse the CLI's canonical Git/worktree resolver. An absent local locks
 	// directory must never hide a closed boundary in the main checkout.
+	if (role !== "planning") return false;
 	try {
 		const helper = resolve(dirname(fileURLToPath(import.meta.url)), "../../scripts/nogg");
 		const env = { ...process.env };
 		delete env.NOGGING_ROOT;
 		const state = JSON.parse(execFileSync("python3", [helper, "repo-state", "--cwd", cwd],
 			{ encoding: "utf8", env, stdio: ["ignore", "pipe", "pipe"], timeout: 5000 }));
-		if (typeof state.locks_dir !== "string") return false;
-		return !existsSync(resolve(state.locks_dir, "openspec.readonly"));
+		if (typeof state.locks_dir !== "string" || typeof state.config_path !== "string") return false;
+		for (const sentinel of new Set([resolve(state.locks_dir, "openspec.readonly"),
+			resolve(cwd, ".nogging/locks/openspec.readonly")])) {
+			try {
+				lstatSync(sentinel);
+				return false;
+			} catch (error) {
+				if (!error || typeof error !== "object" || !("code" in error) || error.code !== "ENOENT") return false;
+			}
+		}
+		const config = JSON.parse(readFileSync(state.config_path, "utf8"));
+		if (!config || typeof config !== "object" || Array.isArray(config)) return false;
+		const ttl = config.planning_lock_ttl_seconds === undefined ? 7200 : config.planning_lock_ttl_seconds;
+		if (typeof ttl !== "number" || !Number.isFinite(ttl) || ttl <= 0) return false;
+		const lock = JSON.parse(readFileSync(resolve(state.locks_dir, "planning.lock"), "utf8"));
+		if (!lock || typeof lock !== "object" || Array.isArray(lock)
+			|| !Number.isInteger(lock.pid) || lock.pid <= 0
+			|| typeof lock.host !== "string" || !lock.host.trim()
+			|| typeof lock.created_at !== "string"
+			|| !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(lock.created_at)) return false;
+		const created = Date.parse(lock.created_at);
+		const age = Date.now() - created;
+		return Number.isFinite(created) && age >= 0 && age < ttl * 1000;
 	} catch {
 		return false;
 	}
