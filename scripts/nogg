@@ -1655,6 +1655,40 @@ def resolve_agent(agent):
         raise RuntimeError(
             f"session_agent {resolved!r} is not a known agent (claude, codex, pi)")
     return resolved
+def helper_contract(path):
+    """Negotiate only a read-only helper interface, never start an agent."""
+    path = Path(path)
+    remedy = "run Nogging update from the same pinned distribution"
+    if not path.is_file() or not os.access(path, os.X_OK):
+        raise RuntimeError(f"session helper {path} is missing or not executable; {remedy}")
+    try:
+        result = subprocess.run([str(path), "--contract"], cwd=ROOT,
+                                text=True, capture_output=True, timeout=5)
+        contract = json.loads(result.stdout)
+        if result.returncode or not isinstance(contract, dict) or contract.get("version") != 1:
+            raise ValueError("unsupported contract version or failed handshake")
+        return contract
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(f"session helper {path} has an incompatible contract; {remedy}") from exc
+
+def preflight_session_helpers(argv, agent):
+    contract = helper_contract(argv[0])
+    if not isinstance(contract.get("agents"), list) or agent not in contract["agents"]:
+        raise RuntimeError(f"session-launch contract does not support agent {agent}; run Nogging update")
+    options = contract.get("options")
+    if not isinstance(options, dict):
+        raise RuntimeError("session-launch contract has no option schema; run Nogging update")
+    index = 1
+    while index < len(argv):
+        flag = argv[index]
+        arity = options.get(flag)
+        if type(arity) is not int or arity not in (0, 1) or index + arity >= len(argv):
+            raise RuntimeError(f"session-launch contract cannot accept {flag}; run Nogging update")
+        index += arity + 1
+    writer = helper_contract(ROOT / "scripts/session-log-writer")
+    if writer.get("positional") != 3:
+        raise RuntimeError("session-log-writer contract must accept three arguments; run Nogging update")
+
 def session_launch(role, bead, cwd, read_only, owner,
                    profile=None, prompt=None, full_access=False, agent=None,
                    resume=None, kickoff=False):
@@ -1720,35 +1754,13 @@ def session_launch(role, bead, cwd, read_only, owner,
         if blocking:
             raise RuntimeError(
                 f"Bead {bead} has an unmet dependency on {', '.join(blocking)}; launch refused")
-    live = tmux_sessions()
-    for _, rec in session_records():
-        if is_orchestrator:
-            if (rec.get("role") == "orchestrator"
-                    and rec.get("state") in SESSION_ACTIVE_STATES and rec.get("name") in live):
-                raise RuntimeError(
-                    f"a live orchestrator session already exists: {rec['name']} "
-                    f"(use `orchestrator run` to adopt it)")
-        elif (rec.get("bead_id") == bead and rec.get("role") == role_meta
-                and rec.get("state") in SESSION_ACTIVE_STATES and rec.get("name") in live):
-            raise RuntimeError(
-                f"a live {role_meta} session already covers {bead}: {rec['name']}")
     # The orchestrator is a singleton: a fixed, nonce-free `nogg-orchestrator-<slug>`
     # name (a stale terminal record of the same name is reused in place). Every
     # other role gets the deterministic `sf-<role>-<bead>-<nonce>` shape.
-    name = f"nogg-orchestrator-{repo_slug()}" if is_orchestrator else gen_session_name(role_slug, bead)
+    name = f"nogg-orchestrator-{repo_slug()}" if is_orchestrator else "pending"
     workdir = str(Path(cwd or ROOT).resolve())
-    sdir = sessions_dir()
+    sdir = ROOT / scfg("session_state_dir", ".nogging/state/sessions")
     rec_path, log_path = sdir / f"{name}.json", sdir / f"{name}.log"
-    if tmux_has_session(name):    # last-line race guard
-        raise RuntimeError(f"session {name} already exists; refusing to reuse or overwrite it")
-    if rec_path.exists():
-        # The singleton orchestrator reuses its fixed name once the prior record
-        # is terminal; every other session name is nonce-unique and must not be
-        # reused or overwritten.
-        prior_terminal = is_orchestrator and (
-            json.loads(rec_path.read_text()).get("state") in SESSION_TERMINAL_STATES)
-        if not prior_terminal:
-            raise RuntimeError(f"session {name} already exists; refusing to reuse or overwrite it")
     wrapper = str((ROOT / "scripts/session-launch").resolve())
     inner = [wrapper, "--prompt", str(prompt_path), "--cwd", workdir]
     if bead:
@@ -1780,7 +1792,6 @@ def session_launch(role, bead, cwd, read_only, owner,
         if openspec_readonly:
             settings_out = deny_openspec_writes(settings_out)
         settings_out = merge_observability_hooks(settings_out)
-        effective_path.write_text(json.dumps(settings_out, indent=2) + "\n")
         effective_settings_path = str(effective_path)
         inner[1:1] = ["--settings", effective_settings_path]
     elif agent == "codex":  # no per-session permissions file — the floor is
@@ -1826,6 +1837,41 @@ def session_launch(role, bead, cwd, read_only, owner,
         if "model" in pi_spec:
             inner += ["--model", pi_spec["model"]]
     if read_only: inner.append("--read-only")
+    preflight_session_helpers(inner, agent)
+    # Name collision checks themselves call tmux: defer them until the full
+    # emitted argv and both helpers have passed interface negotiation.
+    if not is_orchestrator:
+        name = gen_session_name(role_slug, bead)
+        rec_path, log_path = sdir / f"{name}.json", sdir / f"{name}.log"
+        if agent == "claude":
+            effective_path = sdir / f"{name}.settings.json"
+            effective_settings_path = str(effective_path)
+            inner[inner.index("--settings") + 1] = effective_settings_path
+    live = tmux_sessions()
+    for _, rec in session_records():
+        if is_orchestrator:
+            if (rec.get("role") == "orchestrator"
+                    and rec.get("state") in SESSION_ACTIVE_STATES and rec.get("name") in live):
+                raise RuntimeError(
+                    f"a live orchestrator session already exists: {rec['name']} "
+                    f"(use `orchestrator run` to adopt it)")
+        elif (rec.get("bead_id") == bead and rec.get("role") == role_meta
+                and rec.get("state") in SESSION_ACTIVE_STATES and rec.get("name") in live):
+            raise RuntimeError(
+                f"a live {role_meta} session already covers {bead}: {rec['name']}")
+    if tmux_has_session(name):    # last-line race guard
+        raise RuntimeError(f"session {name} already exists; refusing to reuse or overwrite it")
+    if rec_path.exists():
+        # The singleton orchestrator reuses its fixed name once the prior record
+        # is terminal; every other session name is nonce-unique and must not be
+        # reused or overwritten.
+        prior_terminal = is_orchestrator and (
+            json.loads(rec_path.read_text()).get("state") in SESSION_TERMINAL_STATES)
+        if not prior_terminal:
+            raise RuntimeError(f"session {name} already exists; refusing to reuse or overwrite it")
+    data_dir(sdir)
+    if agent == "claude":
+        effective_path.write_text(json.dumps(settings_out, indent=2) + "\n")
     record = {
         "name": name, "bead_id": bead, "role": role_meta, "host": socket.gethostname(),
         "started_at": now(), "working_dir": workdir, "command": redact_argv(inner),
