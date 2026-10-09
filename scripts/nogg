@@ -216,6 +216,7 @@ def planning_worktree(planning_id, description, location=None):
     print(f"planning worktree allocated: {location}")
     print(f"branch: {branch} (from {base})")
     print(f"record: {record_path.relative_to(ROOT)}")
+    return str(location)
 IMPLEMENT_BRANCH_RE = re.compile(r"^(feat|fix|chore|docs|refactor|perf|test)/[a-z0-9]+(?:-[a-z0-9]+)*$")
 def claimed_bead(bead_id):
     matches = [issue for issue in beads() if str(issue_id(issue)) == bead_id]
@@ -910,13 +911,21 @@ def codex_prompts_link(unlink=False):
 def lock(name, ttl, force=False):
     directory = Path(canonical_repository_state(ROOT)["locks_dir"]) if name == "planning" else LOCKS
     path = data_dir(directory) / f"{name}.lock"
-    if path.exists() and not force:
-        info = json.loads(path.read_text())
-        then = dt.datetime.fromisoformat(info["created_at"])
-        if (dt.datetime.now(dt.timezone.utc) - then).total_seconds() < ttl:
-            raise LockBusyError(f"{name} lock held by {info['host']} pid {info['pid']}; use --force only after verifying it is stale")
-    path.write_text(json.dumps({"pid": os.getpid(), "host": socket.gethostname(), "created_at": now()}, indent=2) + "\n")
-    return path
+    def acquire():
+        if path.exists() and not force:
+            info = json.loads(path.read_text())
+            then = dt.datetime.fromisoformat(info["created_at"])
+            if (dt.datetime.now(dt.timezone.utc) - then).total_seconds() < ttl:
+                raise LockBusyError(f"{name} lock held by {info['host']} pid {info['pid']}; use --force only after verifying it is stale")
+        path.write_text(json.dumps({"pid": os.getpid(), "host": socket.gethostname(), "created_at": now()}, indent=2) + "\n")
+        return path
+    if name == "planning":
+        # Serialize check-and-create across linked worktrees. The short mutex
+        # is separate from the durable planning ownership record.
+        with (directory / "planning.lock.mutex").open("a") as mutex:
+            fcntl.flock(mutex, fcntl.LOCK_EX)
+            return acquire()
+    return acquire()
 def orchestrator_lock_ttl():
     """Staleness horizon for `.nogging/locks/orchestrator.lock`. Long by
     default — the orchestrator is always-on and its supervisor rewrites the
@@ -2137,7 +2146,7 @@ def session_helper_diagnostics():
 def planning_launch_workdir(planning_id, description, cwd):
     """Validate an explicitly allocated scope; never turn a shared checkout
     into a planner's working directory or create a placeholder execution task.
-    Automatic allocation is added by the dedicated planning-launch task.
+    Existing allocations are accepted only when explicitly named by --cwd.
     """
     if not cwd:
         raise RuntimeError("planning requires a dedicated allocated worktree; run "
@@ -2182,10 +2191,20 @@ def session_launch(role, bead, cwd, read_only, owner,
     role_meta, role_slug = normalize_role(role)
     is_orchestrator = role_meta == "orchestrator"
     is_planning = role_meta == "planning"
+    allocate_planning = False
     if is_planning:
         planning_id = require_kebab(planning_id, "planning ID")
         description = require_kebab(description, "planning description")
-        cwd = planning_launch_workdir(planning_id, description, cwd)
+        destination = Path(cwd).expanduser().resolve() if cwd else (
+            ROOT.parent / f"{ROOT.name}-plan-{planning_id}-{description}")
+        if destination.exists() and cwd:
+            cwd = planning_launch_workdir(planning_id, description, cwd)
+        else:
+            if destination.exists() or worktree_record_path("plan", planning_id, description).exists():
+                raise RuntimeError("planning scope already has an allocation; recover or safely retire it before a fresh launch")
+            cwd = str(destination)
+            allocate_planning = True
+        prompt = prompt or "planning"
         bead = bead or None
     elif planning_id is not None or description is not None:
         raise RuntimeError("--planning-id and --description require --role planning")
@@ -2277,7 +2296,7 @@ def session_launch(role, bead, cwd, read_only, owner,
            # from the working tree. That floor file ships with `codex-onboarding`;
            # warn (do not fail) when it is not present yet.
         floor_file = Path(workdir) / ".codex/rules/nogging.rules"
-        if not floor_file.is_file():
+        if not floor_file.is_file() and not allocate_planning:
             print(f"warning: {floor_file} is absent — the Nogging command floor for "
                   f"Codex is not in place for this session (it ships with the "
                   f"codex-onboarding change). Continuing.", file=sys.stderr)
@@ -2303,7 +2322,7 @@ def session_launch(role, bead, cwd, read_only, owner,
            # the guard for either authority level. The wrapper explicitly
            # loads it and refuses startup if the payload is missing.
         floor_file = Path(workdir) / ".pi/extensions/nogging-guard.ts"
-        if not floor_file.is_file():
+        if not floor_file.is_file() and not allocate_planning:
             print(f"warning: {floor_file} is absent — the Nogging command floor for "
                   f"Pi is missing; the wrapper will refuse startup. Restore the "
                   f"installed payload.", file=sys.stderr)
@@ -2315,6 +2334,9 @@ def session_launch(role, bead, cwd, read_only, owner,
             inner += ["--model", pi_spec["model"]]
     if read_only: inner.append("--read-only")
     preflight_session_helpers(inner, agent)
+    if allocate_planning:
+        planning_worktree(planning_id, description, location=workdir)
+        planning_launch_workdir(planning_id, description, workdir)
     # Name collision checks themselves call tmux: defer them until the full
     # emitted argv and both helpers have passed interface negotiation.
     if not is_orchestrator:
@@ -2886,30 +2908,53 @@ def session_nudge(name, message=None):
     _submit_pane_input(name, agent)
     print(f"nudged {name}")
 def _compose_kickoff_message(bead_id, change):
-    return (f"Claim Bead {bead_id} and work change {change} end to end: "
-            f"claim {bead_id}, then work every Bead the {change} change "
-            f"scopes in tasks.md order.")
+    return (f"Claim Bead {bead_id} and implement its mapped task in change {change}. "
+            "Work only this authorized Bead unless the operator explicitly authorized "
+            "the entire change; follow tasks.md order within that authorized scope. "
+            "Use its dedicated implementation worktree and the validation/close/task-done/commit protocol.")
+
+def specialist_kickoff_message(bead_id):
+    result = run(CFG["beads_command"], "show", bead_id, "--json", check=False)
+    try:
+        rows = json.loads(result.stdout or "[]")
+        if isinstance(rows, dict): rows = rows.get("issues", [rows])
+        records = [row for row in rows if isinstance(row, dict) and str(issue_id(row)) == bead_id]
+    except (ValueError, TypeError):
+        records = []
+    if (result.returncode or len(records) != 1 or records[0].get("status") != "in_progress"
+            or not records[0].get("assignee")):
+        raise RuntimeError(f"specialist kickoff requires already-claimed Bead {bead_id}; Main Worker retains the claim")
+    return (f"Work only the already-claimed Bead {bead_id} delegated by the Main Worker. "
+            "Do not claim, re-status, close or commit any Bead, select sibling tasks, or edit openspec/. "
+            "Return your structured result and validation evidence to the Main Worker.")
+
 def session_kickoff(name, message=None):
-    """Deliver a session's first turn. Refuses, sending nothing, unless the
-    session is `running`. With `message`, sends it verbatim via
-    `session_send`. With no `message`, composes one from the session's own
-    `bead_id` and that Bead's `openspec:change:` label — refusing (sending
-    nothing) when either is missing, which excludes `orchestrator` sessions:
-    they carry no `bead_id` and are never kicked off this way."""
+    """Send only the recorded role's authorized scope; bare launch stays idle."""
     _, rec = _require_running(name)
     if message:
         session_send(name, message)
         return
+    role = rec.get("role") or "lead"  # legacy records were Lead sessions
+    if role == "planning":
+        planning_id = require_kebab(rec.get("planning_id"), "planning ID")
+        description = require_kebab(rec.get("description"), "planning description")
+        workdir = planning_launch_workdir(planning_id, description, rec.get("working_dir"))
+        session_send(name, f"Begin authorized planning {planning_id} ({description}) in {workdir}. "
+                     "You are the Planning Agent: acquire ./scripts/nogg plan-begin yourself in this session "
+                     "before any OpenSpec write. If another planner owns the lock, report its owner and stop "
+                     "without writing. Follow the planning prompt through validation, planning commit, "
+                     "materialization, explicit dependency wiring, local integration, safe cleanup and plan-end "
+                     "from a surviving checkout. Do not select or claim execution Beads.")
+        return
     bead_id = rec.get("bead_id")
     if not bead_id:
-        raise RuntimeError(
-            f"kickoff: {name} carries no bead_id; pass --message to kick it "
-            f"off explicitly (an orchestrator session always needs one)")
+        raise RuntimeError(f"kickoff: {name} carries no bead_id; pass --message to kick it off explicitly")
+    if role.startswith("specialist:"):
+        session_send(name, specialist_kickoff_message(bead_id))
+        return
     change = bead_change(bead_id)
     if not change:
-        raise RuntimeError(
-            f"kickoff: Bead {bead_id} carries no openspec:change: label; "
-            f"pass --message to kick off {name} explicitly")
+        raise RuntimeError(f"kickoff: Bead {bead_id} carries no openspec:change: label; pass --message explicitly")
     session_send(name, _compose_kickoff_message(bead_id, change))
 # --- session observability: sweep --------------------------------------
 def change_beads(change):
