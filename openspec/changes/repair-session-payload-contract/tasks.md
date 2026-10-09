@@ -10,7 +10,7 @@
 
 - [x] TASK-PSC-005 Document managed wrapper replacement, preflight errors and supported update recovery; verify init/update/update/remove preserves unrelated hooks, profiles outside owned names, OpenSpec and Beads, including paths containing spaces.
 
-- [ ] TASK-PSC-006 Run scripts/test plus packed-package fresh-install/old-install-update launch tests with stub agents; record version, payload inventory and evidence for #43 and the installer portion of #51 without claiming model selection is complete.
+- [x] TASK-PSC-006 Run scripts/test plus packed-package fresh-install/old-install-update launch tests with stub agents; record version, payload inventory and evidence for #43 and the installer portion of #51 without claiming model selection is complete.
 
 ## Execution contract
 
