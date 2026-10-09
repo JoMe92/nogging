@@ -484,7 +484,10 @@ def task_done(bead_id):
 def beads():
     out = run(CFG["beads_command"], "list", "--status", BEAD_STATUSES, "--limit", "0", "--json").stdout.strip()
     decoded = json.loads(out or "[]")
-    return decoded.get("issues", decoded) if isinstance(decoded, dict) else decoded
+    issues = decoded.get("issues", decoded) if isinstance(decoded, dict) else decoded
+    if not isinstance(issues, list) or any(not isinstance(issue, dict) for issue in issues):
+        raise AuditError("unreadable tracker state: expected a list of Bead objects")
+    return issues
 def labels(issue): return issue.get("labels") or []
 DISCOVERY_LABEL = "discovery"
 def acknowledgement_ledger():
@@ -977,45 +980,92 @@ def limbo_warnings(issues, commit_tokens=None):
         if status != "closed":
             out.append(f"LIMBO: {bid} committed in {sha[:12]} but status={status}")
     return out
-def validate(fallback_ref=None):
-    # include_archived=True so a closed Bead still labelled for a change that
-    # has since been archived resolves cleanly instead of tripping "maps missing
-    # task" / "change label disagrees". materialize() and sync() keep using the
-    # live-only map.
-    #
-    # Returns (tasks, issues, problems, warnings). `problems` are hard
-    # disagreements — `sync()` raises `AuditError` on any of them and the sync
-    # timer stops until a human resolves it. `warnings` are advisory: a
-    # committed-but-open Bead and the like, surfaced by `doctor` / `recover`
-    # but never blocking the mirror (a warning must not redden `sync`).
-    tasks, duplicates = task_map(include_archived=True); issues = beads()
+def mapping_audit(fallback_ref=None):
+    """One read-only snapshot, with typed scope for every mapping invariant."""
+    tasks, duplicates = task_map(include_archived=True)
+    issues = beads()
     fallback, fallback_duplicates = task_map_at_ref(fallback_ref, include_archived=True) if fallback_ref else ({}, [])
-    problems = []; warnings = []
-    if duplicates: problems.append("duplicate task IDs: " + ", ".join(sorted(set(duplicates))))
-    seen = {}
+    diagnostics = []
+    if duplicates or fallback_duplicates:
+        diagnostics.append(MappingDiagnostic("duplicate-spec-tasks",
+            "duplicate task IDs: " + ", ".join(sorted(set(duplicates + fallback_duplicates))),
+            task_ids=tuple(sorted(set(duplicates + fallback_duplicates))), repository_wide=True))
+    seen_ids, mapped = {}, {}
     for issue in issues:
+        bid = str(issue_id(issue) or "")
+        if not bid or bid in seen_ids:
+            diagnostics.append(MappingDiagnostic("ambiguous-bead-identity",
+                f"ambiguous Bead identity: {bid or '<missing ID>'}",
+                (bid,) if bid else (), repository_wide=True))
+        seen_ids[bid] = issue
         classified = classify_mapping(issue)
-        problems.extend(diagnostic.message for diagnostic in classified.diagnostics)
-        if classified.kind == "invalid":
+        for diagnostic in classified.diagnostics:
+            # A task-only malformed pair is still attributable when the
+            # approved task definition uniquely identifies its owner.
+            owners = {tasks.get(task, fallback.get(task, {})).get("change")
+                      for task in diagnostic.task_ids}
+            scope = tuple(sorted(set(diagnostic.changes) | (owners - {None})))
+            diagnostics.append(MappingDiagnostic(diagnostic.code, diagnostic.message,
+                diagnostic.bead_ids, scope, diagnostic.task_ids, not bool(scope)))
+        if classified.kind != "mapped":
             continue
         change, task = classified.change, classified.task
-        if task:
-            if task not in tasks and task in fallback:
-                tasks[task] = fallback[task]
-            if task not in tasks: problems.append(f"{issue_id(issue)} maps missing task {task}")
-            elif tasks[task]["change"] != change: problems.append(f"{issue_id(issue)} change label disagrees with {task}")
-            if task in seen: problems.append(f"multiple Beads map {task}: {seen[task]}, {issue_id(issue)}")
-            seen[task] = issue_id(issue)
+        if task not in tasks and task in fallback:
+            tasks[task] = fallback[task]
+        scope = {change}
+        if task in tasks:
+            scope.add(tasks[task]["change"])
+        if task not in tasks:
+            diagnostics.append(MappingDiagnostic("missing-task", f"{bid} maps missing task {task}",
+                (bid,), tuple(sorted(scope)), (task,)))
+        elif tasks[task]["change"] != change:
+            diagnostics.append(MappingDiagnostic("mismatched-task-owner", f"{bid} change label disagrees with {task}",
+                (bid,), tuple(sorted(scope)), (task,)))
+        mapped.setdefault(task, []).append(issue)
+    for task, records in mapped.items():
+        if len(records) > 1:
+            ids = tuple(str(issue_id(issue)) for issue in records)
+            scope = {classify_mapping(issue).change for issue in records}
+            if task in tasks:
+                scope.add(tasks[task]["change"])
+            diagnostics.append(MappingDiagnostic("duplicate-mapped-beads",
+                f"multiple Beads map {task}: " + ", ".join(ids), ids,
+                tuple(sorted(scope)), (task,)))
     for task, info in tasks.items():
-        # An archived tasks.md is frozen — its checked lines were already
-        # backed by a closed Bead when the change was archived and nothing can
-        # change them now, so skip the reverse check for archived files.
-        if info.get("archived") or info.get("file") is None: continue
+        if info.get("archived") or info.get("file") is None:
+            continue
         if re.search(rf"^- \[x\] {re.escape(task)}\b", info["file"].read_text(), re.M):
-            issue = next((i for i in issues if mapping(i)[1] == task), None)
-            if not issue or issue.get("status") != "closed": problems.append(f"checked task {task} has no closed Bead")
-    warnings.extend(limbo_warnings(issues))
-    return tasks, issues, problems, warnings
+            records = mapped.get(task, [])
+            if len(records) != 1 or records[0].get("status") != "closed":
+                diagnostics.append(MappingDiagnostic("checked-task-without-closure",
+                    f"checked task {task} has no closed Bead",
+                    tuple(str(issue_id(issue)) for issue in records), (info["change"],), (task,)))
+    return tasks, issues, diagnostics, limbo_warnings(issues)
+
+def validate(fallback_ref=None):
+    """Strict public audit stays nonzero on every defect, including scoped ones."""
+    tasks, issues, diagnostics, warnings = mapping_audit(fallback_ref)
+    return tasks, issues, [diagnostic.message for diagnostic in diagnostics], warnings
+
+def scoped_mapping_gate(diagnostics, target=None):
+    """Refuse global ambiguity or target defects before any execution write."""
+    blocking = [diagnostic for diagnostic in diagnostics
+                if diagnostic.repository_wide or (target is not None and target in diagnostic.changes)]
+    if blocking:
+        raise AuditError("audit failed:\n- " + "\n- ".join(diagnostic.message for diagnostic in blocking))
+
+def reconciliation_plan(tasks, issues, diagnostics):
+    scoped_mapping_gate(diagnostics)
+    quarantined = {change for diagnostic in diagnostics for change in diagnostic.changes}
+    plans = {}
+    for issue in issues:
+        classified = classify_mapping(issue)
+        if classified.kind != "mapped" or classified.change in quarantined:
+            continue
+        if issue.get("status") != "closed" or tasks[classified.task].get("archived"):
+            continue
+        plans.setdefault(classified.change, []).append(issue)
+    return plans, quarantined
 def archive_ready_changes(tasks, issues):
     """Live (non-archived) changes whose every live task has a closed mapped
     Bead — candidates `doctor` reports as ready for `/plan`'s archive step.
@@ -1035,8 +1085,10 @@ def archive_ready_changes(tasks, issues):
     return sorted(change for change, task_ids in by_change.items()
                   if task_ids <= closed_tasks)
 def materialize(change):
-    tasks, issues, problems, _warnings = validate()
-    if problems: raise AuditError("validation failed:\n- " + "\n- ".join(problems))
+    tasks, issues, diagnostics, _warnings = mapping_audit()
+    scoped_mapping_gate(diagnostics, target=change)
+    for diagnostic in diagnostics:
+        print(f"materialize: unrelated mapping defect skipped: {diagnostic.message}", file=sys.stderr)
     selected = [(task, info) for task, info in tasks.items()
                 if info["change"] == change and not info.get("archived")]
     if not selected: raise RuntimeError(f"no tasks found for change {change}")
@@ -1226,10 +1278,12 @@ def sync(on_request=False):
     path = None
     try:
         path = lock("sync", CFG["sync_lock_ttl_seconds"])
-        tasks, issues, problems, _warnings = validate()
-        if problems: raise AuditError("audit failed:\n- " + "\n- ".join(problems))
+        tasks, issues, diagnostics, _warnings = mapping_audit()
+        plans, quarantined = reconciliation_plan(tasks, issues, diagnostics)
+        for diagnostic in diagnostics:
+            print(f"sync: quarantined {', '.join(diagnostic.changes)}: {diagnostic.message}", file=sys.stderr)
         changed = []
-        for issue in issues:
+        for issue in [issue for change in sorted(plans) for issue in plans[change]]:
             change, task = mapping(issue)
             if not task or issue.get("status") != "closed": continue
             # A closed Bead whose task now lives only in an archived change is
@@ -1261,6 +1315,12 @@ def sync(on_request=False):
                      "GIT_COMMITTER_NAME": sync_name, "GIT_COMMITTER_EMAIL": sync_email})
             print(f"synced {len(set(changed))} file(s)")
         else: print("sync: no changes")
+        if quarantined:
+            # Independent valid changes have been committed. Never record a
+            # partial pass as complete success; health persistence is refined
+            # by TASK-BMF-004 without repeating those idempotent writes.
+            raise AuditError("partial reconciliation; quarantined changes: " + ", ".join(sorted(quarantined))
+                             + "\n- " + "\n- ".join(d.message for d in diagnostics))
         prev = read_last_success()
         prev_branch = prev.get("branch")
         if prev_branch and prev_branch != branch:
