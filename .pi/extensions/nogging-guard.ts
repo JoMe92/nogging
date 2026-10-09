@@ -14,6 +14,7 @@
  * an actual safety gap. None of these patterns attempt full shell parsing.
  */
 import { dirname, resolve, sep } from "node:path";
+import { hostname } from "node:os";
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -88,7 +89,8 @@ export function isUnderOpenspec(inputPath: string, cwd: string): boolean {
 	try {
 		const state = repositoryState(cwd);
 		const target = physicalPath(resolve(cwd, inputPath));
-		return [state.checkout_root, state.main_checkout].some((root) => {
+		if (!Array.isArray(state.checkout_roots) || !state.checkout_roots.length) throw new Error("missing checkout roots");
+		return state.checkout_roots.some((root: string) => {
 			if (typeof root !== "string") throw new Error("invalid repository root");
 			const spec = physicalPath(resolve(root, "openspec"));
 			return target === spec || target.startsWith(spec + sep);
@@ -125,6 +127,21 @@ export function openspecBoundaryOpen(cwd: string, role = process.env.NOGG_SESSIO
 			|| typeof lock.host !== "string" || !lock.host.trim()
 			|| typeof lock.created_at !== "string"
 			|| !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(lock.created_at)) return false;
+		if (lock.session_name !== undefined) {
+			if (lock.session_name !== process.env.NOGG_SESSION_NAME
+				|| lock.session_root !== resolve(process.env.NOGG_SESSION_ROOT ?? state.main_checkout)
+				|| typeof lock.pid_start !== "string") return false;
+			const sessionConfig = JSON.parse(readFileSync(resolve(lock.session_root, ".nogging/config.json"), "utf8"));
+			const session = JSON.parse(readFileSync(resolve(lock.session_root,
+				sessionConfig.session_state_dir ?? ".nogging/state/sessions", lock.session_name + ".json"), "utf8"));
+			if (lock.host !== hostname() || session.host !== lock.host
+				|| session.name !== lock.session_name || session.role !== "planning"
+				|| !["starting", "running", "idle"].includes(session.state)
+				|| session.session_pid !== lock.pid || session.session_pid_start !== lock.pid_start
+				|| resolve(session.working_dir) !== resolve(state.checkout_root)) return false;
+			const stat = readFileSync(`/proc/${lock.pid}/stat`, "utf8");
+			if (stat.slice(stat.lastIndexOf(")") + 2).trim().split(/\s+/)[19] !== lock.pid_start) return false;
+		} else if (process.env.NOGG_SESSION_NAME) return false;
 		const created = Date.parse(lock.created_at);
 		const age = Date.now() - created;
 		return Number.isFinite(created) && age >= 0 && age < ttl * 1000;
@@ -145,7 +162,16 @@ export default function (pi: ExtensionAPI) {
 		}
 		if (event.toolName === "write" || event.toolName === "edit") {
 			const path = event.input.path as string;
-			if (isUnderOpenspec(path, ctx.cwd) && !openspecBoundaryOpen(ctx.cwd)) {
+			let allowed = openspecBoundaryOpen(ctx.cwd);
+			if (allowed && process.env.NOGG_SESSION_NAME) {
+				try {
+					const state = repositoryState(ctx.cwd);
+					const target = physicalPath(resolve(ctx.cwd, path));
+					const own = physicalPath(resolve(state.checkout_root, "openspec"));
+					allowed = target === own || target.startsWith(own + sep);
+				} catch { allowed = false; }
+			}
+			if (isUnderOpenspec(path, ctx.cwd) && !allowed) {
 				if (ctx.hasUI) ctx.ui.notify(`Blocked ${event.toolName} under openspec/: ${path}`, "warning");
 				return { block: true, reason: "openspec/ is read-only outside a planning session (Nogging write boundary)" };
 			}

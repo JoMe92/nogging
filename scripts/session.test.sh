@@ -110,8 +110,8 @@ refute() { if grep -qF -- "$2" "$out"; then echo "FAIL - $1 (present: $2)"; cat 
 # make_root <dir> [grace] — minimal Nogging checkout for the session layer.
 make_root() {
   local r="$1" grace="${2:-10}"
-  mkdir -p "$r/.nogging/state" "$r/scripts"
-  cp "$repo_root/scripts/session-launch" "$repo_root/scripts/session-log-writer" "$r/scripts/"
+  mkdir -p "$r/.nogging/state" "$r/scripts" "$r/openspec"
+  cp "$repo_root/scripts/session-launch" "$repo_root/scripts/session-log-writer" "$repo_root/scripts/openspec-sandbox" "$r/scripts/"
   # A bare, commit-less `git init` is enough for `git worktree list
   # --porcelain` to succeed — needed by doctor()'s persona_mismatch_notes(),
   # which this file's dal-doctor scenario exercises via a real `doctor` call.
@@ -440,9 +440,7 @@ check "twb-launch: effective settings deny a Write under openspec/"  'Write(open
 unset NOGGING_ROOT
 
 # ===========================================================================
-# Scenario: a launch during a fresh planning session keeps openspec/ writable
-# (TASK-TWB-004). The read-only root keys off the session's role + the planning
-# lock, not the sentinel.
+# Scenario: an execution launch stays fenced during another planning session.
 # ===========================================================================
 root="$work/twb-planning"; make_root "$root"
 export NOGGING_ROOT="$root"
@@ -456,9 +454,9 @@ printf '{"pid":1,"host":"h","created_at":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%S+
 name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
 rec="$root/.nogging/state/sessions/$name.json"
 cp "$(record "$rec" effective_settings_path)" "$out"
-refute "twb-planning: no openspec deny while a fresh planning lock is held" 'Edit(openspec/**)'
-[[ "$(record "$rec" openspec_readonly)" == "False" ]] \
-  && echo "ok   - twb-planning: record marks openspec_readonly false during planning" \
+check "twb-planning: execution keeps openspec deny while a planning lock is held" 'Edit(openspec/**)'
+[[ "$(record "$rec" openspec_readonly)" == "True" ]] \
+  && echo "ok   - twb-planning: record keeps execution openspec_readonly true during planning" \
   || { echo "FAIL - twb-planning: openspec_readonly is $(record "$rec" openspec_readonly)"; fail=1; }
 unset NOGGING_ROOT
 

@@ -15,7 +15,7 @@ with tempfile.TemporaryDirectory(prefix='nogg planning role ') as td:
     shutil.copytree(source/'.nogging/launch-prompts',root/'.nogging/launch-prompts')
     shutil.copy2(source/'.nogging/config.json',root/'.nogging/config.json')
     (root/'scripts').mkdir()
-    for name in ['session-launch','session-log-writer','nogg']:
+    for name in ['session-launch','session-log-writer','openspec-sandbox','nogg']:
         shutil.copy2(source/'scripts'/name,root/'scripts'/name)
     (root/'.gitignore').write_text('.nogging/state/\n.nogging/locks/\n')
     subprocess.run(['git','init','-q',str(root)],check=True)

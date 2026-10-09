@@ -11,7 +11,7 @@ import json, os, pathlib, shutil, subprocess, sys, tempfile, time, uuid
 source = pathlib.Path(sys.argv[1])
 with tempfile.TemporaryDirectory(prefix="nogg startup ") as directory:
     root = pathlib.Path(directory)
-    for name in (".nogging", "scripts", "bin"):
+    for name in (".nogging", "scripts", "bin", "openspec"):
         (root / name).mkdir()
     for name in ("launch-profiles", "launch-prompts"):
         shutil.copytree(source / ".nogging" / name, root / ".nogging" / name)
@@ -20,8 +20,9 @@ with tempfile.TemporaryDirectory(prefix="nogg startup ") as directory:
     config["session_tmux_socket"] = sock
     config["beads_command"] = str(root / "bin/bd")
     (root / ".nogging/config.json").write_text(json.dumps(config))
-    for name in ("nogg", "session-launch", "session-log-writer"):
+    for name in ("nogg", "session-launch", "session-log-writer", "openspec-sandbox"):
         shutil.copy2(source / "scripts" / name, root / "scripts" / name)
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
     fixtures = {
         "bd": '#!/bin/sh\ncase "$1" in show) echo \'[{"id":"SPEC-live"}]\';; dep) echo "[]";; esac\n',
         "claude": '#!/bin/sh\necho "runtime-live: unknown option --session-id; token=$NOGG_TEST_API_TOKEN" >&2\nexit 64\n',

@@ -91,6 +91,7 @@ make_root() {
   cp -r "$repo_root/.nogging/launch-prompts" "$r/.nogging/"
   ln -sf "$repo_root/scripts/session-launch" "$r/scripts/session-launch"
   ln -sf "$repo_root/scripts/session-log-writer" "$r/scripts/session-log-writer"
+  ln -sf "$repo_root/scripts/openspec-sandbox" "$r/scripts/openspec-sandbox"
   python3 - "$repo_root/.nogging/config.json" "$r/.nogging/config.json" <<'PY'
 import json, sys
 cfg = json.load(open(sys.argv[1]))

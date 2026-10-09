@@ -16,6 +16,7 @@ module.exports = {
   verbatim: [
     'scripts/nogg',
     'scripts/session-launch',
+    'scripts/openspec-sandbox',
     'scripts/session-log-writer',
     'scripts/install-hooks',
     'scripts/test',
@@ -87,6 +88,7 @@ module.exports = {
   executable: [
     'scripts/nogg',
     'scripts/session-launch',
+    'scripts/openspec-sandbox',
     'scripts/session-log-writer',
     'scripts/install-hooks',
     'scripts/test',

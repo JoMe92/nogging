@@ -54,8 +54,20 @@ def canonical_repository_state(cwd):
     main_common = (main / git("-C", str(main), "rev-parse", "--git-common-dir")).resolve()
     if top != main or main_common != common_dir:
         raise RuntimeError("Git metadata does not identify a supported main checkout")
+    checkout_roots = []
+    for block in metadata.split("\n\n"):
+        lines = block.splitlines()
+        if not lines:
+            continue
+        if not lines[0].startswith("worktree "):
+            raise RuntimeError("malformed Git worktree metadata")
+        location = lines[0][len("worktree "):]
+        if not location or location.startswith(chr(34)):
+            raise RuntimeError("quoted/control-character worktree paths are unsupported")
+        checkout_roots.append(str(Path(location).resolve()))
     return {"checkout_root": str(Path(git("rev-parse", "--show-toplevel")).resolve()),
             "main_checkout": str(main), "common_dir": str(common_dir),
+            "checkout_roots": checkout_roots,
             "state_dir": str(main / ".nogging/state"),
             "locks_dir": str(main / ".nogging/locks"),
             "config_path": str(main / ".nogging/config.json")}
@@ -462,6 +474,21 @@ def task_done(bead_id):
     close`, bundled into the same execution commit. Never writes
     `execution-log.md` — that stays `sync()`'s job (design.md, Decision 2).
     """
+    broker = os.environ.get("NOGG_TASK_DONE_SOCKET")
+    if broker:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.settimeout(30)
+            client.connect(broker)
+            client.sendall(json.dumps({"bead_id": bead_id}).encode())
+            client.shutdown(socket.SHUT_WR)
+            chunks = []
+            while chunk := client.recv(65536):
+                chunks.append(chunk)
+        result = json.loads(b"".join(chunks))
+        if not result.get("ok"):
+            raise RuntimeError(result.get("error", "mechanical task tick refused"))
+        print(result.get("output", ""), end="")
+        return
     out = run(CFG["beads_command"], "show", bead_id, "--json").stdout.strip()
     decoded = json.loads(out or "[]")
     records = decoded.get("issues", decoded) if isinstance(decoded, dict) else decoded
@@ -475,8 +502,10 @@ def task_done(bead_id):
     _change, task = mapping(issue)
     if not task:
         raise RuntimeError(f"task-done: {bead_id} carries no openspec:task: label")
-    tasks, _duplicates = task_map()
+    tasks, duplicates = task_map()
     entry = tasks.get(task)
+    if task in duplicates or (entry and entry.get("change") != _change):
+        raise RuntimeError(f"task-done: ambiguous or mismatched approved task {task}")
     if entry is None or entry.get("archived"):
         print(f"task-done: {task} not found in a live tasks.md; nothing to tick")
         return
@@ -908,16 +937,164 @@ def codex_prompts_link(unlink=False):
             print(f"{'relinked' if state == 'wrong' else 'linked  '}   {target} -> {src}")
     if unresolved:
         print(f"{unresolved} file(s) need operator action (see SKIP above)")
+def process_start(pid):
+    """Linux process birth token prevents a recycled PID from proving ownership."""
+    try:
+        return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[19]
+    except (OSError, IndexError):
+        return None
+
+def planning_lock_live(record):
+    if os.environ.get("NOGG_OPENSPEC_FENCED") == "1":
+        # Host owner PIDs cannot be disproved from the execution PID namespace.
+        return True
+    if record.get("host") != socket.gethostname():
+        return True  # remote ownership cannot be disproved locally
+    pid = record.get("pid")
+    if type(pid) is not int or pid <= 0:
+        return True
+    if not pid_alive(pid):
+        return False
+    birth = record.get("pid_start")
+    return not birth or process_start(pid) == birth
+
+def planning_session_context(require_workdir=False):
+    name = os.environ.get("NOGG_SESSION_NAME")
+    if not name:
+        return None
+    if os.environ.get("NOGG_SESSION_ROLE") != "planning":
+        raise RuntimeError("only the planning role may acquire or release a supervised planning lock")
+    root = Path(os.environ.get("NOGG_SESSION_ROOT") or canonical_repository_state(ROOT)["main_checkout"]).resolve()
+    try:
+        config = json.loads((root / ".nogging/config.json").read_text())
+        if not isinstance(config, dict):
+            raise ValueError("session configuration is not an object")
+        directory = root / config.get("session_state_dir", ".nogging/state/sessions")
+        record = json.loads((directory / f"{name}.json").read_text())
+    except (ValueError, OSError, TypeError) as exc:
+        raise RuntimeError("cannot establish the owning planning session record") from exc
+    if (not isinstance(record, dict) or record.get("name") != name or record.get("role") != "planning"
+            or record.get("state") not in SESSION_ACTIVE_STATES
+            or type(record.get("session_pid")) is not int or not record.get("session_pid_start")):
+        raise RuntimeError("planning session ownership is unavailable or not active")
+    context = {"session_name": name, "session_root": str(root),
+               "working_dir": record.get("working_dir"), "planning_id": record.get("planning_id"),
+               "pid": record["session_pid"], "pid_start": record["session_pid_start"],
+               "host": record.get("host", socket.gethostname())}
+    if not planning_lock_live(context):
+        raise RuntimeError(f"planning session {name} is no longer alive")
+    if require_workdir and Path(context.get("working_dir") or "").resolve() != ROOT:
+        raise RuntimeError("plan-begin must run in its owning session's dedicated planning worktree")
+    return context
+
+def openspec_tool_decision(cwd, target):
+    """Shared early tool signal; the execution OS fence remains authoritative."""
+    state = canonical_repository_state(cwd)
+    target = (Path(cwd) / target).resolve()
+    protected = any(target == (Path(root) / 'openspec').resolve()
+                    or target.is_relative_to((Path(root) / 'openspec').resolve())
+                    for root in state['checkout_roots'])
+    if not protected:
+        return False, True
+    role = os.environ.get('NOGG_SESSION_ROLE')
+    if role and role != 'planning':
+        return True, False
+    if any(path.exists() or path.is_symlink() for path in
+           [Path(state['locks_dir']) / 'openspec.readonly', Path(cwd) / '.nogging/locks/openspec.readonly']):
+        return True, False
+    try:
+        config = json.loads(Path(state['config_path']).read_text())
+        ttl = config.get('planning_lock_ttl_seconds', 7200)
+        if type(ttl) not in (int, float) or not 0 < ttl < float('inf'):
+            return True, False
+        record = json.loads((Path(state['locks_dir']) / 'planning.lock').read_text())
+        then = dt.datetime.fromisoformat(record['created_at'].replace('Z', '+00:00'))
+        age = (dt.datetime.now(dt.timezone.utc) - then).total_seconds()
+        if not 0 <= age < ttl:
+            return True, False
+        if record.get('session_name') or os.environ.get('NOGG_SESSION_NAME'):
+            context = planning_session_context()
+            own_scope = (Path(state['checkout_root']) / 'openspec').resolve()
+            return True, bool(planning_lock_owned(record, context) and planning_lock_live(record)
+                              and context.get('working_dir') == state['checkout_root']
+                              and (target == own_scope or target.is_relative_to(own_scope)))
+        return True, True
+    except (ValueError, OSError, TypeError, KeyError, RuntimeError):
+        return True, False
+
+def planning_lock_owned(record, context):
+    return bool(context and record.get("session_name") and all(
+        record.get(key) == context.get(key)
+        for key in ("session_name", "session_root", "host", "pid", "pid_start")))
+
+def release_planning_lock(force=False, session_record=None):
+    if session_record is not None and session_record.get("role") != "planning":
+        return False
+    directory = Path(canonical_repository_state(ROOT)["locks_dir"])
+    path = directory / "planning.lock"
+    data_dir(directory)
+    with (directory / "planning.lock.mutex").open("a") as mutex:
+        fcntl.flock(mutex, fcntl.LOCK_EX)
+        try:
+            record = json.loads(path.read_text())
+        except FileNotFoundError:
+            if session_record is not None:
+                return False
+            if not force:
+                raise RuntimeError("no planning lock (use --force to close the boundary anyway)")
+            write_sentinel()
+            return True
+        except (ValueError, OSError) as exc:
+            raise RuntimeError("planning lock is unreadable; preserve and repair ownership before release") from exc
+        if not isinstance(record, dict):
+            raise RuntimeError("planning lock ownership is malformed; preserve and repair it")
+        if session_record is not None:
+            context = {"session_name": session_record.get("name"), "session_root": str(ROOT),
+                       "host": session_record.get("host", socket.gethostname()),
+                       "pid": session_record.get("session_pid"), "pid_start": session_record.get("session_pid_start")}
+            if not planning_lock_owned(record, context):
+                return False
+            # A stopped/crashed planner loses write authority immediately. Its
+            # record remains until the actual owner process is confirmed gone.
+            write_sentinel(by="planning-session-terminal")
+            if planning_lock_live(record):
+                print(f"planning lock retained for still-live owner {record['session_name']} pid {record['pid']}")
+                return False
+        else:
+            context = planning_session_context()
+            if record.get("session_name") and not planning_lock_owned(record, context):
+                if not force or planning_lock_live(record):
+                    raise LockBusyError(f"planning lock owned by session {record['session_name']} on {record.get('host')} pid {record.get('pid')}; another live owner cannot be released")
+            elif context and not record.get("session_name") and (not force or planning_lock_live(record)):
+                raise LockBusyError("standalone planning lock is not owned by this supervised session")
+        write_sentinel()
+        path.unlink()
+        return True
+
 def lock(name, ttl, force=False):
     directory = Path(canonical_repository_state(ROOT)["locks_dir"]) if name == "planning" else LOCKS
     path = data_dir(directory) / f"{name}.lock"
     def acquire():
+        context = planning_session_context(require_workdir=True) if name == "planning" else None
+        if name == "planning" and path.exists():
+            existing = json.loads(path.read_text())
+            if not isinstance(existing, dict):
+                raise RuntimeError("planning lock ownership is malformed; preserve and repair it")
+            if existing.get("session_name") and not planning_lock_owned(existing, context) and planning_lock_live(existing):
+                raise LockBusyError(f"planning lock held by session {existing['session_name']} on {existing.get('host')} pid {existing.get('pid')}; live ownership cannot be forced")
         if path.exists() and not force:
             info = json.loads(path.read_text())
+            if not isinstance(info, dict):
+                raise ValueError("lock is not an object")
             then = dt.datetime.fromisoformat(info["created_at"])
             if (dt.datetime.now(dt.timezone.utc) - then).total_seconds() < ttl:
                 raise LockBusyError(f"{name} lock held by {info['host']} pid {info['pid']}; use --force only after verifying it is stale")
-        path.write_text(json.dumps({"pid": os.getpid(), "host": socket.gethostname(), "created_at": now()}, indent=2) + "\n")
+        record = {"pid": os.getpid(), "host": socket.gethostname(), "created_at": now()}
+        if context:
+            record.update(context)
+        atomic_json_state(path, record)
+        if name == "planning":
+            remove_sentinel()
         return path
     if name == "planning":
         # Serialize check-and-create across linked worktrees. The short mutex
@@ -1857,7 +2034,9 @@ def transition(path, rec, state, **extra):
             rec["exit_reason"] = extra.pop("exit_reason", None) or rec.get("exit_reason") or state
         for k, v in extra.items(): rec[k] = v
         write_session(path, rec)
-        return rec
+    if state in SESSION_TERMINAL_STATES:
+        release_planning_lock(session_record=rec)
+    return rec
 def bead_exists(bead_id):
     res = run(CFG["beads_command"], "show", bead_id, "--json", check=False)
     if res.returncode != 0: return False
@@ -2112,6 +2291,10 @@ def validate_launch_contract(contract, argv, agent):
         index += arity + 1
 def preflight_session_helpers(argv, agent):
     validate_launch_contract(helper_contract(argv[0]), argv, agent)
+    boundary = helper_contract(ROOT / "scripts/openspec-sandbox")
+    if (not isinstance(boundary.get('features'), list)
+            or not {'readonly-mounts', 'closed-task-broker'}.issubset(boundary['features'])):
+        raise RuntimeError("OpenSpec filesystem boundary contract is incompatible; run Nogging update")
     writer = helper_contract(ROOT / "scripts/session-log-writer")
     if writer.get("positional") != 3:
         raise RuntimeError("session-log-writer contract must accept three arguments; run Nogging update")
@@ -2139,6 +2322,14 @@ def session_helper_diagnostics():
         if type(contract.get("positional")) is not int or contract["positional"] != 3:
             raise RuntimeError("session-log-writer contract must accept three arguments; run Nogging update")
         checks.append(("session-log-writer helper contract", True))
+    except RuntimeError as exc:
+        checks.append((str(exc), False))
+    try:
+        boundary = helper_contract(ROOT / "scripts/openspec-sandbox")
+        if (not isinstance(boundary.get('features'), list)
+                or not {'readonly-mounts', 'closed-task-broker'}.issubset(boundary['features'])):
+            raise RuntimeError("OpenSpec filesystem boundary contract is incompatible; run Nogging update")
+        checks.append(("OpenSpec filesystem boundary helper contract", True))
     except RuntimeError as exc:
         checks.append((str(exc), False))
     return checks
@@ -2212,13 +2403,10 @@ def session_launch(role, bead, cwd, read_only, owner,
         bead = None
     elif not bead and not is_planning:
         raise RuntimeError("--bead is required for every execution role (optional for planning and orchestrator)")
-    # An execution session (any non-planning role) launched outside a fresh
-    # planning session gets openspec/ as a read-only root in its effective
-    # authority — tool-agnostically. A planning role, or a launch while a fresh
-    # planning lock is held, keeps openspec/ writable.
+    # Execution roles remain fenced even while another session plans.
+    # The wrapper enters the Linux mount boundary before dispatching any tool.
     openspec_readonly = (
-        not role_meta.startswith("planning")
-        and fresh_lock("planning", CFG["planning_lock_ttl_seconds"]) is None
+        not is_planning
     )
     # Resolve and validate the launch profile / prompt before anything about a
     # session exists on disk or in tmux.
@@ -2384,6 +2572,7 @@ def session_launch(role, bead, cwd, read_only, owner,
         "agent": agent, "openspec_readonly": bool(openspec_readonly),
         "floor_lifted": bool(floor_lifted), "claude_session_id": claude_session_id,
         "planning_id": planning_id, "description": description,
+        "session_pid": None, "session_pid_start": None,
     }
     write_session(rec_path, record)                       # metadata before exec
     with log_path.open("a") as fh:                        # append-only log before exec
@@ -2396,6 +2585,8 @@ def session_launch(role, bead, cwd, read_only, owner,
         tmux("new-session", "-d", "-s", name, "-c", workdir,
              "-e", f"NOGG_SESSION_NAME={name}",
              "-e", f"NOGG_SESSION_ROLE={role_meta}",
+             "-e", f"NOGG_SESSION_ROOT={ROOT}",
+             "-e", f"NOGG_OPENSPEC_FENCE={int(openspec_readonly)}",
              "-e", f"NOGG_STARTUP_LOG={log_path}", "--", *inner)
         writer = str((ROOT / "scripts/session-log-writer").resolve())
         max_bytes = int(scfg("session_log_max_bytes", 1048576))
@@ -2414,6 +2605,11 @@ def session_launch(role, bead, cwd, read_only, owner,
             fh.write(f"# {reason}\n")
         transition(rec_path, record, "failed", exit_reason=reason)
         raise ToolError(reason) from exc
+    process = tmux("display-message", "-p", "-t", name, "#{pane_pid}", check=False)
+    raw_pid = getattr(process, "stdout", "").strip()
+    if raw_pid.isdigit() and int(raw_pid) > 0:
+        record["session_pid"] = int(raw_pid)
+        record["session_pid_start"] = process_start(int(raw_pid))
     transition(rec_path, record, "running")
     if record.get("state") == "failed":
         raise ToolError(record.get("exit_reason") or "agent startup failed")
@@ -2546,6 +2742,7 @@ def session_cleanup(name, reap=False):
         nm = rec.get("name")
         if nm in live:
             tmux("kill-session", "-t", nm, check=False)
+        release_planning_lock(session_record=rec)
         _archive_log(rec)
         _remove_effective_settings(rec)
         transition(path, rec, "retired", retired_at=now())
@@ -2560,6 +2757,7 @@ def session_stop(name, reason):
     already-terminal record is a reported no-op."""
     path, rec = load_session(name)
     if rec.get("state") in SESSION_TERMINAL_STATES:
+        release_planning_lock(session_record=rec)
         print(f"{name} already {rec.get('state')} "
               f"(ended {rec.get('ended_at')}, reason: {rec.get('exit_reason')}); nothing to do")
         return
@@ -3350,12 +3548,15 @@ def recover_scan():
         pid, lhost = info.get("pid"), info.get("host")
         if lhost != host:
             liveness = f"pid {pid} on {lhost} (not this host)"
-        elif isinstance(pid, int) and pid_alive(pid):
+        elif isinstance(pid, int) and (planning_lock_live(info) if name == "planning" else pid_alive(pid)):
             liveness = f"pid {pid} alive"
         else:
             liveness = f"pid {pid} dead"
         state = "held (fresh)" if fresh else "STALE"
-        lock_lines.append(f"{name}.lock: {state}, age {age}s / ttl {ttl}s, {liveness}")
+        owner = f", owner session {info['session_name']} scope {info.get('planning_id')} worktree {info.get('working_dir')}" if info.get("session_name") else ""
+        lock_lines.append(f"{name}.lock: {state}, age {age}s / ttl {ttl}s, {liveness}{owner}")
+        if name == "planning" and info.get("session_name") and not planning_lock_live(info):
+            attention.append(f"interrupted planning owner {info['session_name']}; verify preserved worktree then plan-end --force from a surviving checkout")
         if not fresh:
             attention.append(f"stale {name}.lock")
     section("Locks", lock_lines)
@@ -3795,19 +3996,11 @@ def main():
         print(json.dumps(canonical_repository_state(args.cwd), sort_keys=True))
     elif args.command == "plan-begin":
         lock("planning", CFG["planning_lock_ttl_seconds"], args.force)
-        remove_sentinel()
         print("planning session lock acquired")
         print("openspec write boundary open")
     elif args.command == "plan-end":
-        path = Path(canonical_repository_state(ROOT)["locks_dir"]) / "planning.lock"
-        if path.exists():
-            path.unlink(); print("planning session lock released")
-        elif not args.force:
-            raise RuntimeError("no planning lock (use --force to close the boundary anyway)")
-        else:
-            print("no planning lock (--force): closing the boundary anyway")
-        write_sentinel()
-        print("openspec write boundary closed")
+        release_planning_lock(args.force)
+        print("planning session lock released; openspec write boundary closed")
     elif args.command == "materialize": materialize(args.change)
     elif args.command == "task-done": task_done(args.bead_id)
     elif args.command == "codex-prompts-link": codex_prompts_link(args.unlink)

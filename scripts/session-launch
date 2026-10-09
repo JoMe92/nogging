@@ -85,6 +85,15 @@ sys.exit(code if code >= 0 else 128 - code)
 ' "$0" "$@"
 fi
 
+# Every supervised execution runtime enters the same OS write boundary before
+# dispatch. Re-entry is private to the namespace child; planning uses its owned
+# lock and the orchestrator retains its documented explicit-takeover authority.
+if [ "${NOGG_OPENSPEC_FENCE:-0}" = 1 ] && [ "${NOGG_OPENSPEC_FENCED:-0}" != 1 ]; then
+  boundary_helper="$(dirname "$0")/openspec-sandbox"
+  [ -x "$boundary_helper" ] || { echo "nogg: missing OpenSpec filesystem boundary helper; execution refused" >&2; exit 2; }
+  exec "$boundary_helper" "$0" "$@"
+fi
+
 agent="claude"
 settings=""
 prompt=""
