@@ -66,6 +66,10 @@ else:sys.exit(2)
     assert len(json.loads(tracker.read_text()))==before+1
     assert nogg('materialize','beta').returncode==0
     assert len(json.loads(tracker.read_text()))==before+1
+    # Independently finish the newly materialized beta task in the tracker;
+    # alpha remains malformed throughout beta's complete mirror/readiness.
+    rows=json.loads(tracker.read_text());rows[-1]['status']='closed'
+    rows[-1]['closed_at']='2026-01-02T00:00:00Z';tracker.write_text(json.dumps(rows))
     assert strict_problems()==['SPEC-bad has incomplete OpenSpec labels']
     assert nogg('validate').returncode!=0, 'strict validation hid malformed alpha'
     state=root/'.nogging/state';state.mkdir(exist_ok=True)
@@ -84,7 +88,10 @@ else:sys.exit(2)
     assert 'last complete sync: 2020-01-01T00:00:00Z' in diagnostic
     assert 'last partial sync:' in diagnostic
     assert 'mapping quarantine alpha: SPEC-bad;' in diagnostic and 'first seen' in diagnostic
-    assert '[x] TASK-B-001' in files['beta'].read_text()
+    assert '[x] TASK-B-001' in files['beta'].read_text() and '[x] TASK-B-002' in files['beta'].read_text()
+    readiness_code='from importlib.machinery import SourceFileLoader; import json,sys; m=SourceFileLoader("ready",sys.argv[1]).load_module(); t,i,d,w=m.mapping_audit(); print(json.dumps(m.archive_ready_changes(t,i)))'
+    ready=json.loads(subprocess.check_output([sys.executable,'-c',readiness_code,str(source/'scripts/nogg')],env=env,text=True))
+    assert ready==['beta'], 'malformed alpha prevented independent beta completion'
     assert '[ ] TASK-A-001' in files['alpha'].read_text()
     assert not (files['alpha'].parent/'execution-log.md').exists()
     assert (files['beta'].parent/'execution-log.md').read_text().count('<!-- nogg:SPEC-b:')==1

@@ -13,6 +13,12 @@ openspec:change:<change-id>
 openspec:task:<task-id>
 ```
 
+A non-task follow-up instead carries `openspec:followup` and exactly one
+`openspec:change:<change-id>` label, with no task label. It preserves change
+traceability without satisfying a task checkbox. Plain unmapped Beads are
+valid. Conflicting or incomplete labels remain explicit diagnostics; Nogging
+never repairs them by selecting an arbitrary label or deleting history.
+
 Labels are used because Beads does not provide arbitrary per-issue custom
 fields. An execution agent adds a note before closing a Bead containing a Git
 commit SHA and validation evidence. A material discovery is recorded on the
@@ -25,8 +31,10 @@ discovery closed before a planning session reviews it still surfaces. A
 planning session records a review with `scripts/nogg discoveries --ack
 <id>...`; the acknowledgement ledger
 (`.nogging/state/acknowledged-discoveries.json`) then hides that Bead, open or
-closed. The ledger is local, additive, and safe to delete — a deleted ledger
-just re-surfaces every discovery once.
+closed. The ledger lives in the main checkout and is shared across linked
+worktrees. Legacy IDs merge under a short lock with recovery snapshots and
+atomic replacement; malformed input refuses to overwrite valid state. Preserve
+this durable review history during recovery and worktree cleanup.
 
 Materialization is idempotent: rerunning it creates only missing mapped Beads
 and never duplicates work. Its "already mapped" check reads closed Beads too
@@ -101,12 +109,21 @@ takes a separate lock. A stale lock has a PID, host, timestamp and TTL, so it
 can be inspected and removed deliberately with `plan-end --force` after a
 crash.
 
+Mapping audits remain strict. Materialization gates only target-affecting or
+global invariants; sync quarantines every identifiable affected change and
+reconciles independent valid changes. A degraded pass exits `3`, records
+`.nogging/state/sync-mapping-health.json`, and preserves the separate last
+complete-success timestamp. Repair clears only resolved scopes and retains the
+last partial pass with skipped IDs and reasons. Completion/archive readiness
+uses approved mapped tasks plus their explicit blocking dependencies; unlinked
+follow-ups never fabricate checkboxes or block completion just by association.
+
 A failed sync writes `.nogging/state/sync-failure.json`: a `classification`
 (`transient` or `permanent`), the error, the consecutive-failure `attempts`
 count, `max_attempts`, `first_seen` / `last_seen`, and `next_retry_after`.
-Classification is mechanical, by exception type — a failed invariant audit,
-mapping conflict or missing task is `permanent` and is not retried
-automatically; lock contention and `git` / `bd` / JSON errors are `transient`
+Classification is mechanical, by exception type — repository-wide identity
+ambiguity, duplicate global spec task definitions and unreadable mapping health
+are `permanent`; lock contention and `git` / `bd` / JSON errors are `transient`
 and retry with capped exponential backoff until `max_attempts`. Every failure
 is also appended to `.nogging/state/sync-failures.jsonl`. A successful sync
 deletes the active record (the JSONL history is kept). The caller (the timer)

@@ -244,6 +244,48 @@ or restore a valid ledger with all known acknowledged IDs and original
 timestamps. Retry `discoveries`; never infer acknowledgements from Bead status.
 An interrupted replacement leaves the previous ledger usable; retry normally.
 
+## Non-task follow-ups and trace-preserving mapping repair
+
+Use a regular materialized Bead for work that implements an approved task.
+For related work that has no approved checkbox, create an explicit non-task
+follow-up, retaining the change association and a human explanation:
+
+```bash
+bd create "Investigate related behavior" --type task \
+  --labels "openspec:followup,openspec:change:<change-name>" \
+  --description "What remains, the evidence, and why this is a non-task follow-up."
+```
+
+Do not copy an existing task label onto the follow-up. If it must block mapped
+work, add the dependency explicitly in the correct direction:
+
+```bash
+bd dep add <mapped-bead-id> <followup-bead-id> --type blocks
+```
+
+An open or blocked follow-up without that edge does not prevent completion of
+the mapped change. Nonblocking traceability edges do not substitute for
+`blocks`. A missing or unreadable blocking prerequisite prevents completion.
+Follow-ups are never mirrored to an invented task or execution-log entry.
+
+For a malformed mapping, first inspect the named Bead, its notes/commit
+history, the approved task definition and every other Bead with the same task
+label. Establish which Bead is the canonical mapped task. In a deliberate
+planning repair, either restore the correct unique mapping or classify the
+extra work as a follow-up: remove its erroneous task label, retain the one
+correct change label, and add `openspec:followup`. Record the reason and the
+canonical Bead ID in a human note. Preserve closure status, commit evidence,
+discoveries and dependency edges; never delete a closed Bead to make audit pass.
+Conflicting change labels need an explicit ownership decision before repair.
+
+Run `./scripts/nogg audit` again, then `./scripts/nogg materialize <change>`
+for any missing approved work and `./scripts/nogg sync --now` to reconcile.
+Audit remains nonzero while any defect exists. A scoped defect allows unrelated
+valid changes to proceed with degraded exit `3`; duplicate global task IDs,
+ambiguous tracker identities or unreadable tracker state refuse every mirror
+write. See the partial-pass health section above to confirm repaired scopes
+have cleared without losing historical diagnostics.
+
 ## Orphaned Beads and bad mirrors
 
 If an active Bead is orphaned, the planner must either restore/relink its task
