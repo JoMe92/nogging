@@ -5,7 +5,7 @@ It intentionally contains no LLM call and makes no semantic product decision.
 """
 from __future__ import annotations
 
-import argparse, datetime as dt, fcntl, getpass, json, os, re, shlex, shutil, signal, socket, subprocess, sys, time, uuid
+import argparse, datetime as dt, fcntl, getpass, hashlib, json, os, re, shlex, shutil, signal, socket, subprocess, sys, tempfile, time, uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -488,24 +488,90 @@ def labels(issue): return issue.get("labels") or []
 DISCOVERY_LABEL = "discovery"
 def acknowledgement_ledger():
     return Path(canonical_repository_state(ROOT)["state_dir"]) / "acknowledged-discoveries.json"
-def load_ack():
-    """Bead ID -> acknowledgement timestamp. A planning session writes it; the
-    mechanical layer only records the acknowledgement, it never decides one.
-    A missing or unreadable ledger just means nothing is acknowledged yet."""
-    ledger = acknowledgement_ledger()
-    if not ledger.exists(): return {}
+def read_acknowledgements(path):
     try:
-        data = json.loads(ledger.read_text())
-        return data if isinstance(data, dict) else {}
-    except (ValueError, OSError):
-        return {}
-def ack_discoveries(ids):
-    ledger = load_ack()
-    for i in ids: ledger[i] = now()
+        raw = path.read_bytes()
+    except FileNotFoundError:
+        return {}, None
+    try:
+        data = json.loads(raw)
+        if (not isinstance(data, dict)
+                or any(not isinstance(k, str) or not k or not isinstance(v, str)
+                       for k, v in data.items())):
+            raise ValueError("expected Bead IDs mapped to timestamp strings")
+    except (ValueError, UnicodeError) as exc:
+        raise RuntimeError(f"acknowledgement ledger {path} is malformed; restore or repair it before acknowledging") from exc
+    return data, raw
+
+def atomic_acknowledgements_write(path, raw):
+    """Replace only after a complete, flushed write in the same directory."""
+    fd, temporary = tempfile.mkstemp(prefix=path.name + ".tmp-", dir=path.parent)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+def acknowledgement_backup(path, raw, shared_state):
+    if raw is None:
+        return
+    backups = data_dir(shared_state / "acknowledged-discoveries.backups")
+    name = hashlib.sha256(str(path).encode() + b"\0" + raw).hexdigest() + ".json"
+    backup = backups / name
+    if backup.exists():
+        if backup.read_bytes() != raw:
+            raise RuntimeError(f"acknowledgement backup {backup} is damaged; repair before continuing")
+    else:
+        atomic_acknowledgements_write(backup, raw)
+
+def acknowledgement_transaction(ids=()):
     path = acknowledgement_ledger()
+    local = STATE / "acknowledged-discoveries.json"
+    sources = [path] if local == path else [path, local]
+    if not ids and not any(p.exists() for p in sources):
+        return {}
     data_dir(path.parent)
-    path.write_text(
-        json.dumps(ledger, indent=2, sort_keys=True) + "\n")
+    with path.with_suffix(".lock").open("a") as lockfile:
+        fcntl.flock(lockfile, fcntl.LOCK_EX)
+        snapshots = [(source, *read_acknowledgements(source)) for source in sources]
+        canonical = snapshots[0][1]
+        merged = dict(canonical)
+        for _source, existing, _raw in snapshots[1:]:
+            for bid, timestamp in existing.items():
+                if bid not in merged:
+                    merged[bid] = timestamp
+                else:
+                    # Retain the earliest known acknowledgement when both
+                    # timestamps can be interpreted; never infer review from status.
+                    try:
+                        if dt.datetime.fromisoformat(timestamp) < dt.datetime.fromisoformat(merged[bid]):
+                            merged[bid] = timestamp
+                    except (ValueError, TypeError):
+                        pass
+        for bid in ids:
+            if not isinstance(bid, str) or not bid:
+                raise RuntimeError("acknowledgement requires a non-empty Bead ID")
+            merged.setdefault(bid, now())
+        if merged != canonical or (ids and snapshots[0][2] is None):
+            for source, _data, raw in snapshots:
+                acknowledgement_backup(source, raw, path.parent)
+            atomic_acknowledgements_write(path, (json.dumps(merged, indent=2, sort_keys=True) + "\n").encode())
+        return merged
+
+def load_ack():
+    """Merge this checkout's legacy ledger into durable shared review state."""
+    return acknowledgement_transaction()
+def ack_discoveries(ids):
+    acknowledgement_transaction(ids)
     print(f"acknowledged {len(ids)} discovery Bead(s): {', '.join(ids)}")
 def discovery_is_closed(issue): return issue.get("status") == "closed"
 def pending_discoveries():
