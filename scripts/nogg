@@ -618,11 +618,70 @@ def discoveries():
         note = issue_note(issue_id(issue))
         for line in (note.splitlines() if note else ["(no human-readable note recorded)"]):
             print(f"    {line}")
+@dataclass(frozen=True)
+class MappingDiagnostic:
+    """A mapping defect with explicit Bead and identifiable change scope."""
+    code: str
+    message: str
+    bead_ids: tuple[str, ...] = ()
+    changes: tuple[str, ...] = ()
+    task_ids: tuple[str, ...] = ()
+    repository_wide: bool = False
+
+@dataclass(frozen=True)
+class BeadMapping:
+    kind: str  # mapped, followup, unmapped, invalid
+    change: str | None = None
+    task: str | None = None
+    diagnostics: tuple[MappingDiagnostic, ...] = ()
+
+def classify_mapping(issue):
+    """Never select the first of conflicting labels or silently repair them."""
+    bid = str(issue_id(issue) or "<missing Bead ID>")
+    ls = issue.get("labels")
+    if ls is None:
+        ls = []
+    if not isinstance(ls, list) or any(not isinstance(label, str) for label in ls):
+        diagnostic = MappingDiagnostic("invalid-labels", f"{bid} has unreadable OpenSpec labels",
+                                       (bid,), repository_wide=True)
+        return BeadMapping("invalid", diagnostics=(diagnostic,))
+    changes = [label[len("openspec:change:"):] for label in ls if label.startswith("openspec:change:")]
+    tasks = [label[len("openspec:task:"):] for label in ls if label.startswith("openspec:task:")]
+    followups = ls.count("openspec:followup")
+    scope = tuple(sorted({change for change in changes if change}))
+    task_scope = tuple(sorted({task for task in tasks if task}))
+    diagnostics = []
+    def defect(code, detail):
+        diagnostics.append(MappingDiagnostic(code, f"{bid} {detail}", (bid,), scope,
+                                             task_scope, not bool(scope)))
+    if len(changes) > 1:
+        defect("duplicate-change-labels", "has multiple OpenSpec change labels: " + ", ".join(changes))
+    if len(tasks) > 1:
+        defect("duplicate-task-labels", "has multiple OpenSpec task labels: " + ", ".join(tasks))
+    if any(not value for value in changes + tasks):
+        defect("empty-mapping-label", "has an empty OpenSpec mapping label")
+    if followups and tasks:
+        defect("followup-with-task", "has openspec:followup together with an OpenSpec task label")
+    if followups > 1:
+        defect("duplicate-followup-labels", "has multiple openspec:followup labels")
+    if followups and not changes:
+        defect("followup-without-change", "has openspec:followup without an OpenSpec change label")
+    if not followups and bool(changes) != bool(tasks):
+        defect("incomplete-label-pair", "has incomplete OpenSpec labels")
+    change = changes[0] if len(changes) == 1 and changes[0] else None
+    task = tasks[0] if len(tasks) == 1 and tasks[0] else None
+    if diagnostics:
+        return BeadMapping("invalid", change, task, tuple(diagnostics))
+    if followups:
+        return BeadMapping("followup", change)
+    if change and task:
+        return BeadMapping("mapped", change, task)
+    return BeadMapping("unmapped")
+
 def mapping(issue):
-    ls = labels(issue)
-    change = next((x.split(":", 2)[2] for x in ls if x.startswith("openspec:change:")), None)
-    task = next((x.split(":", 2)[2] for x in ls if x.startswith("openspec:task:")), None)
-    return change, task
+    """Compatibility tuple for callers; an invalid mapping grants no identity."""
+    classified = classify_mapping(issue)
+    return (None, None) if classified.kind == "invalid" else (classified.change, classified.task)
 def issue_id(issue): return issue.get("id") or issue.get("identifier") or issue.get("issue_id")
 # The OpenSpec write boundary sentinel. Its presence tells the tool-agnostic
 # guards that `openspec/` is closed to execution-agent writes. `plan-begin`
@@ -935,8 +994,11 @@ def validate(fallback_ref=None):
     if duplicates: problems.append("duplicate task IDs: " + ", ".join(sorted(set(duplicates))))
     seen = {}
     for issue in issues:
-        change, task = mapping(issue)
-        if bool(change) != bool(task): problems.append(f"{issue_id(issue)} has incomplete OpenSpec labels")
+        classified = classify_mapping(issue)
+        problems.extend(diagnostic.message for diagnostic in classified.diagnostics)
+        if classified.kind == "invalid":
+            continue
+        change, task = classified.change, classified.task
         if task:
             if task not in tasks and task in fallback:
                 tasks[task] = fallback[task]
