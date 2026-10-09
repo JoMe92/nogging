@@ -69,7 +69,17 @@ case "$cmd" in
       || { echo "tmux stub: no metadata record before exec" >&2; exit 90; }
     ls "$NOGGING_ROOT"/.nogging/state/sessions/*.log  >/dev/null 2>&1 \
       || { echo "tmux stub: no log file before exec" >&2; exit 91; }
-    touch "$d/sess-$name" ;;
+    touch "$d/sess-$name"
+    if [[ -n "${TMUX_STUB_FAST_EXIT:-}" ]]; then
+      env_args=()
+      while [[ $# -gt 0 ]]; do
+        if [[ "$1" == "--" ]]; then shift; break; fi
+        if [[ "$1" == "-e" ]]; then env_args+=("$2"); shift; fi
+        shift
+      done
+      env "${env_args[@]}" "$@" >/dev/null 2>/dev/null || true
+      rm -f "$d/sess-$name"
+    fi ;;
   has-session)
     [[ -n "${TMUX_STUB_ALL_COLLIDE:-}" ]] && exit 0
     name="$(arg_after -t "$@")"; [[ -f "$d/sess-$name" ]] ;;
@@ -81,7 +91,11 @@ case "$cmd" in
   kill-session)
     name="$(arg_after -t "$@")"; rm -f "$d/sess-$name" ;;
   kill-server) rm -f "$d"/sess-* ;;
-  pipe-pane|attach) : ;;
+  pipe-pane)
+    if [[ -n "${TMUX_STUB_FAST_EXIT:-}" ]]; then
+      echo 'cannot find pane' >&2; exit 1
+    fi ;;
+  attach) : ;;
   *) : ;;
 esac
 STUB
@@ -1162,6 +1176,47 @@ if [[ -e "$TMUX_STUB_DIR/calls.log" || -d "$root/.nogging/state/sessions" ]]; th
   echo 'FAIL - resume contract caused side effects'; fail=1
 fi
 unset NOGGING_ROOT
+
+# Execute the real wrapper before pipe-pane can attach, as with a fast CLI error.
+for failure in unknown-flag exec-failure; do
+  root="$work/startup-$failure"; make_root "$root"
+  cp "$nogg" "$root/scripts/nogg"
+  export NOGGING_ROOT="$root" TMUX_STUB_DIR="$work/startup-$failure-tmux"
+  export BD_KNOWN="SPEC-startup" TMUX_STUB_FAST_EXIT=1
+  export NOGG_TEST_API_TOKEN='fixture-private-value'
+  if [[ "$failure" == unknown-flag ]]; then
+    cat >"$work/bin/claude" <<'RUNTIME'
+#!/usr/bin/env bash
+printf 'runtime: unknown option --session-id; token=%s\n' "$NOGG_TEST_API_TOKEN" >&2
+exit 64
+RUNTIME
+    expected='runtime: unknown option --session-id'
+  else
+    cat >"$work/bin/claude" <<'RUNTIME'
+#!/usr/bin/env bash
+exec nogging-nonexistent-runtime-fixture
+RUNTIME
+    expected='nogging-nonexistent-runtime-fixture'
+  fi
+  chmod +x "$work/bin/claude"
+  if "$nogg" session launch --role lead --bead SPEC-startup >"$out" 2>&1; then
+    echo "FAIL - startup $failure accepted"; fail=1
+  fi
+  check "startup $failure reports real error" "$expected"
+  refute "startup $failure redacts console" "$NOGG_TEST_API_TOKEN"
+  python3 - "$root" "$expected" <<'PYTEST'
+import json, pathlib, sys
+root = pathlib.Path(sys.argv[1]) / '.nogging/state/sessions'
+records = [p for p in root.glob('*.json') if not p.name.endswith('.settings.json')]
+assert len(records) == 1
+record = json.loads(records[0].read_text())
+assert record['state'] == 'failed'
+assert sys.argv[2] in record['exit_reason']
+assert sys.argv[2] in pathlib.Path(record['log_path']).read_text()
+assert 'fixture-private-value' not in ''.join(p.read_text() for p in root.iterdir() if p.is_file())
+PYTEST
+  unset NOGGING_ROOT TMUX_STUB_FAST_EXIT NOGG_TEST_API_TOKEN
+ done
 
 if [[ $fail -ne 0 ]]; then echo "session checks failed" >&2; exit 1; fi
 echo "all session checks passed"

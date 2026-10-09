@@ -39,9 +39,50 @@ set -eu
 if [ "${1:-}" = "--contract" ]; then
   [ "$#" -eq 1 ] || exit 2
   cat <<'CONTRACT'
-{"version":1,"agents":["claude","codex","pi"],"options":{"--agent":1,"--settings":1,"--prompt":1,"--cwd":1,"--bead":1,"--sandbox":1,"--approval":1,"--network":1,"--readonly-root":1,"--provider":1,"--model":1,"--read-only":0,"--continue":0,"--session-id":1,"--resume":1,"--remote-control":1}}
+{"version":1,"features":["startup-stderr"],"agents":["claude","codex","pi"],"options":{"--agent":1,"--settings":1,"--prompt":1,"--cwd":1,"--bead":1,"--sandbox":1,"--approval":1,"--network":1,"--readonly-root":1,"--provider":1,"--model":1,"--read-only":0,"--continue":0,"--session-id":1,"--resume":1,"--remote-control":1}}
 CONTRACT
   exit 0
+fi
+
+# Start the diagnostic sink before argument parsing or exec can fail. The child
+# keeps the pane stdin/stdout; stderr is scrubbed before both durable storage
+# and display. Re-enter this wrapper without the private sink environment key.
+if [ -n "${NOGG_STARTUP_LOG:-}" ]; then
+  exec python3 -c '
+import os, pathlib, subprocess, sys
+from importlib.machinery import SourceFileLoader
+wrapper = pathlib.Path(sys.argv[1]).resolve()
+m = SourceFileLoader("nogg_startup", str(wrapper.parent / "nogg")).load_module()
+log = pathlib.Path(os.environ["NOGG_STARTUP_LOG"])
+env = os.environ.copy()
+env.pop("NOGG_STARTUP_LOG", None)
+with log.open("a"):
+    pass
+child = subprocess.Popen([str(wrapper), *sys.argv[2:]], env=env,
+                         stderr=subprocess.PIPE, text=True, errors="replace")
+try:
+    for line in child.stderr:
+        line = m.redact(line)
+        with log.open("a") as sink:
+            sink.write(line)
+        try:
+            sys.stderr.write(line)
+            sys.stderr.flush()
+        except OSError:
+            pass
+except KeyboardInterrupt:
+    pass
+code = child.wait()
+if code:
+    record_path = log.with_suffix(".json")
+    if record_path.is_file():
+        record = m.json.loads(record_path.read_text())
+        if record.get("state") in m.SESSION_ACTIVE_STATES:
+            detail = log.read_text(errors="replace")[-4096:].strip()
+            reason = m.redact(f"agent exited with status {code}\nstartup log: {detail}")
+            m.transition(record_path, record, "failed", exit_reason=reason)
+sys.exit(code if code >= 0 else 128 - code)
+' "$0" "$@"
 fi
 
 agent="claude"

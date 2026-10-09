@@ -5,7 +5,7 @@ It intentionally contains no LLM call and makes no semantic product decision.
 """
 from __future__ import annotations
 
-import argparse, datetime as dt, getpass, json, os, re, shlex, shutil, signal, socket, subprocess, sys, time, uuid
+import argparse, datetime as dt, fcntl, getpass, json, os, re, shlex, shutil, signal, socket, subprocess, sys, time, uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -1426,14 +1426,25 @@ def transition(path, rec, state, **extra):
     """Record a lifecycle-state transition durably. `starting`/`running`/`idle`
     are active states; `stopped`/`failed`/`retired` are terminal and carry
     `ended_at` plus an `exit_reason`."""
-    rec["state"] = state
-    if state in SESSION_TERMINAL_STATES and state != "retired":
-        rec.setdefault("ended_at", None)
-        rec["ended_at"] = rec.get("ended_at") or now()
-        rec["exit_reason"] = extra.pop("exit_reason", None) or rec.get("exit_reason") or state
-    for k, v in extra.items(): rec[k] = v
-    write_session(path, rec)
-    return rec
+    # The wrapper can report an exec failure concurrently with the launcher
+    # reporting running. Serialize these writers and preserve terminal states.
+    with path.with_suffix(".lifecycle.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if path.exists():
+            latest = json.loads(path.read_text())
+            if (state in ("running", "failed")
+                    and latest.get("state") in SESSION_TERMINAL_STATES):
+                rec.clear()
+                rec.update(latest)
+                return rec
+        rec["state"] = state
+        if state in SESSION_TERMINAL_STATES and state != "retired":
+            rec.setdefault("ended_at", None)
+            rec["ended_at"] = rec.get("ended_at") or now()
+            rec["exit_reason"] = extra.pop("exit_reason", None) or rec.get("exit_reason") or state
+        for k, v in extra.items(): rec[k] = v
+        write_session(path, rec)
+        return rec
 def bead_exists(bead_id):
     res = run(CFG["beads_command"], "show", bead_id, "--json", check=False)
     if res.returncode != 0: return False
@@ -1675,6 +1686,8 @@ def preflight_session_helpers(argv, agent):
     contract = helper_contract(argv[0])
     if not isinstance(contract.get("agents"), list) or agent not in contract["agents"]:
         raise RuntimeError(f"session-launch contract does not support agent {agent}; run Nogging update")
+    if not isinstance(contract.get("features"), list) or "startup-stderr" not in contract["features"]:
+        raise RuntimeError("session-launch contract lacks startup stderr capture; run Nogging update")
     options = contract.get("options")
     if not isinstance(options, dict):
         raise RuntimeError("session-launch contract has no option schema; run Nogging update")
@@ -1890,7 +1903,8 @@ def session_launch(role, bead, cwd, read_only, owner,
         # way a `session emit` hook invocation — a bare, argument-less
         # command line (design.md Decision 4) — can know its own session name.
         tmux("new-session", "-d", "-s", name, "-c", workdir,
-             "-e", f"NOGG_SESSION_NAME={name}", "--", *inner)
+             "-e", f"NOGG_SESSION_NAME={name}",
+             "-e", f"NOGG_STARTUP_LOG={log_path}", "--", *inner)
         writer = str((ROOT / "scripts/session-log-writer").resolve())
         max_bytes = int(scfg("session_log_max_bytes", 1048576))
         depth = int(scfg("session_log_rotation_depth", 3))
@@ -1898,9 +1912,19 @@ def session_launch(role, bead, cwd, read_only, owner,
                                   (writer, str(log_path), str(max_bytes), str(depth)))
         tmux("pipe-pane", "-o", "-t", name, sink)
     except ToolError as exc:
-        transition(rec_path, record, "failed", exit_reason=f"launch failed: {redact(str(exc))}")
-        raise
+        # stderr was attached in the wrapper before exec, so even a child that
+        # vanished before pipe-pane has a durable underlying diagnostic.
+        detail = log_path.read_text(errors="replace")[-4096:].strip()
+        reason = f"launch failed: {redact(str(exc))}"
+        if detail:
+            reason += f"\nstartup log: {redact(detail)}"
+        with log_path.open("a") as fh:
+            fh.write(f"# {reason}\n")
+        transition(rec_path, record, "failed", exit_reason=reason)
+        raise ToolError(reason) from exc
     transition(rec_path, record, "running")
+    if record.get("state") == "failed":
+        raise ToolError(record.get("exit_reason") or "agent startup failed")
     print(f"launched {name}")
     print(f"  bead={bead or '-'} role={role_meta} cwd={workdir}")
     print(f"  log={log_path}")
