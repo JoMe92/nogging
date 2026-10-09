@@ -850,11 +850,14 @@ unset NOGGING_ROOT
 # that would suppress or bypass the always-on guard extension
 # ===========================================================================
 export PI_ARGV_LOG="$work/pi-argv.log"; : >"$PI_ARGV_LOG"
+mkdir -p "$work/pi-full/.pi/extensions"
+cp "$here/../.pi/extensions/nogging-guard.ts" "$work/pi-full/.pi/extensions/"
 "$here/session-launch" --agent pi --provider anthropic --model claude-x \
   --prompt "$work/pi-full/.nogging/launch-prompts/autonomous.md" \
   --cwd "$work/pi-full" --bead SPEC-pia >"$out" 2>&1 \
   || { echo "FAIL - pi-wrap: wrapper errored"; cat "$out"; fail=1; }
 cp "$PI_ARGV_LOG" "$out"
+check "pi-wrap: explicitly loads the guard" "<--extension> <$work/pi-full/.pi/extensions/nogging-guard.ts>"
 check "pi-wrap: always passes --approve"                       "<--approve>"
 check "pi-wrap: forwards --provider"                           "<--provider> <anthropic>"
 check "pi-wrap: forwards --model"                              "<--model> <claude-x>"

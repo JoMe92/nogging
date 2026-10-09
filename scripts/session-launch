@@ -200,7 +200,14 @@ case "$agent" in
     exec codex "$@"
     ;;
   pi)
-    set -- --approve
+    guard="$(pwd)/.pi/extensions/nogging-guard.ts"
+    if [ ! -f "$guard" ]; then
+      echo "session-launch: Pi guard is missing: $guard; restore the installed payload" >&2
+      exit 2
+    fi
+    # Explicit loading works even in a fresh worktree. Approval applies only
+    # to this process; never modify Pi's standing trust store.
+    set -- --approve --extension "$guard"
     [ -n "$provider" ] && set -- "$@" --provider "$provider"
     [ -n "$model" ]    && set -- "$@" --model "$model"
     if [ -n "$prompt" ] && [ -f "$prompt" ]; then

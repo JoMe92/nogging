@@ -194,25 +194,37 @@ retrying with a different model.
 
 ## `openspec/` stuck read-only or stuck writable
 
-The OpenSpec write boundary is a sentinel file,
-`.nogging/locks/openspec.readonly`, plus a per-session read-only `openspec/`
-root for launched execution sessions. `./scripts/nogg doctor` prints its
-state (`openspec write boundary: OPEN` / `LOCKED` / `LOCKED (stale planning lock
-present …)`).
+The canonical boundary lives in the **main checkout's** `.nogging/locks`,
+shared by linked worktrees. Run `./scripts/nogg repo-state --cwd "$PWD"` to
+resolve the exact paths; `doctor` prints them. Unsupported or unavailable Git
+metadata denies authorization. Do not create a local lock as a substitute.
 
-- **Stuck read-only** — a planning session cannot edit `openspec/` because a
-  sentinel was left behind or `plan-begin` crashed. Run
-  `./scripts/nogg plan-begin` (add `--force` if a stale planning lock
-  lingers); it removes the sentinel and opens the boundary. Deleting
-  `.nogging/locks/openspec.readonly` by hand has the same effect on the
-  `PreToolUse` fast path — the sentinel is local, additive state and safe to
-  delete.
-- **Stuck writable** — a forgotten `plan-end` left `openspec/` open. Run
-  `./scripts/nogg plan-end` (add `--force` if the planning lock is already
-  gone) to re-close it. `doctor` surfaces the open boundary meanwhile; a
-  launched execution session is unaffected because it keys its read-only root
-  off its own role, and the stale-lock TTL eventually re-closes the `PreToolUse`
-  path on its own.
+Pi permits OpenSpec writes only for an explicit planning role with a valid,
+fresh canonical `planning.lock` and no closed sentinel. The main checkout's
+`planning_lock_ttl_seconds` applies (default 7200); invalid values, future
+locks, unreadable state and dangling sentinel symlinks deny authorization.
+Execution roles remain read-only while another planning session is open.
+
+- **Stuck read-only:** inspect canonical state and confirm the lock owner.
+  Use `plan-begin` only in the authorized planning workflow. Use `--force`
+  only after confirming the stale owner is gone. A legacy worktree-local
+  `openspec.readonly` also closes Pi's boundary: prefer a fresh worktree, or
+  remove the legacy sentinel only after confirming no live owner needs it.
+  Deleting the canonical sentinel alone does not authorize Pi writes.
+- **Stuck writable:** run `plan-end` to release the lock and restore the
+  canonical sentinel. If the lock is absent, `plan-end --force` closes the
+  boundary. Check `doctor` again; never grant an execution role planning
+  authority to work around a guard failure.
+
+Discovery acknowledgements share the main checkout's
+`.nogging/state/acknowledged-discoveries.json`. Invoking a legacy worktree
+merges its IDs under an exclusive lock and preserves source snapshots in
+`acknowledged-discoveries.backups/` before atomic replacement. Malformed or
+unreadable ledgers refuse the operation rather than erase IDs. Preserve the
+original file, inspect the reported source and recovery snapshots, then repair
+or restore a valid ledger with all known acknowledged IDs and original
+timestamps. Retry `discoveries`; never infer acknowledgements from Bead status.
+An interrupted replacement leaves the previous ledger usable; retry normally.
 
 ## Orphaned Beads and bad mirrors
 

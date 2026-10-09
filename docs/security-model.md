@@ -59,7 +59,7 @@ requests a single planning or code takeover.
   layer. It is not a host-wide policy.
 - **Pi:** neither restricted nor trusted mode has a filesystem or network
   sandbox. The project guard extension enforces only the command floor and the
-  OpenSpec boundary, and Pi must trust/approve the project extension. Treat Pi
+  OpenSpec boundary. Supervised Pi explicitly loads the extension with run-scoped approval; no standing trust change is required. Treat Pi
   restricted mode as materially weaker than Claude or Codex restricted mode.
 
 The ordinary command floor rejects a short list of high-risk command classes,

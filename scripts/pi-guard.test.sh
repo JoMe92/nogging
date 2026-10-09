@@ -118,6 +118,7 @@ allowed("git filter-branch", "echo hello");
 
 // --- openspec/ write-boundary predicates, against a throwaway fixture dir --
 const fixture = mkdtempSync(path.join(tmpdir(), "pi-guard-fixture-"));
+execFileSync("git", ["-C", fixture, "init", "-q"]);
 
 check(
   "isUnderOpenspec: openspec/changes/foo/tasks.md -> true",
@@ -134,10 +135,9 @@ check(
 
 check(
   "openspecBoundaryOpen: non-Git path fails closed",
-  openspecBoundaryOpen(fixture) === false,
+  openspecBoundaryOpen(tmpdir()) === false,
 );
 
-execFileSync("git", ["-C", fixture, "init", "-q"]);
 check("openspecBoundaryOpen: a checkout alone grants no authorization", openspecBoundaryOpen(fixture) === false);
 check("openspecBoundaryOpen: planning role without a lock denies", openspecBoundaryOpen(fixture, "planning") === false);
 

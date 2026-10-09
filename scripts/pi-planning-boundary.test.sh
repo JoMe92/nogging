@@ -76,6 +76,21 @@ try {
   assert.equal(openspecBoundaryOpen(linked, "planning"), false);
   writeFileSync(config, JSON.stringify({ planning_lock_ttl_seconds: null }));
   assert.equal(openspecBoundaryOpen(linked, "planning"), false);
+  writeFileSync(config, JSON.stringify({ planning_lock_ttl_seconds: 1 }));
+  put({ ...fresh(), created_at: new Date(Date.now() - 2000).toISOString() });
+  assert.equal(openspecBoundaryOpen(linked, "planning"), false);
+  writeFileSync(config, JSON.stringify({ planning_lock_ttl_seconds: 10 }));
+  assert.equal(openspecBoundaryOpen(linked, "planning"), true);
+  put(fresh());
+  const nested = join(linked, "src/nested");
+  mkdirSync(nested, { recursive: true });
+  mkdirSync(join(linked, "openspec"));
+  symlinkSync(join(linked, "openspec"), join(linked, "spec-link"));
+  for (const path of ["../../openspec/a.md", join(linked, "openspec/a.md"), "../../spec-link/a.md", join(main, "openspec/a.md")]) {
+    assert.equal(mod.isUnderOpenspec(path, nested), true, path);
+  }
+  assert.equal(mod.isUnderOpenspec("../file.ts", nested), false);
+  assert.equal(mod.isUnderOpenspec("../../openspec-other/a.md", nested), false);
   writeFileSync(config, "{}");
   chmodSync(config, 0);
   if (!process.getuid || process.getuid() !== 0) assert.equal(openspecBoundaryOpen(linked, "planning"), false);

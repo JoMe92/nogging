@@ -6,7 +6,7 @@
 
 - [x] TASK-WSS-003 Fix Pi OpenSpec authorization to require canonical fresh planning lock, absent sentinel and planning role; verify no lock, stale/malformed lock, unreadable state, non-Git cwd, closed main sentinel and execution role all deny, while authorized planning permits writes.
 
-- [ ] TASK-WSS-004 Update doctor, failure-recovery and Pi guidance with canonical state and fail-closed behavior; verify TTL override, path normalization and guard activation from a fresh supervised linked worktree with no standing trust mutation.
+- [x] TASK-WSS-004 Update doctor, failure-recovery and Pi guidance with canonical state and fail-closed behavior; verify TTL override, path normalization and guard activation from a fresh supervised linked worktree with no standing trust mutation.
 
 - [ ] TASK-WSS-005 Run scripts/test and a scratch linked-worktree acknowledgement/guard integration check; record #48/#55 evidence including negative execution-write cases while a separate planning lock is open.
 
