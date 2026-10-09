@@ -175,6 +175,8 @@ make_root() {
   local r="$1"
   mkdir -p "$r/.nogging/state" "$r/.nogging/locks" "$r/openspec/changes/demo"
   cp "$repo_root/.nogging/config.json" "$r/.nogging/config.json"
+  mkdir -p "$r/scripts"
+  cp "$repo_root/scripts/session-launch" "$repo_root/scripts/session-log-writer" "$r/scripts/"
   cat >"$r/openspec/changes/demo/tasks.md" <<'MD'
 # Tasks
 
@@ -1290,9 +1292,15 @@ cat >"$BD_FIXTURE" <<'JSON'
    "labels": ["openspec:change:demo", "openspec:task:TASK-DEMO-001"]}
 ]
 JSON
-grep -q '"claim_stale_seconds"' "$root/.nogging/config.json" \
-  && echo "ok   - rec-stale-claim: config carries claim_stale_seconds" \
-  || { echo "FAIL - rec-stale-claim: claim_stale_seconds not in config"; fail=1; }
+# This key is optional in consumer configs. Exercise its supported default.
+python3 - "$root/.nogging/config.json" <<'PYCFG'
+import json, sys
+p = sys.argv[1]
+cfg = json.load(open(p))
+cfg.pop("claim_stale_seconds", None)
+with open(p, "w") as fh:
+    json.dump(cfg, fh)
+PYCFG
 "$nogg" recover >"$out" 2>&1 \
   && echo "ok   - rec-stale-claim: a stale claim alone does not fail recover" \
   || { echo "FAIL - rec-stale-claim: recover exited non-zero for a stale claim only"; cat "$out"; fail=1; }

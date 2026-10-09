@@ -1682,8 +1682,7 @@ def helper_contract(path):
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         raise RuntimeError(f"session helper {path} has an incompatible contract; {remedy}") from exc
 
-def preflight_session_helpers(argv, agent):
-    contract = helper_contract(argv[0])
+def validate_launch_contract(contract, argv, agent):
     if not isinstance(contract.get("agents"), list) or agent not in contract["agents"]:
         raise RuntimeError(f"session-launch contract does not support agent {agent}; run Nogging update")
     if not isinstance(contract.get("features"), list) or "startup-stderr" not in contract["features"]:
@@ -1698,9 +1697,38 @@ def preflight_session_helpers(argv, agent):
         if type(arity) is not int or arity not in (0, 1) or index + arity >= len(argv):
             raise RuntimeError(f"session-launch contract cannot accept {flag}; run Nogging update")
         index += arity + 1
+def preflight_session_helpers(argv, agent):
+    validate_launch_contract(helper_contract(argv[0]), argv, agent)
     writer = helper_contract(ROOT / "scripts/session-log-writer")
     if writer.get("positional") != 3:
         raise RuntimeError("session-log-writer contract must accept three arguments; run Nogging update")
+
+def session_helper_diagnostics():
+    checks = []
+    wrapper = ROOT / "scripts/session-launch"
+    # Inspect every option this distribution can emit, without starting a
+    # runtime or requiring profiles, a Bead, or a tmux server.
+    argv = [str(wrapper)]
+    for flag in ("--agent", "--settings", "--prompt", "--cwd", "--bead",
+                 "--sandbox", "--approval", "--network", "--readonly-root",
+                 "--provider", "--model", "--session-id", "--resume", "--remote-control"):
+        argv += [flag, "probe"]
+    argv += ["--read-only", "--continue"]
+    try:
+        contract = helper_contract(wrapper)
+        for agent in ("claude", "codex", "pi"):
+            validate_launch_contract(contract, argv, agent)
+        checks.append(("session-launch helper contract", True))
+    except RuntimeError as exc:
+        checks.append((str(exc), False))
+    try:
+        contract = helper_contract(ROOT / "scripts/session-log-writer")
+        if type(contract.get("positional")) is not int or contract["positional"] != 3:
+            raise RuntimeError("session-log-writer contract must accept three arguments; run Nogging update")
+        checks.append(("session-log-writer helper contract", True))
+    except RuntimeError as exc:
+        checks.append((str(exc), False))
+    return checks
 
 def session_launch(role, bead, cwd, read_only, owner,
                    profile=None, prompt=None, full_access=False, agent=None,
@@ -3019,6 +3047,7 @@ def doctor(audit=False, with_recover=False):
     checks = []
     for cmd in ("git", "python3", CFG["beads_command"], "dolt"):
         checks.append((cmd, tool_on_path(cmd)))
+    checks.extend(session_helper_diagnostics())
     warnings = []
     tasks, issues = {}, []
     try: tasks, issues, problems, warnings = validate()
