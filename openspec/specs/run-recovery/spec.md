@@ -1,7 +1,8 @@
 # run-recovery Specification
 
 ## Purpose
-TBD - created by archiving change resilient-interrupted-runs. Update Purpose after archive.
+
+Defines diagnosis and safe resumption of interrupted planning and execution from durable repository and Beads state.
 
 ## Requirements
 

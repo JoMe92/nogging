@@ -1,7 +1,8 @@
 # beads-sync Specification
 
 ## Purpose
-TBD - created by archiving change reliable-beads-sync. Update Purpose after archive.
+
+Defines durable and idempotent reconciliation of approved OpenSpec tasks, Beads execution evidence and discovery review.
 
 ## Requirements
 

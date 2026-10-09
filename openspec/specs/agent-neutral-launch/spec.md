@@ -1,7 +1,8 @@
 # agent-neutral-launch Specification
 
 ## Purpose
-TBD - created by archiving change agent-neutral-launch. Update Purpose after archive.
+
+Defines agent selection and runtime-specific launch authority while preserving supervised session records, logs and lifecycle behavior.
 
 ## Requirements
 

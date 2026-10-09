@@ -1,7 +1,8 @@
 # launch-profiles Specification
 
 ## Purpose
-TBD - created by archiving change selectable-launch-profile. Update Purpose after archive.
+
+Defines selectable session authority and prompts, their conservative defaults, command floors and recorded effective configuration.
 
 ## Requirements
 

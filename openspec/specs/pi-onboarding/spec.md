@@ -1,7 +1,8 @@
 # pi-onboarding Specification
 
 ## Purpose
-TBD - created by archiving change pi-agent-support. Update Purpose after archive.
+
+Defines Pi workflow integration, guard activation, project trust and the explicit limits of its floor-only authority model.
 
 ## Requirements
 
