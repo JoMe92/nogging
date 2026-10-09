@@ -14,8 +14,10 @@
  * positive just makes an operator explain themselves; a false negative is
  * an actual safety gap. None of these patterns attempt full shell parsing.
  */
-import { resolve, sep } from "node:path";
+import { dirname, resolve, sep } from "node:path";
 import { existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 function hasShortFlagChar(cmd: string, ch: string): boolean {
@@ -72,10 +74,19 @@ export function isUnderOpenspec(inputPath: string, cwd: string): boolean {
 }
 
 export function openspecBoundaryOpen(cwd: string): boolean {
-	// Mirrors scripts/nogg's SENTINEL: presence of
-	// .nogging/locks/openspec.readonly means CLOSED (read-only); absence
-	// means a planning session is active and the boundary is OPEN.
-	return !existsSync(resolve(cwd, ".nogging/locks/openspec.readonly"));
+	// Reuse the CLI's canonical Git/worktree resolver. An absent local locks
+	// directory must never hide a closed boundary in the main checkout.
+	try {
+		const helper = resolve(dirname(fileURLToPath(import.meta.url)), "../../scripts/nogg");
+		const env = { ...process.env };
+		delete env.NOGGING_ROOT;
+		const state = JSON.parse(execFileSync("python3", [helper, "repo-state", "--cwd", cwd],
+			{ encoding: "utf8", env, stdio: ["ignore", "pipe", "pipe"], timeout: 5000 }));
+		if (typeof state.locks_dir !== "string") return false;
+		return !existsSync(resolve(state.locks_dir, "openspec.readonly"));
+	} catch {
+		return false;
+	}
 }
 
 export default function (pi: ExtensionAPI) {

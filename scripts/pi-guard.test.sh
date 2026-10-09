@@ -31,6 +31,7 @@ cat > "$runner" <<'NODE'
 import { pathToFileURL } from "node:url";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 
 const guardPath = process.argv[2];
@@ -132,9 +133,12 @@ check(
 );
 
 check(
-  "openspecBoundaryOpen: open when no lock file is present",
-  openspecBoundaryOpen(fixture) === true,
+  "openspecBoundaryOpen: non-Git path fails closed",
+  openspecBoundaryOpen(fixture) === false,
 );
+
+execFileSync("git", ["-C", fixture, "init", "-q"]);
+check("openspecBoundaryOpen: resolves a Git checkout", openspecBoundaryOpen(fixture) === true);
 
 mkdirSync(path.join(fixture, ".nogging", "locks"), { recursive: true });
 writeFileSync(path.join(fixture, ".nogging", "locks", "openspec.readonly"), "");

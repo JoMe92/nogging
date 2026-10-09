@@ -1,6 +1,6 @@
 ## 1. Implementation and validation
 
-- [ ] TASK-WSS-001 Introduce a canonical repository state/lock resolver used by discovery acknowledgement and worktree-aware guards; verify main checkout, relative and absolute common-dir, spaces, linked worktrees and unsupported/non-Git paths without changing unrelated state locations.
+- [x] TASK-WSS-001 Introduce a canonical repository state/lock resolver used by discovery acknowledgement and worktree-aware guards; verify main checkout, relative and absolute common-dir, spaces, linked worktrees and unsupported/non-Git paths without changing unrelated state locations.
 
 - [ ] TASK-WSS-002 Migrate and atomically merge legacy acknowledgement ledgers with concurrent-addition protection and recovery backup; verify acknowledgement from two worktrees, interrupted writes and clean worktree retirement preserve every ID and user-readable review behavior.
 

@@ -152,6 +152,7 @@ if [[ "$op_ln" -lt "$cl_ln" ]]; then echo "ok   - closed-disc: open listed befor
 
 # --- Scenario: acknowledging a discovery stops it being surfaced -----------
 ackroot="$work/ackroot"; mkdir -p "$ackroot/.nogging/state"
+git -C "$ackroot" init -q
 cp "$repo_root/.nogging/config.json" "$ackroot/.nogging/config.json"
 export NOGGING_ROOT="$ackroot"
 "$nogg" discoveries >"$out" 2>&1

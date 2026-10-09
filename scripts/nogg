@@ -13,8 +13,62 @@ from pathlib import Path
 # script lives in; NOGGING_ROOT overrides it so the test suite can point the
 # bridge at a scratch repository.
 ROOT = Path(os.environ.get("NOGGING_ROOT") or Path(__file__).resolve().parents[1]).resolve()
+def canonical_repository_state(cwd):
+    """Read Git metadata to resolve durable state without assuming .git layout."""
+    cwd = Path(cwd).resolve()
+    env = os.environ.copy()
+    for key in ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE"):
+        env.pop(key, None)
+    def git(*args):
+        try:
+            result = subprocess.run(["git", "-C", str(cwd), *args], env=env,
+                                    text=True, capture_output=True, timeout=5)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise RuntimeError("cannot resolve canonical repository state") from exc
+        if result.returncode:
+            raise RuntimeError("canonical repository state requires a supported non-bare Git checkout")
+        return result.stdout.rstrip("\n")
+    if git("rev-parse", "--is-bare-repository") != "false":
+        raise RuntimeError("canonical repository state does not support bare repositories")
+    if git("rev-parse", "--is-inside-work-tree") != "true":
+        raise RuntimeError("canonical repository state requires a working checkout")
+    common = git("rev-parse", "--path-format=absolute", "--git-common-dir")
+    # Git 2.30 may echo the unsupported path-format option; resolve its relative
+    # common-dir against the command cwd instead of assuming it is absolute.
+    if "\n" in common or common.startswith("--"):
+        common = git("rev-parse", "--git-common-dir")
+    common_dir = (cwd / common).resolve()
+    if not common or not common_dir.is_dir():
+        raise RuntimeError("canonical Git common directory is missing or unsupported")
+    metadata = git("-c", "core.quotePath=false", "worktree", "list", "--porcelain")
+    first = metadata.split("\n\n", 1)[0].splitlines()
+    if not first or not first[0].startswith("worktree ") or "bare" in first:
+        raise RuntimeError("main checkout cannot be resolved from Git worktree metadata")
+    raw = first[0][len("worktree "):]
+    if not raw or raw.startswith(chr(34)):
+        raise RuntimeError("quoted/control-character worktree paths are unsupported")
+    main = Path(raw).resolve()
+    if not main.is_dir():
+        raise RuntimeError("canonical main checkout is unavailable")
+    top = Path(git("-C", str(main), "rev-parse", "--show-toplevel")).resolve()
+    main_common = (main / git("-C", str(main), "rev-parse", "--git-common-dir")).resolve()
+    if top != main or main_common != common_dir:
+        raise RuntimeError("Git metadata does not identify a supported main checkout")
+    return {"main_checkout": str(main), "common_dir": str(common_dir),
+            "state_dir": str(main / ".nogging/state"),
+            "locks_dir": str(main / ".nogging/locks"),
+            "config_path": str(main / ".nogging/config.json")}
+
 CFG = json.loads((ROOT / ".nogging/config.json").read_text())
 LOCKS, STATE, REPORTS = (ROOT / ".nogging/locks", ROOT / ".nogging/state", ROOT / ".nogging/reports")
+# Only planning boundary locks and discovery acknowledgements become shared.
+# Session, sync, report and allocation state retain their existing locations.
+try:
+    PLANNING_LOCKS = Path(canonical_repository_state(ROOT)["locks_dir"])
+except RuntimeError:
+    # Pure helper tests can import this module without a Git checkout. The
+    # public resolver and planning mutations still reject unsupported layouts.
+    PLANNING_LOCKS = LOCKS
 WORKTREE_STATE = STATE / "worktrees"
 PR_STATE = STATE / "pull-requests"
 TASK_RE = re.compile(r"^- \[[ x]\] (TASK-[A-Z0-9-]+)\s+(.+)$", re.M)
@@ -432,21 +486,25 @@ def beads():
     return decoded.get("issues", decoded) if isinstance(decoded, dict) else decoded
 def labels(issue): return issue.get("labels") or []
 DISCOVERY_LABEL = "discovery"
-ACK_LEDGER = STATE / "acknowledged-discoveries.json"
+def acknowledgement_ledger():
+    return Path(canonical_repository_state(ROOT)["state_dir"]) / "acknowledged-discoveries.json"
 def load_ack():
     """Bead ID -> acknowledgement timestamp. A planning session writes it; the
     mechanical layer only records the acknowledgement, it never decides one.
     A missing or unreadable ledger just means nothing is acknowledged yet."""
-    if not ACK_LEDGER.exists(): return {}
+    ledger = acknowledgement_ledger()
+    if not ledger.exists(): return {}
     try:
-        data = json.loads(ACK_LEDGER.read_text())
+        data = json.loads(ledger.read_text())
         return data if isinstance(data, dict) else {}
     except (ValueError, OSError):
         return {}
 def ack_discoveries(ids):
     ledger = load_ack()
     for i in ids: ledger[i] = now()
-    data_dir(STATE).joinpath("acknowledged-discoveries.json").write_text(
+    path = acknowledgement_ledger()
+    data_dir(path.parent)
+    path.write_text(
         json.dumps(ledger, indent=2, sort_keys=True) + "\n")
     print(f"acknowledged {len(ids)} discovery Bead(s): {', '.join(ids)}")
 def discovery_is_closed(issue): return issue.get("status") == "closed"
@@ -504,9 +562,9 @@ def issue_id(issue): return issue.get("id") or issue.get("identifier") or issue.
 # removes it, `plan-end` writes it, a fresh install starts with it present.
 # It is advisory to the guards, not a file-mode change, so `git switch` /
 # `merge` / `checkout` and the `sync` writer are unaffected by it.
-SENTINEL = LOCKS / "openspec.readonly"
+SENTINEL = PLANNING_LOCKS / "openspec.readonly"
 def write_sentinel(by="plan-end"):
-    data_dir(LOCKS)
+    data_dir(PLANNING_LOCKS)
     SENTINEL.write_text(json.dumps({"closed_at": now(), "by": by}, indent=2) + "\n")
 def remove_sentinel():
     SENTINEL.unlink(missing_ok=True)
@@ -523,7 +581,7 @@ def boundary_state_line():
         except (ValueError, KeyError, TypeError):
             age = -1
         return f"openspec write boundary: OPEN (planning session active, lock age {age}s)"
-    if (LOCKS / "planning.lock").exists() and not fresh:
+    if (PLANNING_LOCKS / "planning.lock").exists() and not fresh:
         return "openspec write boundary: LOCKED (stale planning lock present — run plan-end --force)"
     return "openspec write boundary: LOCKED"
 def dolt_ahead_of_remote():
@@ -705,7 +763,8 @@ def codex_prompts_link(unlink=False):
     if unresolved:
         print(f"{unresolved} file(s) need operator action (see SKIP above)")
 def lock(name, ttl, force=False):
-    path = data_dir(LOCKS) / f"{name}.lock"
+    directory = Path(canonical_repository_state(ROOT)["locks_dir"]) if name == "planning" else LOCKS
+    path = data_dir(directory) / f"{name}.lock"
     if path.exists() and not force:
         info = json.loads(path.read_text())
         then = dt.datetime.fromisoformat(info["created_at"])
@@ -1088,7 +1147,7 @@ def pid_alive(pid):
 def fresh_lock(name, ttl):
     """The lock-file contents if `<name>.lock` exists and is younger than `ttl`
     seconds, else None. A missing or unparseable file reads as not-held."""
-    path = LOCKS / f"{name}.lock"
+    path = (PLANNING_LOCKS if name == "planning" else LOCKS) / f"{name}.lock"
     if not path.exists():
         return None
     try:
@@ -2843,7 +2902,7 @@ def recover_scan():
     for name, ttl in (("planning", CFG.get("planning_lock_ttl_seconds", 7200)),
                       ("sync", CFG.get("sync_lock_ttl_seconds", 120)),
                       ("orchestrator", orchestrator_lock_ttl())):
-        path = LOCKS / f"{name}.lock"
+        path = (PLANNING_LOCKS if name == "planning" else LOCKS) / f"{name}.lock"
         if not path.exists():
             continue
         try:
@@ -3042,7 +3101,7 @@ def doctor(audit=False, with_recover=False):
     # sentinel and no planning lock). An install whose repo has core.hooksPath
     # set skips scripts/install-hooks, so doctor is the other creation point the
     # spec names. Idempotent; never disturbs a live planning session.
-    if not SENTINEL.exists() and not (LOCKS / "planning.lock").exists():
+    if not SENTINEL.exists() and not (PLANNING_LOCKS / "planning.lock").exists():
         write_sentinel(by="doctor")
     checks = []
     for cmd in ("git", "python3", CFG["beads_command"], "dolt"):
@@ -3200,6 +3259,8 @@ def doctor(audit=False, with_recover=False):
     if any(not ok for _, ok in checks) or (with_recover and rattention): sys.exit(1)
 def main():
     p = argparse.ArgumentParser(); sub = p.add_subparsers(dest="command", required=True)
+    rs = sub.add_parser("repo-state", help="print canonical repository state without writes")
+    rs.add_argument("--cwd", default=str(ROOT))
     sub.add_parser("validate")
     dp = sub.add_parser("doctor")
     dp.add_argument("--recover", action="store_true",
@@ -3291,13 +3352,15 @@ def main():
     semit = ssub.add_parser("emit")
     semit.add_argument("event")
     args = p.parse_args()
-    if args.command == "plan-begin":
+    if args.command == "repo-state":
+        print(json.dumps(canonical_repository_state(args.cwd), sort_keys=True))
+    elif args.command == "plan-begin":
         lock("planning", CFG["planning_lock_ttl_seconds"], args.force)
         remove_sentinel()
         print("planning session lock acquired")
         print("openspec write boundary open")
     elif args.command == "plan-end":
-        path = LOCKS / "planning.lock"
+        path = Path(canonical_repository_state(ROOT)["locks_dir"]) / "planning.lock"
         if path.exists():
             path.unlink(); print("planning session lock released")
         elif not args.force:

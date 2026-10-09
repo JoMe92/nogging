@@ -32,9 +32,15 @@ case "$abs" in
   *) exit 0 ;;
 esac
 
-sentinel="$root/.nogging/locks/openspec.readonly"
-planning_lock="$root/.nogging/locks/planning.lock"
-config="$root/.nogging/config.json"
+helper="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/nogg"
+state=$(python3 "$helper" repo-state --cwd "$root" 2>/dev/null) || {
+  echo "Nogging: cannot resolve canonical repository state; OpenSpec needs an active planning session." >&2
+  exit 2
+}
+locks=$(jq -er '.locks_dir' <<<"$state") || exit 2
+config=$(jq -er '.config_path' <<<"$state") || exit 2
+sentinel="$locks/openspec.readonly"
+planning_lock="$locks/planning.lock"
 
 reason=""
 if [[ -e "$sentinel" ]]; then
