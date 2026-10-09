@@ -72,18 +72,39 @@ else:sys.exit(2)
     previous='{"at":"2020-01-01T00:00:00Z","branch":"master"}\n'
     (state/'last-success.json').write_text(previous)
     partial=nogg('sync','--now')
-    assert partial.returncode!=0 and 'quarantined alpha' in partial.stderr, partial.stderr
+    assert partial.returncode==3 and 'quarantined alpha' in partial.stderr, partial.stderr
+    health_path=state/'sync-mapping-health.json'
+    health=json.loads(health_path.read_text())
+    assert set(health['failures'])=={'alpha'}
+    assert health['last_partial']['skipped_changes']==['alpha']
+    assert health['last_partial']['processed_changes']==['beta']
+    assert health['failures']['alpha']['diagnostics'][0]['bead_ids']==['SPEC-bad']
+    assert not (state/'sync-failure.json').exists(), 'partial pass scheduled a global retry'
+    diagnostic=nogg('doctor').stdout
+    assert 'last complete sync: 2020-01-01T00:00:00Z' in diagnostic
+    assert 'last partial sync:' in diagnostic
+    assert 'mapping quarantine alpha: SPEC-bad;' in diagnostic and 'first seen' in diagnostic
     assert '[x] TASK-B-001' in files['beta'].read_text()
     assert '[ ] TASK-A-001' in files['alpha'].read_text()
     assert not (files['alpha'].parent/'execution-log.md').exists()
     assert (files['beta'].parent/'execution-log.md').read_text().count('<!-- nogg:SPEC-b:')==1
     assert (state/'last-success.json').read_text()==previous
-    mirrored=head();assert nogg('sync','--now').returncode!=0 and head()==mirrored
+    mirrored=head();assert nogg('sync','--now').returncode==3 and head()==mirrored
+    assert json.loads(health_path.read_text())['failures']['alpha']['first_seen']==health['failures']['alpha']['first_seen']
     # Repair the fixture explicitly; no production code ever relabels it.
     issues=json.loads(tracker.read_text());issues[0]['labels'].append('openspec:followup');tracker.write_text(json.dumps(issues))
     assert nogg('sync','--now').returncode==0
     assert '[x] TASK-A-001' in files['alpha'].read_text()
     assert strict_problems()==[], 'strict mapping audit still reports repaired scope'
+    repaired=json.loads(health_path.read_text())
+    assert repaired['failures']=={} and repaired['last_partial']['skipped_changes']==['alpha']
+    assert (state/'last-success.json').read_text()!=previous
+    assert 'historical; no active scoped mapping failures' in nogg('doctor').stdout
+    assert repaired['last_partial']['diagnostics'][0]['bead_ids']==['SPEC-bad']
+    original_health=health_path.read_bytes();health_path.write_text('{broken health')
+    frozen=head();assert nogg('sync','--now').returncode==1 and head()==frozen
+    assert health_path.read_text()=='{broken health', 'sync overwrote corrupt health'
+    health_path.write_bytes(original_health)
     assert 'nogg:SPEC-bad:' not in (files['alpha'].parent/'execution-log.md').read_text()
     assert len(json.loads(tracker.read_text()))==before+1, 'followup invented a mapped Bead'
     assert files['alpha'].read_text().count('TASK-')==1, 'followup invented a checkbox'

@@ -81,6 +81,8 @@ BEAD_STATUSES = "open,in_progress,blocked,deferred,closed"
 class AuditError(RuntimeError):
     """An invariant / mapping / task-parse disagreement. Permanent: a human
     must resolve it before sync can make progress."""
+class PartialSyncError(RuntimeError):
+    """Valid changes reconciled while scoped mapping failures remain (exit 3)."""
 class LockBusyError(RuntimeError):
     """Another sync holds the lock and it is not yet stale. Transient."""
 class ToolError(RuntimeError):
@@ -1292,6 +1294,85 @@ def read_last_success():
         return data if isinstance(data, dict) else {}
     except (ValueError, OSError):
         return {}
+MAPPING_HEALTH = STATE / "sync-mapping-health.json"
+def read_mapping_health():
+    try:
+        value = json.loads(MAPPING_HEALTH.read_text())
+    except FileNotFoundError:
+        return {}
+    except (ValueError, OSError) as exc:
+        raise AuditError(f"cannot read mapping health: {MAPPING_HEALTH}; preserve and repair the file") from exc
+    if (not isinstance(value, dict) or not isinstance(value.get("failures", {}), dict)
+            or not isinstance(value.get("last_partial", {}), dict)):
+        raise AuditError(f"malformed mapping health: {MAPPING_HEALTH}; preserve and repair the file")
+    for change, entry in value.get("failures", {}).items():
+        if (not isinstance(change, str) or not isinstance(entry, dict)
+                or not isinstance(entry.get("first_seen"), str) or not isinstance(entry.get("last_seen"), str)
+                or not isinstance(entry.get("diagnostics"), list)):
+            raise AuditError(f"malformed mapping health scope: {MAPPING_HEALTH}")
+        for diagnostic in entry["diagnostics"]:
+            if (not isinstance(diagnostic, dict) or not isinstance(diagnostic.get("reason"), str)
+                    or not isinstance(diagnostic.get("code"), str)
+                    or any(not isinstance(diagnostic.get(key), list)
+                           or any(not isinstance(item, str) for item in diagnostic[key])
+                           for key in ("bead_ids", "task_ids"))):
+                raise AuditError(f"malformed mapping health diagnostic: {MAPPING_HEALTH}")
+    partial = value.get("last_partial", {})
+    if partial and (not isinstance(partial.get("at"), str) or not isinstance(partial.get("branch"), str)
+                    or any(not isinstance(partial.get(key), list)
+                           or any(not isinstance(item, str) for item in partial[key])
+                           for key in ("skipped_changes", "processed_changes"))):
+        raise AuditError(f"malformed partial-pass health: {MAPPING_HEALTH}")
+    return value
+
+def atomic_json_state(path, value):
+    data_dir(path.parent)
+    atomic_acknowledgements_write(path, (json.dumps(value, indent=2, sort_keys=True) + "\n").encode())
+
+def record_mapping_health(branch, diagnostics, processed_changes):
+    previous = read_mapping_health()
+    stamp = now()
+    failures = {}
+    for diagnostic in diagnostics:
+        for change in diagnostic.changes:
+            entry = failures.setdefault(change, {
+                "first_seen": previous.get("failures", {}).get(change, {}).get("first_seen", stamp),
+                "last_seen": stamp, "diagnostics": []})
+            entry["diagnostics"].append({"code": diagnostic.code, "bead_ids": list(diagnostic.bead_ids),
+                                         "task_ids": list(diagnostic.task_ids), "reason": diagnostic.message})
+    health = {"failures": failures, "last_partial": previous.get("last_partial", {})}
+    if failures:
+        health["last_partial"] = {"at": stamp, "branch": branch,
+                                  "processed_changes": sorted(processed_changes),
+                                  "skipped_changes": sorted(failures),
+                                  "diagnostics": [{"code": d.code, "changes": list(d.changes),
+                                                   "bead_ids": list(d.bead_ids), "task_ids": list(d.task_ids),
+                                                   "reason": d.message} for d in diagnostics]}
+    atomic_json_state(MAPPING_HEALTH, health)
+    return health
+
+def mapping_health_lines():
+    last = read_last_success()
+    lines = [f"last complete sync: {last['at']} ({humanize_age(last['at'])} ago)"
+             + (f" on {last['branch']}" if last.get("branch") else "")] if last.get("at") else ["last complete sync: none recorded"]
+    try:
+        health = read_mapping_health()
+        partial = health.get("last_partial", {})
+        failures = health.get("failures", {})
+        if partial.get("at"):
+            lines.append(f"last partial sync: {partial['at']} ({humanize_age(partial['at'])} ago); "
+                         f"skipped {', '.join(partial.get('skipped_changes', []))}"
+                         + (" (historical; no active scoped mapping failures)" if not failures else ""))
+        for change, entry in sorted(failures.items()):
+            for diagnostic in entry["diagnostics"]:
+                ids = ", ".join(diagnostic.get("bead_ids", [])) or "no unique Bead ID"
+                lines.append(f"mapping quarantine {change}: {ids}; {diagnostic['reason']}; "
+                             f"first seen {humanize_age(entry['first_seen'])} ago, "
+                             f"last seen {humanize_age(entry['last_seen'])} ago")
+    except (AuditError, KeyError, TypeError, AttributeError):
+        lines.append(f"mapping health unreadable: {MAPPING_HEALTH}; preserve and repair before sync")
+    return lines
+
 SKIP_RECORD = STATE / "last-skip.json"
 def record_skip(reason):
     """Persist why the most recent tick skipped, so a mirror that has quietly
@@ -1336,6 +1417,7 @@ def sync(on_request=False):
     path = None
     try:
         path = lock("sync", CFG["sync_lock_ttl_seconds"])
+        read_mapping_health()  # refuse damaged durable health before mirroring
         tasks, issues, diagnostics, _warnings = mapping_audit()
         plans, quarantined = reconciliation_plan(tasks, issues, diagnostics)
         for diagnostic in diagnostics:
@@ -1373,20 +1455,21 @@ def sync(on_request=False):
                      "GIT_COMMITTER_NAME": sync_name, "GIT_COMMITTER_EMAIL": sync_email})
             print(f"synced {len(set(changed))} file(s)")
         else: print("sync: no changes")
+        record_mapping_health(branch, diagnostics, plans)
         if quarantined:
-            # Independent valid changes have been committed. Never record a
-            # partial pass as complete success; health persistence is refined
-            # by TASK-BMF-004 without repeating those idempotent writes.
-            raise AuditError("partial reconciliation; quarantined changes: " + ", ".join(sorted(quarantined))
-                             + "\n- " + "\n- ".join(d.message for d in diagnostics))
+            clear_failure()
+            clear_skip()
+            raise PartialSyncError("partial reconciliation; quarantined changes: " + ", ".join(sorted(quarantined))
+                                   + "\n- " + "\n- ".join(d.message for d in diagnostics))
         prev = read_last_success()
         prev_branch = prev.get("branch")
         if prev_branch and prev_branch != branch:
             print(f"sync: note — mirroring on {branch} (last run was on {prev_branch})")
-        data_dir(STATE).joinpath("last-success.json").write_text(
-            json.dumps({"at": now(), "branch": branch}, indent=2) + "\n")
+        atomic_json_state(STATE / "last-success.json", {"at": now(), "branch": branch})
         clear_failure()
         clear_skip()
+    except PartialSyncError:
+        raise  # degraded pass is not a retryable repository-wide failure
     except Exception as exc:
         record_failure(exc)
         raise
@@ -3396,6 +3479,7 @@ def doctor(audit=False, with_recover=False):
              "compatibility baseline: Node 18/20/22, Python 3.9-3.13, "
              "Git 2.30+, Bash 4.4+, OpenSpec 1.11.x, Beads 1.2.x, Dolt 2.3.x "
              "(docs/nogging/compatibility.md)"]
+    notes.extend(mapping_health_lines())
     # Advisory only, like every other NOTE here: never a FAIL, never changes
     # doctor's exit code. `/plan`'s archive step (TASK-TCC-004) is what
     # actually archives a change; doctor only surfaces readiness.
@@ -3689,4 +3773,5 @@ def session_cmd(args):
         session_emit(args.event)
 if __name__ == "__main__":
     try: main()
+    except PartialSyncError as exc: print(f"nogg: {exc}", file=sys.stderr); sys.exit(3)
     except Exception as exc: print(f"nogg: {exc}", file=sys.stderr); sys.exit(1)
