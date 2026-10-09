@@ -21,6 +21,10 @@ with tempfile.TemporaryDirectory(prefix='nogg planning role ') as td:
     subprocess.run(['git','init','-q',str(root)],check=True)
     subprocess.run(['git','-C',str(root),'add','.'],check=True)
     subprocess.run(['git','-C',str(root),'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','seed'],check=True)
+    origin=root.parent/'origin.git'
+    subprocess.run(['git','init','-q','--bare',str(origin)],check=True)
+    subprocess.run(['git','-C',str(root),'remote','add','origin',str(origin)],check=True)
+    subprocess.run(['git','-C',str(root),'push','-q','origin','HEAD:develop'],check=True)
     os.environ['NOGGING_ROOT']=str(root)
     m=SourceFileLoader('planning_role',str(source/'scripts/nogg')).load_module()
     assert m.normalize_role('planning')==('planning','planning')
@@ -43,6 +47,16 @@ with tempfile.TemporaryDirectory(prefix='nogg planning role ') as td:
             assert record['description']==description and record['working_dir']==str(workdir)
             assert pid in record['name'] and '--bead' not in record['command']
             assert record['state']=='running' and 'session kickoff' in output.getvalue()
+        for agent in ['claude','codex','pi']:
+            pid='auto-'+agent
+            with contextlib.redirect_stdout(io.StringIO()):
+                m.session_launch('planning',None,None,False,None,agent=agent,planning_id=pid,description='fresh-scope')
+            record=next(r for _,r in m.session_records() if r.get('planning_id')==pid)
+            assert record['bead_id'] is None and record['role']=='planning'
+            assert Path(record['working_dir'])!=root and Path(record['working_dir']).is_dir()
+            assert Path(record['working_dir']).joinpath('.git').is_file()
+            assert any('.nogging/launch-prompts/planning.md' in str(arg) for arg in record['command'])
+            assert m.worktree_record_path('plan',pid,'fresh-scope').exists()
         assert lookup.call_count==0, 'Bead-optional launch queried a placeholder task'
         assert not (root/'.nogging/locks/planning.lock').exists(), 'bare launch acquired a lock'
         assert all(call[0]!='send-keys' for call in calls), 'bare launch sent a kickoff'
@@ -64,6 +78,10 @@ with tempfile.TemporaryDirectory(prefix='nogg planning role ') as td:
     for field,value in [('planning_id',None),('planning_id','bad id'),('description','Bad_Description'),('cwd',str(root)),('cwd',str(workdir/'nested'))]:
         refused(**{**base,field:value})
     refused(**{**base,'role':'lead','bead':'SPEC-associated'})
+    refused(**{**base,'cwd':None})
+    refused(**{**base,'planning_id':'bad-profile-scope','cwd':None,'profile':'missing-profile'})
+    assert not m.worktree_record_path('plan','bad-profile-scope','scope-test').exists()
+    assert not (root.parent/f'{root.name}-plan-bad-profile-scope-scope-test').exists()
     refused(role='lead',bead=None,cwd=None,read_only=False,owner=None)
     with patch.object(m,'bead_exists',return_value=False):
         refused(**{**base,'bead':'SPEC-missing'})
