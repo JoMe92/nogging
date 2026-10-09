@@ -49,6 +49,13 @@ runs under — see *Running with broader authority*.
 `launch` prints the session name, the log path and the attach command. It does
 not attach you — the session comes up idle at a prompt, waiting for direction.
 
+Before contacting tmux, launch verifies that its installed runtime helpers are
+executable and support every requested option. A refusal naming a helper
+contract calls for a pinned Nogging `update`; see `failure-recovery.md`.
+If the agent itself exits during startup, the failed record and redacted log
+retain the original error even when the pane has already disappeared. Check
+`session list` and `session log <name>` after a suspected quick failure.
+
 Then give it its task: attach (below) and tell it what to do, or point it at a
 briefing file.
 

@@ -5,6 +5,31 @@ mapping errors and the last sync failure without modifying data. Run
 `./scripts/nogg audit` for the same invariant checks plus a timestamped
 local report.
 
+## Session helper or startup failures
+
+`doctor` checks that `scripts/session-launch` and `scripts/session-log-writer`
+are executable and implement the interface expected by the installed CLI.
+A missing helper or incompatible contract means the managed payload is partial
+or mixed. Run the pinned Nogging package's `update` from a release containing
+the helper-contract repair, then run `./scripts/nogg doctor` again. Updating
+from an older package that omitted the wrappers does not fix the installation.
+Use the same distribution for the CLI and both helpers; do not patch wrapper
+flags by hand. Existing worktrees need the repaired payload as well.
+
+Contract refusal happens before tmux or session files, so it requires no session
+cleanup. If a runtime starts and then exits, its record becomes `failed` and
+its stderr is redacted and saved even if the pane disappears before logging
+can attach. Run `./scripts/nogg session list`, then
+`./scripts/nogg session log <name>` to inspect the underlying error (for example,
+an unsupported runtime option or a missing executable). Fix that cause, retire
+the terminal session with `session cleanup <name>`, and launch again. A quick
+failure can occur just after the launcher returns; check the record and log
+before assuming the agent is running.
+
+Normal `update` replaces managed helpers while preserving OpenSpec, Beads,
+custom profiles and unrelated agent settings. It does not upgrade the agent
+CLI itself or grant additional authority.
+
 ## Resuming an interrupted run
 
 A planning or development run can stop mid-way — the token budget runs out, the
