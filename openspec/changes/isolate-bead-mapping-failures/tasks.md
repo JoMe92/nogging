@@ -2,7 +2,7 @@
 
 - [x] TASK-BMF-001 Define and implement mapped/follow-up/unmapped classification with typed scoped diagnostics; verify valid pairs, change-only malformed labels, explicit follow-ups, inherited duplicate labels and illegal follow-up-plus-task combinations.
 
-- [ ] TASK-BMF-002 Scope materialize target validation and sync reconciliation plans by affected change while keeping audit strict; verify malformed change A does not prevent materialize/mirror B and global ambiguity still refuses all writes.
+- [x] TASK-BMF-002 Scope materialize target validation and sync reconciliation plans by affected change while keeping audit strict; verify malformed change A does not prevent materialize/mirror B and global ambiguity still refuses all writes.
 
 - [ ] TASK-BMF-003 Exclude non-task follow-ups from checkbox mirroring and account for explicit blocking dependency edges in completion/archive readiness; verify no fabricated task, no duplicate Bead and no premature complete classification.
 
