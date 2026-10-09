@@ -96,7 +96,8 @@ refute() { if grep -qF -- "$2" "$out"; then echo "FAIL - $1 (present: $2)"; cat 
 # make_root <dir> [grace] — minimal Nogging checkout for the session layer.
 make_root() {
   local r="$1" grace="${2:-10}"
-  mkdir -p "$r/.nogging/state"
+  mkdir -p "$r/.nogging/state" "$r/scripts"
+  cp "$repo_root/scripts/session-launch" "$repo_root/scripts/session-log-writer" "$r/scripts/"
   # A bare, commit-less `git init` is enough for `git worktree list
   # --porcelain` to succeed — needed by doctor()'s persona_mismatch_notes(),
   # which this file's dal-doctor scenario exercises via a real `doctor` call.
@@ -1089,6 +1090,78 @@ export BD_DEP_LIST_JSON='[{"id":"SPEC-blocker4","status":"closed"}]'
 "$nogg" doctor >"$out" 2>&1 || true
 refute "dal-doctor: the NOTE is gone once the dependency is closed" "now has an unmet dependency"
 unset BD_DEP_LIST_JSON NOGGING_ROOT
+
+# Contract failures must happen before even a read-only tmux call or settings write.
+for defect in missing-launch nonexec-launch missing-writer stale-version session-id remote-control sandbox approval network readonly-root provider model; do
+  root="$work/contract-$defect"; make_root "$root"
+  export NOGGING_ROOT="$root" TMUX_STUB_DIR="$work/contract-$defect-tmux"
+  export BD_KNOWN="SPEC-contract"
+  python3 - "$root" "$defect" <<'PYFIX'
+import json, pathlib, subprocess, sys
+root, defect = pathlib.Path(sys.argv[1]), sys.argv[2]
+helper = root / 'scripts/session-launch'
+if defect == 'missing-launch':
+    helper.unlink()
+elif defect == 'nonexec-launch':
+    helper.chmod(0o644)
+elif defect == 'missing-writer':
+    (root / 'scripts/session-log-writer').unlink()
+else:
+    contract = json.loads(subprocess.check_output([str(helper), '--contract']))
+    if defect == 'stale-version':
+        contract['version'] = 0
+    else:
+        contract['options'].pop('--' + defect)
+    helper.write_text('#!/usr/bin/env python3\nprint(' + repr(json.dumps(contract)) + ')\n')
+PYFIX
+  args=(--role lead --bead SPEC-contract)
+  case "$defect" in
+    resume) args+=(--resume 00000000-0000-4000-8000-000000000001) ;;
+    remote-control) args=(--role orchestrator) ;;
+    sandbox|approval|network|readonly-root) args+=(--agent codex) ;;
+    provider|model)
+      printf 'provider = "test"\nmodel = "test"\n' >"$root/.nogging/launch-profiles/custom.pi.toml"
+      args+=(--agent pi --profile "$root/.nogging/launch-profiles/custom.pi.toml") ;;
+  esac
+  if "$nogg" session launch "${args[@]}" >"$out" 2>&1; then
+    echo "FAIL - contract $defect accepted"; fail=1
+  fi
+  check "contract $defect gives update remedy" "update"
+  if [[ -e "$TMUX_STUB_DIR/calls.log" || -d "$root/.nogging/state/sessions" ]]; then
+    echo "FAIL - contract $defect caused side effects"; fail=1
+  else
+    echo "ok   - contract $defect refuses before tmux or session files"
+  fi
+  unset NOGGING_ROOT
+ done
+
+# Exact resume is an internal orchestrator call, not a public launch flag.
+root="$work/contract-resume"; make_root "$root"
+export NOGGING_ROOT="$root" TMUX_STUB_DIR="$work/contract-resume-tmux"
+python3 - "$root/scripts/session-launch" <<'PYFIX'
+import json, pathlib, subprocess, sys
+p = pathlib.Path(sys.argv[1])
+c = json.loads(subprocess.check_output([str(p), '--contract']))
+c['options'].pop('--resume')
+p.write_text('#!/usr/bin/env python3\nprint(' + repr(json.dumps(c)) + ')\n')
+PYFIX
+python3 - "$nogg" >"$out" 2>&1 <<'PYTEST'
+from importlib.machinery import SourceFileLoader
+import sys
+m = SourceFileLoader('resume_contract', sys.argv[1]).load_module()
+try:
+    m.session_launch('orchestrator', None, None, False, None,
+                     resume='00000000-0000-4000-8000-000000000001')
+except RuntimeError as exc:
+    print(exc)
+else:
+    raise AssertionError('incompatible resume contract accepted')
+PYTEST
+check "contract resume checks internal exact-conversation flag" "cannot accept --resume"
+if [[ -e "$TMUX_STUB_DIR/calls.log" || -d "$root/.nogging/state/sessions" ]]; then
+  echo 'FAIL - resume contract caused side effects'; fail=1
+fi
+unset NOGGING_ROOT
 
 if [[ $fail -ne 0 ]]; then echo "session checks failed" >&2; exit 1; fi
 echo "all session checks passed"

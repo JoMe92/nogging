@@ -2,7 +2,7 @@
 
 - [x] TASK-PSC-001 Add both wrappers to manifest verbatim/executable lists and assert npm payload coverage; verify fresh init and update from a fixture missing or containing old wrappers produce executable current copies while preserving OpenSpec, Beads and unrelated target content.
 
-- [ ] TASK-PSC-002 Add a side-effect-free launch-wrapper contract handshake and preflight all emitted flags including session-id, resume, remote-control and per-agent options; verify mismatched/missing/non-executable wrappers refuse before any tmux call or session record.
+- [x] TASK-PSC-002 Add a side-effect-free launch-wrapper contract handshake and preflight all emitted flags including session-id, resume, remote-control and per-agent options; verify mismatched/missing/non-executable wrappers refuse before any tmux call or session record.
 
 - [ ] TASK-PSC-003 Capture startup stderr before the child can exit and report the real redacted cause with a failed lifecycle record; verify an immediate unknown-flag/exec failure produces a readable log rather than only cannot-find-pane.
 

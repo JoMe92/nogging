@@ -8,6 +8,12 @@
 # Usage: session-log-writer <log-path> <max-bytes> <depth>
 set -eu
 
+if [ "${1:-}" = "--contract" ]; then
+  [ "$#" -eq 1 ] || exit 2
+  printf '%s\n' '{"version":1,"positional":3}'
+  exit 0
+fi
+
 log=${1:?log path required}
 max=${2:?max bytes required}
 depth=${3:?rotation depth required}
