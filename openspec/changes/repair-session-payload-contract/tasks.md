@@ -6,7 +6,7 @@
 
 - [x] TASK-PSC-003 Capture startup stderr before the child can exit and report the real redacted cause with a failed lifecycle record; verify an immediate unknown-flag/exec failure produces a readable log rather than only cannot-find-pane.
 
-- [ ] TASK-PSC-004 Add doctor payload/contract diagnostics and make shipped self-tests honor optional configuration defaults and consumer-local fixtures; verify a minimal legacy config without claim_stale_seconds and installed documentation links in a scratch consumer.
+- [x] TASK-PSC-004 Add doctor payload/contract diagnostics and make shipped self-tests honor optional configuration defaults and consumer-local fixtures; verify a minimal legacy config without claim_stale_seconds and installed documentation links in a scratch consumer.
 
 - [ ] TASK-PSC-005 Document managed wrapper replacement, preflight errors and supported update recovery; verify init/update/update/remove preserves unrelated hooks, profiles outside owned names, OpenSpec and Beads, including paths containing spaces.
 

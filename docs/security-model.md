@@ -130,6 +130,6 @@ a prudent final step.
 
 ## Reporting a vulnerability
 
-Follow [`SECURITY.md`](../SECURITY.md). Do not put a suspected vulnerability,
+Follow [Nogging’s security policy](https://github.com/JoMe92/nogging/blob/develop/SECURITY.md). Do not put a suspected vulnerability,
 credential, private URL, or sensitive log in a public issue.
 
