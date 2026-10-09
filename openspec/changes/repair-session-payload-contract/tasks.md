@@ -1,6 +1,6 @@
 ## 1. Implementation and validation
 
-- [ ] TASK-PSC-001 Add both wrappers to manifest verbatim/executable lists and assert npm payload coverage; verify fresh init and update from a fixture missing or containing old wrappers produce executable current copies while preserving OpenSpec, Beads and unrelated target content.
+- [x] TASK-PSC-001 Add both wrappers to manifest verbatim/executable lists and assert npm payload coverage; verify fresh init and update from a fixture missing or containing old wrappers produce executable current copies while preserving OpenSpec, Beads and unrelated target content.
 
 - [ ] TASK-PSC-002 Add a side-effect-free launch-wrapper contract handshake and preflight all emitted flags including session-id, resume, remote-control and per-agent options; verify mismatched/missing/non-executable wrappers refuse before any tmux call or session record.
 

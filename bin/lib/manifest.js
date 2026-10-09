@@ -15,6 +15,8 @@ module.exports = {
   // Individual files copied verbatim.
   verbatim: [
     'scripts/nogg',
+    'scripts/session-launch',
+    'scripts/session-log-writer',
     'scripts/install-hooks',
     'scripts/test',
     'scripts/nogg.test.sh',
@@ -84,6 +86,8 @@ module.exports = {
   // chmod 0755 after copying (destination-relative).
   executable: [
     'scripts/nogg',
+    'scripts/session-launch',
+    'scripts/session-log-writer',
     'scripts/install-hooks',
     'scripts/test',
     'scripts/check-branch-name',
