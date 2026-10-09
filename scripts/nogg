@@ -54,7 +54,8 @@ def canonical_repository_state(cwd):
     main_common = (main / git("-C", str(main), "rev-parse", "--git-common-dir")).resolve()
     if top != main or main_common != common_dir:
         raise RuntimeError("Git metadata does not identify a supported main checkout")
-    return {"main_checkout": str(main), "common_dir": str(common_dir),
+    return {"checkout_root": str(Path(git("rev-parse", "--show-toplevel")).resolve()),
+            "main_checkout": str(main), "common_dir": str(common_dir),
             "state_dir": str(main / ".nogging/state"),
             "locks_dir": str(main / ".nogging/locks"),
             "config_path": str(main / ".nogging/config.json")}
@@ -638,18 +639,32 @@ def boundary_state_line():
     """One read-only line describing the OpenSpec write boundary, for `doctor`:
     OPEN during an active planning session, LOCKED otherwise, and LOCKED naming
     a stale planning lock as the reason when one is still on disk."""
-    ttl = CFG.get("planning_lock_ttl_seconds", 7200)
-    fresh = fresh_lock("planning", ttl)
-    if fresh and not SENTINEL.exists():
-        try:
-            age = int((dt.datetime.now(dt.timezone.utc)
-                       - dt.datetime.fromisoformat(fresh["created_at"])).total_seconds())
-        except (ValueError, KeyError, TypeError):
-            age = -1
-        return f"openspec write boundary: OPEN (planning session active, lock age {age}s)"
-    if (PLANNING_LOCKS / "planning.lock").exists() and not fresh:
+    try:
+        state = canonical_repository_state(ROOT)
+        directory = Path(state["locks_dir"])
+        config = json.loads(Path(state["config_path"]).read_text())
+        ttl = config.get("planning_lock_ttl_seconds", 7200)
+        if isinstance(ttl, bool) or not isinstance(ttl, (int, float)) or not 0 < ttl < float("inf"):
+            raise ValueError("invalid planning lock TTL")
+        if os.path.lexists(directory / "openspec.readonly") or os.path.lexists(LOCKS / "openspec.readonly"):
+            return "openspec write boundary: LOCKED"
+        path = directory / "planning.lock"
+        if not path.exists():
+            return "openspec write boundary: LOCKED"
+        record = json.loads(path.read_text())
+        if (type(record.get("pid")) is not int or record["pid"] <= 0
+                or not isinstance(record.get("host"), str) or not record["host"].strip()):
+            raise ValueError("invalid planning lock owner")
+        created = record["created_at"]
+        if not isinstance(created, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})", created):
+            raise ValueError("invalid planning lock timestamp")
+        age = (dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(created.replace("Z", "+00:00"))).total_seconds()
+        if 0 <= age < ttl:
+            return f"openspec write boundary: OPEN (planning session active, lock age {int(age)}s; execution roles remain read-only)"
         return "openspec write boundary: LOCKED (stale planning lock present — run plan-end --force)"
-    return "openspec write boundary: LOCKED"
+    except (RuntimeError, ValueError, OSError, TypeError, KeyError, AttributeError):
+        return "openspec write boundary: LOCKED (invalid or unavailable canonical state)"
+
 def dolt_ahead_of_remote():
     """Local Dolt commits on the current branch not present on its configured
     remote, read entirely from local Dolt refs (no network call) — `None` when
@@ -1988,14 +2003,13 @@ def session_launch(role, bead, cwd, read_only, owner,
            # That means, unlike Codex, this branch passes nothing extra for
            # the openspec/ write boundary (openspec_readonly is not consulted
            # here) and never constructs a flag that would disable or bypass
-           # the guard for either authority level. That floor file ships with
-           # this same change (TASK-PIA-004); warn (do not fail) when it is
-           # not present yet.
+           # the guard for either authority level. The wrapper explicitly
+           # loads it and refuses startup if the payload is missing.
         floor_file = Path(workdir) / ".pi/extensions/nogging-guard.ts"
         if not floor_file.is_file():
             print(f"warning: {floor_file} is absent — the Nogging command floor for "
-                  f"Pi is not in place for this session (it ships with this same "
-                  f"pi-agent-support change). Continuing.", file=sys.stderr)
+                  f"Pi is missing; the wrapper will refuse startup. Restore the "
+                  f"installed payload.", file=sys.stderr)
         effective_settings_path = None
         inner += ["--agent", "pi"]
         if "provider" in pi_spec:
@@ -3230,15 +3244,18 @@ def doctor(audit=False, with_recover=False):
     pi_present = tool_on_path("pi")
     notes.append("pi available" if pi_present
                  else "pi not installed; only needed for the Pi agent path")
-    # Informational nudge (never a failure): the repo ships a Pi guard
-    # extension, but Pi won't load it until the project has standing trust.
+    try:
+        repository = canonical_repository_state(ROOT)
+        notes.append(f"canonical planning boundary: {repository['locks_dir']}")
+        notes.append(f"canonical discovery acknowledgements: {repository['state_dir']}/acknowledged-discoveries.json")
+    except RuntimeError as exc:
+        notes.append(f"canonical repository state unavailable; OpenSpec authorization denied: {exc}")
     if pi_present:
         guard_file = ROOT / ".pi/extensions/nogging-guard.ts"
-        if guard_file.is_file() and pi_project_trusted(ROOT) is not True:
-            notes.append(
-                "pi is present but this project is not yet trusted for .pi/extensions/ "
-                "(the Nogging guard extension won't load) - run once with `pi --approve` "
-                "or use pi's `/trust` command to grant standing trust")
+        if not guard_file.is_file():
+            notes.append(f"Pi guard missing: {guard_file}; supervised wrapper refuses launch; restore the installed payload")
+        else:
+            notes.append("supervised Pi explicitly loads the guard with --extension; --approve is run-scoped, no standing trust mutation")
     # The always-on Orchestration Agent: report the service state, linger, and
     # whether a FULL-ACCESS orchestrator session is live. Its absence or
     # inactivity is never a failure (it is opt-in, like the Codex/Pi paths);

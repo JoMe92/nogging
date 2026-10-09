@@ -6,16 +6,15 @@
  * extension IS the floor for a Pi-supervised Nogging session: it
  * intercepts every `tool_call` event and denies a shell command matching
  * the Nogging command-floor patterns, or a write/edit under `openspec/`
- * while the write boundary is closed. Loads only once this project is
- * trusted (`--approve` or `/trust`), since `.pi/extensions/` is one of the
- * trust-gated resource directories.
+ * while the write boundary is closed. Supervised launches explicitly load
+ * this extension; project discovery in standalone Pi requires run approval.
  *
  * Deliberately over-inclusive on the shell-command matching: a false
  * positive just makes an operator explain themselves; a false negative is
  * an actual safety gap. None of these patterns attempt full shell parsing.
  */
 import { dirname, resolve, sep } from "node:path";
-import { lstatSync, readFileSync } from "node:fs";
+import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -67,10 +66,37 @@ export function matchesFloor(command: string): string | undefined {
 	return FLOOR_PATTERNS.find((p) => p.test(command))?.name;
 }
 
+function repositoryState(cwd: string) {
+	const helper = resolve(dirname(fileURLToPath(import.meta.url)), "../../scripts/nogg");
+	const env = { ...process.env };
+	delete env.NOGGING_ROOT;
+	return JSON.parse(execFileSync("python3", [helper, "repo-state", "--cwd", cwd],
+		{ encoding: "utf8", env, stdio: ["ignore", "pipe", "pipe"], timeout: 5000 }));
+}
+
+function physicalPath(path: string): string {
+	try { return realpathSync(path); }
+	catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+		const parent = dirname(path);
+		if (parent === path) throw error;
+		return resolve(physicalPath(parent), path.slice(parent.length + 1));
+	}
+}
+
 export function isUnderOpenspec(inputPath: string, cwd: string): boolean {
-	const openspecRoot = resolve(cwd, "openspec");
-	const resolved = resolve(cwd, inputPath);
-	return resolved === openspecRoot || (resolved + sep).startsWith(openspecRoot + sep);
+	try {
+		const state = repositoryState(cwd);
+		const target = physicalPath(resolve(cwd, inputPath));
+		return [state.checkout_root, state.main_checkout].some((root) => {
+			if (typeof root !== "string") throw new Error("invalid repository root");
+			const spec = physicalPath(resolve(root, "openspec"));
+			return target === spec || target.startsWith(spec + sep);
+		});
+	} catch {
+		// Unknown layout or unreadable path cannot establish safe write scope.
+		return true;
+	}
 }
 
 export function openspecBoundaryOpen(cwd: string, role = process.env.NOGG_SESSION_ROLE ?? "execution"): boolean {
@@ -78,11 +104,7 @@ export function openspecBoundaryOpen(cwd: string, role = process.env.NOGG_SESSIO
 	// directory must never hide a closed boundary in the main checkout.
 	if (role !== "planning") return false;
 	try {
-		const helper = resolve(dirname(fileURLToPath(import.meta.url)), "../../scripts/nogg");
-		const env = { ...process.env };
-		delete env.NOGGING_ROOT;
-		const state = JSON.parse(execFileSync("python3", [helper, "repo-state", "--cwd", cwd],
-			{ encoding: "utf8", env, stdio: ["ignore", "pipe", "pipe"], timeout: 5000 }));
+		const state = repositoryState(cwd);
 		if (typeof state.locks_dir !== "string" || typeof state.config_path !== "string") return false;
 		for (const sentinel of new Set([resolve(state.locks_dir, "openspec.readonly"),
 			resolve(cwd, ".nogging/locks/openspec.readonly")])) {

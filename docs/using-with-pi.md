@@ -33,16 +33,12 @@ In addition to the usual target-repo prerequisites (`bd`/Beads, `python3`,
   none configured, `session launch --agent pi` starts the process but it fails
   immediately with "No API key found for the selected model". This is a
   provider/auth concern, not something Nogging manages.
-- **Trust `.pi/extensions/` once.** Pi only loads project-local
-  `.pi/extensions/`, `.pi/prompts/`, and the other `.pi/*` resource
-  directories once the project has a standing trust decision, or `--approve`
-  is passed for that run. `scripts/nogg session launch --agent pi`
-  always passes `--approve` itself (see *Launch authority levels* below), so
-  a supervised launch works without any manual trust step — but running `pi`
-  yourself, interactively, in this repo will still prompt the first time.
-  `scripts/nogg doctor` prints a NOTE naming the fix (`pi --approve` or
-  the `/trust` command) when `pi` is present, the guard extension is shipped,
-  and no standing trust decision has been recorded yet.
+- **Supervised guard activation requires no standing trust change.** The wrapper
+  passes the absolute guard path through `--extension` and uses run-scoped
+  `--approve` for project resources. It refuses to start if the guard is missing.
+  It does not modify Pi's trust store. Standalone Pi requires run approval or an
+  existing project trust decision to discover local resources. `doctor` names
+  the guard and the shared state locations.
 
 ## What the installer places under `.pi/`
 
@@ -93,9 +89,15 @@ uses since Pi has no execpolicy-style file. `nogging-guard.ts`:
   `git push --force`/`-f`/`--force-with-lease`, `git reset --hard`,
   `git clean -f*`, `git filter-branch`;
 - denies a write or edit (`toolName === "write"`/`"edit"`) under `openspec/`
-  unless `.nogging/locks/openspec.readonly` is absent (a planning session
-  is active) — the same sentinel `plan-begin`/`plan-end` toggle for every
-  other agent.
+  unless the role is exactly `planning`, the main checkout has a fresh valid
+  planning lock, and neither canonical nor legacy local closed sentinel exists.
+  Missing, malformed, unreadable or unsupported state denies authorization.
+  The canonical config supplies `planning_lock_ttl_seconds` (default 7200).
+  Execution roles stay read-only even while another planning session is open.
+  Paths are normalized from the checkout root, including nested cwd, `..`,
+  absolute paths and existing symlinks. Standalone Pi defaults to execution;
+  an explicitly authorized manual planning process needs
+  `NOGG_SESSION_ROLE=planning` in addition to `plan-begin`.
 
 It is active at **both** authority levels, always — nothing this bridge
 passes to `pi` suppresses or bypasses it, and `trusted` only changes the
