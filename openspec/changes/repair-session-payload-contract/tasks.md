@@ -8,7 +8,7 @@
 
 - [x] TASK-PSC-004 Add doctor payload/contract diagnostics and make shipped self-tests honor optional configuration defaults and consumer-local fixtures; verify a minimal legacy config without claim_stale_seconds and installed documentation links in a scratch consumer.
 
-- [ ] TASK-PSC-005 Document managed wrapper replacement, preflight errors and supported update recovery; verify init/update/update/remove preserves unrelated hooks, profiles outside owned names, OpenSpec and Beads, including paths containing spaces.
+- [x] TASK-PSC-005 Document managed wrapper replacement, preflight errors and supported update recovery; verify init/update/update/remove preserves unrelated hooks, profiles outside owned names, OpenSpec and Beads, including paths containing spaces.
 
 - [ ] TASK-PSC-006 Run scripts/test plus packed-package fresh-install/old-install-update launch tests with stub agents; record version, payload inventory and evidence for #43 and the installer portion of #51 without claiming model selection is complete.
 

@@ -17,10 +17,43 @@ git -C "$consumer" init -q
 printf 'user planning\n' >"$consumer/openspec/changes/user/tasks.md"
 printf 'user tracker\n' >"$consumer/.beads/user-data"
 printf 'user helper\n' >"$consumer/scripts/user-helper"
+python3 - "$consumer" <<'PY'
+import json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+files = {
+    '.claude/settings.json': json.dumps({'userSetting': 'keep', 'hooks': {
+        'PreToolUse': [{'matcher': 'Read', 'hooks': [{'type': 'command', 'command': 'echo user-hook'}]}],
+        'Notification': [{'hooks': [{'type': 'command', 'command': 'echo user-notification'}]}]}}),
+    '.codex/hooks.json': json.dumps({'hooks': {'SessionStart': [{'command': 'user-start'}]}}),
+    '.nogging/launch-profiles/operator.json': '{"userProfile": true}\n',
+    '.pi/extensions/user-extension.ts': '// user extension\n',
+    'openspec/config.yaml': 'schema: spec-driven\n# user configuration\n',
+    'scripts/hooks/user-hook': '# user hook\n',
+}
+for name, content in files.items():
+    path = root / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+(root / 'user-snapshots.json').write_text(json.dumps(files))
+PY
 check_preserved() {
   test "$(cat "$consumer/openspec/changes/user/tasks.md")" = 'user planning' || fail 'planning changed'
   test "$(cat "$consumer/.beads/user-data")" = 'user tracker' || fail 'tracker changed'
   test "$(cat "$consumer/scripts/user-helper")" = 'user helper' || fail 'unrelated helper changed'
+  python3 - "$consumer" <<'PY'
+import json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+original = json.loads((root / 'user-snapshots.json').read_text())
+for name, content in original.items():
+    actual = (root / name).read_text()
+    if name == '.claude/settings.json':
+        before, after = json.loads(content), json.loads(actual)
+        assert after['userSetting'] == before['userSetting']
+        for event, entries in before['hooks'].items():
+            assert all(entry in after['hooks'][event] for entry in entries)
+    else:
+        assert actual == content, f'user file changed: {name}'
+PY
 }
 check_helpers() {
   for helper in session-launch session-log-writer; do

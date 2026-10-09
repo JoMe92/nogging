@@ -108,7 +108,7 @@ command above.
 
 | Class | Paths | Behaviour |
 | --- | --- | --- |
-| Tool files | `scripts/nogg`, `scripts/install-hooks`, `scripts/test`, `scripts/*.test.sh`, `scripts/hooks/*`, `.agents/skills/**` | copied verbatim, overwritten on every `init` / `update` |
+| Tool files | `scripts/nogg`, `scripts/session-launch`, `scripts/session-log-writer`, `scripts/install-hooks`, `scripts/test`, shipped `scripts/*.test.sh`, `scripts/hooks/*`, `.agents/skills/**` | copied verbatim, overwritten on every `init` / `update`; runtime helpers installed executable |
 | Reference docs | `docs/nogging/{operating-model,architecture,compatibility,failure-recovery,security-model,using-with-codex,using-with-pi,worktree-workflow}.md` | copied verbatim |
 | Scaffold | `openspec/config.yaml`, `openspec/project.md`, `.nogging/config.json` | written **only when absent** — never overwritten |
 | Merged | `.claude/settings.json`, `.gitignore`, `CLAUDE.md`, `AGENTS.md`, `.codex/hooks.json` | edited idempotently; your other content is preserved (a `bd`-written `.codex/hooks.json` is never clobbered) |
@@ -189,6 +189,30 @@ that tag's managed payload while retaining OpenSpec changes, Beads data,
 Claude, Codex, and Pi settings. Do not use an unpinned branch for either step.
 Run the pinned package's `--version` first and record both the version being
 left and the version selected for update or rollback.
+
+### Repairing session helpers
+
+`scripts/nogg`, `scripts/session-launch`, and `scripts/session-log-writer`
+must come from the same distribution. Both wrappers are managed files:
+`init` and `update` replace their content and restore executable permissions.
+Keep custom launch settings in a separately named profile rather than editing
+these wrappers or the shipped profile names.
+
+If `doctor` reports a missing, non-executable, or incompatible session helper,
+run `update` from a pinned release containing the helper-contract repair, then
+run `./scripts/nogg doctor` again. Repeating an older release that omitted the
+helpers cannot repair the omission. Refresh an existing implementation
+worktree too if its committed payload still contains the older helpers.
+
+Session launch checks the helper contract and all emitted options before any
+tmux call or session record. An incompatible helper therefore leaves no
+half-started session to clean up. A runtime that fails after this check has a
+failed session record and a redacted diagnostic log; use `session list` and
+`session log <name>` to read the original startup error.
+
+The repair preserves OpenSpec changes, Beads, unrelated hooks and configuration,
+and profiles outside Nogging's owned names. `remove` deletes the owned wrappers
+along with the other managed payload while retaining those user files.
 
 ## Removing the installed payload
 
