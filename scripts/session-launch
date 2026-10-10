@@ -39,7 +39,7 @@ set -eu
 if [ "${1:-}" = "--contract" ]; then
   [ "$#" -eq 1 ] || exit 2
   cat <<'CONTRACT'
-{"version":1,"features":["startup-stderr"],"agents":["claude","codex","pi"],"options":{"--agent":1,"--settings":1,"--prompt":1,"--cwd":1,"--bead":1,"--sandbox":1,"--approval":1,"--network":1,"--readonly-root":1,"--provider":1,"--model":1,"--read-only":0,"--continue":0,"--session-id":1,"--resume":1,"--remote-control":1}}
+{"version":1,"features":["startup-stderr"],"agents":["claude","codex","pi","antigravity","agy"],"options":{"--agent":1,"--settings":1,"--prompt":1,"--cwd":1,"--bead":1,"--sandbox":1,"--approval":1,"--network":1,"--readonly-root":1,"--provider":1,"--model":1,"--mode":1,"--read-only":0,"--continue":0,"--session-id":1,"--resume":1,"--remote-control":1}}
 CONTRACT
   exit 0
 fi
@@ -106,6 +106,7 @@ network="on"
 readonly_root=""
 provider=""
 model=""
+mode="accept-edits"
 resume=0
 session_id=""
 resume_id=""
@@ -124,6 +125,7 @@ while [ $# -gt 0 ]; do
     --readonly-root) readonly_root=$2; shift 2 ;;
     --provider)  provider=$2; shift 2 ;;
     --model)     model=$2; shift 2 ;;
+    --mode)      mode=$2; shift 2 ;;
     --read-only) read_only=1; shift ;;
     --continue)  resume=1; shift ;;
     --session-id) session_id=$2; shift 2 ;;
@@ -243,6 +245,38 @@ ROOTS
       exec codex "$@" "$(cat "$prompt")"
     fi
     exec codex "$@"
+    ;;
+  antigravity|agy)
+    case "$mode" in accept-edits|plan) ;; *) echo "session-launch: invalid Antigravity mode" >&2; exit 2 ;; esac
+    case "$sandbox" in ""|false) ;; *) echo "session-launch: Antigravity sandbox is unsupported" >&2; exit 2 ;; esac
+    if [ "$resume" -eq 1 ] || [ -n "$resume_id" ] || [ -n "$session_id" ]; then
+      echo "session-launch: Antigravity exact conversation lifecycle is not yet enabled" >&2
+      exit 2
+    fi
+    : "${approval:=ask}"
+    # Repeat the preflight at dispatch so direct wrapper calls also fail closed.
+    python3 - "$repo_root/scripts/nogg" "$(pwd)" "$approval" <<'AGY_CHECK'
+import sys
+from importlib.machinery import SourceFileLoader
+m = SourceFileLoader("nogg_agy_launch", sys.argv[1]).load_module()
+try:
+    m.prepare_antigravity_trust(sys.argv[2], sys.argv[3])
+except RuntimeError as exc:
+    sys.stderr.write(str(exc) + "\n")
+    sys.exit(2)
+AGY_CHECK
+    export NOGG_SESSION_WORKING_DIR="$(pwd)"
+    case "$approval" in
+      ask) export NOGG_SESSION_AUTHORITY=restricted ;;
+      auto) export NOGG_SESSION_AUTHORITY=trusted ;;
+      *) exit 2 ;;
+    esac
+    [ "$read_only" -eq 1 ] && mode=plan
+    set -- --mode "$mode"
+    [ "$approval" = auto ] && set -- "$@" --dangerously-skip-permissions
+    [ -n "$model" ] && set -- "$@" --model "$model"
+    export AGY_CLI_DISABLE_AUTO_UPDATE=true
+    exec agy "$@"
     ;;
   pi)
     guard="$(pwd)/.pi/extensions/nogging-guard.ts"

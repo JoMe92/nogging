@@ -2145,6 +2145,110 @@ def resolve_pi_profile(profile, full_access):
             f"Pi launch spec (a level name or a .pi.toml path), not a .codex.toml file")
     return resolve_launch_file(
         value, "session_launch_profile_dir", ".nogging/launch-profiles", ".pi.toml")
+def resolve_antigravity_profile(profile, full_access):
+    value = profile or ("trusted" if full_access else "restricted")
+    if Path(value).suffix and not str(value).endswith(".agy.toml"):
+        raise RuntimeError("Antigravity requires a level name or .agy.toml profile")
+    return resolve_launch_file(value, "session_launch_profile_dir",
+                               ".nogging/launch-profiles", ".agy.toml")
+
+
+def load_antigravity_spec(path):
+    # Small flat TOML subset; no tomllib dependency on older supported Python.
+    spec = {}
+    try:
+        for raw in Path(path).read_text().splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            key, sep, value = line.partition("=")
+            key, value = key.strip(), value.strip()
+            if not sep or key in spec or key not in ("mode", "sandbox", "approval", "model"):
+                raise ValueError("duplicate, unknown or malformed key")
+            parsed, end = json.JSONDecoder().raw_decode(value)
+            tail = value[end:].strip()
+            if tail and not tail.startswith("#"):
+                raise ValueError("unexpected text after value")
+            if key == "sandbox" and type(parsed) is bool:
+                parsed = "true" if parsed else "false"
+            if not isinstance(parsed, str):
+                raise ValueError("values must be quoted strings (sandbox also accepts a boolean)")
+            spec[key] = parsed
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"Antigravity launch spec {path}: {exc}") from exc
+    spec = {"mode": "accept-edits", "sandbox": "false", "approval": "ask", **spec}
+    if spec["mode"] not in ("accept-edits", "plan") or spec["approval"] not in ("ask", "auto"):
+        raise RuntimeError("Antigravity profile requires mode accept-edits/plan and approval ask/auto")
+    if spec["sandbox"] != "false":
+        raise RuntimeError("Antigravity sandbox is unsupported until linked-worktree acceptance passes")
+    if "model" in spec and not spec["model"].strip():
+        raise RuntimeError("Antigravity model must not be empty")
+    return spec
+
+
+def validate_antigravity_guard(workdir):
+    workdir = Path(workdir).resolve()
+    try:
+        state = canonical_repository_state(workdir)
+        if state["checkout_root"] != str(workdir):
+            raise ValueError("launch must select the checkout root")
+        for rel in ("scripts/hooks/agy-guard", "scripts/nogg"):
+            if not (workdir / rel).is_file():
+                raise ValueError("missing guard helper")
+        hooks = json.loads((workdir / ".agents/hooks.json").read_text())
+        expected = {"PreToolUse": [{"matcher": "*", "hooks": [
+            {"type": "command", "command": "python3 ../scripts/hooks/agy-guard", "timeout": 10}]}]}
+        entry = hooks["nogging-guard"]
+        if not isinstance(entry, dict) or entry.get("enabled", True) is not True or entry.get("PreToolUse") != expected["PreToolUse"]:
+            raise ValueError("missing or disabled catch-all guard entry")
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError) as exc:
+        raise RuntimeError("Antigravity worktree guard is missing or inactive; restore the installed .agents/hooks.json and scripts payload") from exc
+
+
+def prepare_antigravity_trust(workdir, approval):
+    """Pre-trust only the selected workspace; serialize our atomic merges.
+
+    Read under the lock, retain unrelated settings, refuse malformed state and
+    symlinks, and never widen an existing file's access permissions.
+    """
+    validate_antigravity_guard(workdir)
+    if approval not in ("ask", "auto"):
+        raise RuntimeError("Antigravity approval must be ask or auto")
+    path = Path.home() / ".gemini/antigravity-cli/settings.json"
+    temporary = None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        lockfd = os.open(str(path) + ".nogging.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(lockfd, "a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            if path.is_symlink():
+                raise ValueError("settings symlink is unsupported")
+            settings = json.loads(path.read_text()) if path.exists() else {}
+            if not isinstance(settings, dict):
+                raise ValueError("settings must be an object")
+            if approval == "ask" and settings.get("toolPermission", "request-review") != "request-review":
+                raise ValueError("restricted/ask requires global toolPermission request-review (or absent); always-proceed, strict and unknown modes are unverified; change the global setting explicitly")
+            workspaces = settings.get("trustedWorkspaces", [])
+            if not isinstance(workspaces, list) or any(not isinstance(v, str) for v in workspaces):
+                raise ValueError("trustedWorkspaces must be an array of paths")
+            workspace = str(Path(workdir).resolve())
+            settings["trustedWorkspaces"] = workspaces + ([] if workspace in workspaces else [workspace])
+            mode = (path.stat().st_mode & 0o600) if path.exists() else 0o600
+            fd, temporary = tempfile.mkstemp(prefix=".nogging-settings-", dir=path.parent)
+            with os.fdopen(fd, "w") as stream:
+                os.fchmod(stream.fileno(), mode)
+                stream.write(json.dumps(settings, indent=2) + "\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, path)
+            temporary = None
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"Antigravity trust preparation refused: {exc}") from exc
+    finally:
+        if temporary is not None:
+            Path(temporary).unlink(missing_ok=True)
+
+
 def resolved_launch_pair(profile, prompt, full_access, agent="claude"):
     """Resolve the launch selection to concrete files.
 
@@ -2161,6 +2265,8 @@ def resolved_launch_pair(profile, prompt, full_access, agent="claude"):
         prompt = prompt or "autonomous"
     if agent == "codex":
         profile_path, profile_label = resolve_codex_profile(profile, full_access)
+    elif agent == "antigravity":
+        profile_path, profile_label = resolve_antigravity_profile(profile, full_access)
     elif agent == "pi":
         profile_path, profile_label = resolve_pi_profile(profile, full_access)
     elif profile is not None:
@@ -2269,9 +2375,11 @@ def resolve_agent(agent):
     the `session_agent` config key, then the historical `claude` default. No
     existing install changes behaviour: the key is absent by default."""
     resolved = agent or scfg("session_agent", "claude")
-    if resolved not in ("claude", "codex", "pi"):
+    if resolved == "agy":
+        resolved = "antigravity"
+    if resolved not in ("claude", "codex", "pi", "antigravity"):
         raise RuntimeError(
-            f"session_agent {resolved!r} is not a known agent (claude, codex, pi)")
+            f"session_agent {resolved!r} is not a known agent (claude, codex, pi, antigravity/agy)")
     return resolved
 def helper_contract(path):
     """Negotiate only a read-only helper interface, never start an agent."""
@@ -2322,12 +2430,12 @@ def session_helper_diagnostics():
     argv = [str(wrapper)]
     for flag in ("--agent", "--settings", "--prompt", "--cwd", "--bead",
                  "--sandbox", "--approval", "--network", "--readonly-root",
-                 "--provider", "--model", "--session-id", "--resume", "--remote-control"):
+                 "--provider", "--model", "--mode", "--session-id", "--resume", "--remote-control"):
         argv += [flag, "probe"]
     argv += ["--read-only", "--continue"]
     try:
         contract = helper_contract(wrapper)
-        for agent in ("claude", "codex", "pi"):
+        for agent in ("claude", "codex", "pi", "antigravity"):
             validate_launch_contract(contract, argv, agent)
         checks.append(("session-launch helper contract", True))
     except RuntimeError as exc:
@@ -2436,6 +2544,11 @@ def session_launch(role, bead, cwd, read_only, owner,
     source_settings = load_profile_settings(profile_path) if agent == "claude" else None
     codex_spec = load_codex_spec(profile_path) if agent == "codex" else None
     pi_spec = load_pi_spec(profile_path) if agent == "pi" else None
+    agy_spec = load_antigravity_spec(profile_path) if agent == "antigravity" else None
+    if agy_spec and Path(profile_path).name == "restricted.agy.toml" and agy_spec["approval"] != "ask":
+        raise RuntimeError("Antigravity restricted profile requires ask approval")
+    if agy_spec and resume:
+        raise RuntimeError("Antigravity exact conversation lifecycle is not yet enabled")
     # The command-floor / openspec-boundary lift is the orchestrator's alone: the
     # `nogging_floor` / `nogging_openspec_readonly` profile keys are honoured
     # ONLY for --role orchestrator. For every other role they are ignored — the
@@ -2515,6 +2628,14 @@ def session_launch(role, bead, cwd, read_only, owner,
         # pre-commit boundary hook. See the wrapper for the runtime check.
         if openspec_readonly:
             inner += ["--readonly-root", str(Path(workdir) / "openspec")]
+    elif agent == "antigravity":
+        effective_settings_path = None
+        if not allocate_planning:
+            validate_antigravity_guard(workdir)
+        inner += ["--agent", "antigravity", "--mode", agy_spec["mode"],
+                  "--approval", agy_spec["approval"]]
+        if "model" in agy_spec:
+            inner += ["--model", agy_spec["model"]]
     else:  # pi: no per-session permissions file and no sandbox/approval/
            # network spec — the floor is the always-on guard extension
            # (`.pi/extensions/nogging-guard.ts`), which reads
@@ -2540,6 +2661,8 @@ def session_launch(role, bead, cwd, read_only, owner,
     if allocate_planning:
         planning_worktree(planning_id, description, location=workdir)
         planning_launch_workdir(planning_id, description, workdir)
+    if agent == "antigravity":
+        prepare_antigravity_trust(workdir, agy_spec["approval"])
     # Name collision checks themselves call tmux: defer them until the full
     # emitted argv and both helpers have passed interface negotiation.
     if not is_orchestrator:
@@ -3970,7 +4093,7 @@ def main():
     sl.add_argument("--description", help="kebab-case planning description required for --role planning")
     sl.add_argument("--cwd"); sl.add_argument("--read-only", action="store_true")
     sl.add_argument("--owner")
-    sl.add_argument("--agent", choices=("claude", "codex", "pi"),
+    sl.add_argument("--agent", choices=("claude", "codex", "pi", "antigravity", "agy"),
                     help="agent binary to launch; defaults to the session_agent config key, "
                          "then 'claude'")
     sl.add_argument("--profile", help="named launch profile or a path to a settings JSON file")
