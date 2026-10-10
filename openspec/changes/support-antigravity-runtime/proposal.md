@@ -16,7 +16,7 @@ Operators need another supervised runtime and quota pool without leaving Nogging
 
 ### Modified Capabilities
 
-- `session-usage`: Antigravity usage source and model-group buckets. (created by prerequisite gate-session-usage).
+- `session-usage`: Antigravity usage source and model-group buckets. (created by gate-session-usage; prerequisite of AGR-005 quota integration only).
 - `agent-neutral-launch`: Fourth supported agent selection.
 
 ## Impact
