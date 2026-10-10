@@ -19,11 +19,7 @@
       "Bash(mkfs:*)",
       "Bash(mkfs.*:*)",
       "Bash(shutdown:*)",
-      "Bash(reboot:*)",
-      "Bash(systemctl:*)",
-      "Bash(curl:*)",
-      "Bash(wget:*)",
-      "WebFetch"
+      "Bash(reboot:*)"
     ],
     "additionalDirectories": []
   },
