@@ -80,6 +80,18 @@ HOME are refused before session creation. Session records and `session list`
 show granted paths and their source (`label` or `option`). The directory may
 contain OAuth credentials and granting it permits the session to overwrite them.
 `NOGG_CODEX_EXTRA_WRITABLE_ROOTS` is retired: a nonempty value refuses launch.
+`doctor` reports a malformed declaration or a refused directory as a `WARN`, and
+a `NOTE` when `agy` is installed but `antigravity` is not declared.
+
+`./scripts/nogg doctor` diagnoses this policy from inside `codex sandbox`, using
+the same resolver as a launch: it creates and removes a uniquely named file in
+the shared Git directory and the worktree's gitdir, so a root the sandbox keeps
+read-only is reported even though the host can write it. `doctor --sandbox`
+also runs `git ls-remote origin` (SSH remotes only, 30 s) and `scripts/test`
+(bounded by `doctor_sandbox_test_timeout_seconds`, default 900) in the same
+sandbox and names failing suites. Every outcome, including a skip because
+`codex` or `codex sandbox` is absent, is a `NOTE` and never changes doctor's
+exit status.
 
 Both levels additionally pass `--add-dir <shared checkout root>`, unconditionally
 alongside `--cd <worktree>`, so the shared checkout's `.git`/`.beads` stay

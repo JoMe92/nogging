@@ -4261,7 +4261,124 @@ def recover():
     print("recover: nothing in flight — clear to select work with bd ready")
 def tool_on_path(name):
     return shutil.which(name) is not None
-def doctor(audit=False, with_recover=False):
+def codex_sandbox_argv(policy, extra=()):
+    """`codex sandbox` argv carrying the resolved trusted-level session policy."""
+    net = "true" if policy["network_access"] else "false"
+    return ["codex", "sandbox", "-c", 'sandbox_mode="workspace-write"',
+            "-c", "sandbox_workspace_write.writable_roots=" + json.dumps(policy["writable_roots"]),
+            "-c", f"sandbox_workspace_write.network_access={net}", *extra, "--"]
+
+
+def _sandbox_run(argv, workdir, policy, timeout):
+    """Run argv under the sandbox in its own process group; kill it on timeout."""
+    env = os.environ.copy()
+    if policy.get("git_ssh_command"):
+        env["GIT_SSH_COMMAND"] = policy["git_ssh_command"]
+    proc = subprocess.Popen(argv, cwd=str(workdir), env=env, text=True, stdin=subprocess.DEVNULL,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try: os.killpg(proc.pid, signal.SIGKILL)
+        except OSError: pass
+        proc.communicate()
+        return None, ""
+    return proc.returncode, out + err
+
+
+def codex_sandbox_diagnosis(workdir, with_sandbox=False, sandbox_extra=()):
+    """NOTE-only Codex sandbox diagnosis (design.md Decisions 4 and 5).
+
+    Every probe runs INSIDE `codex sandbox` under the policy the shared resolver
+    gives a trusted Codex session, so it sees exactly what that session would be
+    denied. Plain doctor: create/remove a uniquely named file in the shared Git
+    directory and in the worktree's gitdir. `doctor --sandbox` adds an SSH
+    `git ls-remote origin` (SSH remotes only, 30 s) and `scripts/test` (bounded
+    by doctor_sandbox_test_timeout_seconds, default 900). Returns NOTE strings;
+    never raises, so no outcome changes doctor's exit status. `sandbox_extra`
+    adds `-c` overrides (tests use it to exclude /tmp from the writable set).
+    """
+    if not tool_on_path("codex"):
+        return ["codex sandbox diagnosis skipped: codex not installed"]
+    try:
+        supported = subprocess.run(["codex", "sandbox", "--help"], capture_output=True,
+                                   text=True, timeout=30).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        supported = False
+    if not supported:
+        return ["codex sandbox diagnosis skipped: this codex build has no `codex sandbox` subcommand"]
+    try:
+        policy = codex_sandbox_policy(workdir, network=True)
+        common = str(Path(run("git", "-C", str(workdir), "rev-parse", "--path-format=absolute",
+                              "--git-common-dir").stdout.strip()).resolve())
+        own = str(Path(run("git", "-C", str(workdir), "rev-parse",
+                           "--absolute-git-dir").stdout.strip()).resolve())
+    except Exception as exc:
+        return [f"codex sandbox diagnosis skipped: resolver error: {exc}"]
+    base = codex_sandbox_argv(policy, sandbox_extra)
+    notes = []
+    targets = [("shared Git dir", common)] + ([("worktree gitdir", own)] if own != common else [])
+    for label, root in targets:
+        probe = Path(root) / f"nogg-doctor-probe-{uuid.uuid4().hex}"
+        try:
+            rc, out = _sandbox_run(base + ["sh", "-c", 'touch "$1" && rm -f "$1"', "sh", str(probe)],
+                                   workdir, policy, 30)
+        except OSError as exc:
+            rc, out = 1, str(exc)
+        finally:
+            try: probe.unlink()  # no residue even if the sandbox left it behind
+            except OSError: pass
+        if rc == 0:
+            notes.append(f"codex sandbox write-probe {label}: writable ({root})")
+        elif rc is None:
+            notes.append(f"codex sandbox write-probe {label}: timed out after 30 s ({root})")
+        else:
+            reason = out.strip().splitlines()[-1][:200] if out.strip() else f"exit {rc}"
+            notes.append(f"codex sandbox write-probe {label}: {root} is NOT writable in the Codex sandbox: {reason}")
+    if not with_sandbox:
+        notes.append("codex sandbox SSH fetch and scripts/test probes skipped: run doctor --sandbox")
+        return notes
+    remote = run("git", "-C", str(workdir), "remote", "get-url", "origin", check=False)
+    url = remote.stdout.strip() if remote.returncode == 0 else ""
+    if not url:
+        notes.append("codex sandbox SSH fetch probe skipped: no origin remote")
+    elif not (url.startswith("ssh://") or re.match(r"^[\w.-]+@[\w.-]+:", url)):
+        notes.append("codex sandbox SSH fetch probe skipped: origin is not an SSH remote")
+    else:
+        try:
+            rc, out = _sandbox_run(base + ["git", "ls-remote", "--exit-code", "origin", "HEAD"],
+                                   workdir, policy, 30)
+        except OSError as exc:
+            rc, out = 1, str(exc)
+        if rc == 0:
+            notes.append("codex sandbox SSH fetch probe: ok")
+        elif rc is None:
+            notes.append("codex sandbox SSH fetch probe: timed out after 30 s")
+        else:
+            notes.append(f"codex sandbox SSH fetch probe: FAILED (exit {rc}): {out.strip()[-200:]}")
+    test_script = Path(workdir) / "scripts/test"
+    timeout_s = CFG.get("doctor_sandbox_test_timeout_seconds", 900)
+    if not isinstance(timeout_s, int) or isinstance(timeout_s, bool) or timeout_s <= 0:
+        timeout_s = 900
+    if not test_script.is_file():
+        notes.append("codex sandbox test probe skipped: scripts/test not found")
+        return notes
+    try:
+        rc, out = _sandbox_run(base + [str(test_script)], workdir, policy, timeout_s)
+    except OSError as exc:
+        rc, out = 1, str(exc)
+    if rc == 0:
+        notes.append("codex sandbox test probe: all suites passed")
+    elif rc is None:
+        notes.append(f"codex sandbox test probe: timed out after {timeout_s} s")
+    else:
+        failing = list(dict.fromkeys(ln.split()[-1] for ln in out.splitlines()
+                                     if ln.startswith("FAIL - ")))
+        notes.append("codex sandbox test probe: FAILED suites: " + (", ".join(failing) or f"exit {rc}"))
+    return notes
+
+
+def doctor(audit=False, with_recover=False, with_sandbox=False):
     # A fresh install starts with the OpenSpec write boundary closed. Bootstrap
     # the sentinel once, only when nothing has toggled the boundary yet (no
     # sentinel and no planning lock). An install whose repo has core.hooksPath
@@ -4286,6 +4403,11 @@ def doctor(audit=False, with_recover=False):
             checks.append((f"last sync failed ({rec.get('classification')}): "
                            f"attempt {rec.get('attempts')}/{rec.get('max_attempts')}, "
                            f"next retry {retry} — {str(rec.get('error', '')).splitlines()[0]}", False))
+    # agent_state_roots: a malformed declaration, or a declared directory a
+    # labelled launch would refuse, is a WARN, never a FAIL. Nothing is granted.
+    declared = CFG.get("agent_state_roots", {})
+    try: resolve_agent_state_roots([(a, "doctor") for a in declared] if isinstance(declared, dict) else ())
+    except RuntimeError as exc: warnings.append(str(exc))
     for name, ok in checks: print(f"{'OK' if ok else 'FAIL'}  {name}")
     # Warnings are advisory (a committed-but-open Bead and the like): shown
     # distinctly from FAIL, and they never change doctor's exit code.
@@ -4327,7 +4449,15 @@ def doctor(audit=False, with_recover=False):
             notes.append(f"codex prompts present in .codex/prompts/ but not linked into "
                          f"{codex_home() / 'prompts'}/ "
                          f"(run: ./scripts/nogg codex-prompts-link)")
+    # Sandbox diagnosis (NOTE-only, never raises): offline write-probes always,
+    # SSH fetch and scripts/test only with --sandbox; a skip NOTE without codex.
+    notes.extend(codex_sandbox_diagnosis(ROOT, with_sandbox=with_sandbox))
     agy_present = tool_on_path("agy")
+    state_roots = CFG.get("agent_state_roots", {})
+    if agy_present and not (isinstance(state_roots, dict) and state_roots.get("antigravity")):
+        notes.append("agy is installed but agent_state_roots.antigravity is not declared; "
+                     "add \"antigravity\": [\"~/.gemini/antigravity-cli\"] to the "
+                     "agent_state_roots key in .nogging/config.json")
     notes.append("agy available; baseline 1.3.2 has unsigned core live evidence; quota pending AGR-005"
                  if agy_present else "agy not installed; only needed for the Antigravity agent path")
     notes.append("Antigravity: no validated filesystem/network sandbox; sandbox requests refuse; quota support pending AGR-005")
@@ -4495,6 +4625,8 @@ def main():
     dp = sub.add_parser("doctor")
     dp.add_argument("--recover", action="store_true",
                     help="also run the interrupted-run checks and fail if any need attention")
+    dp.add_argument("--sandbox", action="store_true",
+                    help="also run SSH-fetch and bounded scripts/test probes inside the Codex sandbox (opt-in; slow)")
     sub.add_parser("audit"); sub.add_parser("recover")
     sy = sub.add_parser("sync"); sy.add_argument("--now", action="store_true",
         help="on-demand: signal a running sync daemon, else run one pass; report sync-lock contention without retrying")
@@ -4614,7 +4746,7 @@ def main():
     elif args.command == "discoveries": ack_discoveries(args.ack) if args.ack else discoveries()
     elif args.command == "session": session_cmd(args)
     elif args.command == "orchestrator": orchestrator_cmd(args)
-    else: doctor(args.command == "audit", getattr(args, "recover", False))
+    else: doctor(args.command == "audit", getattr(args, "recover", False), getattr(args, "sandbox", False))
 def session_cmd(args):
     if args.session_command == "launch":
         session_launch(args.role, args.bead, args.cwd, args.read_only, args.owner,
