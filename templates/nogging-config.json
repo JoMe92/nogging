@@ -1,4 +1,5 @@
 {
+  "agent_state_roots": {"antigravity": ["~/.gemini/antigravity-cli"]},
   "name": "Nogging",
   "sync_interval_seconds": 30,
   "beads_command": "bd",

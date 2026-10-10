@@ -39,7 +39,7 @@ set -eu
 if [ "${1:-}" = "--contract" ]; then
   [ "$#" -eq 1 ] || exit 2
   cat <<'CONTRACT'
-{"version":1,"features":["startup-stderr"],"agents":["claude","codex","pi","antigravity","agy"],"options":{"--agent":1,"--settings":1,"--prompt":1,"--cwd":1,"--bead":1,"--sandbox":1,"--approval":1,"--network":1,"--readonly-root":1,"--provider":1,"--model":1,"--mode":1,"--read-only":0,"--continue":0,"--session-id":1,"--resume":1,"--remote-control":1}}
+{"version":1,"features":["startup-stderr"],"agents":["claude","codex","pi","antigravity","agy"],"options":{"--writable-roots":1,"--agent":1,"--settings":1,"--prompt":1,"--cwd":1,"--bead":1,"--sandbox":1,"--approval":1,"--network":1,"--readonly-root":1,"--provider":1,"--model":1,"--mode":1,"--read-only":0,"--continue":0,"--session-id":1,"--resume":1,"--remote-control":1}}
 CONTRACT
   exit 0
 fi
@@ -104,6 +104,7 @@ sandbox=""
 approval=""
 network="on"
 readonly_root=""
+writable_roots=""
 provider=""
 model=""
 mode="accept-edits"
@@ -123,6 +124,7 @@ while [ $# -gt 0 ]; do
     --sandbox)   sandbox=$2; shift 2 ;;
     --approval)  approval=$2; shift 2 ;;
     --network)   network=$2; shift 2 ;;
+    --writable-roots) writable_roots=$2; shift 2 ;;
     --readonly-root) readonly_root=$2; shift 2 ;;
     --provider)  provider=$2; shift 2 ;;
     --model)     model=$2; shift 2 ;;
@@ -178,39 +180,22 @@ case "$agent" in
     [ "$read_only" -eq 1 ] && sandbox="read-only"
     : "${sandbox:=workspace-write}"
     : "${approval:=on-request}"
-    # --add-dir is unconditional, at every authority level: the shared
-    # checkout's .git/.beads must stay writable even for a `restricted`
-    # (network-off) session, which still commits locally and runs local
-    # bd/scripts/nogg commands inside its worktree (design.md, Decision 3).
-    set -- --cd "$(pwd)" --add-dir "$repo_root" --sandbox "$sandbox" --ask-for-approval "$approval"
-    # Codex's workspace-write sandbox keeps `.git` read-only even inside an
-    # --add-dir root, so a Lead could not fetch, commit or allocate a worktree.
-    # Re-open exactly the shared git directory (linked worktrees' gitdirs live
-    # under it); the rest of the sandbox, and the openspec/ fence, are unchanged.
-    git_common_dir=$(git -C "$repo_root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) \
-      || git_common_dir="$repo_root/.git"
-    # Codex additionally protects the cwd worktree's own gitdir, so it must be
-    # listed explicitly next to the shared git directory.
-    git_work_dir=$(git -C "$(pwd)" rev-parse --absolute-git-dir 2>/dev/null) || git_work_dir=""
-    # NOGG_CODEX_EXTRA_WRITABLE_ROOTS is an operator opt-in (colon-separated):
-    # each entry must be an existing directory strictly under $HOME, e.g. the
-    # Antigravity runtime state needed for live agy probes. Nothing is added by
-    # default and anything else is refused before the agent starts.
-    git_roots=$(python3 - "$git_common_dir" "$git_work_dir" <<'ROOTS'
-import json, os, sys
-roots = [path for path in sys.argv[1:] if path]
-home = os.path.realpath(os.environ.get("HOME", ""))
-for raw in filter(None, os.environ.get("NOGG_CODEX_EXTRA_WRITABLE_ROOTS", "").split(":")):
-    real = os.path.realpath(raw)
-    if (not os.path.isabs(raw) or not home or real == home
-            or not real.startswith(home + os.sep) or not os.path.isdir(real)):
-        sys.stderr.write("session-launch: refusing NOGG_CODEX_EXTRA_WRITABLE_ROOTS entry "
-                         "(must be an existing directory under $HOME): " + raw + "\n")
-        sys.exit(2)
-    roots.append(real)
-print(json.dumps(list(dict.fromkeys(roots))))
-ROOTS
+    [ -z "${NOGG_CODEX_EXTRA_WRITABLE_ROOTS:-}" ] || {
+      echo 'session-launch: use agent_state_roots and agent-state:<agent>; retired environment variable refused' >&2; exit 2;
+    }
+    policy=$(python3 - "$repo_root/scripts/nogg" "$(pwd)" "$network" <<'POLICY'
+import json, sys
+from importlib.machinery import SourceFileLoader
+m = SourceFileLoader("nogg_policy", sys.argv[1]).load_module()
+print(json.dumps(m.codex_sandbox_policy(sys.argv[2], network=sys.argv[3] == "on")))
+POLICY
     ) || exit 2
+    git_roots=$writable_roots
+    if [ -z "$git_roots" ]; then
+      # TOML accepts the JSON array representation, including quoted paths.
+      git_roots=$(python3 -c 'import json,sys; print(json.dumps(json.loads(sys.argv[1])["writable_roots"]))' "$policy")
+    fi
+    set -- --cd "$(pwd)" --add-dir "$repo_root" --sandbox "$sandbox" --ask-for-approval "$approval"
     set -- "$@" -c "sandbox_workspace_write.writable_roots=$git_roots"
     # Emit the network_access override explicitly in both directions rather than
     # omitting it for `on` and leaning on the codex default: the trusted profile
@@ -234,13 +219,8 @@ ROOTS
         echo "nogg: (codex-onboarding) and the pre-commit boundary hook for this session." >&2
       fi
     fi
-    # The outer user namespace maps root-owned SSH config to nobody. Skip
-    # system config while retaining the operator's hosts and keys, unless they
-    # already supplied a Git SSH command. Quote the path for Git's shell.
-    if [ -z "${GIT_SSH_COMMAND:-}" ] && [ -f "${HOME:-/nonexistent}/.ssh/config" ]; then
-      printf -v ssh_config '%q' "$HOME/.ssh/config"
-      export GIT_SSH_COMMAND="ssh -F $ssh_config"
-    fi
+    resolved_ssh=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["git_ssh_command"] or "")' "$policy")
+    if [ -n "$resolved_ssh" ]; then export GIT_SSH_COMMAND="$resolved_ssh"; fi
     echo "nogg: starting Codex for ${bead:-<no bead>} in $(pwd) (sandbox=${sandbox} approval=${approval} network=${network})"
     if [ -n "$prompt" ] && [ -f "$prompt" ]; then
       exec codex "$@" "$(cat "$prompt")"

@@ -32,7 +32,7 @@ with tempfile.TemporaryDirectory(prefix='nogg planning role ') as td:
     except RuntimeError:pass
     else:raise AssertionError('planner alias was accepted')
     calls=[]
-    with patch.object(m,'tmux',side_effect=lambda *args,**kwargs:calls.append(args)),patch.object(m,'tmux_sessions',return_value=set()),patch.object(m,'tmux_has_session',return_value=False),patch.object(m,'bead_exists',return_value=True) as lookup,patch.object(m,'unmet_dependencies',side_effect=AssertionError('planning consulted execution blockers')):
+    with patch.object(m,'tmux',side_effect=lambda *args,**kwargs:calls.append(args)),patch.object(m,'tmux_sessions',return_value=set()),patch.object(m,'tmux_has_session',return_value=False),patch.object(m,'bead_records',return_value=[{'id':'SPEC-test','labels':[]}]) as lookup,patch.object(m,'unmet_dependencies',side_effect=AssertionError('planning consulted execution blockers')):
         for agent in ['claude','codex','pi']:
             pid='planning-'+agent;description='scope-test';workdir=root.parent/pid
             subprocess.run(['git','-C',str(root),'worktree','add','-q','-b',f'plan/{pid}/{description}',str(workdir)],check=True)
@@ -83,7 +83,7 @@ with tempfile.TemporaryDirectory(prefix='nogg planning role ') as td:
     assert not m.worktree_record_path('plan','bad-profile-scope','scope-test').exists()
     assert not (root.parent/f'{root.name}-plan-bad-profile-scope-scope-test').exists()
     refused(role='lead',bead=None,cwd=None,read_only=False,owner=None)
-    with patch.object(m,'bead_exists',return_value=False):
+    with patch.object(m,'bead_records',return_value=[]):
         refused(**{**base,'bead':'SPEC-missing'})
     # CLI parser accepts the canonical scope flags for every runtime. Validation
     # fails on the intentionally malformed identifier before any launch.
