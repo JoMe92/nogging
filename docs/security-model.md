@@ -115,6 +115,20 @@ without the rules it allowed both in three runs. The scoped rules make the
 supervised path predictable. Only the prompts and this policy keep direct
 agent invocation out; the classifier is not a guarantee.
 
+## Planning sessions and the OpenSpec boundary
+
+A supervised planning session (`--role planning`) is the only role that may
+open the OpenSpec write boundary. It does so only through its own
+`plan-begin`, which takes the canonical planning lock in the main checkout
+and records the owning session, host and process. Launch never takes the
+lock. An orchestrator never pre-acquires it for a child, and an optional
+associated Bead grants no execution authority. Execution roles stay fenced
+from `openspec/` even while some planner holds the lock. `session stop`,
+cleanup and recovery never release a lock owned by another live session.
+Recovery names the stale owner before it closes the boundary. A planner
+retires its clean, integrated worktree before `plan-end` and runs
+`plan-end` from a surviving canonical checkout.
+
 ## Network, filesystem, and credentials
 
 An agent can disclose every secret it can read whenever its mode permits

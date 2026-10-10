@@ -125,9 +125,10 @@ requirement is behavioural — the file can be rewritten without a spec change.
 
 The persona and step text are identical; only the invocation surface differs.
 Each is a thin wrapper over `scripts/nogg` — the mechanical steps
-(`plan-begin` → discovery review → author → `validate` → `materialize` →
-commit as the `planning` writer → `plan-end`; `discoveries` / `--ack`;
-`sync --now`) are agent-neutral.
+(`plan-begin` → discovery review → author → `validate` → commit as the
+`planning` writer → `materialize` → wire dependencies → integrate → safe
+cleanup → `plan-end` from a surviving canonical checkout; `discoveries` /
+`--ack`; `sync --now`) are agent-neutral.
 
 **Custom-prompt discovery is version-dependent.** codex-cli 0.148 loads custom
 prompts only from `${CODEX_HOME:-~/.codex}/prompts/` (user-scoped); repo-scoped

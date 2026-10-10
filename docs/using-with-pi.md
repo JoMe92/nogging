@@ -118,9 +118,10 @@ surface and, in `plan.md`, the description of how the `openspec/` write
 boundary is actually enforced (the guard extension for Pi, versus a
 `PreToolUse` hook for Claude or the filesystem write guard for Codex) differ.
 Each is a thin wrapper over `scripts/nogg` — the mechanical steps
-(`plan-begin` → discovery review → author → `validate` → `materialize` →
-commit as the `planning` writer → `plan-end`; `discoveries` / `--ack`;
-`sync --now`) are agent-neutral.
+(`plan-begin` → discovery review → author → `validate` → commit as the
+`planning` writer → `materialize` → wire dependencies → integrate → safe
+cleanup → `plan-end` from a surviving canonical checkout; `discoveries` /
+`--ack`; `sync --now`) are agent-neutral.
 
 ## Resuming a run after a tool switch
 

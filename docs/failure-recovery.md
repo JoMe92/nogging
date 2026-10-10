@@ -40,7 +40,7 @@ next start — fresh, resumed, or after a tool switch — every agent runs
 
 | `recover` reports | Action |
 | --- | --- |
-| Stale `planning.lock` | Confirm no planning session is actually running, then `./scripts/nogg plan-end --force`. |
+| Stale `planning.lock` | Confirm no planning session is actually running, then `./scripts/nogg plan-end --force`. A lock that names a supervised session is refused while that owner is alive; `recover` names the owner. Never release another session's lock by stopping or cleaning up your own. |
 | Fresh `planning.lock`, not yours | A planning session is active elsewhere. Do not start execution that depends on unmaterialized work — wait or coordinate. |
 | `LIMBO: <id> committed … but status=<status>` | The work is **done**. `git show` the commit, run `scripts/test`, add the evidence note (`bd update <id> --append-notes "commit <sha>; <evidence>"`), `bd close <id>`. **Do not re-implement it** — that produces a duplicate commit. |
 | `in_progress` Bead, `resumable` | Same as `LIMBO`: it has a commit, so the work is done — verify, note, close. Never re-implement. |
