@@ -48,6 +48,8 @@ check "bridge is executable"       test -x "$repo/scripts/nogg"
 check "skills copied"              test -f "$repo/.agents/skills/openspec-propose/SKILL.md"
 check "all Claude agents installed" diff -qr "$root/.claude/agents" "$repo/.claude/agents"
 check "all Claude commands installed" diff -qr "$root/.claude/commands" "$repo/.claude/commands"
+check "orchestrator permissions example template shipped" test -f "$repo/templates/claude/orchestrator-permissions.example.json"
+check "init never injects orchestrator permissions template into settings" bash -c "! grep -q 'git push --force' '$repo/.claude/settings.json'"
 check "launch profiles shipped"    test -f "$repo/.nogging/launch-profiles/restricted.json"
 check "launch profiles ship trusted" test -f "$repo/.nogging/launch-profiles/trusted.json"
 check "launch profiles ship codex fragments" test -f "$repo/.nogging/launch-profiles/restricted.codex.toml"
@@ -371,6 +373,8 @@ if command -v npm >/dev/null 2>&1; then
     check "packed install ships the compatibility guide" test -f "$packrepo/docs/nogging/compatibility.md"
     check "packed install ships the orchestrator profile" test -f "$packrepo/.nogging/launch-profiles/orchestrator.json"
     check "packed install ships the orchestrator prompt"  test -f "$packrepo/.nogging/launch-prompts/orchestrator.md"
+    check "packed install ships the orchestrator permissions template" \
+      test -f "$packrepo/templates/claude/orchestrator-permissions.example.json"
     check "packed install ships the orchestrator unit template" \
       test -f "$pkg/templates/systemd/nogg-orchestrator.service.tmpl"
     # A packed install WITH systemd renders the per-repo orchestrator unit.

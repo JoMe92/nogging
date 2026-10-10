@@ -34,6 +34,7 @@ module.exports = {
     'scripts/hooks/branch-name.test.sh',
     'scripts/hooks/pre-tool-use-lead-launch-guard.test.sh',
     'scripts/hooks/session-start-cloud-bootstrap.test.sh',
+    'templates/claude/orchestrator-permissions.example.json',
   ],
 
   // Directories copied verbatim (recursive).
