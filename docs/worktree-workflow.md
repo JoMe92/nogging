@@ -13,9 +13,11 @@ scripts/nogg worktree plan <planning-id> <description>
 ```
 
 Change into the printed path, run `plan-begin`, author and validate OpenSpec,
-commit as the planning writer, materialize the Beads, and run `plan-end`.
-Fast-forward the planning branch into `develop` and push `develop` before
-starting implementation. Cleanup accepts only a clean, integrated worktree:
+commit as the `planning` writer, materialize the Beads and wire their
+dependencies explicitly. Fast-forward the planning branch into `develop` and
+push `develop` before starting implementation. Cleanup accepts only a clean,
+integrated worktree, and it comes before `plan-end`, which runs from a
+surviving canonical checkout:
 
 ```bash
 scripts/nogg worktree cleanup <planning-record.json>

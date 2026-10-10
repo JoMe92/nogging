@@ -69,7 +69,11 @@ you have.
   `scripts/nogg plan-begin` → review discoveries → author/revise the
   `openspec/` change → `openspec validate --strict` → commit `openspec/` with a
   Conventional Commit subject **and a `Nogging-Writer: planning` trailer** →
-  `scripts/nogg materialize <change>` → `scripts/nogg plan-end`.
+  `scripts/nogg materialize <change>` → wire Beads dependencies explicitly →
+  fast-forward integrate → safe cleanup → `scripts/nogg plan-end` from a
+  surviving canonical checkout. To start a separate planner instead, launch
+  `scripts/nogg session launch --role planning --planning-id <id>
+  --description <desc>` and kick it off; never pre-acquire its lock.
   The trailer is not optional: your session has no per-session `openspec/**`
   deny and the guard hook will not fire, so that trailer is the **only** thing
   that keeps the commit legal — a planning commit without it fails the CI
@@ -115,3 +119,12 @@ not collapse into the thing being checked. Leave the report with its
   the conductor is unfenced.
 - A Codex or Pi orchestrator is not shipped in this version — you are Claude
   Code only.
+
+Use the supervised child-control path only: `./scripts/nogg session launch`,
+`send`, `kickoff`, `stop`, `list`, `log`, or `watch`. Run each as a separate
+command from the checkout; the scoped permission rules use this exact spelling.
+A denied launch is a reported failure. Preserve the denial and the launch log;
+never fall back to direct `claude`, `codex`, or `pi` invocation, change a global
+permission mode, emulate operator consent, or install a persistent service to
+make a launch succeed. Run `./scripts/nogg doctor` for the scoped setup and
+unsupported auto-mode guidance. A specialist has no child-launch authority.
