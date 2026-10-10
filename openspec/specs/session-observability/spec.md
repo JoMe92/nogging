@@ -160,12 +160,9 @@ attached. `--role orchestrator` SHALL never trigger this warning.
 session will not act until it receives a first message, and the exact
 follow-up command, whenever `--kickoff` was not passed. `scripts/nogg session
 kickoff <name> [--message TEXT]` SHALL deliver that first message: with
-`--message`, that exact text; without it, a message composed from the
-session's own `bead_id` and the Bead's `openspec:change:` label, naming both
-and directing the session to claim the Bead and proceed through that
-change's `tasks.md` in order. `session kickoff` SHALL refuse, sending
+`--message`, that exact text; without it, a role-specific message composed from its recorded scope. A Lead message names its Bead and change and directs only authorized work; a specialist message names its already-claimed Bead and forbids claiming, committing or closing; a planning message names its planning identifier and dedicated worktree and directs acquisition of its own planning lock before spec writes. `session kickoff` SHALL refuse, sending
 nothing, when the named session is not `running`, or when no `--message` is
-given and the session record carries no `bead_id`. `--kickoff` on `session
+given and an execution-role session record carries no `bead_id`. `--kickoff` on `session
 launch` SHALL chain a `session kickoff` call immediately after a successful
 launch.
 
@@ -178,7 +175,7 @@ launch.
 #### Scenario: Kickoff composes the expected message
 
 - **WHEN** `session kickoff <name>` runs with no `--message` for a `running`
-  session whose record carries a `bead_id`
+  Lead session whose record carries a `bead_id`
 - **THEN** a message naming that Bead ID and its change is sent to the
   session and is confirmed submitted
 
@@ -190,7 +187,7 @@ launch.
 #### Scenario: Kickoff refuses with no message and no Bead
 
 - **WHEN** `session kickoff <name>` runs with no `--message` for a `running`
-  session whose record carries no `bead_id`
+  execution-role session whose record carries no `bead_id`
 - **THEN** it refuses with a clear error and sends nothing
 
 #### Scenario: `--kickoff` chains automatically
@@ -198,6 +195,16 @@ launch.
 - **WHEN** `session launch --role lead --bead <id> --kickoff` runs
 - **THEN** the resulting session has already received its first message by
   the time the command returns
+
+#### Scenario: Planning kickoff needs no placeholder Bead
+
+- **WHEN** kickoff targets a running planning session with a valid planning identifier and dedicated worktree
+- **THEN** it sends a planning instruction directing that session to acquire its own lock without selecting or claiming any Bead
+
+#### Scenario: Specialist kickoff respects delegation authority
+
+- **WHEN** kickoff targets a running specialist assigned one already-claimed Bead
+- **THEN** it directs only that Bead work and does not authorize claiming, committing, closing or selecting sibling tasks
 
 ### Requirement: `session nudge` reliably submits a pane regardless of prior input
 

@@ -9,13 +9,13 @@ Defines Pi workflow integration, guard activation, project trust and the explici
 ### Requirement: A project-local extension enforces the command floor and the write boundary
 
 Because Pi ships no native sandbox or execution-policy mechanism, the
-installer SHALL place `.pi/extensions/specforge-guard.ts`, a project-local
+installer SHALL place `.pi/extensions/nogging-guard.ts`, a project-local
 extension that intercepts the `tool_call` event to: deny a shell command
-matching the SpecForge command-floor patterns (`sudo`, `rm -rf`/`rm -fr`,
+matching the Nogging command-floor patterns (`sudo`, `rm -rf`/`rm -fr`,
 `dd`, `mkfs` and variants, `shutdown`, `reboot`, `systemctl`, `chown`,
 `curl`, `wget`, `git push --force*`, `git reset --hard`, `git clean -fdx`,
 `git filter-branch`); and deny a file write or edit under `openspec/` unless
-`.specforge/locks/openspec.readonly` reports the write boundary open. Neither
+a fresh planning lock and absent closed-boundary sentinel authorize a planning session. The guard SHALL resolve shared repository state from linked worktrees, use planning_lock_ttl_seconds (default 7200), and treat missing, stale, malformed or unreadable lock state and repository-resolution failures as closed. Execution roles SHALL remain unable to write OpenSpec even while another session is planning. Neither
 `session launch --agent pi` at any authority level, nor any launch profile,
 SHALL pass a flag or setting that prevents this extension from loading.
 
@@ -32,7 +32,7 @@ SHALL pass a flag or setting that prevents this extension from loading.
 #### Scenario: An openspec/ write succeeds during planning
 
 - **WHEN** the write boundary is open (a planning session is active)
-- **AND** a Pi session writes under `openspec/`
+- **AND** an authorized Pi planning session writes under `openspec/`
 - **THEN** the guard extension allows the call
 
 ### Requirement: Pi's restricted level carries no sandbox, and this is stated plainly
@@ -98,3 +98,17 @@ are `.pi/prompts/{plan,discovery-review,sync-now}.md`.
 - **WHEN** `AGENTS.md` *Tool notes* is read
 - **THEN** it names `session launch --agent pi --role specialist:<type>` as the Pi specialist mechanism
 - **AND** it states the specialist boundary rules still apply
+
+### Requirement: Pi worktree state lookup fails closed
+
+A Pi guard in a linked worktree SHALL consult canonical repository locks; an absent worktree-local sentinel SHALL NOT imply authorization. Any closed sentinel found in authoritative state SHALL take precedence over a fresh lock.
+
+#### Scenario: No local sentinel
+
+- **WHEN** a linked worktree has no local locks directory and the canonical sentinel is closed
+- **THEN** an OpenSpec write is denied
+
+#### Scenario: Missing or stale lock
+
+- **WHEN** no fresh valid planning lock can be established or git resolution fails
+- **THEN** the boundary is closed

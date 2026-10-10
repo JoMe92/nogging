@@ -371,3 +371,45 @@ otherwise changing that session.
 - **AND** an operator runs `scripts/nogg doctor`
 - **THEN** its output includes a `NOTE` naming that session and the
   blocking Bead ID
+
+### Requirement: Launch preflight rejects an incompatible runtime helper before side effects
+
+Session launch SHALL verify helper existence, executability and argument compatibility before tmux creation. Doctor SHALL report missing or incompatible helpers as failures. A process that fails after successful preflight SHALL leave a failed session record and durable redacted diagnostic log naming the underlying startup error.
+
+#### Scenario: Version skew
+
+- **WHEN** the wrapper cannot accept a flag the launcher emits
+- **THEN** launch fails naming the incompatible contract and creates no pane or session record
+
+#### Scenario: Immediate runtime exit
+
+- **WHEN** a validated wrapper exits immediately with an error
+- **THEN** the recorded failure and log preserve its underlying error even if its pane no longer exists
+
+### Requirement: Planning is a supervised Bead-optional role
+
+Session launch SHALL accept --role planning with a planning identifier and description, SHALL allocate a dedicated planning worktree, and SHALL record the true role. Planning SHALL NOT require or claim a placeholder execution Bead. Bare launch SHALL remain idle and perform no planning-lock or Beads mutation; role-specific kickoff SHALL direct the planner to acquire its own canonical planning lock before writing.
+
+#### Scenario: Launch before tasks exist
+
+- **WHEN** an operator launches a named planning session with no Bead
+- **THEN** a tracked planning session starts in its dedicated worktree and names its required kickoff
+
+#### Scenario: Planning lock contention
+
+- **WHEN** two planners receive kickoff concurrently
+- **THEN** only the lock-owning planner may begin spec writes; the other reports the owner
+
+### Requirement: Planning lock cleanup respects its owning supervised session
+
+A planning session SHALL own its lock acquisition and release. Stop, cleanup and recovery SHALL refuse to release a different live owner lock, SHALL surface interrupted ownership, and SHALL preserve dirty or unintegrated planning worktrees.
+
+#### Scenario: Unrelated stop
+
+- **WHEN** an execution session stops while a planner holds its lock
+- **THEN** the planning lock remains held
+
+#### Scenario: Interrupted planner
+
+- **WHEN** the owning planner dies before plan-end
+- **THEN** recovery names the owner and provides a safe closed-boundary recovery path
