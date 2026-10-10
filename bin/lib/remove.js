@@ -62,6 +62,27 @@ function removeClaudeGuard(ctx) {
   ctx.log.add('remove', 'Nogging Claude guard', ctx.dryRun ? 'dry-run' : undefined);
 }
 
+function removeAntigravityHooks(ctx) {
+  const rel = '.agents/hooks.json';
+  const full = path.join(ctx.targetRoot, rel);
+  if (!fs.existsSync(full)) return;
+  const data = JSON.parse(fs.readFileSync(full, 'utf8'));
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw new Error(`${rel} must contain a JSON object; refusing to replace user hooks`);
+  }
+  const owned = JSON.parse(fs.readFileSync(path.join(ctx.pkgRoot, 'templates/antigravity/hooks.json'), 'utf8'));
+  let changed = false;
+  for (const name of Object.keys(owned)) {
+    if (Object.hasOwn(data, name)) {
+      delete data[name];
+      changed = true;
+    }
+  }
+  if (!changed) return;
+  if (!ctx.dryRun) fs.writeFileSync(full, JSON.stringify(data, null, 2) + '\n');
+  ctx.log.add('remove', 'Nogging Antigravity hooks', ctx.dryRun ? 'dry-run' : undefined);
+}
+
 function removeInstallation(ctx) {
   for (const rel of manifest.verbatim) removeFile(ctx, rel);
   for (const dir of manifest.verbatimDirs) {
@@ -72,6 +93,7 @@ function removeInstallation(ctx) {
   removeMarkerBlock(ctx, 'CLAUDE.md');
   removeMarkerBlock(ctx, 'AGENTS.md');
   removeClaudeGuard(ctx);
+  removeAntigravityHooks(ctx);
   ctx.notes.push('Target-owned OpenSpec, Beads, .nogging configuration/state, and unrelated settings were preserved.');
   ctx.notes.push('Review shared .gitignore entries and Git hooks manually; ownership cannot be inferred safely.');
 }

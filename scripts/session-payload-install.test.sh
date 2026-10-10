@@ -24,6 +24,8 @@ files = {
     '.claude/settings.json': json.dumps({'userSetting': 'keep', 'hooks': {
         'PreToolUse': [{'matcher': 'Read', 'hooks': [{'type': 'command', 'command': 'echo user-hook'}]}],
         'Notification': [{'hooks': [{'type': 'command', 'command': 'echo user-notification'}]}]}}),
+    '.agents/hooks.json': json.dumps({'user-first': {'Stop': []}, 'nogging-guard': {'enabled': False}, 'user-last': {'PreToolUse': []}}),
+    '.agents/skills/user-skill/SKILL.md': '# user skill\n',
     '.codex/hooks.json': json.dumps({'hooks': {'SessionStart': [{'command': 'user-start'}]}}),
     '.nogging/launch-profiles/operator.json': '{"userProfile": true}\n',
     '.pi/extensions/user-extension.ts': '// user extension\n',
@@ -46,7 +48,12 @@ root = pathlib.Path(sys.argv[1])
 original = json.loads((root / 'user-snapshots.json').read_text())
 for name, content in original.items():
     actual = (root / name).read_text()
-    if name == '.claude/settings.json':
+    if name == '.agents/hooks.json':
+        before, after = json.loads(content), json.loads(actual)
+        users = {k: v for k, v in after.items() if not k.startswith('nogging-')}
+        assert users == {k: v for k, v in before.items() if not k.startswith('nogging-')}
+        assert list(users) == ['user-first', 'user-last']
+    elif name == '.claude/settings.json':
         before, after = json.loads(content), json.loads(actual)
         assert after['userSetting'] == before['userSetting']
         for event, entries in before['hooks'].items():
@@ -56,11 +63,24 @@ for name, content in original.items():
 PY
 }
 check_helpers() {
-  for helper in session-launch session-log-writer; do
+  for helper in session-launch session-log-writer hooks/agy-guard; do
     test -f "$package/scripts/$helper" || fail "package omitted $helper"
     test -x "$consumer/scripts/$helper" || fail "installed $helper is not executable"
     cmp "$package/scripts/$helper" "$consumer/scripts/$helper" || fail "installed $helper differs from distribution"
   done
+  python3 - "$consumer" "$package" <<'PYTEST'
+import json, pathlib, sys
+root, package = map(pathlib.Path, sys.argv[1:])
+hooks = json.loads((root / '.agents/hooks.json').read_text())
+expected = json.loads((package / 'templates/antigravity/hooks.json').read_text())
+assert list(hooks) == ['user-first', 'nogging-guard', 'user-last', 'nogging-observability']
+for name, entry in expected.items():
+    assert hooks[name] == entry
+for name in ('restricted', 'trusted'):
+    assert (root / f'.nogging/launch-profiles/{name}.agy.toml').is_file()
+for name in ('plan', 'discovery-review', 'sync-now'):
+    assert (root / f'.agents/skills/nogging-{name}/SKILL.md').is_file()
+PYTEST
   check_preserved
 }
 (cd "$consumer" && node "$package/bin/cli.js" init --no-beads --no-hooks --no-systemd >/dev/null)
@@ -80,8 +100,15 @@ check_helpers
 (cd "$consumer" && node "$package/bin/cli.js" update --no-beads --no-hooks --no-systemd >/dev/null)
 check_helpers
 (cd "$consumer" && node "$package/bin/cli.js" remove --no-beads --no-hooks --no-systemd >/dev/null)
-for helper in session-launch session-log-writer; do
+for helper in session-launch session-log-writer hooks/agy-guard; do
   test ! -e "$consumer/scripts/$helper" || fail "remove retained $helper"
 done
 check_preserved
+python3 - "$consumer" <<'PYTEST'
+import json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+assert list(json.loads((root / '.agents/hooks.json').read_text())) == ['user-first', 'user-last']
+for name in ('plan', 'discovery-review', 'sync-now'):
+    assert not (root / f'.agents/skills/nogging-{name}/SKILL.md').exists()
+PYTEST
 printf 'packed session helper install/update/remove: ok\n'
