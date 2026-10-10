@@ -2,7 +2,8 @@
 
 The optional `agy` integration uses the same Beads, Git and OpenSpec workflow
 as other Nogging agents. The investigated Linux runtime is **agy 1.3.2**.
-Core live acceptance remains pending TASK-AGR-008; quota support and full
+Unsigned core live evidence is recorded in the
+[core acceptance report](https://github.com/JoMe92/nogging/blob/develop/docs/acceptance/2026-10-10-antigravity-core.md); quota support and full
 issue #54 completion remain pending TASK-AGR-005. This guide does not declare
 those checks complete. See the [contract investigation](https://github.com/JoMe92/nogging/blob/develop/docs/acceptance/antigravity-contract-investigation.md)
 for sanitized live evidence and unsupported contracts.
@@ -105,8 +106,8 @@ when a separate session is unnecessary. The orchestrator remains Claude-only.
 Headless exit zero and `status: SUCCESS` do not prove execution: observed hook
 denials and timeouts can still produce those values without `denied_actions`.
 Check expected effects, captured hook events and timeout stderr. Exact resume
-has investigation evidence; complete supervised live acceptance belongs to
-AGR-008. `/usage` observations include weekly and five-hour group buckets,
+has supervised core acceptance evidence, including exact-ID memory recall.
+`/usage` observations include weekly and five-hour group buckets,
 but quota gating, exhausted-credit classification and complete model mapping
 are pending AGR-005. Do not advertise them as available or close issue #54
 from core runtime evidence alone. Human acceptance signatures stay blank.
