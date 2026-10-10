@@ -1,0 +1,5 @@
+# Antigravity 1.3.2: hook floor at both levels; no validated OS sandbox.
+mode = "accept-edits"
+sandbox = "false"
+approval = "ask"
+# model = "gemini-..."
