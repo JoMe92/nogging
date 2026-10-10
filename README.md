@@ -101,14 +101,23 @@ Maintainers developing Nogging itself clone the repository and run
 worktree before editing OpenSpec:
 
 ```bash
-./scripts/nogg worktree plan <planning-id> "Describe the change"
-cd ../nogging-plan-<planning-id>
+./scripts/nogg worktree plan <planning-id> <description>   # both kebab-case
+cd <printed planning worktree path>
 ./scripts/nogg plan-begin
 # Author and validate the OpenSpec change, with stable TASK-... IDs in tasks.md.
 ./scripts/nogg validate
+NOGGING_WRITER=planning git commit -m "docs(openspec): <summary>"  # commit before materialize
 ./scripts/nogg materialize <change-name>
-./scripts/nogg plan-end
+# Wire Beads dependencies explicitly, fast-forward the plan branch into develop,
+# then remove the clean, integrated planning worktree.
+cd <main checkout>
+./scripts/nogg plan-end   # after cleanup, from the surviving canonical checkout
 ```
+
+A supervised planner is started with `./scripts/nogg session launch --role
+planning --planning-id <planning-id> --description <description>`. It gets
+its own worktree, stays idle until kickoff and takes the canonical planning
+lock itself.
 
 The generated timer is enabled with
 `systemctl --user enable --now nogg-sync.timer`; `./scripts/nogg sync --now`

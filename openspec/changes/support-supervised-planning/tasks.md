@@ -8,7 +8,7 @@
 
 - [x] TASK-SSP-004 Ship scoped supervised-launch permission guidance/effective settings plus doctor diagnostics for missing rules and unsupported auto-mode combinations; reproduce #52 on supported Claude, verify unrelated settings retained and direct agent/service fallbacks remain outside the grant.
 
-- [ ] TASK-SSP-005 Reconcile AGENTS.md, templates, Claude/Codex/Pi planning commands, README and operating/security/session docs with role, commit-before-materialize, cleanup-before-plan-end and canonical locks; verify generated installed instructions agree.
+- [x] TASK-SSP-005 Reconcile AGENTS.md, templates, Claude/Codex/Pi planning commands, README and operating/security/session docs with role, commit-before-materialize, cleanup-before-plan-end and canonical locks; verify generated installed instructions agree.
 
 - [ ] TASK-SSP-006 Run scripts/test and a supervised scratch planning lifecycle for supported installed agents through kickoff, lock, validated planning commit, materialize, local integration and safe cleanup; record #47/#52 evidence and leave human acceptance signatures blank.
 

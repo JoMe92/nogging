@@ -69,7 +69,11 @@ you have.
   `scripts/nogg plan-begin` → review discoveries → author/revise the
   `openspec/` change → `openspec validate --strict` → commit `openspec/` with a
   Conventional Commit subject **and a `Nogging-Writer: planning` trailer** →
-  `scripts/nogg materialize <change>` → `scripts/nogg plan-end`.
+  `scripts/nogg materialize <change>` → wire Beads dependencies explicitly →
+  fast-forward integrate → safe cleanup → `scripts/nogg plan-end` from a
+  surviving canonical checkout. To start a separate planner instead, launch
+  `scripts/nogg session launch --role planning --planning-id <id>
+  --description <desc>` and kick it off; never pre-acquire its lock.
   The trailer is not optional: your session has no per-session `openspec/**`
   deny and the guard hook will not fire, so that trailer is the **only** thing
   that keeps the commit legal — a planning commit without it fails the CI

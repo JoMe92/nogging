@@ -39,9 +39,11 @@ want to be able to stop independently.
 ./scripts/nogg session launch --role lead --bead SPEC-xxx --owner "$USER"
 ```
 
-`--bead` is required and must exist; `launch` runs a read-only `bd show` to
-check it and **makes no other Beads change** — being launched is not permission
-to start work. `--role` is `lead` or `specialist:<type>`. `--cwd <path>`
+For an execution role `--bead` is required and must exist; `launch` runs a
+read-only `bd show` to check it and **makes no other Beads change** — being
+launched is not permission to start work. `--role` is `lead`,
+`specialist:<type>` or `planning`. A planning session is Bead-optional — see
+*Start a planning session* below. `--cwd <path>`
 defaults to the repo root. `--read-only` starts the session in plan mode.
 `--profile` / `--prompt` / `--full-access` choose the authority the session
 runs under — see *Running with broader authority*.
@@ -58,6 +60,33 @@ retain the original error even when the pane has already disappeared. Check
 
 Then give it its task: attach (below) and tell it what to do, or point it at a
 briefing file.
+
+## Start a planning session
+
+```bash
+./scripts/nogg session launch --role planning \
+  --planning-id <planning-id> --description <description> [--bead SPEC-xxx]
+./scripts/nogg session kickoff <name>
+```
+
+Both identifiers are kebab-case. Launch allocates a dedicated planning
+worktree and records the true `planning` role. It takes no planning lock and
+makes no Beads change. An optional `--bead` is context only and is never
+claimed; an execution role cannot launch without a real Bead. The bare
+session stays idle. Its kickoff tells the planner to run `plan-begin` itself,
+which takes the canonical planning lock in the main checkout, owned by that
+session. A second planner given a kickoff reports the named owner and writes
+nothing. Nobody, the orchestrator included, acquires the lock on a child's
+behalf.
+
+The planner commits the validated spec as the `planning` writer before
+`materialize`, wires Beads
+dependencies explicitly, fast-forward integrates its branch, and removes only
+a clean, integrated worktree. Only then does it run `plan-end`, from a
+surviving canonical checkout. `session stop`, cleanup and recovery release
+only the planning lock owned by that session, never another session's.
+Execution sessions stay fenced from `openspec/` while any planning lock is
+held.
 
 If the session is **resuming** interrupted work — a previous session ran out of
 budget or crashed, or you are switching tools — have it run
@@ -255,7 +284,7 @@ orchestrate-only-by-default scope.
 
 | Command | Effect |
 | --- | --- |
-| `session launch --role <r> --bead <id> [--cwd <p>] [--read-only] [--owner <o>] [--agent <claude\|codex>] [--profile <n>] [--prompt <n>] [--full-access]` | start a supervised session; no Beads change |
+| `session launch --role <r> [--bead <id>] [--planning-id <id> --description <d>] [--cwd <p>] [--read-only] [--owner <o>] [--agent <claude\|codex>] [--profile <n>] [--prompt <n>] [--full-access]` | start a supervised session; no Beads change |
 | `session list` | list every session with live-reconciled state and its launch profile |
 | `session log <name> [--follow]` | print / tail the log; never attaches |
 | `session attach <name> [--read-only]` | attach the terminal; `Ctrl-b d` to detach |
