@@ -22,6 +22,17 @@ with tempfile.TemporaryDirectory(prefix="nogg startup ") as directory:
     (root / ".nogging/config.json").write_text(json.dumps(config))
     for name in ("nogg", "session-launch", "session-log-writer", "openspec-sandbox"):
         shutil.copy2(source / "scripts" / name, root / "scripts" / name)
+    # Exercise real tmux/startup logging independently of host mount support.
+    # Preserve helper contract checks; dedicated fence tests use the real helper.
+    boundary = root / "scripts/openspec-sandbox"
+    boundary.rename(root / "scripts/openspec-sandbox-real")
+    boundary.write_text('''#!/bin/sh
+if [ "${1:-}" = --contract ]; then
+  exec "$(dirname "$0")/openspec-sandbox-real" --contract
+fi
+NOGG_OPENSPEC_FENCED=1 exec "$@"
+''')
+    boundary.chmod(0o755)
     subprocess.run(["git", "init", "-q", str(root)], check=True)
     fixtures = {
         "bd": '#!/bin/sh\ncase "$1" in show) echo \'[{"id":"SPEC-live"}]\';; dep) echo "[]";; esac\n',
