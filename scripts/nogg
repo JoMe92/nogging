@@ -1893,6 +1893,78 @@ def merge_floor(settings):
             deny.append(entry)
     perms["deny"] = deny
     return result
+# Narrow child-control commands are granted only to supervised Lead/orchestrator
+# parents. Keep the canonical spelling: arbitrary nogg commands are not granted.
+SUPERVISED_SESSION_COMMANDS = ("launch", "send", "kickoff", "stop", "list", "log", "watch")
+def supervised_launch_rules():
+    return [f"Bash(./scripts/nogg session {command}:*)"
+            for command in SUPERVISED_SESSION_COMMANDS]
+
+def merge_supervised_launch_permissions(settings, role):
+    result = json.loads(json.dumps(settings))
+    if role not in ("lead", "orchestrator"):
+        return result
+    permissions = result.setdefault("permissions", {})
+    allow = permissions.get("allow", [])
+    if not isinstance(allow, list) or any(not isinstance(rule, str) for rule in allow):
+        raise RuntimeError("launch profile permissions.allow must be a list of rules")
+    merged_allow = list(allow)
+    for rule in supervised_launch_rules():
+        if rule not in merged_allow:
+            merged_allow.append(rule)
+    permissions["allow"] = merged_allow
+    return result
+
+def supervised_launch_permission_notes():
+    notes = []
+    project = ROOT / '.claude/settings.json'
+    try:
+        data = json.loads(project.read_text()) if project.exists() else {}
+        permissions = data.get('permissions', {})
+        allow = permissions.get('allow', [])
+        if not isinstance(allow, list):
+            raise ValueError('permissions.allow is not an array')
+        missing = [rule for rule in supervised_launch_rules() if rule not in allow]
+        if missing:
+            notes.append('external Claude parent lacks scoped supervised-launch rules in .claude/settings.json: '
+                         + ', '.join(missing) + '; use a Nogging-supervised Lead/orchestrator (effective settings add these), '
+                         'or deliberately add the exact rules for a manual parent; no global mode change is needed')
+    except (ValueError, OSError, AttributeError, TypeError):
+        notes.append('cannot inspect scoped Claude parent permissions; repair .claude/settings.json or use a supervised parent')
+    # Only inspect the relevant flag; never print user configuration or alter it.
+    candidates = [Path(os.environ.get('CLAUDE_CONFIG_DIR', str(Path.home() / '.claude'))) / 'settings.json']
+    profile_dir = ROOT / CFG.get('session_launch_profile_dir', '.nogging/launch-profiles')
+    candidates.extend(sorted(profile_dir.glob('*.json')) if profile_dir.is_dir() else [])
+    for path in candidates:
+        if not path.is_file():
+            continue
+        try:
+            data = json.loads(path.read_text())
+            auto = data.get('autoMode', {})
+            if isinstance(auto, dict) and auto.get('classifyAllShell') is True:
+                notes.append(f'Claude auto mode with autoMode.classifyAllShell=true in {path.name} suspends scoped Bash allow rules; '
+                             'unattended supervised child creation is unsupported in that combination. '
+                             'Keep the denial, request deliberate operator approval or an explicitly selected trusted/orchestrator profile; '
+                             'never invoke an agent directly or install a service as fallback')
+        except (ValueError, OSError, AttributeError, TypeError):
+            notes.append(f'cannot inspect Claude auto-mode prerequisite in {path.name}; review the file deliberately')
+    for _, record in session_records():
+        if record.get('agent', 'claude') != 'claude' or record.get('role') not in ('lead', 'orchestrator'):
+            continue
+        if record.get('state') not in SESSION_ACTIVE_STATES:
+            continue
+        effective = record.get('effective_settings_path')
+        try:
+            settings = json.loads(Path(effective).read_text())
+            allow = settings.get('permissions', {}).get('allow', [])
+            missing = [rule for rule in supervised_launch_rules() if rule not in allow]
+            if missing:
+                notes.append(f"session {record.get('name')}: scoped child-control permissions missing; "
+                             'restart deliberately with the updated Nogging effective settings')
+        except (ValueError, OSError, TypeError, AttributeError):
+            notes.append(f"session {record.get('name')}: cannot verify scoped child-control effective settings")
+    return notes
+
 # Edit-tool deny rules that make openspec/ a read-only root in the effective
 # authority of a launched Claude execution session. The tool-agnostic sibling of
 # the PreToolUse guard: the guard is the fast in-model signal, these are the
@@ -2623,6 +2695,7 @@ def session_launch(role, bead, cwd, read_only, owner,
         # The Nogging-only keys never reach Claude; strip them from the copy.
         base_settings = {k: v for k, v in source_settings.items()
                          if k not in ("//", "nogging_floor", "nogging_openspec_readonly")}
+        base_settings = merge_supervised_launch_permissions(base_settings, role_meta)
         settings_out = base_settings if floor_lifted else merge_floor(base_settings)
         if openspec_readonly:
             settings_out = deny_openspec_writes(settings_out)
@@ -4121,6 +4194,7 @@ def doctor(audit=False, with_recover=False):
                  + (f" — {', '.join(rattention)}" if rattention else " (nothing in flight)"))
     notes.extend(persona_mismatch_notes())
     notes.extend(launch_profile_notes())
+    notes.extend(supervised_launch_permission_notes())
     notes.extend(blocked_running_sessions_notes())
     for note in notes: print(f"NOTE  {note}")
     recover_lines = []

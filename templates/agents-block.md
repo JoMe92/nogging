@@ -28,8 +28,9 @@ are confined to *Tool notes* at the end.
 ### The write boundary
 
 `openspec/` is read-only for every execution agent and writable only during a
-planning session holding `.nogging/locks/planning.lock`
-(`./scripts/nogg plan-begin` … `plan-end`). The lock toggles a
+planning session holding the canonical `.nogging/locks/planning.lock` in the
+main checkout (`./scripts/nogg plan-begin` … `plan-end`). A held planning lock
+never makes `openspec/` writable for an execution role. The lock toggles a
 `.nogging/locks/openspec.readonly` sentinel that the write guard consults.
 
 ### Specialist delegation
@@ -47,12 +48,20 @@ key).
 
 The Planning Agent first allocates `./scripts/nogg worktree plan
 <planning-id> <description>` from updated `origin/develop` and works only in
-that worktree. It runs `plan-begin`, writes or revises OpenSpec, validates,
-commits with `NOGGING_WRITER=planning`, materializes Beads
-(`./scripts/nogg materialize <change>`), fast-forward integrates the plan
-into `develop`, safely retires only a clean integrated worktree, then runs
-`./scripts/nogg plan-end`. The commit precedes `materialize` so a crash
-between them never leaves Beads without a committed spec.
+that worktree. A supervised planner gets its worktree at launch:
+`./scripts/nogg session launch --role planning --planning-id <planning-id>
+--description <description>`. A bare launch stays idle; an optional `--bead`
+is context only and is never claimed. After kickoff the planner runs
+`plan-begin` itself. That takes the canonical planning lock in the main
+checkout, owned by that session; nobody acquires it on its behalf. It writes
+or revises OpenSpec, validates, commits with `NOGGING_WRITER=planning`,
+materializes Beads (`./scripts/nogg materialize <change>`), wires Beads
+dependencies explicitly, fast-forward integrates the plan into `develop`, and
+safely retires only a clean integrated worktree. Only after that cleanup does
+it run `./scripts/nogg plan-end`, from a surviving canonical checkout. The
+commit precedes `materialize` so a crash between them never leaves Beads
+without a committed spec. Stop, cleanup and recovery never release another
+session's planning lock.
 
 ### The Orchestration Agent
 

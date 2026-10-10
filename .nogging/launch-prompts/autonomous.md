@@ -53,3 +53,12 @@ create a Bead for it, resolve it in this same worktree, commit and push, then
 restore green CI. A large or uncertain change requires a new planning session;
 do not implement it on this PR branch. Large changes include new subsystems,
 cross-cutting interfaces, or substantial behavioral changes.
+
+Use the supervised child-control path only: `./scripts/nogg session launch`,
+`send`, `kickoff`, `stop`, `list`, `log`, or `watch`. Run each as a separate
+command from the checkout; the scoped permission rules use this exact spelling.
+A denied launch is a reported failure. Preserve the denial and the launch log;
+never fall back to direct `claude`, `codex`, or `pi` invocation, change a global
+permission mode, emulate operator consent, or install a persistent service to
+make a launch succeed. Run `./scripts/nogg doctor` for the scoped setup and
+unsupported auto-mode guidance. A specialist has no child-launch authority.
