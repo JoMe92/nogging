@@ -133,6 +133,27 @@ starts.
 Codex reads any credential it needs from its own `~/.codex/auth.json` — no
 token is ever passed on the command line, exactly as for Claude.
 
+## Choosing the model
+
+With no model setting a session runs on the runtime's own default. To pick one:
+
+```bash
+./scripts/nogg session launch --role lead --bead SPEC-xxx --model <model-name>
+```
+
+Precedence is `--model`, then an optional `model` key in the launch profile
+(Claude `.json`, Codex `.codex.toml`, Pi `.pi.toml`, Antigravity `.agy.toml`),
+then the runtime's native default. A Codex profile may also set
+`model_reasoning_effort`. The model reaches the runtime as one `--model` argv
+element for this launch only: neither the profile nor any user-global runtime
+setting (`~/.claude`, `~/.codex`, `~/.pi`) is written.
+
+The session record keeps `requested_model`, `model_source` (`launch`,
+`profile` or `runtime-default`) and `reasoning_effort`. `session list` shows
+them in `MODEL` and `MODEL_SOURCE` columns. Without a model setting both show
+`runtime-default`: Nogging records that the runtime chose, not a guess at which
+model it chose. A record written before this was recorded shows `-`.
+
 ## Watch without touching
 
 ```bash
