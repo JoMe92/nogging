@@ -60,7 +60,7 @@
       printed) if the key is missing or the exchange fails — never falls
       back to an ambient personal credential silently.
 
-- [ ] TASK-ACI-009 When `worktree plan`/`worktree implement` allocates a
+- [x] TASK-ACI-009 When `worktree plan`/`worktree implement` allocates a
       worktree for a persona whose roster entry has a `github_app` block:
       set that worktree's `user.email` to the GitHub-assigned bot format
       (`<app-user-id>+<slug>[bot]@users.noreply.github.com`, read from the

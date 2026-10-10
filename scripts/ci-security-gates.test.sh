@@ -3,7 +3,7 @@ set -euo pipefail
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 tmp=$(mktemp -d)
-cleanup() { case "$tmp" in /tmp/tmp.*) rm -r -- "$tmp" ;; esac; }
+cleanup() { case "$tmp" in /tmp/tmp.*) chmod -R u+w "$tmp" 2>/dev/null || true; rm -r -- "$tmp" ;; esac; }
 trap cleanup EXIT
 
 expect_failure() {
