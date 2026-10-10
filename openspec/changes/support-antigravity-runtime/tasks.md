@@ -6,7 +6,7 @@
 
 - [x] TASK-AGR-003 Add .agy.toml profiles, normalized agent alias, model forwarding and wrapper contract plus atomic narrowly scoped workspace trust; verify missing guard or unwritable trust refuses before agent start, restricted rejects always-proceed and unrelated global keys/mode remain intact.
 
-- [ ] TASK-AGR-004 Implement conversation-ID capture, exact resume and lifecycle-safe first-turn/kickoff behavior with auto-update disabled per session; verify Stop events append, session send/stop work, no duplicate kickoff and no claim caused by bare launch.
+- [x] TASK-AGR-004 Implement conversation-ID capture, exact resume and lifecycle-safe first-turn/kickoff behavior with auto-update disabled per session; verify Stop events append, session send/stop work, no duplicate kickoff and no claim caused by bare launch.
 
 - [ ] TASK-AGR-005 Add Antigravity pane adapter and quota source wired into GSU, all applicable model-group buckets and resume reset resolution; verify working/idle/needs_input/limit fixtures, weekly versus short limits, unknown model mapping and exit-75 gate before trust/tmux. Requires integrated AGR-004 and GSU-006; ship quota payload/docs through installed update and append unsigned packed-consumer/live quota acceptance plus core lifecycle regression evidence. Full #54 completion requires this and AGR-008.
 

@@ -126,13 +126,19 @@ with tempfile.TemporaryDirectory() as tmp:
             restricted.write_text('approval = "auto"\n')
             refused(lambda: m.session_launch('lead','SPEC-test',str(linked),False,None,profile=str(restricted),agent='agy'),'requires ask')
             assert calls == []
+            refused(lambda: m.session_launch('lead','SPEC-test',str(linked),False,None,agent='agy',resume='latest'),'conversation ID')
+            refused(lambda: m.session_launch('lead','SPEC-test',str(linked),False,None,agent='agy',resume=''),'conversation ID')
+            assert calls == []
             profile.write_text('model = "test-model"\napproval = "auto"\n')
-            m.session_launch('lead','SPEC-test',str(linked),True,None,profile=str(profile),agent='agy')
+            m.session_launch('lead','SPEC-test',str(linked),True,None,profile=str(profile),agent='agy',resume='00000000-0000-4000-8000-000000000001')
             record = json.loads(next((tmp/'sessions').glob('*.json')).read_text())
             assert record['agent'] == 'antigravity' and record['read_only']
             command = record['command']
             assert command[command.index('--model')+1] == 'test-model'
             assert '--read-only' in command
+            assert command[command.index('--resume')+1] == record['antigravity_conversation_id']
+            assert record['antigravity_initial_turn'] and not record.get('kickoff_sent_at')
+            assert not any(a[0] == 'send-keys' for a in calls)
         # Execute real wrapper against a fake runtime; assert argv and guard context.
         bindir = tmp/'bin'; bindir.mkdir()
         fake = bindir/'agy'
