@@ -189,11 +189,25 @@ case "$agent" in
     # Codex additionally protects the cwd worktree's own gitdir, so it must be
     # listed explicitly next to the shared git directory.
     git_work_dir=$(git -C "$(pwd)" rev-parse --absolute-git-dir 2>/dev/null) || git_work_dir=""
+    # NOGG_CODEX_EXTRA_WRITABLE_ROOTS is an operator opt-in (colon-separated):
+    # each entry must be an existing directory strictly under $HOME, e.g. the
+    # Antigravity runtime state needed for live agy probes. Nothing is added by
+    # default and anything else is refused before the agent starts.
     git_roots=$(python3 - "$git_common_dir" "$git_work_dir" <<'ROOTS'
-import json, sys
-print(json.dumps(list(dict.fromkeys(path for path in sys.argv[1:] if path))))
+import json, os, sys
+roots = [path for path in sys.argv[1:] if path]
+home = os.path.realpath(os.environ.get("HOME", ""))
+for raw in filter(None, os.environ.get("NOGG_CODEX_EXTRA_WRITABLE_ROOTS", "").split(":")):
+    real = os.path.realpath(raw)
+    if (not os.path.isabs(raw) or not home or real == home
+            or not real.startswith(home + os.sep) or not os.path.isdir(real)):
+        sys.stderr.write("session-launch: refusing NOGG_CODEX_EXTRA_WRITABLE_ROOTS entry "
+                         "(must be an existing directory under $HOME): " + raw + "\n")
+        sys.exit(2)
+    roots.append(real)
+print(json.dumps(list(dict.fromkeys(roots))))
 ROOTS
-    )
+    ) || exit 2
     set -- "$@" -c "sandbox_workspace_write.writable_roots=$git_roots"
     # Emit the network_access override explicitly in both directions rather than
     # omitting it for `on` and leaning on the codex default: the trusted profile
