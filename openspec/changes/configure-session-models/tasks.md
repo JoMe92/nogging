@@ -6,7 +6,7 @@
 
 - [x] TASK-SCM-003 Record requested model, source and runtime-default fallback and show them in session list/docs; verify per-launch overrides do not mutate profiles or global runtime settings.
 
-- [ ] TASK-SCM-004 Run scripts/test, installed-payload model-selection scenarios and a live sandboxed Codex worktree lifecycle capability check; record #51 model-selection evidence, account for .git/.beads access honestly, and do not close the issue until both this and TASK-PSC-006 pass.
+- [x] TASK-SCM-004 Run scripts/test, installed-payload model-selection scenarios and a live sandboxed Codex worktree lifecycle capability check; record #51 model-selection evidence, account for .git/.beads access honestly, and do not close the issue until both this and TASK-PSC-006 pass.
 
 ## Execution contract
 
