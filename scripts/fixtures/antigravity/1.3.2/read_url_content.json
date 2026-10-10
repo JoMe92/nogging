@@ -1,0 +1,21 @@
+{
+  "cwd": "/workspace/probe/.agents",
+  "payload": {
+    "artifactDirectoryPath": "/runtime/antigravity-cli/brain/00000000-0000-4000-8000-000000000004",
+    "conversationId": "00000000-0000-4000-8000-000000000004",
+    "modelName": "gemini-3.8-flash-low",
+    "stepIdx": 2,
+    "toolCall": {
+      "args": {
+        "Url": "https://example.com",
+        "toolAction": "Reading example.com",
+        "toolSummary": "Read URL content"
+      },
+      "name": "read_url_content"
+    },
+    "transcriptPath": "/runtime/antigravity-cli/brain/00000000-0000-4000-8000-000000000004/.system_generated/logs/transcript_full.jsonl",
+    "workspacePaths": [
+      "/workspace/probe"
+    ]
+  }
+}
