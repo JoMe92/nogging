@@ -1,6 +1,6 @@
 ## 1. Implementation and validation
 
-- [ ] TASK-SCM-001 Extend Claude/Codex profile parsing with optional model and supported Codex model_reasoning_effort and add --model precedence; verify absent keys preserve behavior, wrong types/effort fail before session creation and Pi existing model selection remains valid.
+- [x] TASK-SCM-001 Extend Claude/Codex profile parsing with optional model and supported Codex model_reasoning_effort and add --model precedence; verify absent keys preserve behavior, wrong types/effort fail before session creation and Pi existing model selection remains valid.
 
 - [ ] TASK-SCM-002 Forward selected model/effort through session-launch using separate argv elements and update the wrapper contract; verify stub Claude/Codex/Pi binaries receive exact flags with no interpolation or authority changes.
 
