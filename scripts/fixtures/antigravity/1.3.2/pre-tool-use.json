@@ -1,0 +1,24 @@
+{
+  "cwd": "/workspace/probe/.agents",
+  "payload": {
+    "artifactDirectoryPath": "/home/operator/.gemini/antigravity-cli/brain/00000000-0000-4000-8000-000000000001",
+    "conversationId": "00000000-0000-4000-8000-000000000001",
+    "modelName": "gemini-3.8-flash-high",
+    "stepIdx": 2,
+    "toolCall": {
+      "args": {
+        "CodeContent": "PROBE",
+        "Description": "Create probe.txt containing PROBE",
+        "Overwrite": true,
+        "TargetFile": "/workspace/probe/probe.txt",
+        "toolAction": "Creating probe file",
+        "toolSummary": "Create probe.txt"
+      },
+      "name": "write_to_file"
+    },
+    "transcriptPath": "/home/operator/.gemini/antigravity-cli/brain/00000000-0000-4000-8000-000000000001/.system_generated/logs/transcript_full.jsonl",
+    "workspacePaths": [
+      "/workspace/probe"
+    ]
+  }
+}

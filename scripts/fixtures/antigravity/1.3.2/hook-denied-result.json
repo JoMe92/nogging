@@ -1,0 +1,14 @@
+{
+  "conversation_id": "00000000-0000-4000-8000-000000000001",
+  "status": "SUCCESS",
+  "response": "The tool call was denied by pre-tool hook: `Contract probe: deny every tool`.\n",
+  "duration_seconds": 10.893574861,
+  "num_turns": 1,
+  "usage": {
+    "input_tokens": 33065,
+    "output_tokens": 592,
+    "thinking_tokens": 482,
+    "cache_read_tokens": 0,
+    "total_tokens": 33657
+  }
+}
