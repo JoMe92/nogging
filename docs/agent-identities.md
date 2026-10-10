@@ -89,12 +89,20 @@ illustrative fragment for `personas.lead`, with a fictitious App ID:
 }
 ```
 
-The approved setup requires the App ID and key path, but this checkout does not
-implement their field schema yet. Confirm `app_id` and `private_key_path`
-against the installed credential helper before copying this fragment; use its
-supported fields for any installation ID or bot user ID it requires. Prefer an
-absolute host path rather than assuming JSON expands `~`. Only public identifiers
+The credential helper accepts `app_id` and `private_key_path`. If the path is
+omitted, it uses `~/.config/nogging/bot-identities/<slug>.pem`; a leading `~`
+is expanded. It discovers the installation through the checkout's GitHub
+`origin` repository, so no installation ID is required. Only public identifiers
 and paths belong in the config, never the PEM contents or an access token.
+
+`scripts/nogg credential-helper <slug> get` reads Git's credential request
+from standard input. It supports HTTPS credentials for `github.com` and
+requires an HTTPS or `git@github.com:` origin. OpenSSL must be available for
+RS256 signing. Tokens are requested for the origin repository only and remain
+in memory; `store` and `erase` consume input without persisting anything.
+Failures return non-zero with no credential output. When wiring the helper
+manually, clear inherited credential helpers first so Git cannot continue to
+an ambient personal credential after a failure.
 
 Once Tier 2 is implemented, allocate a fresh persona worktree through Nogging so
 its identity and credential helper are scoped to that worktree. App installation
