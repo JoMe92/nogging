@@ -115,6 +115,40 @@ without the rules it allowed both in three runs. The scoped rules make the
 supervised path predictable. Only the prompts and this policy keep direct
 agent invocation out; the classifier is not a guarantee.
 
+## Interactive Orchestration Agent permission template
+
+Nogging ships `templates/claude/orchestrator-permissions.example.json` as a
+user-settings fragment for interactive Orchestration Agent sessions. Operators
+can copy or merge it into their user settings (`~/.claude/settings.json`) to allow
+necessary cross-worktree exploration and orchestration commands while retaining
+strict safety boundaries.
+
+Key security model properties and constraints:
+
+- **Allow rules do not bypass the auto-mode classifier:** In auto mode, Claude Code's
+  classifier reviews actions before they execute. Allow rules do not bypass this
+  classifier: broad shell grants are suspended in auto mode, and the classifier can
+  still evaluate and refuse actions (such as edits to security boundaries or
+  unrecognized outbound exfiltration).
+- **`autoMode` is read only from user settings:** Claude Code reads classifier
+  configuration (`environment`, `allow`, `soft_deny`, `hard_deny`) strictly from
+  user settings (`~/.claude/settings.json` or `~/.claude.json`). Project settings
+  (`.claude/settings.json` or `.claude/settings.local.json`) cannot configure or
+  customize auto mode trust rules.
+- **Wildcards before subcommands are hazardous:** Permission patterns like
+  `Bash(git -C * add)` or `Bash(git * add)` place a wildcard before the subcommand.
+  Claude Code matches everything before the first `*`, so a rule like
+  `Bash(git * main)` matches any git command and options—including
+  `-c core.fsmonitor=<script>`, which permits arbitrary command execution.
+  Allow and deny rules must anchor on the command and subcommand before wildcards
+  (e.g. `Bash(./scripts/nogg:*)` or `Bash(git push --force:*)`).
+- **Superset of the command floor:** The template's deny list includes every entry
+  from Nogging's `FLOOR_DENY` plus history-destroying Git commands (`git push --force`,
+  `git reset --hard`, `git clean`, `git branch -D`, `git filter-branch`).
+- **Manual operator setup:** `nogg init` and `nogg update` never apply or write
+  the template to user or project settings files. It is an example template for the
+  operator to adapt manually.
+
 ## Planning sessions and the OpenSpec boundary
 
 A supervised planning session (`--role planning`) is the only role that may
