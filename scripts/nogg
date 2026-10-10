@@ -4347,6 +4347,9 @@ def codex_sandbox_diagnosis(workdir, with_sandbox=False, sandbox_extra=()):
                            "--absolute-git-dir").stdout.strip()).resolve())
     except Exception as exc:
         return [f"codex sandbox diagnosis skipped: resolver error: {exc}"]
+    # session-launch also grants the shared checkout root (`--add-dir`); mirror it,
+    # resolved from the Git common dir so doctor run from a worktree matches too.
+    policy["writable_roots"] = list(dict.fromkeys(policy["writable_roots"] + [str(Path(common).parent)]))
     base = codex_sandbox_argv(policy, sandbox_extra)
     notes = []
     targets = [("shared Git dir", common)] + ([("worktree gitdir", own)] if own != common else [])
@@ -4404,8 +4407,9 @@ def codex_sandbox_diagnosis(workdir, with_sandbox=False, sandbox_extra=()):
     elif rc is None:
         notes.append(f"codex sandbox test probe: timed out after {timeout_s} s")
     else:
-        failing = list(dict.fromkeys(ln.split()[-1] for ln in out.splitlines()
-                                     if ln.startswith("FAIL - ")))
+        failing = list(dict.fromkeys(mt.group(1) for mt in
+                                     (re.match(r"^FAIL - (\S+\.test\.sh)$", ln) for ln in out.splitlines())
+                                     if mt))
         notes.append("codex sandbox test probe: FAILED suites: " + (", ".join(failing) or f"exit {rc}"))
     return notes
 

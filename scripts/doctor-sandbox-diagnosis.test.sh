@@ -39,7 +39,11 @@ roots = [json.loads(v.split("=", 1)[1]) for k, v in zip(a, a[1:])
          if k == "-c" and v.startswith("sandbox_workspace_write.writable_roots=")][0]
 if cmd[:2] == ["sh", "-c"] and "touch" in cmd[2]:
     target = os.path.dirname(cmd[-1])
-    if not any(target == r or target.startswith(r + "/") for r in roots):
+    # Like Codex, a writable root keeps a `.git` beneath it read-only unless
+    # that Git dir (or a path inside it) is itself a granted root.
+    def grants(r):
+        return target == r or (target.startswith(r + "/") and "/.git/" not in target[len(r):] + "/")
+    if not any(grants(r) for r in roots):
         print(f"touch: cannot touch '{cmd[-1]}': Read-only file system", file=sys.stderr)
         sys.exit(1)
 os.execvp(cmd[0], cmd)
@@ -86,6 +90,14 @@ with tempfile.TemporaryDirectory() as tmp:
           and any(f"worktree gitdir: writable ({own})" in n for n in notes), f"stub: granted roots writable: {notes}")
     check(any("run doctor --sandbox" in n for n in notes), "plain doctor points at --sandbox for network/test probes")
     check(not residue(), "stub: no probe residue")
+    seen = []
+    orig_run = m._sandbox_run
+    m._sandbox_run = lambda argv, *a: (seen.append(argv), (0, ""))[1]
+    try: diag(wt)
+    finally: m._sandbox_run = orig_run
+    check(seen and any(v == "sandbox_workspace_write.writable_roots=" + __import__("json").dumps(
+              [str(common), str(own), str(common.parent)]) for v in seen[0]),
+          f"probe policy also grants the shared checkout root, like session-launch --add-dir: {seen[:1]}")
 
     # --- stub: a root the sandbox does not grant is NOT writable even though the host can write it.
     notes = diag(wt, grant=False)
@@ -107,12 +119,13 @@ with tempfile.TemporaryDirectory() as tmp:
     git("-C", str(wt), "remote", "add", "origin", "https://example.invalid/x/y.git")
     (wt / "scripts").mkdir()
     test = wt / "scripts/test"
-    test.write_text("#!/usr/bin/env bash\necho 'PASS - scripts/a.test.sh'\necho 'FAIL - scripts/b.test.sh'\nexit 1\n")
+    test.write_text("#!/usr/bin/env bash\necho 'PASS - scripts/a.test.sh'\necho 'FAIL - b-check: errored'\n"
+                    "echo 'FAIL - scripts/b.test.sh'\nexit 1\n")
     test.chmod(0o755)
     notes = diag(wt, with_sandbox=True)
     check(any("origin is not an SSH remote" in n for n in notes), f"non-SSH remote skipped: {notes}")
     check(any(n == "codex sandbox test probe: FAILED suites: scripts/b.test.sh" for n in notes),
-          f"failing suite named: {notes}")
+          f"only the failing suite is named, not per-check FAIL lines: {notes}")
     test.write_text("#!/usr/bin/env bash\nsleep 30\n")
     notes = diag(wt, with_sandbox=True, cfg={"doctor_sandbox_test_timeout_seconds": 1})
     check(any(n == "codex sandbox test probe: timed out after 1 s" for n in notes), f"test probe bounded: {notes}")
@@ -125,10 +138,12 @@ with tempfile.TemporaryDirectory() as tmp:
 
     # --- real codex sandbox (when available): granted vs not granted, /tmp excluded
     # so the temp checkout is writable only through writable_roots.
-    supported = real_codex and subprocess.run([real_codex, "sandbox", "--help"],
-                                              capture_output=True).returncode == 0
+    # `codex sandbox -- true` also fails when this test itself already runs inside
+    # a sandbox (doctor --sandbox), where bubblewrap cannot nest.
+    supported = real_codex and subprocess.run([real_codex, "sandbox", "--", "true"], capture_output=True,
+                                              stdin=subprocess.DEVNULL).returncode == 0
     if not supported:
-        print("ok - real codex sandbox checks skipped: codex sandbox unavailable on this host")
+        print("ok - real codex sandbox checks skipped: codex sandbox unavailable or nested on this host")
     else:
         extra = ("-c", "sandbox_workspace_write.exclude_slash_tmp=true",
                  "-c", "sandbox_workspace_write.exclude_tmpdir_env_var=true")
