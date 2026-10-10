@@ -31,5 +31,13 @@
         "matcher": ""
       }
     ]
+  },
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "allow": [
+      "Bash(*)",
+      "WebFetch",
+      "WebSearch"
+    ]
   }
 }

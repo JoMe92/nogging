@@ -2167,7 +2167,8 @@ def resolved_launch_pair(profile, prompt, full_access, agent="claude"):
         profile_path, profile_label = resolve_launch_file(
             profile, "session_launch_profile_dir", ".nogging/launch-profiles", ".json")
     elif "session_launch_profile" in CFG:
-        profile_path, profile_label = (ROOT / CFG["session_launch_profile"]).resolve(), "restricted"
+        profile_path = (ROOT / CFG["session_launch_profile"]).resolve()
+        profile_label = profile_path.stem
     else:
         profile_path, profile_label = resolve_launch_file(
             "restricted", "session_launch_profile_dir", ".nogging/launch-profiles", ".json")

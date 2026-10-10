@@ -275,3 +275,39 @@ to `.nogging/launch-profiles/` and `.nogging/launch-prompts/` and are
 overridable with `session_launch_profile_dir` / `session_launch_prompt_dir`; a
 `session_launch_profile` / `session_launch_prompt` key still pins a single file
 and wins over the directory default.
+
+## This repository’s autonomous Claude configuration
+
+This checkout opts into autonomous Claude operation at the Product Owner’s
+request. `.nogging/config.json` selects the trusted Claude profile and the
+autonomous prompt for new supervised sessions. Explicit `--profile` and
+`--prompt` selections still win. To start a restricted, manually directed
+session, pass both `--profile restricted --prompt no-autonomous-claim`.
+Codex and Pi retain their own profile defaults; the configured prompt is
+shared. Planning sessions retain their planning prompt. Existing running
+sessions keep their launch settings; these changes apply on a new launch.
+
+The trusted Claude profile uses `bypassPermissions` and no longer denies
+WebFetch, curl, wget or systemctl. The fixed Nogging command floor and
+execution OpenSpec write boundary still apply. This grants tool authority,
+while the autonomous prompt keeps work scoped to the assigned change and
+its review workflow. The orchestrator profile already uses bypass permissions
+and remains unchanged.
+
+For Anthropic-hosted Cloud, `.claude/settings.json` selects `acceptEdits`
+and pre-approves Bash, WebFetch and WebSearch, preserving the existing hooks.
+This is a broad shell grant requested by the repository owner. Cloud does
+not support bypass permissions. In an existing Cloud session, select
+**Accept edits** in the mode dropdown; a resumed session can retain Auto
+instead of adopting the new default. A broad Bash grant is suspended in
+Auto mode, so staying in Auto does not provide the same behavior.
+
+Provider-managed policy, protected paths, explicit ask/deny rules, hooks,
+network restrictions and connector-specific approvals can still require
+interaction. Repository settings do not configure `autoMode` trust rules.
+No classifier bypass or credential changes are installed. Hosted Cloud
+behavior must be checked in an actual new Cloud session after the branch
+is integrated and available to clone.
+
+References: [Claude permission modes](https://code.claude.com/docs/en/permission-modes)
+and [Auto-mode configuration](https://code.claude.com/docs/en/auto-mode-config).
