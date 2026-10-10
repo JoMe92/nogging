@@ -67,6 +67,54 @@ including privilege escalation and destructive host operations. It cannot
 prevent equivalent actions through another executable, language runtime, API,
 or manually changed configuration. The orchestrator profile lifts that floor.
 
+## Supervised child launches from Claude auto mode
+
+Use one command at a time from the checkout, with the canonical `./scripts/nogg`
+spelling. Nogging adds these narrow rules to **per-session effective settings**
+for Claude Lead and orchestrator parents:
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "Bash(./scripts/nogg session launch:*)",
+      "Bash(./scripts/nogg session send:*)",
+      "Bash(./scripts/nogg session kickoff:*)",
+      "Bash(./scripts/nogg session stop:*)",
+      "Bash(./scripts/nogg session list:*)",
+      "Bash(./scripts/nogg session log:*)",
+      "Bash(./scripts/nogg session watch:*)"
+    ]
+  }
+}
+```
+
+For a manually started parent, deliberately add those entries to its settings;
+merge them with existing rules. `./scripts/nogg doctor` names missing rules and
+unsupported auto-mode setup. Installer init/update preserve unrelated permission
+lists and the chosen mode; they install named Nogging hooks without globally
+changing permission modes. Specialists receive no child-launch grant.
+
+Claude normally checks narrow Bash allow rules before its auto classifier.
+`autoMode.classifyAllShell: true` suspends those rules; unattended child creation
+is unsupported in that combination. Keep the denial and ask the operator for a
+deliberate approval or an explicitly selected `trusted`/`orchestrator` profile.
+Project `autoMode` blocks do not configure the classifier. Nogging never rewrites
+user/managed classifier settings. See the [Claude auto-mode reference](https://code.claude.com/docs/en/auto-mode-config).
+
+Direct `claude`, `codex` or `pi` invocation and persistent service installation
+are outside this grant. A denied supervised launch remains a failure: retain its
+diagnostic and do not use an unprofiled fallback. An allow rule does not override
+an explicit deny, an ask rule or a vendor policy.
+
+Observed on installed Claude 2.1.296 in `--permission-mode auto` with inert
+stubs (issue #52): with these effective settings, `./scripts/nogg session
+launch` ran in every probe, while the classifier denied a direct `codex exec`
+fallback in one of three runs. Classifier verdicts are not deterministic, and
+without the rules it allowed both in three runs. The scoped rules make the
+supervised path predictable. Only the prompts and this policy keep direct
+agent invocation out; the classifier is not a guarantee.
+
 ## Network, filesystem, and credentials
 
 An agent can disclose every secret it can read whenever its mode permits
