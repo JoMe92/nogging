@@ -2389,12 +2389,44 @@ def load_profile_settings(path):
     if not isinstance(data, dict) or not isinstance(data.get("permissions"), dict):
         raise RuntimeError(
             f"launch profile {path} has no 'permissions' object; launch refused")
+    if "model" in data:
+        validate_model_name(data["model"], f"launch profile {path}: model")
+    reject_reasoning_effort(data, f"launch profile {path}")
     return data
+# Reasoning-effort values the installed Codex CLI (0.162.1) accepts for its
+# `model_reasoning_effort` config key. Whether a given model supports a value
+# is left to Codex itself; Nogging keeps no list of model names.
+CODEX_REASONING_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra")
+def validate_model_name(value, origin):
+    """A model name is forwarded to the runtime as one argv element and the
+    runtime validates it natively. Nogging only refuses values that cannot be
+    a model name or that would read as a flag: non-strings, empty strings,
+    whitespace/control characters, and a leading `-`."""
+    if (not isinstance(value, str) or not value or value.startswith("-")
+            or any(c.isspace() or not c.isprintable() for c in value)):
+        raise RuntimeError(
+            f"{origin} must be a non-empty model name without whitespace or a leading '-', "
+            f"got {value!r}; launch refused")
+    return value
+def reject_reasoning_effort(spec, origin):
+    if "model_reasoning_effort" in spec:
+        raise RuntimeError(
+            f"{origin}: model_reasoning_effort is Codex-only; launch refused")
+def select_session_model(cli_model, spec):
+    """Model precedence: explicit `--model`, then the profile `model`, then
+    the runtime's native default (`None`). Returns `(model, source)` with
+    source `launch`, `profile` or `runtime-default`."""
+    if cli_model is not None:
+        return validate_model_name(cli_model, "--model"), "launch"
+    if spec and spec.get("model") is not None:
+        return spec["model"], "profile"
+    return None, "runtime-default"
 CODEX_SANDBOX_MODES = ("read-only", "workspace-write", "danger-full-access")
 CODEX_APPROVAL_POLICIES = ("untrusted", "on-request", "never")
 def load_codex_spec(path):
-    """Read a `.codex.toml` launch fragment: the three flat keys `sandbox`,
-    `ask_for_approval`, `network_access`. Deliberately a tiny tolerant reader
+    """Read a `.codex.toml` launch fragment: the three required flat keys
+    `sandbox`, `ask_for_approval`, `network_access`, plus the optional `model`
+    and `model_reasoning_effort`. Deliberately a tiny tolerant reader
     (no `tomllib` dependency, so the bridge still runs on Python < 3.11): one
     `key = value` per line, `#` comments and blanks ignored, values are a
     double-quoted string or a bare `true`/`false`. Fails loudly rather than
@@ -2432,6 +2464,14 @@ def load_codex_spec(path):
             f"not one of {CODEX_APPROVAL_POLICIES}")
     if not isinstance(spec["network_access"], bool):
         raise RuntimeError(f"Codex launch spec {path}: network_access must be true or false")
+    if "model" in spec:
+        validate_model_name(spec["model"], f"Codex launch spec {path}: model")
+    effort = spec.get("model_reasoning_effort")
+    if "model_reasoning_effort" in spec and (
+            not isinstance(effort, str) or effort not in CODEX_REASONING_EFFORTS):
+        raise RuntimeError(
+            f"Codex launch spec {path}: model_reasoning_effort {effort!r} "
+            f"not one of {CODEX_REASONING_EFFORTS}; launch refused")
     return spec
 def load_pi_spec(path):
     """Read a `.pi.toml` launch fragment: two OPTIONAL flat keys, `provider`
@@ -2461,6 +2501,7 @@ def load_pi_spec(path):
             raise RuntimeError(
                 f"Pi launch spec {path}: value for {key!r} must be a quoted "
                 f"string, got {value!r}")
+    reject_reasoning_effort(spec, f"Pi launch spec {path}")
     return spec
 def resolve_agent(agent):
     """The agent binary a launch runs: the explicit `--agent` flag wins, then
@@ -2579,7 +2620,8 @@ def planning_launch_workdir(planning_id, description, cwd):
 
 def session_launch(role, bead, cwd, read_only, owner,
                    profile=None, prompt=None, full_access=False, agent=None,
-                   resume=None, kickoff=False, planning_id=None, description=None):
+                   resume=None, kickoff=False, planning_id=None, description=None,
+                   model=None):
     """Start a supervised agent session for a Bead.
 
     `resume` names the exact prior conversation: Claude uses `--resume <id>`;
@@ -2638,6 +2680,11 @@ def session_launch(role, bead, cwd, read_only, owner,
     codex_spec = load_codex_spec(profile_path) if agent == "codex" else None
     pi_spec = load_pi_spec(profile_path) if agent == "pi" else None
     agy_spec = load_antigravity_spec(profile_path) if agent == "antigravity" else None
+    # Model precedence (--model, profile model, runtime default) is resolved and
+    # validated here, before any session exists on disk or in tmux.
+    selected_model, model_source = select_session_model(
+        model, source_settings or codex_spec or pi_spec or agy_spec)
+    reasoning_effort = (codex_spec or {}).get("model_reasoning_effort")
     if agy_spec and Path(profile_path).name == "restricted.agy.toml" and agy_spec["approval"] != "ask":
         raise RuntimeError("Antigravity restricted profile requires ask approval")
     if resume is not None and agent not in ("claude", "antigravity"):
@@ -2730,8 +2777,8 @@ def session_launch(role, bead, cwd, read_only, owner,
             validate_antigravity_guard(workdir)
         inner += ["--agent", "antigravity", "--mode", agy_spec["mode"],
                   "--approval", agy_spec["approval"]]
-        if "model" in agy_spec:
-            inner += ["--model", agy_spec["model"]]
+        if selected_model is not None:
+            inner += ["--model", selected_model]
         if resume:
             inner += ["--resume", resume]
     else:  # pi: no per-session permissions file and no sandbox/approval/
@@ -2752,8 +2799,8 @@ def session_launch(role, bead, cwd, read_only, owner,
         inner += ["--agent", "pi"]
         if "provider" in pi_spec:
             inner += ["--provider", pi_spec["provider"]]
-        if "model" in pi_spec:
-            inner += ["--model", pi_spec["model"]]
+        if selected_model is not None:
+            inner += ["--model", selected_model]
     if read_only: inner.append("--read-only")
     preflight_session_helpers(inner, agent)
     if allocate_planning:
@@ -4363,6 +4410,8 @@ def main():
     sl.add_argument("--full-access", action="store_true",
                     help="shorthand for --profile trusted --prompt autonomous")
     sl.add_argument("--resume", help="exact conversation ID (Antigravity or Claude); never latest")
+    sl.add_argument("--model", help="model for this launch; overrides the profile model, "
+                                    "which overrides the runtime default")
     sl.add_argument("--kickoff", action="store_true",
                     help="send the session its first message immediately after launch")
     ssub.add_parser("list")
@@ -4426,7 +4475,8 @@ def session_cmd(args):
     if args.session_command == "launch":
         session_launch(args.role, args.bead, args.cwd, args.read_only, args.owner,
                        args.profile, args.prompt, args.full_access, args.agent,
-                       resume=args.resume, kickoff=args.kickoff, planning_id=args.planning_id, description=args.description)
+                       resume=args.resume, kickoff=args.kickoff, planning_id=args.planning_id, description=args.description,
+                       model=args.model)
     elif args.session_command == "list":
         session_list()
     elif args.session_command == "attach":
