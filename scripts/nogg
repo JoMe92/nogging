@@ -2137,13 +2137,22 @@ def transition(path, rec, state, **extra):
         release_planning_lock(session_record=rec)
     return rec
 def bead_records(bead_id):
-    res = run(CFG["beads_command"], "show", bead_id, "--json", check=False)
-    if res.returncode != 0: return []
-    try: decoded = json.loads(res.stdout.strip() or "[]")
-    except ValueError: return []
-    records = decoded.get("issues", decoded) if isinstance(decoded, dict) else decoded
-    if isinstance(records, dict): records = [records]
-    return [r for r in records if isinstance(r, dict) and str(issue_id(r)) == str(bead_id)]
+    if not bead_id:
+        return []
+    try:
+        res = run(CFG["beads_command"], "show", bead_id, "--json", check=False)
+        if res.returncode != 0:
+            raise ValueError("query failed")
+        decoded = json.loads(res.stdout.strip() or "[]")
+        records = decoded.get("issues", decoded) if isinstance(decoded, dict) else decoded
+        if isinstance(records, dict):
+            records = [records]
+        if not isinstance(records, list) or any(not isinstance(r, dict) for r in records):
+            raise ValueError("invalid Beads response")
+        return [r for r in records if str(issue_id(r)) == str(bead_id)]
+    except (OSError, ValueError, ToolError):
+        print(f"warning: cannot read Bead {bead_id}; bd is unavailable or its query failed; no agent-state grants", file=sys.stderr)
+        return []
 def bead_exists(bead_id):
     return bool(bead_records(bead_id))
 def unmet_dependencies(bead_id):
@@ -2635,6 +2644,10 @@ def session_state_grants(bead, explicit=(), records=None):
     if bead:
         if records is None:
             records = bead_records(bead)
+        if not records:
+            if explicit:
+                raise RuntimeError(f"agent_state_roots: cannot read Bead {bead}; requested agent-state grants refused")
+            return resolve_agent_state_roots()
         for record in records:
             for label in record.get("labels", []):
                 if label.startswith("agent-state:"):
@@ -2725,7 +2738,7 @@ def session_launch(role, bead, cwd, read_only, owner,
     records = bead_records(bead) if bead else []
     grants = session_state_grants(bead, agent_state, records)
     if not is_orchestrator and bead and not records:
-        raise RuntimeError(f"Bead {bead} does not exist; launch refused")
+        raise RuntimeError(f"Bead {bead} does not exist or cannot be read; launch refused without agent-state grants")
     if not is_orchestrator and not is_planning:
         blocking = unmet_dependencies(bead)
         if blocking:
