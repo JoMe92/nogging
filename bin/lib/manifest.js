@@ -26,6 +26,7 @@ module.exports = {
     'scripts/hooks/commit-msg',
     'scripts/hooks/pre-commit',
     'scripts/hooks/pre-push',
+    'scripts/hooks/agy-guard',
     'scripts/hooks/pre-tool-use-openspec-guard',
     'scripts/hooks/pre-tool-use-lead-launch-guard',
     'scripts/hooks/session-start-cloud-bootstrap',
@@ -38,6 +39,7 @@ module.exports = {
   // Directories copied verbatim (recursive).
   verbatimDirs: [
     { from: '.agents/skills', to: '.agents/skills' },
+    { from: 'templates/antigravity/skills', to: '.agents/skills' },
     // The Claude Code payload: specialist definitions and repository-scoped
     // workflow commands. Settings remain under mergeClaudeSettings() so a
     // target repository's unrelated Claude configuration is preserved.
@@ -96,6 +98,7 @@ module.exports = {
     'scripts/hooks/commit-msg',
     'scripts/hooks/pre-commit',
     'scripts/hooks/pre-push',
+    'scripts/hooks/agy-guard',
     'scripts/hooks/pre-tool-use-openspec-guard',
     'scripts/hooks/pre-tool-use-lead-launch-guard',
     'scripts/hooks/session-start-cloud-bootstrap',

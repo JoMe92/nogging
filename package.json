@@ -65,7 +65,10 @@
     "docs/using-with-codex.md",
     "docs/using-with-pi.md",
     "docs/worktree-workflow.md",
-    "openspec/config.yaml"
+    "openspec/config.yaml",
+    "scripts/hooks/agy-guard",
+    "templates/antigravity/hooks.json",
+    "templates/antigravity/skills"
   ],
   "engines": {
     "node": ">=18"
