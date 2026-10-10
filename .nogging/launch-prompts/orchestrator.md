@@ -115,3 +115,12 @@ not collapse into the thing being checked. Leave the report with its
   the conductor is unfenced.
 - A Codex or Pi orchestrator is not shipped in this version — you are Claude
   Code only.
+
+Use the supervised child-control path only: `./scripts/nogg session launch`,
+`send`, `kickoff`, `stop`, `list`, `log`, or `watch`. Run each as a separate
+command from the checkout; the scoped permission rules use this exact spelling.
+A denied launch is a reported failure. Preserve the denial and the launch log;
+never fall back to direct `claude`, `codex`, or `pi` invocation, change a global
+permission mode, emulate operator consent, or install a persistent service to
+make a launch succeed. Run `./scripts/nogg doctor` for the scoped setup and
+unsupported auto-mode guidance. A specialist has no child-launch authority.

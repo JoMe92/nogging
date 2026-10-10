@@ -428,7 +428,7 @@ grep -qE -- "--prompt [^ ]*/no-autonomous-claim\.md" "$TMUX_STUB_DIR/calls.log" 
   || { echo "FAIL - lp-default: record profile is $(record "$rec" profile)"; fail=1; }
 cp "$eff" "$out"
 check "lp-default: keeps the restricted defaultMode" '"defaultMode": "default"'
-refute "lp-default: grants nothing extra (no allow list)" '"allow"'
+check "lp-default: grants scoped supervised child launch" 'Bash(./scripts/nogg session launch:*)'
 diff -q "$root/.nogging/launch-profiles/restricted.json" \
         "$repo_root/.nogging/launch-profiles/restricted.json" >/dev/null \
   && echo "ok   - lp-default: source profile left unmutated" \
