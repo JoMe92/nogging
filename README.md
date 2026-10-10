@@ -133,7 +133,7 @@ Before enabling full-access or persistent services, read the
 
 The first public distribution is GitHub-only. The unscoped npm name
 `nogg` belongs to another project, so this package is marked private and
-must not be published to the npm registry. Install an exact Agentsembli
+must not be published to the npm registry. Install an exact
 Nogging GitHub tag instead:
 
 ```bash
