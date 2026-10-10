@@ -944,12 +944,24 @@ def process_start(pid):
     except (OSError, IndexError):
         return None
 
+def pid_namespace(pid="self"):
+    """The PID namespace identity of `pid`, or None if it cannot be read."""
+    try:
+        return os.readlink(f"/proc/{pid}/ns/pid")
+    except OSError:
+        return None
+
 def planning_lock_live(record):
     if os.environ.get("NOGG_OPENSPEC_FENCED") == "1":
         # Host owner PIDs cannot be disproved from the execution PID namespace.
         return True
     if record.get("host") != socket.gethostname():
         return True  # remote ownership cannot be disproved locally
+    owner_ns = record.get("pid_ns")
+    if owner_ns and pid_namespace() != owner_ns:
+        # An agent's own sandbox (e.g. Codex bwrap) has a private PID namespace
+        # in which the host owner PID is invisible, so it cannot be disproved.
+        return True
     pid = record.get("pid")
     if type(pid) is not int or pid <= 0:
         return True
@@ -980,6 +992,7 @@ def planning_session_context(require_workdir=False):
     context = {"session_name": name, "session_root": str(root),
                "working_dir": record.get("working_dir"), "planning_id": record.get("planning_id"),
                "pid": record["session_pid"], "pid_start": record["session_pid_start"],
+               "pid_ns": record.get("session_pid_ns"),
                "host": record.get("host", socket.gethostname())}
     if not planning_lock_live(context):
         raise RuntimeError(f"planning session {name} is no longer alive")
@@ -1051,7 +1064,8 @@ def release_planning_lock(force=False, session_record=None):
         if session_record is not None:
             context = {"session_name": session_record.get("name"), "session_root": str(ROOT),
                        "host": session_record.get("host", socket.gethostname()),
-                       "pid": session_record.get("session_pid"), "pid_start": session_record.get("session_pid_start")}
+                       "pid": session_record.get("session_pid"), "pid_start": session_record.get("session_pid_start"),
+                       "pid_ns": session_record.get("session_pid_ns")}
             if not planning_lock_owned(record, context):
                 return False
             # A stopped/crashed planner loses write authority immediately. Its
@@ -2610,6 +2624,7 @@ def session_launch(role, bead, cwd, read_only, owner,
     if raw_pid.isdigit() and int(raw_pid) > 0:
         record["session_pid"] = int(raw_pid)
         record["session_pid_start"] = process_start(int(raw_pid))
+        record["session_pid_ns"] = pid_namespace(int(raw_pid))
     transition(rec_path, record, "running")
     if record.get("state") == "failed":
         raise ToolError(record.get("exit_reason") or "agent startup failed")

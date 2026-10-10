@@ -15,29 +15,27 @@ import threading
 from importlib.machinery import SourceFileLoader
 
 
-def enter(roots, argv):
+def enter(boundary, argv):
     subprocess.run(['mount', '--make-rprivate', '/'], check=True)
-    for root in roots:
+    for root in boundary['roots']:
         path = Path(root) / 'openspec'
         if not path.is_dir() or path.is_symlink():
             raise RuntimeError(f'OpenSpec filesystem boundary requires a real directory: {path}')
         subprocess.run(['mount', '--bind', str(path), str(path)], check=True)
         subprocess.run(['mount', '-o', 'remount,bind,ro,nosuid,nodev', str(path)], check=True)
     # The launched runtime must not be able to remount its own read-only roots.
+    # It re-enters as the invoking host user in a nested user+mount namespace:
+    # the kernel locks the inherited read-only mounts there (no rw remount, no
+    # unmount, no non-recursive bind around them), the runtime is not uid 0
+    # (agents refuse unattended permission modes as root), and it can still
+    # build its own nested sandbox such as Codex's bwrap, which an emptied
+    # capability bounding set would forbid.
     libc = ctypes.CDLL(None, use_errno=True)
-    for capability in range(64):
-        result = libc.prctl(24, capability, 0, 0, 0)  # PR_CAPBSET_DROP
-        if result and ctypes.get_errno() != 22:
-            raise OSError(ctypes.get_errno(), 'cannot drop mount boundary capability')
-    class Header(ctypes.Structure):
-        _fields_ = [('version', ctypes.c_uint32), ('pid', ctypes.c_int)]
-    class Data(ctypes.Structure):
-        _fields_ = [('effective', ctypes.c_uint32), ('permitted', ctypes.c_uint32), ('inheritable', ctypes.c_uint32)]
-    header, data = Header(0x20080522, 0), (Data * 2)()
-    if libc.capset(ctypes.byref(header), ctypes.byref(data)) or libc.prctl(38, 1, 0, 0, 0):
+    if libc.prctl(38, 1, 0, 0, 0):  # PR_SET_NO_NEW_PRIVS
         raise OSError(ctypes.get_errno(), 'cannot seal mount boundary')
     os.environ['NOGG_OPENSPEC_FENCED'] = '1'
-    os.execvp(argv[0], argv)
+    os.execvp('unshare', ['unshare', '--user', '--mount', f"--map-user={boundary['uid']}",
+                          f"--map-group={boundary['gid']}", '--', *argv])
 
 
 def supervise(argv):
@@ -94,7 +92,8 @@ def supervise(argv):
         worker.start()
         env = {**os.environ, 'NOGG_TASK_DONE_SOCKET': address}
         child = subprocess.Popen(['unshare', '--user', '--map-root-user', '--mount', '--pid', '--fork', '--kill-child=KILL', '--mount-proc',
-                                  sys.executable, str(Path(__file__).resolve()), '--enter', json.dumps(roots), '--', *argv], env=env)
+                                  sys.executable, str(Path(__file__).resolve()), '--enter',
+                                  json.dumps({'roots': roots, 'uid': os.getuid(), 'gid': os.getgid()}), '--', *argv], env=env)
         def forward(signum, frame):
             if child.poll() is None:
                 child.send_signal(signum)
