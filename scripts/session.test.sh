@@ -124,6 +124,9 @@ make_root() {
   python3 - "$repo_root/.nogging/config.json" "$r/.nogging/config.json" "$grace" <<'PY'
 import json, sys
 cfg = json.load(open(sys.argv[1]))
+# Generic fixtures exercise shipped CLI defaults independently of owner opt-ins.
+cfg.pop("session_launch_profile", None)
+cfg.pop("session_launch_prompt", None)
 cfg["session_stop_grace_seconds"] = float(sys.argv[3])
 json.dump(cfg, open(sys.argv[2], "w"), indent=2)
 PY
@@ -490,6 +493,37 @@ diff -q "$root/.nogging/launch-profiles/trusted.json" \
         "$repo_root/.nogging/launch-profiles/trusted.json" >/dev/null \
   && echo "ok   - lp-named: source trusted profile left unmutated" \
   || { echo "FAIL - lp-named: source profile changed"; fail=1; }
+unset NOGGING_ROOT
+
+# ===========================================================================
+# Scenario: owner-configured autonomy reaches launch and is reported accurately.
+# ===========================================================================
+root="$work/lp-configured"; make_root "$root"
+export NOGGING_ROOT="$root"
+export TMUX_STUB_DIR="$work/lp-configured-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-lpc"
+python3 - "$root/.nogging/config.json" <<'PYCONFIG'
+import json, sys
+path = sys.argv[1]
+cfg = json.load(open(path))
+cfg["session_launch_profile"] = ".nogging/launch-profiles/trusted.json"
+cfg["session_launch_prompt"] = ".nogging/launch-prompts/autonomous.md"
+json.dump(cfg, open(path, "w"))
+PYCONFIG
+"$nogg" session launch --role lead --bead SPEC-lpc >"$out" 2>&1 \
+  || { echo "FAIL - lp-configured: launch errored"; cat "$out"; fail=1; }
+name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
+rec="$root/.nogging/state/sessions/$name.json"
+[[ "$(record "$rec" profile)" == "trusted" ]] \
+  && echo "ok   - lp-configured: configured profile reported as trusted" \
+  || { echo "FAIL - lp-configured: incorrect profile label"; fail=1; }
+cp "$(record "$rec" effective_settings_path)" "$out"
+check "lp-configured: configured launch bypasses routine prompts" '"defaultMode": "bypassPermissions"'
+check "lp-configured: execution boundary preserved" 'Edit(openspec/**)'
+check "lp-configured: command floor preserved" 'Bash(sudo:*)'
+grep -qE -- "--prompt [^ ]*/autonomous\.md" "$TMUX_STUB_DIR/calls.log" \
+  && echo "ok   - lp-configured: autonomous prompt passed" \
+  || { echo "FAIL - lp-configured: autonomous prompt missing"; fail=1; }
 unset NOGGING_ROOT
 
 # ===========================================================================

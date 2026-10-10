@@ -17,6 +17,8 @@
   "session_log_rotation_depth": 3,
   "session_stop_grace_seconds": 10,
   "session_agent": "claude",
+  "session_launch_profile": ".nogging/launch-profiles/trusted.json",
+  "session_launch_prompt": ".nogging/launch-prompts/autonomous.md",
   "personas": {
     "planner": {"name": "Nogging Planner", "email": "planner@nogging.bot"},
     "lead": {"name": "Nogging Lead", "email": "lead@nogging.bot"},
