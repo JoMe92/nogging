@@ -1185,6 +1185,14 @@ unset NOGGING_ROOT
 for failure in unknown-flag exec-failure; do
   root="$work/startup-$failure"; make_root "$root"
   cp "$nogg" "$root/scripts/nogg"
+  # This fixture tests fast runtime startup errors, not mount enforcement.
+  # CI may prohibit user namespaces. Keep the real wrapper and substitute
+  # only this fixture's boundary helper; dedicated fence tests use the real one.
+  cat >"$root/scripts/openspec-sandbox" <<'BOUNDARY'
+#!/bin/sh
+NOGG_OPENSPEC_FENCED=1 exec "$@"
+BOUNDARY
+  chmod +x "$root/scripts/openspec-sandbox"
   export NOGGING_ROOT="$root" TMUX_STUB_DIR="$work/startup-$failure-tmux"
   export BD_KNOWN="SPEC-startup" TMUX_STUB_FAST_EXIT=1
   export NOGG_TEST_API_TOKEN='fixture-private-value'
