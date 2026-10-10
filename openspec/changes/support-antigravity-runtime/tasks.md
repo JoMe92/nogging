@@ -10,7 +10,7 @@
 
 - [ ] TASK-AGR-005 Add Antigravity pane adapter and quota source wired into GSU, all applicable model-group buckets and resume reset resolution; verify working/idle/needs_input/limit fixtures, weekly versus short limits, unknown model mapping and exit-75 gate before trust/tmux. Requires integrated AGR-004 and GSU-006; ship quota payload/docs through installed update and append unsigned packed-consumer/live quota acceptance plus core lifecycle regression evidence. Full #54 completion requires this and AGR-008.
 
-- [ ] TASK-AGR-006 Ship workflow skills, profiles, hooks and guard through install/update/remove and package manifest with ordered named-hook merge; verify user hook entries survive repeated update and removal and every required helper is installed.
+- [x] TASK-AGR-006 Ship workflow skills, profiles, hooks and guard through install/update/remove and package manifest with ordered named-hook merge; verify user hook entries survive repeated update and removal and every required helper is installed.
 
 - [ ] TASK-AGR-007 Write Antigravity guide, compatibility/authority limitations, AGENTS/templates/operating-model and doctor notes; verify --sandbox is rejected unless its worktree lifecycle is positively validated and separate specialist delegation stays one claimed Bead without specialist commit/close authority.
 
