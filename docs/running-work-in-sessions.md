@@ -334,9 +334,12 @@ Auto mode, so staying in Auto does not provide the same behavior.
 Provider-managed policy, protected paths, explicit ask/deny rules, hooks,
 network restrictions and connector-specific approvals can still require
 interaction. Repository settings do not configure `autoMode` trust rules.
-No classifier bypass or credential changes are installed. Hosted Cloud
-behavior must be checked in an actual new Cloud session after the branch
-is integrated and available to clone.
+No classifier bypass or credential changes are installed. For interactive
+Orchestration Agent sessions, operators can adapt the template at
+`templates/claude/orchestrator-permissions.example.json` into user settings
+(`~/.claude/settings.json`); allow rules in that template do not bypass the
+classifier in Auto mode. Hosted Cloud behavior must be checked in an actual
+new Cloud session after the branch is integrated and available to clone.
 
 References: [Claude permission modes](https://code.claude.com/docs/en/permission-modes)
 and [Auto-mode configuration](https://code.claude.com/docs/en/auto-mode-config).
