@@ -2601,6 +2601,7 @@ def session_launch(role, bead, cwd, read_only, owner,
              "-e", f"NOGG_SESSION_ROLE={role_meta}",
              "-e", f"NOGG_SESSION_ROOT={ROOT}",
              "-e", f"NOGG_OPENSPEC_FENCE={int(openspec_readonly)}",
+             "-e", "NOGG_CODEX_EXTRA_WRITABLE_ROOTS=" + os.environ.get("NOGG_CODEX_EXTRA_WRITABLE_ROOTS", ""),
              "-e", f"NOGG_STARTUP_LOG={log_path}", "--", *inner)
         writer = str((ROOT / "scripts/session-log-writer").resolve())
         max_bytes = int(scfg("session_log_max_bytes", 1048576))
