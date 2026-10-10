@@ -4035,6 +4035,16 @@ def doctor(audit=False, with_recover=False):
             notes.append(f"codex prompts present in .codex/prompts/ but not linked into "
                          f"{codex_home() / 'prompts'}/ "
                          f"(run: ./scripts/nogg codex-prompts-link)")
+    agy_present = tool_on_path("agy")
+    notes.append("agy available; investigated baseline 1.3.2, core live acceptance pending AGR-008"
+                 if agy_present else "agy not installed; only needed for the Antigravity agent path")
+    notes.append("Antigravity: no validated filesystem/network sandbox; sandbox requests refuse; quota support pending AGR-005")
+    if agy_present:
+        try:
+            validate_antigravity_guard(ROOT)
+            notes.append("Antigravity guard installed; launch prepares only selected workspace trust; restricted requires request-review")
+        except RuntimeError as exc:
+            notes.append(str(exc))
     pi_present = tool_on_path("pi")
     notes.append("pi available" if pi_present
                  else "pi not installed; only needed for the Pi agent path")

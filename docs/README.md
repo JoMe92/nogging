@@ -31,6 +31,7 @@ Installing it, running it day to day, and its guarantees.
 | [Failure recovery](failure-recovery.md) | `doctor`, `audit`, and recovering from an interrupted run |
 | [Using Nogging with Codex](using-with-codex.md) | What's specific to running the loop from OpenAI Codex |
 | [Using Nogging with Pi](using-with-pi.md) | What's specific to running the loop from Pi |
+| [Using Nogging with Antigravity](using-with-antigravity.md) | Experimental agy 1.3.2 integration, authority and acceptance limits |
 
 ## Releasing and maintaining
 

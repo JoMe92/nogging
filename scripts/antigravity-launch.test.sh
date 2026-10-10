@@ -156,6 +156,11 @@ with tempfile.TemporaryDirectory() as tmp:
             assert actual['args'] == expected+['--model','test-model']
             assert actual['update'] == 'true'
             out.unlink()
+        # Unsupported sandbox must refuse before trust mutation or runtime start.
+        before = settings.read_bytes()
+        result = subprocess.run(base+['--sandbox','true'],env=runenv,capture_output=True,text=True)
+        assert result.returncode != 0 and 'sandbox is unsupported' in result.stderr
+        assert not out.exists() and settings.read_bytes() == before
         settings.write_text(json.dumps({**original,'toolPermission':'always-proceed'}))
         before = settings.read_bytes()
         result = subprocess.run(base+['--approval','ask'],env=runenv,capture_output=True,text=True)
