@@ -2025,7 +2025,16 @@ def load_session(name):
     return p, json.loads(p.read_text())
 def write_session(path, rec):
     rec["updated_at"] = now()
-    path.write_text(json.dumps(rec, indent=2, sort_keys=True) + "\n")
+    # Hook capture and lifecycle polling run in separate processes. Replace the
+    # complete record so readers never see a truncated or half-written JSON file.
+    with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, prefix=".session-", delete=False) as fh:
+        temporary = Path(fh.name)
+        try:
+            fh.write(json.dumps(rec, indent=2, sort_keys=True) + "\n")
+            fh.flush()
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
 def transition(path, rec, state, **extra):
     """Record a lifecycle-state transition durably. `starting`/`running`/`idle`
     are active states; `stopped`/`failed`/`retired` are terminal and carry
@@ -2036,6 +2045,9 @@ def transition(path, rec, state, **extra):
         fcntl.flock(lock, fcntl.LOCK_EX)
         if path.exists():
             latest = json.loads(path.read_text())
+            for key in ("antigravity_conversation_id", "antigravity_ready_at", "kickoff_sent_at"):
+                if key in latest:
+                    rec[key] = latest[key]
             if (state in ("running", "failed")
                     and latest.get("state") in SESSION_TERMINAL_STATES):
                 rec.clear()
@@ -2198,6 +2210,13 @@ def validate_antigravity_guard(workdir):
         hooks = json.loads((workdir / ".agents/hooks.json").read_text())
         expected = {"PreToolUse": [{"matcher": "*", "hooks": [
             {"type": "command", "command": "python3 ../scripts/hooks/agy-guard", "timeout": 10}]}]}
+        expected_stop = {"Stop": [{"hooks": [{"type": "command", "command":
+            '[ -z "${NOGG_SESSION_NAME:-}" ] || NOGGING_ROOT="$NOGG_SESSION_ROOT" python3 ../scripts/nogg session emit turn_end',
+            "timeout": 10}]}]}
+        observability = hooks["nogging-observability"]
+        if (not isinstance(observability, dict) or observability.get("enabled", True) is not True
+                or observability.get("Stop") != expected_stop["Stop"]):
+            raise ValueError("missing or disabled Stop capture hook")
         entry = hooks["nogging-guard"]
         if not isinstance(entry, dict) or entry.get("enabled", True) is not True or entry.get("PreToolUse") != expected["PreToolUse"]:
             raise ValueError("missing or disabled catch-all guard entry")
@@ -2490,8 +2509,9 @@ def session_launch(role, bead, cwd, read_only, owner,
                    resume=None, kickoff=False, planning_id=None, description=None):
     """Start a supervised agent session for a Bead.
 
-    `resume`, when truthy, is the specific prior Claude conversation's session
-    ID to continue via `--resume <id>` — never a bare `--continue`, which
+    `resume` names the exact prior conversation: Claude uses `--resume <id>`;
+    Antigravity uses `--conversation <id>` and captures cold-start IDs from its
+    validated Stop hook. Neither uses a bare `--continue`, which
     resumes whichever conversation is most recent for `cwd` and can pick up an
     unrelated one (SPEC-nfz8). Falsy `resume` cold-starts a Claude agent with a
     freshly generated `--session-id`, recorded as `claude_session_id` so a
@@ -2547,8 +2567,10 @@ def session_launch(role, bead, cwd, read_only, owner,
     agy_spec = load_antigravity_spec(profile_path) if agent == "antigravity" else None
     if agy_spec and Path(profile_path).name == "restricted.agy.toml" and agy_spec["approval"] != "ask":
         raise RuntimeError("Antigravity restricted profile requires ask approval")
-    if agy_spec and resume:
-        raise RuntimeError("Antigravity exact conversation lifecycle is not yet enabled")
+    if resume is not None and agent not in ("claude", "antigravity"):
+        raise RuntimeError("exact resume is supported only for Claude and Antigravity")
+    if agy_spec and resume is not None:
+        validate_antigravity_conversation_id(resume)
     # The command-floor / openspec-boundary lift is the orchestrator's alone: the
     # `nogging_floor` / `nogging_openspec_readonly` profile keys are honoured
     # ONLY for --role orchestrator. For every other role they are ignored — the
@@ -2636,6 +2658,8 @@ def session_launch(role, bead, cwd, read_only, owner,
                   "--approval", agy_spec["approval"]]
         if "model" in agy_spec:
             inner += ["--model", agy_spec["model"]]
+        if resume:
+            inner += ["--resume", resume]
     else:  # pi: no per-session permissions file and no sandbox/approval/
            # network spec — the floor is the always-on guard extension
            # (`.pi/extensions/nogging-guard.ts`), which reads
@@ -2709,6 +2733,8 @@ def session_launch(role, bead, cwd, read_only, owner,
         "profile": profile_label, "effective_settings_path": effective_settings_path,
         "agent": agent, "openspec_readonly": bool(openspec_readonly),
         "floor_lifted": bool(floor_lifted), "claude_session_id": claude_session_id,
+        "antigravity_conversation_id": resume if agent == "antigravity" else None,
+        "antigravity_initial_turn": agent == "antigravity",
         "planning_id": planning_id, "description": description,
         "session_pid": None, "session_pid_start": None,
     }
@@ -2723,6 +2749,7 @@ def session_launch(role, bead, cwd, read_only, owner,
         tmux("new-session", "-d", "-s", name, "-c", workdir,
              "-e", f"NOGG_SESSION_NAME={name}",
              "-e", f"NOGG_SESSION_ROLE={role_meta}",
+             "-e", f"NOGG_SESSION_AGENT={agent}",
              "-e", f"NOGG_SESSION_ROOT={ROOT}",
              "-e", f"NOGG_OPENSPEC_FENCE={int(openspec_readonly)}",
              "-e", "NOGG_CODEX_EXTRA_WRITABLE_ROOTS=" + os.environ.get("NOGG_CODEX_EXTRA_WRITABLE_ROOTS", ""),
@@ -2974,6 +3001,54 @@ def session_pane_text(name):
     return res.stdout if res.returncode == 0 else ""
 def session_events_path(name):
     return sessions_dir() / f"{name}.events.jsonl"
+def validate_antigravity_conversation_id(value):
+    try:
+        if not isinstance(value, str) or str(uuid.UUID(value)) != value:
+            raise ValueError()
+    except ValueError as exc:
+        raise RuntimeError("invalid Antigravity conversation ID") from exc
+    return value
+
+def antigravity_stop_event(name, value):
+    """Accept only the verified 1.3.2 Stop envelope for this owned workspace."""
+    path, rec = load_session(name)
+    try:
+        payload = value["payload"]
+        conversation = validate_antigravity_conversation_id(payload["conversationId"])
+        workdir = Path(rec["working_dir"]).resolve()
+        if (rec.get("agent") != "antigravity"
+                or Path(value["cwd"]).resolve() != workdir / ".agents"
+                or payload["workspacePaths"] != [str(workdir)]
+                or type(payload["fullyIdle"]) is not bool
+                or type(payload["executionNum"]) is not int
+                or payload["executionNum"] < 0):
+            raise ValueError()
+    except (KeyError, TypeError, ValueError) as exc:
+        raise RuntimeError("invalid Antigravity Stop envelope") from exc
+    with path.with_suffix(".lifecycle.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        rec = json.loads(path.read_text())
+        if rec.get("antigravity_conversation_id") not in (None, conversation):
+            raise RuntimeError("Antigravity conversation ID changed; refusing capture")
+        rec["antigravity_conversation_id"] = conversation
+        if payload["fullyIdle"]:
+            rec["antigravity_ready_at"] = now()
+        write_session(path, rec)
+        with session_events_path(name).open("a") as fh:
+            fh.write(json.dumps({"timestamp": now(), "session": name,
+                                "event": "turn_end", "conversation_id": conversation,
+                                "fully_idle": payload["fullyIdle"]}) + "\n")
+
+def await_antigravity_first_turn(name, timeout=30):
+    deadline = time.monotonic() + timeout
+    while True:
+        _, rec = _require_running(name)
+        if not rec.get("antigravity_initial_turn") or rec.get("antigravity_ready_at"):
+            return
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f"{name}: Antigravity first turn has not finished; retry after its Stop hook")
+        time.sleep(0.2)
+
 def session_emit(event):
     """Append one structured JSON line to the calling session's own
     `<name>.events.jsonl` (design.md Decision 4). The session name is read
@@ -2985,6 +3060,11 @@ def session_emit(event):
         raise RuntimeError(
             "session emit: NOGG_SESSION_NAME is not set (not running inside "
             "a session `scripts/nogg session launch` started)")
+    if os.environ.get("NOGG_SESSION_AGENT") == "antigravity":
+        if event != "turn_end":
+            raise RuntimeError("unsupported Antigravity hook event")
+        antigravity_stop_event(name, json.load(sys.stdin))
+        return
     with session_events_path(name).open("a") as fh:
         fh.write(json.dumps({"timestamp": now(), "session": name, "event": event}) + "\n")
 # A Layer-2 hook event maps onto one of classify()'s Layer-1 states: `Stop`
@@ -3217,6 +3297,8 @@ def session_send(name, message, verify=False):
     if not tmux_has_session(name):
         raise RuntimeError(f"{name} has no live tmux session; cannot send")
     agent = rec.get("agent") or "claude"
+    if agent == "antigravity":
+        await_antigravity_first_turn(name)
     if agent == "codex" and codex_queue_send(rec, message):
         print(f"sent to {name} (codex queue)")
         return
@@ -3267,7 +3349,25 @@ def specialist_kickoff_message(bead_id):
             "Return your structured result and validation evidence to the Main Worker.")
 
 def session_kickoff(name, message=None):
-    """Send only the recorded role's authorized scope; bare launch stays idle."""
+    """Send one kickoff only, after the runtime's startup turn finishes."""
+    path, rec = _require_running(name)
+    if rec.get("agent") != "antigravity":
+        return _session_kickoff(name, message)
+    await_antigravity_first_turn(name)
+    with path.with_suffix(".kickoff.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        _, rec = _require_running(name)
+        if rec.get("kickoff_sent_at"):
+            print(f"{name}: kickoff already sent")
+            return
+        _session_kickoff(name, message)
+        with path.with_suffix(".lifecycle.lock").open("a") as lifecycle:
+            fcntl.flock(lifecycle, fcntl.LOCK_EX)
+            _, rec = load_session(name)
+            rec["kickoff_sent_at"] = now()
+            write_session(path, rec)
+
+def _session_kickoff(name, message=None):
     _, rec = _require_running(name)
     if message:
         session_send(name, message)
@@ -4100,6 +4200,7 @@ def main():
     sl.add_argument("--prompt", help="named launch prompt or a path to a system-prompt file")
     sl.add_argument("--full-access", action="store_true",
                     help="shorthand for --profile trusted --prompt autonomous")
+    sl.add_argument("--resume", help="exact conversation ID (Antigravity or Claude); never latest")
     sl.add_argument("--kickoff", action="store_true",
                     help="send the session its first message immediately after launch")
     ssub.add_parser("list")
@@ -4161,7 +4262,7 @@ def session_cmd(args):
     if args.session_command == "launch":
         session_launch(args.role, args.bead, args.cwd, args.read_only, args.owner,
                        args.profile, args.prompt, args.full_access, args.agent,
-                       kickoff=args.kickoff, planning_id=args.planning_id, description=args.description)
+                       resume=args.resume, kickoff=args.kickoff, planning_id=args.planning_id, description=args.description)
     elif args.session_command == "list":
         session_list()
     elif args.session_command == "attach":

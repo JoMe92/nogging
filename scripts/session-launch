@@ -110,6 +110,7 @@ mode="accept-edits"
 resume=0
 session_id=""
 resume_id=""
+resume_requested=0
 remote_control_name=""
 
 while [ $# -gt 0 ]; do
@@ -129,7 +130,7 @@ while [ $# -gt 0 ]; do
     --read-only) read_only=1; shift ;;
     --continue)  resume=1; shift ;;
     --session-id) session_id=$2; shift 2 ;;
-    --resume)    resume_id=$2; shift 2 ;;
+    --resume)    resume_id=$2; resume_requested=1; shift 2 ;;
     --remote-control) remote_control_name=$2; shift 2 ;;
     --)          shift; break ;;
     *) echo "session-launch: unknown argument: $1" >&2; exit 2 ;;
@@ -249,9 +250,19 @@ ROOTS
   antigravity|agy)
     case "$mode" in accept-edits|plan) ;; *) echo "session-launch: invalid Antigravity mode" >&2; exit 2 ;; esac
     case "$sandbox" in ""|false) ;; *) echo "session-launch: Antigravity sandbox is unsupported" >&2; exit 2 ;; esac
-    if [ "$resume" -eq 1 ] || [ -n "$resume_id" ] || [ -n "$session_id" ]; then
-      echo "session-launch: Antigravity exact conversation lifecycle is not yet enabled" >&2
+    if [ "$resume" -eq 1 ] || [ -n "$session_id" ]; then
+      echo "session-launch: Antigravity requires an exact --resume conversation ID" >&2
       exit 2
+    fi
+    if [ "$resume_requested" -eq 1 ]; then
+      python3 - "$resume_id" <<'AGY_ID'
+import sys, uuid
+try:
+    if str(uuid.UUID(sys.argv[1])) != sys.argv[1]:
+        raise ValueError()
+except ValueError:
+    sys.exit("session-launch: invalid Antigravity conversation ID")
+AGY_ID
     fi
     : "${approval:=ask}"
     # Repeat the preflight at dispatch so direct wrapper calls also fail closed.
@@ -275,6 +286,13 @@ AGY_CHECK
     set -- --mode "$mode"
     [ "$approval" = auto ] && set -- "$@" --dangerously-skip-permissions
     [ -n "$model" ] && set -- "$@" --model "$model"
+    [ -n "$resume_id" ] && set -- "$@" --conversation "$resume_id"
+    if [ -n "$prompt" ]; then
+      first_turn="Startup only: read the following session instructions and acknowledge readiness. Wait for a separate operator message before doing work or claiming any Bead.
+
+$(cat "$prompt")"
+      set -- "$@" --prompt-interactive "$first_turn"
+    fi
     export AGY_CLI_DISABLE_AUTO_UPDATE=true
     exec agy "$@"
     ;;
