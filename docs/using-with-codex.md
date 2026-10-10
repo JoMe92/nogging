@@ -55,6 +55,17 @@ the Claude trusted path: it pushes the feature branch, fast-forward-merges into
 session has no network, so `git push`, `bd sync`, and `dolt push|pull` all fail;
 it stops and reports instead.
 
+Both levels explicitly add the shared Git directory and the current worktree's
+Git directory to `sandbox_workspace_write.writable_roots`, because Codex
+otherwise keeps them read-only and a Lead cannot fetch, commit or allocate a
+worktree. This also permits writes to Git hooks and configuration. The
+OpenSpec filesystem fence still applies.
+
+When `~/.ssh/config` exists and `GIT_SSH_COMMAND` is unset, the launcher uses
+`ssh -F ~/.ssh/config` for Git. This avoids system SSH configuration ownership
+errors inside the outer user namespace while retaining the operator's SSH
+settings. An explicit `GIT_SSH_COMMAND` takes precedence.
+
 Both levels additionally pass `--add-dir <shared checkout root>`, unconditionally
 alongside `--cd <worktree>`, so the shared checkout's `.git`/`.beads` stay
 writable from inside the worktree sandbox even at `restricted` — `bd` and local

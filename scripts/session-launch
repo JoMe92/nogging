@@ -180,6 +180,21 @@ case "$agent" in
     # (network-off) session, which still commits locally and runs local
     # bd/scripts/nogg commands inside its worktree (design.md, Decision 3).
     set -- --cd "$(pwd)" --add-dir "$repo_root" --sandbox "$sandbox" --ask-for-approval "$approval"
+    # Codex's workspace-write sandbox keeps `.git` read-only even inside an
+    # --add-dir root, so a Lead could not fetch, commit or allocate a worktree.
+    # Re-open exactly the shared git directory (linked worktrees' gitdirs live
+    # under it); the rest of the sandbox, and the openspec/ fence, are unchanged.
+    git_common_dir=$(git -C "$repo_root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) \
+      || git_common_dir="$repo_root/.git"
+    # Codex additionally protects the cwd worktree's own gitdir, so it must be
+    # listed explicitly next to the shared git directory.
+    git_work_dir=$(git -C "$(pwd)" rev-parse --absolute-git-dir 2>/dev/null) || git_work_dir=""
+    git_roots=$(python3 - "$git_common_dir" "$git_work_dir" <<'ROOTS'
+import json, sys
+print(json.dumps(list(dict.fromkeys(path for path in sys.argv[1:] if path))))
+ROOTS
+    )
+    set -- "$@" -c "sandbox_workspace_write.writable_roots=$git_roots"
     # Emit the network_access override explicitly in both directions rather than
     # omitting it for `on` and leaning on the codex default: the trusted profile
     # (network on) must be able to `git push` to complete an integration, the
@@ -201,6 +216,13 @@ case "$agent" in
         echo "nogg: openspec/ read-only for Codex relies on the .codex/rules/ execpolicy deny" >&2
         echo "nogg: (codex-onboarding) and the pre-commit boundary hook for this session." >&2
       fi
+    fi
+    # The outer user namespace maps root-owned SSH config to nobody. Skip
+    # system config while retaining the operator's hosts and keys, unless they
+    # already supplied a Git SSH command. Quote the path for Git's shell.
+    if [ -z "${GIT_SSH_COMMAND:-}" ] && [ -f "${HOME:-/nonexistent}/.ssh/config" ]; then
+      printf -v ssh_config '%q' "$HOME/.ssh/config"
+      export GIT_SSH_COMMAND="ssh -F $ssh_config"
     fi
     echo "nogg: starting Codex for ${bead:-<no bead>} in $(pwd) (sandbox=${sandbox} approval=${approval} network=${network})"
     if [ -n "$prompt" ] && [ -f "$prompt" ]; then
