@@ -142,6 +142,27 @@ function mergeCodex(ctx) {
   }
 }
 
+// Named hook groups are the Antigravity ownership boundary. Replacing an
+// owned value retains its position; unrelated groups retain content and order.
+function mergeAntigravity(ctx) {
+  const rel = '.agents/hooks.json';
+  const cur = fsops.readTarget(rel, ctx);
+  let data = cur == null ? {} : JSON.parse(cur);
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw new Error(`${rel} must contain a JSON object; refusing to replace user hooks`);
+  }
+  const owned = JSON.parse(readTemplate(ctx, 'templates/antigravity/hooks.json'));
+  let changed = false;
+  for (const [name, entry] of Object.entries(owned)) {
+    if (JSON.stringify(data[name]) !== JSON.stringify(entry)) {
+      data[name] = entry;
+      changed = true;
+    }
+  }
+  if (changed) fsops.writeFile(rel, JSON.stringify(data, null, 2) + '\n', ctx);
+  else ctx.log.add('unchanged', rel);
+}
+
 // Ensure the Nogging ignore lines are present, once, under a comment header.
 function mergeGitignore(ctx) {
   const rel = '.gitignore';
@@ -198,6 +219,7 @@ function readTemplate(ctx, rel) {
 function applyMerges(ctx) {
   mergeClaudeSettings(ctx);
   mergeCodex(ctx);
+  mergeAntigravity(ctx);
   mergeGitignore(ctx);
   mergeMarkerBlock(ctx, 'CLAUDE.md', readTemplate(ctx, 'templates/claude-block.md'));
   mergeMarkerBlock(ctx, 'AGENTS.md', readTemplate(ctx, 'templates/agents-block.md'));
