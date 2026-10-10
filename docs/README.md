@@ -24,6 +24,7 @@ Installing it, running it day to day, and its guarantees.
 | --- | --- |
 | [Installation](installation.md) | `init`, `update`, flags, and what gets touched in your repo |
 | [Compatibility matrix](compatibility.md) | Supported OS, tool versions, and agent integrations, with evidence |
+| [Agent identities](agent-identities.md) | Per-persona GitHub App registration, key storage, and optional Tier-2 setup |
 | [Worktree workflow](worktree-workflow.md) | Why every planning and implementation run gets its own Git worktree |
 | [Running work in sessions](running-work-in-sessions.md) | `scripts/nogg session` — starting, watching, and steering a supervised agent session |
 | [Security and threat model](security-model.md) | What Nogging does and doesn't protect against; authority levels |
