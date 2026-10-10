@@ -20,6 +20,18 @@ with tempfile.TemporaryDirectory() as tmp:
         with patch.object(m, 'run', return_value=reply):
             assert m.session_state_grants('SPEC-test')[0]['source']=='label'
             assert m.session_state_grants('SPEC-test', ['codex'])[0]['agent']=='antigravity'
+        # Missing executable, failed query and malformed output never grant state.
+        for failure in [FileNotFoundError('bd'), SimpleNamespace(stdout='',returncode=1), SimpleNamespace(stdout='{',returncode=0)]:
+            mocked = {'side_effect':failure} if isinstance(failure,Exception) else {'return_value':failure}
+            with patch.object(m,'run',**mocked):
+                assert m.bead_records('SPEC-test')==[]
+                assert m.session_state_grants('SPEC-test')==[]
+                try: m.session_state_grants('SPEC-test',['antigravity'])
+                except RuntimeError as exc: assert 'refused' in str(exc)
+                else: raise AssertionError('unreadable Bead granted requested state')
+        with patch.object(m,'run',side_effect=AssertionError('Bead-less lookup')):
+            assert m.bead_records(None)==[]
+            assert m.session_state_grants(None)==[]
         # Exercise complete launch construction and metadata before any real tmux.
         m.CFG['session_state_dir']=str(home/'sessions')
         with patch.object(m,'bead_records',return_value=[{'id':'SPEC-test','labels':['agent-state:antigravity']}]), patch.object(m,'unmet_dependencies',return_value=[]), patch.object(m,'tmux_sessions',return_value=set()), patch.object(m,'tmux_has_session',return_value=False), patch.object(m,'tmux',return_value=SimpleNamespace(stdout='',returncode=0)), patch.object(m,'gen_session_name',return_value='state-labelled'):
