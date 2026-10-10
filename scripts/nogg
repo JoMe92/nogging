@@ -2210,9 +2210,9 @@ def validate_antigravity_guard(workdir):
         hooks = json.loads((workdir / ".agents/hooks.json").read_text())
         expected = {"PreToolUse": [{"matcher": "*", "hooks": [
             {"type": "command", "command": "python3 ../scripts/hooks/agy-guard", "timeout": 10}]}]}
-        expected_stop = {"Stop": [{"hooks": [{"type": "command", "command":
+        expected_stop = {"Stop": [{"type": "command", "command":
             '[ -z "${NOGG_SESSION_NAME:-}" ] || NOGGING_ROOT="$NOGG_SESSION_ROOT" python3 ../scripts/nogg session emit turn_end',
-            "timeout": 10}]}]}
+            "timeout": 10}]}
         observability = hooks["nogging-observability"]
         if (not isinstance(observability, dict) or observability.get("enabled", True) is not True
                 or observability.get("Stop") != expected_stop["Stop"]):
@@ -3010,14 +3010,13 @@ def validate_antigravity_conversation_id(value):
     return value
 
 def antigravity_stop_event(name, value):
-    """Accept only the verified 1.3.2 Stop envelope for this owned workspace."""
+    """Accept the raw 1.3.2 Stop payload for this owned workspace."""
     path, rec = load_session(name)
     try:
-        payload = value["payload"]
+        payload = value
         conversation = validate_antigravity_conversation_id(payload["conversationId"])
         workdir = Path(rec["working_dir"]).resolve()
         if (rec.get("agent") != "antigravity"
-                or Path(value["cwd"]).resolve() != workdir / ".agents"
                 or payload["workspacePaths"] != [str(workdir)]
                 or type(payload["fullyIdle"]) is not bool
                 or type(payload["executionNum"]) is not int
@@ -4036,7 +4035,7 @@ def doctor(audit=False, with_recover=False):
                          f"{codex_home() / 'prompts'}/ "
                          f"(run: ./scripts/nogg codex-prompts-link)")
     agy_present = tool_on_path("agy")
-    notes.append("agy available; investigated baseline 1.3.2, core live acceptance pending AGR-008"
+    notes.append("agy available; baseline 1.3.2 has unsigned core live evidence; quota pending AGR-005"
                  if agy_present else "agy not installed; only needed for the Antigravity agent path")
     notes.append("Antigravity: no validated filesystem/network sandbox; sandbox requests refuse; quota support pending AGR-005")
     if agy_present:

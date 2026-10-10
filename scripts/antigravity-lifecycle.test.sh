@@ -23,6 +23,8 @@ with tempfile.TemporaryDirectory() as tmp:
     fixture = json.loads((root/'scripts/fixtures/antigravity/1.3.2/stop.json').read_text())
     fixture['cwd'] = str(workdir/'.agents')
     fixture['payload']['workspacePaths'] = [str(workdir)]
+    # Investigation fixtures wrap raw stdin with the recorder's cwd.
+    fixture = fixture['payload']
     def refused(fn):
         try: fn()
         except (RuntimeError, ValueError, TypeError): pass
@@ -30,13 +32,14 @@ with tempfile.TemporaryDirectory() as tmp:
     for bad in ('', 'latest', '--continue', '../../other', None):
         refused(lambda: m.validate_antigravity_conversation_id(bad))
     for field, value in [('conversationId','latest'),('fullyIdle','true'),('executionNum',True),('workspacePaths',['/other'])]:
-        bad = copy.deepcopy(fixture); bad['payload'][field] = value
+        bad = copy.deepcopy(fixture); bad[field] = value
         refused(lambda: m.antigravity_stop_event(name,bad))
     refused(lambda: m.antigravity_stop_event(name,{}))
+    refused(lambda: m.antigravity_stop_event(name,{'cwd':str(workdir/'.agents'),'payload':fixture}))
     assert not m.session_events_path(name).exists()
     with patch.object(m,'tmux_sessions',return_value={name}), patch.object(m,'tmux_has_session',return_value=True):
         refused(lambda: m.await_antigravity_first_turn(name,timeout=0))
-        busy = copy.deepcopy(fixture); busy['payload']['fullyIdle'] = False
+        busy = copy.deepcopy(fixture); busy['fullyIdle'] = False
         m.antigravity_stop_event(name,busy)
         refused(lambda: m.await_antigravity_first_turn(name,timeout=0))
         calls = []
@@ -49,7 +52,7 @@ with tempfile.TemporaryDirectory() as tmp:
             assert rec['antigravity_conversation_id'] == conversation and rec['antigravity_ready_at']
             m.antigravity_stop_event(name,fixture)
             assert len(m.session_events_path(name).read_text().splitlines()) == 3
-            changed = copy.deepcopy(fixture); changed['payload']['conversationId'] = '00000000-0000-4000-8000-000000000002'
+            changed = copy.deepcopy(fixture); changed['conversationId'] = '00000000-0000-4000-8000-000000000002'
             refused(lambda: m.antigravity_stop_event(name,changed))
             with ThreadPoolExecutor(max_workers=2) as pool:
                 list(pool.map(m.session_kickoff, [name, name]))
@@ -80,7 +83,10 @@ with tempfile.TemporaryDirectory() as tmp:
     # Hooks execute in .agents, but session records belong to the launcher root.
     owner = tmp/'owner'; (owner/'.nogging').mkdir(parents=True)
     (owner/'.nogging/config.json').write_text(json.dumps(m.CFG))
-    command = json.loads((workdir/'.agents/hooks.json').read_text())['nogging-observability']['Stop'][0]['hooks'][0]['command']
+    stop = json.loads((workdir/'.agents/hooks.json').read_text())['nogging-observability']['Stop'][0]
+    # Stop is a flat handler in agy, unlike grouped PreToolUse handlers.
+    assert stop['type'] == 'command' and 'hooks' not in stop
+    command = stop['command']
     hook_env = {**os.environ, 'NOGG_SESSION_NAME':name, 'NOGG_SESSION_AGENT':'antigravity',
                 'NOGG_SESSION_ROOT':str(owner)}
     before = m.session_events_path(name).read_text()

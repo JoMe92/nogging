@@ -48,7 +48,7 @@ acceptance evidence is linked here.
 | Claude Code | Supported; validated with 2.1.260 | restricted/trusted profiles and hooks are tested; orchestrator is Claude-only |
 | OpenAI Codex CLI | Supported; validated with 0.148.0 | repo rules require workspace trust; prompt discovery needs the documented link helper |
 | Pi coding agent | Supported on Linux; validated with 0.85.0 | requires Node 22.19+ and has no filesystem/network sandbox |
-| Antigravity CLI | Experimental Linux integration; investigated with agy 1.3.2; core acceptance pending AGR-008 | hook guards at both levels; no validated OS sandbox; quota support pending AGR-005 |
+| Antigravity CLI | Experimental Linux integration; agy 1.3.2 has unsigned core live evidence in `docs/acceptance/2026-10-10-antigravity-core.md` | hook guards at both levels; no validated OS sandbox; quota support pending AGR-005 |
 | Other agents | Unsupported | they may read `AGENTS.md`, but no adapter or release evidence is supplied |
 
 The word “supported” covers Nogging's integration, not a guarantee about an

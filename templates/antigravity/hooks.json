@@ -16,13 +16,9 @@
   "nogging-observability": {
     "Stop": [
       {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "[ -z \"${NOGG_SESSION_NAME:-}\" ] || NOGGING_ROOT=\"$NOGG_SESSION_ROOT\" python3 ../scripts/nogg session emit turn_end",
-            "timeout": 10
-          }
-        ]
+        "type": "command",
+        "command": "[ -z \"${NOGG_SESSION_NAME:-}\" ] || NOGGING_ROOT=\"$NOGG_SESSION_ROOT\" python3 ../scripts/nogg session emit turn_end",
+        "timeout": 10
       }
     ]
   }
