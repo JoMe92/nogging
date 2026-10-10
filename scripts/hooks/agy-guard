@@ -85,6 +85,9 @@ def decide(payload):
             # Check all path-looking arguments, including redirection and inline
             # interpreter strings; reject dynamic OpenSpec references outright.
             for token in tokens:
+                check_path(token, base)
+                if "=" in token:
+                    check_path(token.split("=", 1)[1], base)
                 for path in re.findall(r"[^\s\"'<>;|=()]+", token):
                     check_path(path, base)
             if re.search(r'\bopenspec\b', command):

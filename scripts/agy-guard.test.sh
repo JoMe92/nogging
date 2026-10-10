@@ -23,6 +23,7 @@ with tempfile.TemporaryDirectory() as tmp:
     (main / '.nogging/config.json').write_text('{}')
     (linked / 'openspec').mkdir()
     (linked / 'alias').symlink_to(main / 'openspec', target_is_directory=True)
+    (linked / 'alias with spaces').symlink_to(main / 'openspec', target_is_directory=True)
     env = {k:v for k,v in os.environ.items() if not k.startswith(('NOGG_', 'NOGGING_'))}
     env['NOGG_SESSION_WORKING_DIR'] = str(linked)
     def run(name, args, expected, raw=None):
@@ -40,7 +41,7 @@ with tempfile.TemporaryDirectory() as tmp:
             shell(command, 'deny')
         for command in ('cat openspec/tasks.md', 'sed -n "1,2p" openspec/tasks.md', 'git status', 'printf hello > output.txt'):
             shell(command, yes)
-        for command in ('echo x > openspec/tasks.md', 'sed -i s/x/y/ openspec/tasks.md', 'cp x ../main/openspec/a', 'touch alias/new', 'cat openspec/tasks.md > openspec/copy', 'python3 -c "open(\'openspec/a\',\'w\').write(\'x\')"'):
+        for command in ('echo x > openspec/tasks.md', 'sed -i s/x/y/ openspec/tasks.md', 'cp x ../main/openspec/a', 'touch alias/new', 'touch "alias with spaces/new"', 'cat openspec/tasks.md > openspec/copy', 'python3 -c "open(\'openspec/a\',\'w\').write(\'x\')"'):
             shell(command, 'deny')
         run('write_to_file', {'TargetFile':str(linked / 'normal')}, yes)
         run('replace_file_content', {'TargetFile':str(main / 'openspec/a')}, 'deny')
