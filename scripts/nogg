@@ -6,7 +6,7 @@ It intentionally contains no LLM call and makes no semantic product decision.
 from __future__ import annotations
 
 import argparse, base64, datetime as dt, fcntl, getpass, hashlib, json, os, re, shlex, shutil, signal, socket, subprocess, sys, tempfile, time, uuid
-import urllib.request
+import urllib.parse, urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -132,6 +132,80 @@ def ensure_worktree_config_extension(path):
                   "extensions.worktreeConfig", check=False)
     if current.stdout.strip() != "true":
         run("git", "-C", str(path), "config", "extensions.worktreeConfig", "true")
+def github_app_jwt(app, slug):
+    app_id = str(app.get("app_id", ""))
+    if not app_id.isdecimal() or int(app_id) <= 0:
+        raise ValueError("invalid app ID")
+    key_path = Path(app.get("private_key_path") or
+                    f"~/.config/nogging/bot-identities/{slug}.pem").expanduser()
+    if not key_path.is_file():
+        raise ValueError("missing private key")
+    def b64(data):
+        return base64.urlsafe_b64encode(data).rstrip(b"=")
+    now_ts = int(time.time())
+    unsigned = b".".join(b64(json.dumps(value, separators=(",", ":")).encode())
+                          for value in ({"alg": "RS256", "typ": "JWT"},
+                                        {"iat": now_ts - 60, "exp": now_ts + 540, "iss": app_id}))
+    signed = subprocess.run(["openssl", "dgst", "-sha256", "-sign", str(key_path)],
+                            input=unsigned, capture_output=True, timeout=15)
+    if signed.returncode or not signed.stdout:
+        raise ValueError("signing failed")
+    return (unsigned + b"." + b64(signed.stdout)).decode("ascii")
+class GitHubAppNoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None
+def github_api_base_url():
+    base = os.environ.get("NOGGING_GITHUB_API_URL")
+    if not base:
+        return "https://api.github.com"
+    parsed = urllib.parse.urlsplit(base)
+    if parsed.scheme == "http" and parsed.hostname in ("127.0.0.1", "localhost") and parsed.port is not None and not parsed.path.strip("/"):
+        return f"http://{parsed.hostname}:{parsed.port}"
+    raise ValueError("invalid GitHub API target")
+def github_app_api(jwt, path, data=None):
+    opener = urllib.request.build_opener(GitHubAppNoRedirect())
+    api_base = github_api_base_url()
+    request = urllib.request.Request(api_base + path, data=data,
+        headers={"Authorization": "Bearer " + jwt,
+                 "Accept": "application/vnd.github+json",
+                 "Content-Type": "application/json",
+                 "X-GitHub-Api-Version": "2022-11-28",
+                 "User-Agent": "nogging-credential-helper"})
+    with opener.open(request, timeout=20) as response:
+        return json.load(response)
+def github_app_bot_email(slug, app):
+    """Query GitHub's /app API using the persona's App credentials and return the
+    GitHub-assigned bot format: <app-user-id>+<slug>[bot]@users.noreply.github.com."""
+    jwt = github_app_jwt(app, slug)
+    data = github_app_api(jwt, "/app")
+    app_user_id = data.get("id")
+    app_slug = data.get("slug")
+    if not app_user_id or not app_slug:
+        raise ValueError(f"GitHub /app response missing id or slug for '{slug}'")
+    return f"{app_user_id}+{app_slug}[bot]@users.noreply.github.com"
+def ensure_worktree_https_remote(path):
+    """Force worktree remote origin to HTTPS if it is currently SSH, without
+    mutating the shared repository config."""
+    remote = run("git", "-C", str(path), "remote", "get-url", "origin", check=False)
+    if remote.returncode != 0:
+        return
+    url = remote.stdout.strip()
+    match = re.fullmatch(r"git@([A-Za-z0-9_.-]+):([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\.git)?", url)
+    if match:
+        host, repo = match.group(1), match.group(2)
+        https_url = f"https://{host}/{repo}.git"
+        instead_of = f"git@{host}:"
+    else:
+        match_ssh = re.fullmatch(r"ssh://(?:[^@]+@)?([A-Za-z0-9_.-]+)(?::\d+)?/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\.git)?", url)
+        if match_ssh:
+            host, repo = match_ssh.group(1), match_ssh.group(2)
+            https_url = f"https://{host}/{repo}.git"
+            instead_of = f"ssh://git@{host}/"
+        else:
+            return
+    run("git", "-C", str(path), "config", "--worktree", "remote.origin.url", https_url)
+    run("git", "-C", str(path), "config", "--worktree", "remote.origin.pushurl", https_url)
+    run("git", "-C", str(path), "config", "--worktree", f"url.https://{host}/.insteadOf", instead_of)
 def set_persona_identity(path, slug):
     """Set the worktree-scoped `user.name`/`user.email` at `path` (a linked
     worktree or the main checkout) to the roster identity for `slug`, so
@@ -141,7 +215,18 @@ def set_persona_identity(path, slug):
     ensure_worktree_config_extension(path)
     name, email = persona_identity(slug)
     run("git", "-C", str(path), "config", "--worktree", "user.name", name)
-    run("git", "-C", str(path), "config", "--worktree", "user.email", email)
+    personas = CFG.get("personas", PERSONAS)
+    entry = personas.get(slug) if isinstance(personas, dict) else None
+    app = entry.get("github_app") if isinstance(entry, dict) else None
+    if isinstance(app, dict):
+        bot_email = github_app_bot_email(slug, app)
+        run("git", "-C", str(path), "config", "--worktree", "user.email", bot_email)
+        ensure_worktree_https_remote(path)
+        run("git", "-C", str(path), "config", "--worktree", "--replace-all", "credential.helper", "")
+        run("git", "-C", str(path), "config", "--worktree", "--add", "credential.helper",
+            f"!scripts/nogg credential-helper {slug}")
+    else:
+        run("git", "-C", str(path), "config", "--worktree", "user.email", email)
 def worktree_record_path(kind, identifier, description):
     return WORKTREE_STATE / f"{kind}--{identifier}--{description}.json"
 def write_worktree_record(path, record):
@@ -4372,38 +4457,9 @@ def credential_helper(slug, operation):
         if not re.fullmatch(r"[a-z][a-z0-9-]*", slug):
             raise ValueError("invalid persona")
         app = CFG["personas"][slug]["github_app"]
-        app_id = str(app["app_id"])
-        if not app_id.isdecimal() or int(app_id) <= 0:
-            raise ValueError("invalid app ID")
-        key_path = Path(app.get("private_key_path") or
-                        f"~/.config/nogging/bot-identities/{slug}.pem").expanduser()
-        if not key_path.is_file():
-            raise ValueError("missing private key")
-        def b64(data):
-            return base64.urlsafe_b64encode(data).rstrip(b"=")
-        now = int(time.time())
-        unsigned = b".".join(b64(json.dumps(value, separators=(",", ":")).encode())
-                              for value in ({"alg": "RS256", "typ": "JWT"},
-                                            {"iat": now - 60, "exp": now + 540, "iss": app_id}))
-        signed = subprocess.run(["openssl", "dgst", "-sha256", "-sign", str(key_path)],
-                                input=unsigned, capture_output=True, timeout=15)
-        if signed.returncode or not signed.stdout:
-            raise ValueError("signing failed")
-        jwt = (unsigned + b"." + b64(signed.stdout)).decode("ascii")
-        # Reject redirects: an Authorization header must never leave GitHub.
-        class NoRedirect(urllib.request.HTTPRedirectHandler):
-            def redirect_request(self, *args, **kwargs):
-                return None
-        opener = urllib.request.build_opener(NoRedirect())
+        jwt = github_app_jwt(app, slug)
         def api(path, data=None):
-            request = urllib.request.Request("https://api.github.com" + path, data=data,
-                headers={"Authorization": "Bearer " + jwt,
-                         "Accept": "application/vnd.github+json",
-                         "Content-Type": "application/json",
-                         "X-GitHub-Api-Version": "2022-11-28",
-                         "User-Agent": "nogging-credential-helper"})
-            with opener.open(request, timeout=20) as response:
-                return json.load(response)
+            return github_app_api(jwt, path, data=data)
         # Resolve the installation for this repository rather than choosing an
         # arbitrary installation of an App installed on multiple accounts.
         remote = subprocess.run(["git", "-C", str(ROOT), "remote", "get-url", "origin"],
