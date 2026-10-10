@@ -8,16 +8,16 @@ Defines planning-only OpenSpec write authority and its enforcement and diagnosis
 
 ### Requirement: An execution agent of any tool cannot persist an OpenSpec change
 
-Outside a planning session, an execution agent — regardless of whether it runs
+An execution agent — regardless of whether it runs
 under Claude Code, Codex, or another tool — SHALL NOT be able to create, modify,
-or delete a file under `openspec/changes/` or `openspec/specs/`. The block SHALL
+or delete a file under `openspec/changes/` or `openspec/specs/`. Another session holding a planning lock SHALL NOT grant an execution role write authority. The block SHALL
 be anchored in the filesystem or the OS sandbox, not only in a Claude
 Code-specific hook. The mechanical sync writer and ordinary git branch
 operations SHALL be unaffected.
 
 #### Scenario: A launched execution session cannot write openspec/
 
-- **WHEN** a supervised session is launched for an execution role (not a planning role) and no planning session is active
+- **WHEN** a supervised session is launched for an execution role (not a planning role) including when a different planning session is active
 - **THEN** an attempt by that session to write a file under `openspec/changes/` or `openspec/specs/` fails
 - **AND** the failure does not depend on which agent tool the session runs
 
