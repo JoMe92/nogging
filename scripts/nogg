@@ -2634,6 +2634,11 @@ def validate_launch_contract(contract, argv, agent):
     options = contract.get("options")
     if not isinstance(options, dict):
         raise RuntimeError("session-launch contract has no option schema; run Nogging update")
+    # A wrapper predating model forwarding accepts `--model` but silently drops
+    # it for Claude and Codex; refuse rather than launch on the wrong model.
+    if ("--model" in argv[1:] or "--reasoning-effort" in argv[1:]) and \
+            "model-forwarding" not in contract["features"]:
+        raise RuntimeError("session-launch contract lacks model forwarding; run Nogging update")
     index = 1
     while index < len(argv):
         flag = argv[index]
@@ -2659,7 +2664,7 @@ def session_helper_diagnostics():
     argv = [str(wrapper)]
     for flag in ("--agent", "--settings", "--prompt", "--cwd", "--bead",
                  "--sandbox", "--approval", "--network", "--readonly-root",
-                 "--provider", "--model", "--mode", "--session-id", "--resume", "--remote-control"):
+                 "--provider", "--model", "--reasoning-effort", "--mode", "--session-id", "--resume", "--remote-control"):
         argv += [flag, "probe"]
     argv += ["--read-only", "--continue"]
     try:
@@ -2917,6 +2922,8 @@ def session_launch(role, bead, cwd, read_only, owner,
         settings_out = merge_observability_hooks(settings_out)
         effective_settings_path = str(effective_path)
         inner[1:1] = ["--settings", effective_settings_path]
+        if selected_model is not None:
+            inner += ["--model", selected_model]
     elif agent == "codex":  # no per-session permissions file — the floor is
            # the repo's `.codex/rules/` execpolicy directory, which Codex loads
            # from the working tree. That floor file ships with `codex-onboarding`;
@@ -2939,6 +2946,10 @@ def session_launch(role, bead, cwd, read_only, owner,
         # pre-commit boundary hook. See the wrapper for the runtime check.
         if openspec_readonly:
             inner += ["--readonly-root", str(Path(workdir) / "openspec")]
+        if selected_model is not None:
+            inner += ["--model", selected_model]
+        if reasoning_effort is not None:
+            inner += ["--reasoning-effort", reasoning_effort]
     elif agent == "antigravity":
         effective_settings_path = None
         if not allocate_planning:

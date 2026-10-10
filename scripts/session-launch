@@ -26,10 +26,10 @@
 #
 # Usage:
 #   session-launch [--agent claude] --settings <profile.json> --prompt <prompt.md> \
-#                  --cwd <dir> --bead <id> [--read-only]
+#                  --cwd <dir> --bead <id> [--model <name>] [--read-only]
 #   session-launch --agent codex --sandbox <mode> --approval <policy> \
 #                  --network <on|off> --prompt <prompt.md> --cwd <dir> --bead <id> \
-#                  [--read-only]
+#                  [--model <name>] [--reasoning-effort <level>] [--read-only]
 #   session-launch --agent pi --provider <name> --model <pattern> \
 #                  --prompt <prompt.md> --cwd <dir> --bead <id>
 set -eu
@@ -39,7 +39,7 @@ set -eu
 if [ "${1:-}" = "--contract" ]; then
   [ "$#" -eq 1 ] || exit 2
   cat <<'CONTRACT'
-{"version":1,"features":["startup-stderr"],"agents":["claude","codex","pi","antigravity","agy"],"options":{"--writable-roots":1,"--agent":1,"--settings":1,"--prompt":1,"--cwd":1,"--bead":1,"--sandbox":1,"--approval":1,"--network":1,"--readonly-root":1,"--provider":1,"--model":1,"--mode":1,"--read-only":0,"--continue":0,"--session-id":1,"--resume":1,"--remote-control":1}}
+{"version":1,"features":["startup-stderr","model-forwarding"],"agents":["claude","codex","pi","antigravity","agy"],"options":{"--writable-roots":1,"--agent":1,"--settings":1,"--prompt":1,"--cwd":1,"--bead":1,"--sandbox":1,"--approval":1,"--network":1,"--readonly-root":1,"--provider":1,"--model":1,"--mode":1,"--read-only":0,"--continue":0,"--session-id":1,"--resume":1,"--remote-control":1,"--reasoning-effort":1}}
 CONTRACT
   exit 0
 fi
@@ -107,6 +107,7 @@ readonly_root=""
 writable_roots=""
 provider=""
 model=""
+reasoning_effort=""
 mode="accept-edits"
 resume=0
 session_id=""
@@ -128,6 +129,7 @@ while [ $# -gt 0 ]; do
     --readonly-root) readonly_root=$2; shift 2 ;;
     --provider)  provider=$2; shift 2 ;;
     --model)     model=$2; shift 2 ;;
+    --reasoning-effort) reasoning_effort=$2; shift 2 ;;
     --mode)      mode=$2; shift 2 ;;
     --read-only) read_only=1; shift ;;
     --continue)  resume=1; shift ;;
@@ -143,6 +145,21 @@ done
 # `pwd`, so it is the same directory regardless of the session's `--cwd`
 # (a worktree). Only the codex) branch uses it (--add-dir, below).
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)
+
+# The model and reasoning effort reach the runtime as their own argv elements,
+# never interpolated into a shell string. Repeat the launcher's checks so a
+# direct wrapper call also fails closed: a model is never empty-looking or
+# flag-like, and reasoning effort is Codex-only and from Codex's own set.
+case "$model" in
+  -*|*[[:space:]]*) echo "session-launch: invalid --model value" >&2; exit 2 ;;
+esac
+if [ -n "$reasoning_effort" ]; then
+  [ "$agent" = codex ] || { echo "session-launch: --reasoning-effort is Codex-only" >&2; exit 2; }
+  case "$reasoning_effort" in
+    none|minimal|low|medium|high|xhigh|max|ultra) ;;
+    *) echo "session-launch: unsupported --reasoning-effort" >&2; exit 2 ;;
+  esac
+fi
 
 [ -n "$cwd" ] && cd "$cwd"
 
@@ -173,6 +190,7 @@ case "$agent" in
     # registers with Remote Control no matter how it is started (SPEC-nfz8
     # follow-up: the orchestrator's own docs claimed this happened by itself).
     [ -n "$remote_control_name" ] && set -- "$@" --remote-control "$remote_control_name"
+    [ -n "$model" ] && set -- "$@" --model "$model"
     echo "nogg: starting Claude for ${bead:-<no bead>} in $(pwd) (read-only=${read_only} resume=${resume} session_id=${session_id:-} resume_id=${resume_id:-} remote_control=${remote_control_name:-})"
     exec claude "$@"
     ;;
@@ -205,6 +223,10 @@ POLICY
       on)  set -- "$@" -c 'sandbox_workspace_write.network_access=true' ;;
       off) set -- "$@" -c 'sandbox_workspace_write.network_access=false' ;;
     esac
+    [ -n "$model" ] && set -- "$@" --model "$model"
+    # The value is one of a fixed set of bare words (checked above), so the
+    # TOML string literal cannot be broken out of.
+    [ -n "$reasoning_effort" ] && set -- "$@" -c "model_reasoning_effort=\"$reasoning_effort\""
     if [ -n "$readonly_root" ]; then
       # Make $readonly_root (openspec/) a read-only path. codex exposes
       # --sandbox-state-readable-root only on the `codex sandbox` subcommand in
