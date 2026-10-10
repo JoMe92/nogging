@@ -1,0 +1,14 @@
+{
+  "conversation_id": "00000000-0000-4000-8000-000000000004",
+  "status": "SUCCESS",
+  "response": "The tool call to read `https://example.com` was denied by the pre-tool hook. Per instructions, stopping here without calling further tools.\n",
+  "duration_seconds": 4.659296094,
+  "num_turns": 1,
+  "usage": {
+    "input_tokens": 32565,
+    "output_tokens": 72,
+    "thinking_tokens": 0,
+    "cache_read_tokens": 0,
+    "total_tokens": 32637
+  }
+}

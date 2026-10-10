@@ -1,0 +1,14 @@
+{
+  "conversation_id": "00000000-0000-4000-8000-000000000003",
+  "status": "SUCCESS",
+  "response": "The tool `multi_replace_file_content` is not available in my toolset. The available file editing tool is `replace_file_content`, which supports single contiguous replacements rather than batch replacements across multiple targets in one call.\n\nAs requested not to use other tools or read the file first, I am stopping here.\n",
+  "duration_seconds": 3.251376486,
+  "num_turns": 1,
+  "usage": {
+    "input_tokens": 16265,
+    "output_tokens": 67,
+    "thinking_tokens": 0,
+    "cache_read_tokens": 0,
+    "total_tokens": 16332
+  }
+}
