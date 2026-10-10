@@ -165,6 +165,7 @@ Full index, grouped by concepts / using Nogging / releasing and maintaining:
 | Supported versions and platforms | [Compatibility matrix](docs/compatibility.md) |
 | Codex integration | [Using Nogging with Codex](docs/using-with-codex.md) |
 | Pi integration | [Using Nogging with Pi](docs/using-with-pi.md) |
+| Experimental Antigravity integration | [Using Nogging with Antigravity](docs/using-with-antigravity.md) |
 | Interrupted-run recovery | [Failure recovery](docs/failure-recovery.md) |
 | Acceptance procedure | [Acceptance runbook](docs/acceptance.md) |
 | Contributions and conduct | [Contributing](CONTRIBUTING.md) and [Code of Conduct](CODE_OF_CONDUCT.md) |

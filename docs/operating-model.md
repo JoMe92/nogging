@@ -255,7 +255,7 @@ inside a **named tmux session on the Pi**, under a dedicated tmux server socket
 (`tmux -L nogg`) that is isolated from the operator's own tmux. The session
 is started with `scripts/nogg session launch --role <lead |
 specialist:<type>> --bead <id> [--cwd <path>] [--read-only]
-[--agent <claude|codex>] [--profile <name-or-path>] [--prompt <name-or-path>]
+[--agent <claude|codex|pi|antigravity|agy>] [--profile <name-or-path>] [--prompt <name-or-path>]
 [--full-access]`, which:
 
 - generates a collision-free name `sf-<role>-<bead>-<nonce>`;
@@ -276,7 +276,7 @@ operator directs.
 
 ### The agent is selectable
 
-`--agent {claude,codex}` chooses the binary; with no flag it reads the
+`--agent {claude,codex,pi,antigravity}` (alias `agy`) chooses the binary; with no flag it reads the
 `session_agent` key from `.nogging/config.json`, default `claude`, so no
 existing install changes behaviour. The record stores the agent and
 `session list` shows it in an `AGENT` column. `--agent claude` and the default
@@ -292,6 +292,21 @@ A Codex session has no per-session `permissions` file; its command floor is the
 repo's `.codex/rules/` execpolicy directory (shipped by `codex-onboarding`),
 and `session launch` warns when that floor file is missing but still starts.
 `--full-access` maps to `trusted` + `autonomous` for whichever agent is in use.
+
+### Antigravity sessions
+
+Antigravity uses `.nogging/launch-profiles/<level>.agy.toml`. Restricted uses
+ask permissions and refuses incompatible global permission modes; trusted uses
+auto permissions. Both retain the Python hook floor and canonical role-aware
+OpenSpec guard, with no validated filesystem/network sandbox. Sandbox requests
+refuse. Guard validation and narrowly scoped atomic workspace trust precede
+launch. Stop captures exact conversation IDs; resume never selects latest.
+Specialists are separate supervised sessions on one already-claimed Bead and
+never claim, close, re-status, commit or write OpenSpec. The Main Worker owns
+all evidence and lifecycle changes. See [the Antigravity guide](using-with-antigravity.md)
+for installed skills, first-turn/kickoff handling and pending acceptance/quota
+support. The Orchestration Agent remains Claude-only.
+
 
 ### Launch profiles
 

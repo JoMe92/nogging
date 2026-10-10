@@ -115,4 +115,19 @@ write before either has pulled.
   --bead <id>`, under every specialist boundary rule. Operator entry points:
   `.pi/prompts/{plan,discovery-review,sync-now}.md`.
 
+### Antigravity
+
+`--agent antigravity` (alias `agy`) uses `.agy.toml` profiles and the Python
+`scripts/hooks/agy-guard` PreToolUse hook from `.agents/hooks.json`. Both levels
+retain the command floor and canonical planning-lock OpenSpec boundary.
+Restricted requires verified ask permissions; global always-proceed is refused.
+No filesystem/network isolation is validated; requested sandbox mode refuses.
+Launch prepares trust only for the selected worktree and refuses missing guards
+or failed trust writes. Workflow skills are `.agents/skills/nogging-{plan,discovery-review,sync-now}`.
+Specialists run separately with `scripts/nogg session launch --agent agy
+--role specialist:<type> --bead <id>` on exactly one already-claimed Bead;
+never claim, re-status, close, commit or write OpenSpec. Return structured
+results and discoveries to the Main Worker. See `docs/nogging/using-with-antigravity.md`
+for exact resume, lifecycle and pending acceptance/quota limitations.
+
 Update Nogging itself with `npx github:JoMe92/nogging update`.

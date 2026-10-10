@@ -64,6 +64,7 @@
     "docs/security-model.md",
     "docs/using-with-codex.md",
     "docs/using-with-pi.md",
+    "docs/using-with-antigravity.md",
     "docs/worktree-workflow.md",
     "openspec/config.yaml",
     "scripts/hooks/agy-guard",
