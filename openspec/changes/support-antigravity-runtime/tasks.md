@@ -12,7 +12,7 @@
 
 - [x] TASK-AGR-006 Ship workflow skills, profiles, hooks and guard through install/update/remove and package manifest with ordered named-hook merge; verify user hook entries survive repeated update and removal and every required helper is installed.
 
-- [ ] TASK-AGR-007 Write Antigravity guide, compatibility/authority limitations, AGENTS/templates/operating-model and doctor notes; verify --sandbox is rejected unless its worktree lifecycle is positively validated and separate specialist delegation stays one claimed Bead without specialist commit/close authority.
+- [x] TASK-AGR-007 Write Antigravity guide, compatibility/authority limitations, AGENTS/templates/operating-model and doctor notes; verify --sandbox is rejected unless its worktree lifecycle is positively validated and separate specialist delegation stays one claimed Bead without specialist commit/close authority.
 
 - [ ] TASK-AGR-008 Run scripts/test, packed consumer install/update/remove, live trusted and enforceable restricted tests, exact resume and one real Lead Bead lifecycle plus separate specialist session; commit unsigned acceptance with versions and #54 evidence, leaving any unsupported mode explicitly unadvertised. This is core runtime acceptance after AGR-007, independent of AGR-005/GSU; explicitly mark quota acceptance pending until AGR-005, and do not close #54 or sign human acceptance.
 

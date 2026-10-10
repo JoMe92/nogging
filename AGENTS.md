@@ -267,3 +267,18 @@ the subsection for the tool you are running as, and ignore the others.
   `.pi/prompts/` directly from the repository — no symlink helper is needed
   (unlike Codex, which needs `codex-prompts-link` because it only reads
   custom prompts from `~/.codex/prompts/`).
+
+### Antigravity
+
+`--agent antigravity` (alias `agy`) uses `.agy.toml` profiles and the Python
+`scripts/hooks/agy-guard` PreToolUse hook from `.agents/hooks.json`. Both levels
+retain the command floor and canonical planning-lock OpenSpec boundary.
+Restricted requires verified ask permissions; global always-proceed is refused.
+No filesystem/network isolation is validated; requested sandbox mode refuses.
+Launch prepares trust only for the selected worktree and refuses missing guards
+or failed trust writes. Workflow skills are `.agents/skills/nogging-{plan,discovery-review,sync-now}`.
+Specialists run separately with `scripts/nogg session launch --agent agy
+--role specialist:<type> --bead <id>` on exactly one already-claimed Bead;
+never claim, re-status, close, commit or write OpenSpec. Return structured
+results and discoveries to the Main Worker. See [the Antigravity guide](docs/using-with-antigravity.md)
+for exact resume, lifecycle and pending acceptance/quota limitations.
