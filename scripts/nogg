@@ -5,7 +5,8 @@ It intentionally contains no LLM call and makes no semantic product decision.
 """
 from __future__ import annotations
 
-import argparse, datetime as dt, fcntl, getpass, hashlib, json, os, re, shlex, shutil, signal, socket, subprocess, sys, tempfile, time, uuid
+import argparse, base64, datetime as dt, fcntl, getpass, hashlib, json, os, re, shlex, shutil, signal, socket, subprocess, sys, tempfile, time, uuid
+import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -4144,8 +4145,86 @@ def doctor(audit=False, with_recover=False):
     # `doctor` keeps its tool-availability exit semantics; `doctor --recover`
     # additionally fails when the interrupted-run checks flag anything.
     if any(not ok for _, ok in checks) or (with_recover and rattention): sys.exit(1)
+def credential_helper(slug, operation):
+    """Git credential protocol; all authentication material stays in memory."""
+    try:
+        fields = {}
+        for line in sys.stdin:
+            line = line.rstrip("\n")
+            if not line:
+                break
+            key, sep, value = line.partition("=")
+            if not sep or key in fields:
+                raise ValueError("invalid request")
+            fields[key] = value
+        if operation in ("store", "erase"):
+            return
+        if fields.get("protocol") != "https" or fields.get("host") != "github.com":
+            raise ValueError("unsupported credential target")
+        if not re.fullmatch(r"[a-z][a-z0-9-]*", slug):
+            raise ValueError("invalid persona")
+        app = CFG["personas"][slug]["github_app"]
+        app_id = str(app["app_id"])
+        if not app_id.isdecimal() or int(app_id) <= 0:
+            raise ValueError("invalid app ID")
+        key_path = Path(app.get("private_key_path") or
+                        f"~/.config/nogging/bot-identities/{slug}.pem").expanduser()
+        if not key_path.is_file():
+            raise ValueError("missing private key")
+        def b64(data):
+            return base64.urlsafe_b64encode(data).rstrip(b"=")
+        now = int(time.time())
+        unsigned = b".".join(b64(json.dumps(value, separators=(",", ":")).encode())
+                              for value in ({"alg": "RS256", "typ": "JWT"},
+                                            {"iat": now - 60, "exp": now + 540, "iss": app_id}))
+        signed = subprocess.run(["openssl", "dgst", "-sha256", "-sign", str(key_path)],
+                                input=unsigned, capture_output=True, timeout=15)
+        if signed.returncode or not signed.stdout:
+            raise ValueError("signing failed")
+        jwt = (unsigned + b"." + b64(signed.stdout)).decode("ascii")
+        # Reject redirects: an Authorization header must never leave GitHub.
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, *args, **kwargs):
+                return None
+        opener = urllib.request.build_opener(NoRedirect())
+        def api(path, data=None):
+            request = urllib.request.Request("https://api.github.com" + path, data=data,
+                headers={"Authorization": "Bearer " + jwt,
+                         "Accept": "application/vnd.github+json",
+                         "Content-Type": "application/json",
+                         "X-GitHub-Api-Version": "2022-11-28",
+                         "User-Agent": "nogging-credential-helper"})
+            with opener.open(request, timeout=20) as response:
+                return json.load(response)
+        # Resolve the installation for this repository rather than choosing an
+        # arbitrary installation of an App installed on multiple accounts.
+        remote = subprocess.run(["git", "-C", str(ROOT), "remote", "get-url", "origin"],
+                                capture_output=True, text=True, timeout=5)
+        match = re.fullmatch(r"(?:https://github\.com/|git@github\.com:)([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\.git)?", remote.stdout.strip())
+        if remote.returncode or not match:
+            raise ValueError("unsupported repository remote")
+        repo = match[1]
+        if fields.get("path") and fields["path"].removesuffix(".git") != repo:
+            raise ValueError("credential path does not match repository")
+        installation = api("/repos/" + repo + "/installation")["id"]
+        if type(installation) is not int or installation <= 0:
+            raise ValueError("invalid installation")
+        token = api(f"/app/installations/{installation}/access_tokens",
+                    json.dumps({"repositories": [repo.split("/")[1]]}).encode())["token"]
+        if not isinstance(token, str) or not token or any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in token):
+            raise ValueError("invalid token")
+        sys.stdout.write("username=x-access-token\npassword=" + token + "\n\n")
+    except Exception:
+        # HTTP bodies and subprocess errors may contain credentials. Never
+        # propagate them to the generic CLI exception handler or logs.
+        print("nogg: credential-helper failed; no credential returned", file=sys.stderr)
+        raise SystemExit(1)
+
 def main():
     p = argparse.ArgumentParser(); sub = p.add_subparsers(dest="command", required=True)
+    ch = sub.add_parser("credential-helper", help="mint an in-memory GitHub App credential for Git")
+    ch.add_argument("slug")
+    ch.add_argument("operation", choices=("get", "store", "erase"))
     rs = sub.add_parser("repo-state", help="print canonical repository state without writes")
     rs.add_argument("--cwd", default=str(ROOT))
     sub.add_parser("validate")
@@ -4242,7 +4321,9 @@ def main():
     semit = ssub.add_parser("emit")
     semit.add_argument("event")
     args = p.parse_args()
-    if args.command == "repo-state":
+    if args.command == "credential-helper":
+        credential_helper(args.slug, args.operation)
+    elif args.command == "repo-state":
         print(json.dumps(canonical_repository_state(args.cwd), sort_keys=True))
     elif args.command == "plan-begin":
         lock("planning", CFG["planning_lock_ttl_seconds"], args.force)

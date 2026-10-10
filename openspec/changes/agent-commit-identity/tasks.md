@@ -51,7 +51,7 @@
       (`~/.config/nogging/bot-identities/<slug>.pem`) plus the App ID in
       the persona's `github_app` config block.
 
-- [ ] TASK-ACI-008 Add `scripts/nogg credential-helper <slug>`: implements
+- [x] TASK-ACI-008 Add `scripts/nogg credential-helper <slug>`: implements
       git's credential-helper protocol; on `get`, mints a short-lived
       GitHub App installation access token (signed JWT exchange against
       GitHub's Apps API) for the named persona's configured App and private
