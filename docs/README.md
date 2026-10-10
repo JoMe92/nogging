@@ -32,6 +32,7 @@ Installing it, running it day to day, and its guarantees.
 | [Using Nogging with Codex](using-with-codex.md) | What's specific to running the loop from OpenAI Codex |
 | [Using Nogging with Pi](using-with-pi.md) | What's specific to running the loop from Pi |
 | [Using Nogging with Antigravity](using-with-antigravity.md) | Experimental agy 1.3.2 integration, authority and acceptance limits |
+| [Reading usage limits](usage-limits.md) | How the orchestrator reads 5h and weekly limits for Codex, Claude, and agy |
 
 ## Releasing and maintaining
 
