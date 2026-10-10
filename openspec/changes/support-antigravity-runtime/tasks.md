@@ -4,7 +4,7 @@
 
 - [x] TASK-AGR-002 Implement Python agy guard and merged hooks using canonical WSS locks and role context; verify malformed JSON, missing/stale locks, sentinel precedence, linked-worktree traversal, shell reads versus writes, URL tools and every floor pattern at both authority levels.
 
-- [ ] TASK-AGR-003 Add .agy.toml profiles, normalized agent alias, model forwarding and wrapper contract plus atomic narrowly scoped workspace trust; verify missing guard or unwritable trust refuses before agent start, restricted rejects always-proceed and unrelated global keys/mode remain intact.
+- [x] TASK-AGR-003 Add .agy.toml profiles, normalized agent alias, model forwarding and wrapper contract plus atomic narrowly scoped workspace trust; verify missing guard or unwritable trust refuses before agent start, restricted rejects always-proceed and unrelated global keys/mode remain intact.
 
 - [ ] TASK-AGR-004 Implement conversation-ID capture, exact resume and lifecycle-safe first-turn/kickoff behavior with auto-update disabled per session; verify Stop events append, session send/stop work, no duplicate kickoff and no claim caused by bare launch.
 
