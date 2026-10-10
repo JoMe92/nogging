@@ -361,7 +361,7 @@ From any plain SSH shell (no `TERM`, no tmux client needed):
 
 | Command | What it does |
 | --- | --- |
-| `session list` | every managed session with Bead, role, age, working dir, owner, state, and the launch profile it runs under (`restricted` renders as `-`, a floor-lifted orchestrator as `FULL-ACCESS`); reconciles each record against live tmux and reports a vanished `running` session as `failed`. Read-only, never attaches. |
+| `session list` | every managed session with Bead, role, age, working dir, owner, state, the launch profile it runs under (`restricted` renders as `-`, a floor-lifted orchestrator as `FULL-ACCESS`), and the requested model with its source (`launch`, `profile`, or `runtime-default` when none was set); reconciles each record against live tmux and reports a vanished `running` session as `failed`. Read-only, never attaches. |
 | `session attach <name> [--read-only]` | attach the terminal to a session (`-r` blocks input). The only command that attaches. |
 | `session log <name> [--follow]` | print or tail the append-only log without attaching. |
 | `session stop <name> [--reason <text>]` | interrupt Claude, terminate the pane after the grace period, record `stopped` with `ended_at`/`exit_reason`. Idempotent. |
