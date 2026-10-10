@@ -83,6 +83,13 @@ with tempfile.TemporaryDirectory(prefix='nogg planning kickoff ') as td:
     assert m.release_planning_lock(session_record=winner) is False
     assert lock_path.exists() and (root/'.nogging/locks/openspec.readonly').exists()
     assert not m.planning_lock_live(dict(held,pid_start='different-process-birth'))
+    # An agent sandbox with a private PID namespace (Codex bwrap) cannot see the
+    # host owner PID, so it cannot disprove it; the owner's namespace still can.
+    own_ns=m.pid_namespace()
+    assert own_ns and own_ns.startswith('pid:[')
+    assert not m.planning_lock_live(dict(held,pid_start='different-process-birth',pid_ns=own_ns))
+    assert m.planning_lock_live(dict(held,pid_start='different-process-birth',pid_ns='pid:[1]'))
+    assert m.pid_namespace(2**22+1) is None
 
     subprocess.run([str(source/'scripts/nogg'),'plan-end'],env=env,check=True,stdout=subprocess.DEVNULL)
     # A failed owner closes the boundary but retains a still-live PID. A

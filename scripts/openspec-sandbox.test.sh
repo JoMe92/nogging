@@ -37,13 +37,27 @@ for root in roots:
         else:raise AssertionError('OpenSpec write escaped filesystem fence')
     attempt=subprocess.run(['mount','-o','remount,bind,rw',str(spec)],capture_output=True)
     assert attempt.returncode,'runtime retained remount capability'
+    # A runtime's own nested sandbox (Codex bwrap) gains namespace root but the
+    # inherited read-only mounts stay locked: no rw remount, unmount or bind around.
+    escape=f"""mount -o remount,bind,rw {spec} && exit 10
+umount {spec} && exit 11
+umount -l {spec} && exit 12
+mkdir -p {root}/.escape && mount --bind {root} {root}/.escape && exit 13
+touch {spec}/escaped && exit 14
+exit 0"""
+    attempt=subprocess.run(['unshare','--user','--map-root-user','--mount','sh','-c',escape],capture_output=True,text=True)
+    assert attempt.returncode not in range(10,15),('nested sandbox escaped locked OpenSpec mount',attempt)
+    assert attempt.returncode==0,('runtime cannot build its own nested sandbox',attempt.stderr)
+assert os.getuid()!=0,'runtime runs as namespace root; agents refuse unattended modes as root'
+nested=subprocess.run(['unshare','--user','--map-root-user','--mount','--pid','--fork','true'],capture_output=True,text=True)
+assert nested.returncode==0,('runtime cannot build its own nested sandbox',nested.stderr)
 result=subprocess.run([helper,'task-done','SPEC-open'],text=True,capture_output=True)
 assert result.returncode and 'not closed' in result.stderr,result
 result=subprocess.run([helper,'task-done','SPEC-proof'],text=True,capture_output=True)
 assert result.returncode==0 and 'ticked' in result.stdout,result
 assert '- [x] TASK-PROOF-001' in (Path.cwd()/'openspec/changes/proof/tasks.md').read_text()
 (Path.cwd()/'implementation.txt').write_text('execution remains writable')
-print('OS fence: create/modify/delete denied across all worktrees; remount denied; closed-only broker tick works')
+print('OS fence: create/modify/delete denied across all worktrees; remount denied; non-root runtime nests its own sandbox without escaping; closed-only broker tick works')
 ''')
     result=subprocess.run([str(source/'scripts/openspec-sandbox'),sys.executable,str(verifier),json.dumps([str(p) for p in roots]),str(source/'scripts/nogg')],cwd=roots[1],text=True,capture_output=True,env={**os.environ,'NOGGING_ROOT':str(root),'NOGG_EXPECT_ORIGINAL_ROOT':str(root)})
     assert result.returncode==0,(result.stdout,result.stderr)
