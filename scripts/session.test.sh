@@ -1188,8 +1188,12 @@ for failure in unknown-flag exec-failure; do
   # This fixture tests fast runtime startup errors, not mount enforcement.
   # CI may prohibit user namespaces. Keep the real wrapper and substitute
   # only this fixture's boundary helper; dedicated fence tests use the real one.
+  cp "$root/scripts/openspec-sandbox" "$root/scripts/openspec-sandbox-real"
   cat >"$root/scripts/openspec-sandbox" <<'BOUNDARY'
 #!/bin/sh
+if [ "${1:-}" = --contract ]; then
+  exec "$(dirname "$0")/openspec-sandbox-real" --contract
+fi
 NOGG_OPENSPEC_FENCED=1 exec "$@"
 BOUNDARY
   chmod +x "$root/scripts/openspec-sandbox"
