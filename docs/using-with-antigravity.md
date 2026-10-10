@@ -111,3 +111,11 @@ has supervised core acceptance evidence, including exact-ID memory recall.
 but quota gating, exhausted-credit classification and complete model mapping
 are pending AGR-005. Do not advertise them as available or close issue #54
 from core runtime evidence alone. Human acceptance signatures stay blank.
+
+Runtime state grants are configured with `agent_state_roots` in
+`.nogging/config.json`. Declaration does not grant access: a Bead label
+`agent-state:antigravity` or launch option `--agent-state antigravity` selects
+Antigravity state for a related session. Codex receives those existing
+HOME-contained directories as sandbox writable roots. Records and listings
+show the source and paths. Treat granting credential-bearing state as write
+access to those credentials. See [Codex runtime state grants](using-with-codex.md).

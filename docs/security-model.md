@@ -195,3 +195,11 @@ a prudent final step.
 Follow [Nogging’s security policy](https://github.com/JoMe92/nogging/blob/develop/SECURITY.md). Do not put a suspected vulnerability,
 credential, private URL, or sensitive log in a public issue.
 
+
+Runtime state grants are configured with `agent_state_roots` in
+`.nogging/config.json`. Declaration does not grant access: a Bead label
+`agent-state:antigravity` or launch option `--agent-state antigravity` selects
+Antigravity state for a related session. Codex receives those existing
+HOME-contained directories as sandbox writable roots. Records and listings
+show the source and paths. Treat granting credential-bearing state as write
+access to those credentials. See [Codex runtime state grants](using-with-codex.md).

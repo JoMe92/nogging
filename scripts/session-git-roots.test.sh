@@ -7,7 +7,9 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 root="$work/repo with \"quotes\""
 mkdir -p "$root/scripts" "$work/bin" "$work/home with spaces/.ssh"
-cp "$here/session-launch" "$root/scripts/"
+cp "$here/nogg" "$here/session-launch" "$root/scripts/"
+mkdir -p "$root/.nogging"
+printf '{}\n' > "$root/.nogging/config.json"
 git init -q "$root"
 git -C "$root" -c user.name=Test -c user.email=test@example.com commit -qm initial --allow-empty
 git -C "$root" worktree add -qb linked "$work/linked"
@@ -46,16 +48,6 @@ assert json.load(open(sys.argv[1]))['ssh'] == 'operator-ssh --custom'
 PY
 echo 'ok - explicit SSH command preserved'
 mkdir -p "$work/home with spaces/.agy-state"
-env -u GIT_SSH_COMMAND HOME="$work/home with spaces" \
-  NOGG_CODEX_EXTRA_WRITABLE_ROOTS="$work/home with spaces/.agy-state" \
-  "$root/scripts/session-launch" --agent codex --cwd "$root" >/dev/null
-python3 - "$LAUNCH_RESULT" "$work/home with spaces/.agy-state" <<'PY'
-import json, sys, tomllib
-data = json.load(open(sys.argv[1]))
-arg = next(a for a in data['argv'] if a.startswith('sandbox_workspace_write.writable_roots='))
-assert sys.argv[2] in tomllib.loads(arg)['sandbox_workspace_write']['writable_roots']
-PY
-echo 'ok - opt-in extra writable root added'
 for bad in /etc "$work/home with spaces" "$work/missing" "relative/dir"; do
   if HOME="$work/home with spaces" NOGG_CODEX_EXTRA_WRITABLE_ROOTS="$bad" \
       "$root/scripts/session-launch" --agent codex --cwd "$root" >/dev/null 2>&1; then

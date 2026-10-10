@@ -66,12 +66,20 @@ When `~/.ssh/config` exists and `GIT_SSH_COMMAND` is unset, the launcher uses
 errors inside the outer user namespace while retaining the operator's SSH
 settings. An explicit `GIT_SSH_COMMAND` takes precedence.
 
-An operator can opt in to further writable roots for one launch with
-`NOGG_CODEX_EXTRA_WRITABLE_ROOTS=<dir>[:<dir>...]`; each entry must be an
-existing directory strictly under `$HOME`, otherwise the launch is refused.
-Example: `NOGG_CODEX_EXTRA_WRITABLE_ROOTS=$HOME/.gemini/antigravity-cli` for
-live Antigravity probes. That directory also holds the OAuth token, which the
-session could then overwrite; nothing is added by default.
+Declare runtime directories in `.nogging/config.json`, for example:
+
+```json
+"agent_state_roots": {"antigravity": ["~/.gemini/antigravity-cli"]}
+```
+
+Declaration alone grants nothing. Label the Bead `agent-state:antigravity`
+or pass `session launch --agent-state antigravity` to grant these directories.
+Each requested entry must resolve to an existing directory strictly under
+`$HOME`; HOME itself, relative paths, missing directories and symlinks outside
+HOME are refused before session creation. Session records and `session list`
+show granted paths and their source (`label` or `option`). The directory may
+contain OAuth credentials and granting it permits the session to overwrite them.
+`NOGG_CODEX_EXTRA_WRITABLE_ROOTS` is retired: a nonempty value refuses launch.
 
 Both levels additionally pass `--add-dir <shared checkout root>`, unconditionally
 alongside `--cd <worktree>`, so the shared checkout's `.git`/`.beads` stay

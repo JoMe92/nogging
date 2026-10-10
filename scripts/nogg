@@ -2136,14 +2136,16 @@ def transition(path, rec, state, **extra):
     if state in SESSION_TERMINAL_STATES:
         release_planning_lock(session_record=rec)
     return rec
-def bead_exists(bead_id):
+def bead_records(bead_id):
     res = run(CFG["beads_command"], "show", bead_id, "--json", check=False)
-    if res.returncode != 0: return False
+    if res.returncode != 0: return []
     try: decoded = json.loads(res.stdout.strip() or "[]")
-    except ValueError: return False
+    except ValueError: return []
     records = decoded.get("issues", decoded) if isinstance(decoded, dict) else decoded
     if isinstance(records, dict): records = [records]
-    return any(str(issue_id(r)) == str(bead_id) for r in records if isinstance(r, dict))
+    return [r for r in records if isinstance(r, dict) and str(issue_id(r)) == str(bead_id)]
+def bead_exists(bead_id):
+    return bool(bead_records(bead_id))
 def unmet_dependencies(bead_id):
     """Return the blocking Bead IDs for `bead_id` (`bd dep list <id> --json`,
     default `--direction down` — "what this Bead depends on") whose own
@@ -2577,9 +2579,72 @@ def planning_launch_workdir(planning_id, description, cwd):
         raise RuntimeError("planning worktree is not on its recorded planning branch")
     return str(path)
 
+def resolve_agent_state_roots(requests=()):
+    """Validate declarations without granting unrelated runtime state."""
+    config = CFG.get("agent_state_roots", {})
+    agents = {"claude", "codex", "pi", "antigravity"}
+    if not isinstance(config, dict):
+        raise RuntimeError("agent_state_roots must be an object")
+    for key, entries in config.items():
+        if key not in agents or not isinstance(entries, list) or any(not isinstance(v, str) for v in entries):
+            raise RuntimeError(f"agent_state_roots invalid key or entries: {key}")
+    home = Path.home().resolve()
+    grants = []
+    for agent, source in requests:
+        agent = "antigravity" if agent == "agy" else agent
+        if agent not in agents:
+            raise RuntimeError(f"agent_state_roots unknown agent: {agent}")
+        for raw in config.get(agent, []):
+            if not (raw.startswith("/") or raw.startswith("~/")):
+                raise RuntimeError(f"agent_state_roots {agent}: invalid directory {raw}")
+            try:
+                path = Path(raw).expanduser().resolve()
+            except (OSError, ValueError, RuntimeError) as exc:
+                raise RuntimeError(f"agent_state_roots {agent}: invalid directory {raw}") from exc
+            if path == home or home not in path.parents or not path.is_dir():
+                raise RuntimeError(f"agent_state_roots {agent}: invalid directory {raw}")
+            grant = {"agent": agent, "path": str(path), "source": source}
+            if grant not in grants:
+                grants.append(grant)
+    return grants
+
+
+def codex_writable_roots(workdir, grants=()):
+    """Shared launch/doctor resolver for Git metadata and authorized state."""
+    roots = []
+    for args in (("--path-format=absolute", "--git-common-dir"), ("--absolute-git-dir",)):
+        result = run("git", "-C", str(workdir), "rev-parse", *args)
+        roots.append(str(Path(result.stdout.strip()).resolve()))
+    roots.extend(g["path"] for g in grants)
+    return list(dict.fromkeys(roots))
+
+
+def codex_sandbox_policy(workdir, grants=(), network=True):
+    ssh = os.environ.get("GIT_SSH_COMMAND")
+    config = Path.home() / ".ssh/config"
+    if not ssh and config.is_file():
+        ssh = "ssh -F " + shlex.quote(str(config))
+    return {"writable_roots": codex_writable_roots(workdir, grants),
+            "network_access": bool(network), "git_ssh_command": ssh}
+
+
+def session_state_grants(bead, explicit=(), records=None):
+    if os.environ.get("NOGG_CODEX_EXTRA_WRITABLE_ROOTS"):
+        raise RuntimeError("use agent_state_roots and the agent-state:<agent> label; NOGG_CODEX_EXTRA_WRITABLE_ROOTS is retired")
+    requests = [(name, "option") for name in explicit]
+    if bead:
+        if records is None:
+            records = bead_records(bead)
+        for record in records:
+            for label in record.get("labels", []):
+                if label.startswith("agent-state:"):
+                    requests.append((label.split(":", 1)[1], "label"))
+    return resolve_agent_state_roots(requests)
+
+
 def session_launch(role, bead, cwd, read_only, owner,
                    profile=None, prompt=None, full_access=False, agent=None,
-                   resume=None, kickoff=False, planning_id=None, description=None):
+                   resume=None, kickoff=False, planning_id=None, description=None, agent_state=()):
     """Start a supervised agent session for a Bead.
 
     `resume` names the exact prior conversation: Claude uses `--resume <id>`;
@@ -2591,9 +2656,13 @@ def session_launch(role, bead, cwd, read_only, owner,
     later launch can resume this exact conversation.
 
     This function performs NO Beads mutation. The only `bd` call it makes is
-    the read-only `bd show` inside bead_exists(); it never claims, starts, or
+    the read-only `bd show` inside bead_records(); it never claims, starts, or
     otherwise changes a Bead. Claiming stays a deliberate in-session action
     the operator directs (see .nogging/session-launch-prompt.md)."""
+    if os.environ.get("NOGG_CODEX_EXTRA_WRITABLE_ROOTS"):
+        session_state_grants(None)
+    records = bead_records(bead) if bead else []
+    grants = session_state_grants(bead, agent_state, records)
     agent = resolve_agent(agent)
     role_meta, role_slug = normalize_role(role)
     is_orchestrator = role_meta == "orchestrator"
@@ -2655,7 +2724,7 @@ def session_launch(role, bead, cwd, read_only, owner,
         floor_lifted = source_settings.get("nogging_floor") is False
         if source_settings.get("nogging_openspec_readonly") is False:
             openspec_readonly = False
-    if not is_orchestrator and bead and not bead_exists(bead):
+    if not is_orchestrator and bead and not records:
         raise RuntimeError(f"Bead {bead} does not exist; launch refused")
     if not is_orchestrator and not is_planning:
         blocking = unmet_dependencies(bead)
@@ -2717,6 +2786,7 @@ def session_launch(role, bead, cwd, read_only, owner,
         inner[1:1] = ["--agent", "codex", "--sandbox", sandbox,
                       "--approval", codex_spec["ask_for_approval"],
                       "--network", "on" if codex_spec["network_access"] else "off"]
+        inner += ["--writable-roots", json.dumps(codex_writable_roots(ROOT if allocate_planning else workdir, grants))]
         # Codex has no per-session permissions file, so openspec/ read-only is
         # requested at the wrapper: it maps to codex's readable-root flag where
         # the installed build exposes it on a plain launch, and otherwise falls
@@ -2759,6 +2829,8 @@ def session_launch(role, bead, cwd, read_only, owner,
     if allocate_planning:
         planning_worktree(planning_id, description, location=workdir)
         planning_launch_workdir(planning_id, description, workdir)
+        if agent == "codex":
+            inner[inner.index("--writable-roots") + 1] = json.dumps(codex_writable_roots(workdir, grants))
     if agent == "antigravity":
         prepare_antigravity_trust(workdir, agy_spec["approval"])
     # Name collision checks themselves call tmux: defer them until the full
@@ -2810,6 +2882,7 @@ def session_launch(role, bead, cwd, read_only, owner,
         "antigravity_conversation_id": resume if agent == "antigravity" else None,
         "antigravity_initial_turn": agent == "antigravity",
         "planning_id": planning_id, "description": description,
+        "agent_state_grants": grants,
         "session_pid": None, "session_pid_start": None,
     }
     write_session(rec_path, record)                       # metadata before exec
@@ -2826,7 +2899,6 @@ def session_launch(role, bead, cwd, read_only, owner,
              "-e", f"NOGG_SESSION_AGENT={agent}",
              "-e", f"NOGG_SESSION_ROOT={ROOT}",
              "-e", f"NOGG_OPENSPEC_FENCE={int(openspec_readonly)}",
-             "-e", "NOGG_CODEX_EXTRA_WRITABLE_ROOTS=" + os.environ.get("NOGG_CODEX_EXTRA_WRITABLE_ROOTS", ""),
              "-e", f"NOGG_STARTUP_LOG={log_path}", "--", *inner)
         writer = str((ROOT / "scripts/session-log-writer").resolve())
         max_bytes = int(scfg("session_log_max_bytes", 1048576))
@@ -2913,6 +2985,8 @@ def session_list():
               f"{reconciled_state(rec, live):<8}  {str(rec.get('owner','')):<16}  "
               f"{_agent_display(rec):<8}  "
               f"{_profile_display(rec):<12}  {rec.get('working_dir','')}")
+        for grant in rec.get("agent_state_grants", []):
+            print(f"  agent-state:{grant['agent']} {grant['path']} source={grant['source']}")
 def _profile_display(rec):
     """`session list` PROFILE cell: a session that actually ran with the command
     floor lifted shows as `FULL-ACCESS` (a distinct token, not a profile name);
@@ -4351,6 +4425,7 @@ def main():
     sl = ssub.add_parser("launch")
     sl.add_argument("--role", required=True)
     sl.add_argument("--bead", help="real execution Bead; optional association for planning, absent for orchestrator")
+    sl.add_argument("--agent-state", action="append", default=[], help="grant configured runtime state for this agent")
     sl.add_argument("--planning-id", help="kebab-case identifier required for --role planning")
     sl.add_argument("--description", help="kebab-case planning description required for --role planning")
     sl.add_argument("--cwd"); sl.add_argument("--read-only", action="store_true")
@@ -4426,7 +4501,7 @@ def session_cmd(args):
     if args.session_command == "launch":
         session_launch(args.role, args.bead, args.cwd, args.read_only, args.owner,
                        args.profile, args.prompt, args.full_access, args.agent,
-                       resume=args.resume, kickoff=args.kickoff, planning_id=args.planning_id, description=args.description)
+                       resume=args.resume, kickoff=args.kickoff, planning_id=args.planning_id, description=args.description, agent_state=args.agent_state)
     elif args.session_command == "list":
         session_list()
     elif args.session_command == "attach":
