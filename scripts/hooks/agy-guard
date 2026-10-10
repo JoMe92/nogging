@@ -1,0 +1,110 @@
+#!/usr/bin/env python3
+"""Antigravity 1.3.2 early tool guard, not a hostile-shell sandbox.
+
+Hook cwd is .agents; repository identity and roles come from the owned launch,
+never from model-provided workspacePaths. Unknown tool contracts fail closed.
+"""
+import json
+import os
+from pathlib import Path
+import re
+import shlex
+import sys
+from importlib.machinery import SourceFileLoader
+from functools import lru_cache
+
+
+def floor(command):
+    for pattern in (r'\bsudo\b', r'\bdd\b', r'\bmkfs(?:\.\w+)?\b',
+                    r'\bshutdown\b', r'\breboot\b', r'\bsystemctl\b',
+                    r'\bchown\b', r'\bcurl\b', r'\bwget\b',
+                    r'\bgit\s+filter-branch\b'):
+        if re.search(pattern, command):
+            return True
+    short = lambda char: bool(re.search(r'(^|\s)-[a-zA-Z]*' + char + r'[a-zA-Z]*(\s|$)', command, re.I))
+    if re.search(r'\brm\b', command) and (short('r') or '--recursive' in command) and (short('f') or '--force' in command):
+        return True
+    return bool(re.search(r'\bgit\b', command) and (
+        ('push' in command and (short('f') or '--force' in command)) or
+        ('reset' in command and '--hard' in command) or
+        (re.search(r'\bgit\s+clean\b', command) and (short('f') or '--force' in command))))
+
+
+def decide(payload):
+    bridge = SourceFileLoader('nogg_agy_guard', str(Path(__file__).resolve().parents[1] / 'nogg')).load_module()
+    bridge.canonical_repository_state = lru_cache(maxsize=16)(bridge.canonical_repository_state)
+    cwd = Path(os.environ.get('NOGG_SESSION_WORKING_DIR') or Path(__file__).resolve().parents[2]).resolve()
+    state = bridge.canonical_repository_state(cwd)
+    authority = os.environ.get('NOGG_SESSION_AUTHORITY', 'restricted')
+    if authority not in ('restricted', 'trusted'):
+        raise ValueError('unsupported authority')
+    call = payload['toolCall']
+    name, args = call['name'], call['args']
+    if not isinstance(args, dict):
+        raise ValueError('invalid arguments')
+
+    def check_path(value, base=cwd):
+        if not isinstance(value, str) or not value or '\x00' in value:
+            raise ValueError('missing tool path')
+        protected, allowed = bridge.openspec_tool_decision(base, value)
+        # Standalone calls never acquire an implicit planning role.
+        if protected:
+            if os.environ.get('NOGG_SESSION_ROLE') != 'planning' or not allowed:
+                raise ValueError('OpenSpec write requires own fresh planning lock')
+            local = Path(state['checkout_root']) / '.nogging/locks/openspec.readonly'
+            if local.exists() or local.is_symlink():
+                raise ValueError('local closed sentinel')
+            lock = json.loads((Path(state['locks_dir']) / 'planning.lock').read_text())
+            if (type(lock.get('pid')) is not int or lock['pid'] <= 0
+                    or not isinstance(lock.get('host'), str) or not lock['host'].strip()):
+                raise ValueError('malformed planning lock')
+
+    if name in ('write_to_file', 'replace_file_content'):
+        check_path(args['TargetFile'])
+    elif name == 'run_command':
+        command = args['CommandLine']
+        if not isinstance(command, str) or not command.strip() or floor(command):
+            raise ValueError('invalid command or Nogging command floor')
+        if not isinstance(args.get('Cwd'), str) or not Path(args['Cwd']).is_absolute():
+            raise ValueError('missing absolute shell cwd')
+        base = Path(args['Cwd']).resolve()
+        # Resolve shell cwd too: a foreign/unresolvable checkout is not safe.
+        other = bridge.canonical_repository_state(base)
+        if other['main_checkout'] != state['main_checkout']:
+            raise ValueError('foreign shell repository')
+        tokens = shlex.split(command, posix=True)
+        # Conservative early signal for known shell writes. Reads of task slices
+        # remain available. Dynamic/interpreted writes cannot be fully parsed.
+        reads = {'cat', 'head', 'tail', 'grep', 'wc', 'ls', 'pwd', 'stat'}
+        read_only = bool(tokens) and (tokens[0] in reads or
+            (tokens[0] == 'sed' and len(tokens) >= 4 and tokens[1] == '-n'
+             and re.fullmatch(r'[0-9]+(?:,[0-9$]+)?p', tokens[2])))
+        if re.search(r'[<>]|\$\(|`|\n|[;&|]', command):
+            read_only = False
+        if not read_only:
+            # Check all path-looking arguments, including redirection and inline
+            # interpreter strings; reject dynamic OpenSpec references outright.
+            for token in tokens:
+                for path in re.findall(r"[^\s\"'<>;|=()]+", token):
+                    check_path(path, base)
+            if re.search(r'\bopenspec\b', command):
+                check_path('openspec', base)
+    elif name == 'read_url_content':
+        if not isinstance(args.get('Url'), str) or not re.match(r'^https?://', args['Url']):
+            raise ValueError('invalid URL')
+    elif name not in ('view_file', 'list_dir', 'find_by_name', 'grep_search'):
+        raise ValueError('unsupported tool contract')
+    return {'decision': 'allow' if authority == 'trusted' else 'force_ask',
+            'reason': 'Nogging guard passed; restricted calls require review'}
+
+
+def main():
+    try:
+        result = decide(json.load(sys.stdin))
+    except Exception:
+        result = {'decision': 'deny', 'reason': 'Nogging: malformed or unsupported tool, command floor, or unresolved/closed OpenSpec boundary'}
+    print(json.dumps(result))
+
+
+if __name__ == '__main__':
+    main()
