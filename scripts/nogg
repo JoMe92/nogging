@@ -2913,8 +2913,10 @@ def session_launch(role, bead, cwd, read_only, owner,
         # selection existed (no `--agent` argument).
         effective_path = sdir / f"{name}.settings.json"
         # The Nogging-only keys never reach Claude; strip them from the copy.
+        # So does the profile `model`: the selected model travels only as the
+        # `--model` argv element, never as a second settings value.
         base_settings = {k: v for k, v in source_settings.items()
-                         if k not in ("//", "nogging_floor", "nogging_openspec_readonly")}
+                         if k not in ("//", "nogging_floor", "nogging_openspec_readonly", "model")}
         base_settings = merge_supervised_launch_permissions(base_settings, role_meta)
         settings_out = base_settings if floor_lifted else merge_floor(base_settings)
         if openspec_readonly:
@@ -3039,6 +3041,11 @@ def session_launch(role, bead, cwd, read_only, owner,
         "antigravity_initial_turn": agent == "antigravity",
         "planning_id": planning_id, "description": description,
         "agent_state_grants": grants,
+        # Requested model and where it came from (`launch`, `profile`, or
+        # `runtime-default` with a null model: the runtime picks, and Nogging
+        # does not guess which model that is).
+        "requested_model": selected_model, "model_source": model_source,
+        "reasoning_effort": reasoning_effort,
         "session_pid": None, "session_pid_start": None,
     }
     write_session(rec_path, record)                       # metadata before exec
@@ -3133,14 +3140,17 @@ def session_list():
         print("no managed sessions"); return
     live = tmux_sessions()
     hdr = (f"{'NAME':<40}  {'BEAD':<10}  {'ROLE':<24}  {'STARTED':<20}  "
-           f"{'STATE':<8}  {'OWNER':<16}  {'AGENT':<8}  {'PROFILE':<12}  WORKING_DIR")
+           f"{'STATE':<8}  {'OWNER':<16}  {'AGENT':<8}  {'PROFILE':<12}  "
+           f"{'MODEL':<24}  {'MODEL_SOURCE':<15}  WORKING_DIR")
     print(hdr)
     for _, rec in recs:
         print(f"{rec.get('name',''):<40}  {(rec.get('bead_id') or '-'):<10}  "
               f"{rec.get('role',''):<24}  {rec.get('started_at',''):<20}  "
               f"{reconciled_state(rec, live):<8}  {str(rec.get('owner','')):<16}  "
               f"{_agent_display(rec):<8}  "
-              f"{_profile_display(rec):<12}  {rec.get('working_dir','')}")
+              f"{_profile_display(rec):<12}  "
+              f"{_model_display(rec):<24}  {(rec.get('model_source') or '-'):<15}  "
+              f"{rec.get('working_dir','')}")
         for grant in rec.get("agent_state_grants", []):
             print(f"  agent-state:{grant['agent']} {grant['path']} source={grant['source']}")
 def _profile_display(rec):
@@ -3153,6 +3163,17 @@ def _profile_display(rec):
         return "FULL-ACCESS"
     p = rec.get("profile")
     return p if (p and p != "restricted") else "-"
+def _model_display(rec):
+    """`session list` MODEL cell: the requested model, `runtime-default` when
+    none was requested (the effective model is the runtime's choice and is not
+    invented here), with a ` effort=<level>` suffix for a Codex reasoning
+    effort. A record from before model selection was recorded shows `-`."""
+    if "model_source" not in rec:
+        return "-"
+    shown = rec.get("requested_model") or "runtime-default"
+    if rec.get("reasoning_effort"):
+        shown += f" effort={rec['reasoning_effort']}"
+    return shown
 def _agent_display(rec):
     """`session list` AGENT cell: a record written before this column existed
     has no `agent` key and shows `claude`, the historical default."""
