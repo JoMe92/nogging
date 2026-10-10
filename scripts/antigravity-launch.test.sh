@@ -113,7 +113,7 @@ with tempfile.TemporaryDirectory() as tmp:
         def tmux(*args,**kwargs):
             calls.append(args)
             return subprocess.CompletedProcess(args,0,'','')
-        with patch.object(m,'bead_exists',return_value=True), patch.object(m,'unmet_dependencies',return_value=[]), patch.object(m,'tmux',side_effect=tmux), patch.object(m,'tmux_sessions',return_value=set()), patch.object(m,'tmux_has_session',return_value=False):
+        with patch.object(m,'bead_records',return_value=[{'id':'SPEC-test','labels':[]}]), patch.object(m,'unmet_dependencies',return_value=[]), patch.object(m,'tmux',side_effect=tmux), patch.object(m,'tmux_sessions',return_value=set()), patch.object(m,'tmux_has_session',return_value=False):
             # Missing guard and failed trust must cause zero tmux interactions.
             hooks.unlink()
             refused(lambda: m.session_launch('lead','SPEC-test',str(linked),False,None,agent='agy'),'guard')
