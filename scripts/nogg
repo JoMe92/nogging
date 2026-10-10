@@ -2661,8 +2661,6 @@ def session_launch(role, bead, cwd, read_only, owner,
     the operator directs (see .nogging/session-launch-prompt.md)."""
     if os.environ.get("NOGG_CODEX_EXTRA_WRITABLE_ROOTS"):
         session_state_grants(None)
-    records = bead_records(bead) if bead else []
-    grants = session_state_grants(bead, agent_state, records)
     agent = resolve_agent(agent)
     role_meta, role_slug = normalize_role(role)
     is_orchestrator = role_meta == "orchestrator"
@@ -2724,6 +2722,8 @@ def session_launch(role, bead, cwd, read_only, owner,
         floor_lifted = source_settings.get("nogging_floor") is False
         if source_settings.get("nogging_openspec_readonly") is False:
             openspec_readonly = False
+    records = bead_records(bead) if bead else []
+    grants = session_state_grants(bead, agent_state, records)
     if not is_orchestrator and bead and not records:
         raise RuntimeError(f"Bead {bead} does not exist; launch refused")
     if not is_orchestrator and not is_planning:

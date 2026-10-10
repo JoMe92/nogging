@@ -35,7 +35,7 @@ with tempfile.TemporaryDirectory() as tmp:
         for bad in ['~/', '/etc', 'relative', '~unknown-agent-user/state', '~/missing', '~/escape']:
             m.CFG['agent_state_roots']={'antigravity':[bad]}
             with patch.object(m,'bead_records',return_value=[]), patch.object(m,'tmux') as tmux:
-                try: m.session_launch('planning',None,None,False,None,agent_state=['antigravity'])
+                try: m.session_launch('lead','SPEC-test',str(m.ROOT),False,None,agent_state=['antigravity'])
                 except RuntimeError as exc: assert 'agent_state_roots' in str(exc)
                 else: raise AssertionError('invalid grant reached launch')
                 tmux.assert_not_called()
