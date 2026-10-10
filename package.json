@@ -22,6 +22,7 @@
     "bin/lib/systemd.js",
     "templates/agents-block.md",
     "templates/claude-block.md",
+    "templates/claude/orchestrator-permissions.example.json",
     "templates/nogging-config.json",
     "templates/openspec-project.md",
     "templates/systemd/nogg-orchestrator.service.tmpl",
