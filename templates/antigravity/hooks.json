@@ -1,0 +1,12 @@
+{
+  "nogging-guard": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {"type": "command", "command": "python3 ../scripts/hooks/agy-guard", "timeout": 10}
+        ]
+      }
+    ]
+  }
+}
