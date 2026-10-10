@@ -8,6 +8,13 @@ fi
 python3 - "$root" <<'PY'
 import datetime, json, os, pathlib, shutil, socket, subprocess, sys, tarfile, tempfile, time, uuid
 
+# This test asserts real read-only mounts, so never substitute a fake fence.
+# Match the dedicated sandbox test on hosts that prohibit user namespaces.
+probe = subprocess.run(['unshare', '--user', '--map-root-user', '--mount', 'true'],
+                       capture_output=True)
+if probe.returncode:
+    print('SKIP: packed live fence launch (host denies Linux user/mount namespaces; production execution must refuse)')
+    sys.exit(0)
 source = pathlib.Path(sys.argv[1])
 with tempfile.TemporaryDirectory(prefix="nogg packed launch ") as directory:
     scratch = pathlib.Path(directory)
