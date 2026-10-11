@@ -32,8 +32,9 @@ with tempfile.TemporaryDirectory(prefix="nogg packed launch ") as directory:
         consumer.mkdir()
         subprocess.run(["git", "init", "-q", str(consumer)], check=True)
         env = os.environ.copy()
-        env.pop("NOGGING_ROOT", None)
-        env.pop("NOGG_SESSION_NAME", None)
+        for k in list(env.keys()):
+            if k.startswith("NOGG_") or k == "NOGGING_ROOT":
+                env.pop(k, None)
         install = ["node", str(package / "bin/cli.js")]
         flags = ["--no-beads", "--no-hooks", "--no-systemd"]
         subprocess.run(install + ["init"] + flags, cwd=consumer, env=env,
@@ -53,7 +54,25 @@ with tempfile.TemporaryDirectory(prefix="nogg packed launch ") as directory:
         binaries.mkdir()
         arguments.mkdir()
         bd = binaries / "bd"
-        bd.write_text('#!/bin/sh\ncase "$1" in show) echo \'[{"id":"SPEC-packed"}]\';; dep|list) echo "[]";; *) exit 1;; esac\n')
+        bd_script = '''#!/bin/sh
+case "$1" in
+  show)
+    case "$2" in
+      SPEC-blocked) echo '[{"id":"SPEC-blocked","labels":["openspec:change:test-change","openspec:task:TASK-BLOCKED"]}]' ;;
+      SPEC-ready)   echo '[{"id":"SPEC-ready","labels":["openspec:change:test-change","openspec:task:TASK-READY"]}]' ;;
+      *)            echo '[{"id":"'"$2"'","labels":["openspec:change:test-change","openspec:task:TASK-TEST"]}]' ;;
+    esac ;;
+  dep)
+    case "$3" in
+      SPEC-blocked) echo '[{"id":"SPEC-blocker","status":"open"}]' ;;
+      SPEC-ready)   echo '[{"id":"SPEC-blocker","status":"closed"}]' ;;
+      *)            echo '[]' ;;
+    esac ;;
+  list) echo '[]' ;;
+  *) exit 1 ;;
+esac
+'''
+        bd.write_text(bd_script)
         bd.chmod(0o755)
         runtime = '''#!/usr/bin/env python3
 import json, os, pathlib, sys, time
@@ -93,11 +112,83 @@ while True:
             "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat()}))
         owner_lock_bytes = planning_lock.read_bytes()
         try:
+            # #37: Blocked Bead launch is refused before tmux session or record creation
+            res_blocked = subprocess.run([str(nogg), "session", "launch", "--role", "lead",
+                                          "--bead", "SPEC-blocked", "--agent", "claude"],
+                                         cwd=consumer, env=env, text=True, capture_output=True, timeout=10)
+            assert res_blocked.returncode != 0
+            assert "SPEC-blocked has an unmet dependency on SPEC-blocker" in (res_blocked.stdout + res_blocked.stderr)
+            assert not any("spec-blocked" in p.name.lower() for p in (consumer / ".nogging/state/sessions").glob("*.json"))
+
+            # #37 & #39: Ready Bead launch with --kickoff succeeds and suppresses missing-kickoff hint
+            res_ready = subprocess.run([str(nogg), "session", "launch", "--role", "lead",
+                                        "--bead", "SPEC-ready", "--agent", "claude", "--kickoff"],
+                                       cwd=consumer, env=env, text=True, capture_output=True, timeout=10)
+            assert res_ready.returncode == 0, res_ready.stderr
+            assert "this session will not act until you send it a first message" not in res_ready.stdout
+            ready_recs = [json.loads(p.read_text()) for p in (consumer / ".nogging/state/sessions").glob("*.json")
+                          if not p.name.endswith(".settings.json") and "spec-ready" in p.name.lower()
+                          and json.loads(p.read_text()).get("state") == "running"]
+            assert len(ready_recs) == 1
+            subprocess.run([str(nogg), "session", "stop", ready_recs[0]["name"]],
+                           cwd=consumer, env=env, stdout=subprocess.DEVNULL, check=True, timeout=10)
+            subprocess.run([str(nogg), "session", "cleanup", ready_recs[0]["name"]],
+                           cwd=consumer, env=env, stdout=subprocess.DEVNULL, check=True, timeout=10)
+
+            # #40 & #38: Full-access launch verifies bypassPermissions, skipDangerousMode disclaimer,
+            # deny preservation, and suppresses restricted/manual-mode warning
+            res_full = subprocess.run([str(nogg), "session", "launch", "--role", "lead",
+                                       "--bead", "SPEC-ready", "--agent", "claude", "--full-access"],
+                                      cwd=consumer, env=env, text=True, capture_output=True, timeout=10)
+            assert res_full.returncode == 0, res_full.stderr
+            assert "launched in restricted/manual mode" not in res_full.stdout
+            full_recs = [json.loads(p.read_text()) for p in (consumer / ".nogging/state/sessions").glob("*.json")
+                         if not p.name.endswith(".settings.json") and "spec-ready" in p.name.lower()
+                         and json.loads(p.read_text()).get("state") == "running"]
+            assert len(full_recs) == 1
+            full_rec = full_recs[0]
+            assert full_rec["profile"] == "trusted"
+            settings = json.loads(pathlib.Path(full_rec["effective_settings_path"]).read_text())
+            assert settings["permissions"]["defaultMode"] == "bypassPermissions"
+            assert settings.get("skipDangerousModePermissionPrompt") is True
+            deny = settings["permissions"].get("deny", [])
+            assert any("sudo" in d for d in deny)
+            assert any("rm -rf" in d for d in deny)
+            subprocess.run([str(nogg), "session", "stop", full_rec["name"]],
+                           cwd=consumer, env=env, stdout=subprocess.DEVNULL, check=True, timeout=10)
+            subprocess.run([str(nogg), "session", "cleanup", full_rec["name"]],
+                           cwd=consumer, env=env, stdout=subprocess.DEVNULL, check=True, timeout=10)
+
+            # #37 & #40: Orchestrator launch is Bead-less, runs FULL-ACCESS with lifted floor
+            res_orc = subprocess.run([str(nogg), "session", "launch", "--role", "orchestrator",
+                                      "--profile", "orchestrator", "--agent", "claude"],
+                                     cwd=consumer, env=env, text=True, capture_output=True, timeout=10)
+            assert res_orc.returncode == 0, res_orc.stderr
+            assert "launched in restricted/manual mode" not in res_orc.stdout
+            orc_recs = [json.loads(p.read_text()) for p in (consumer / ".nogging/state/sessions").glob("nogg-orchestrator-*.json")
+                        if not p.name.endswith(".settings.json")]
+            assert len(orc_recs) == 1
+            orc_rec = orc_recs[0]
+            assert orc_rec["role"] == "orchestrator"
+            assert orc_rec.get("floor_lifted") is True
+            orc_settings = json.loads(pathlib.Path(orc_rec["effective_settings_path"]).read_text())
+            assert orc_settings["permissions"]["defaultMode"] == "bypassPermissions"
+            assert orc_settings.get("skipDangerousModePermissionPrompt") is True
+            orc_deny = orc_settings["permissions"].get("deny", [])
+            assert not any("sudo" in d for d in orc_deny)
+            subprocess.run([str(nogg), "session", "stop", orc_rec["name"]],
+                           cwd=consumer, env=env, stdout=subprocess.DEVNULL, check=True, timeout=10)
+            subprocess.run([str(nogg), "session", "cleanup", orc_rec["name"]],
+                           cwd=consumer, env=env, stdout=subprocess.DEVNULL, check=True, timeout=10)
+
             for agent in ("claude", "codex", "pi"):
                 result = subprocess.run([str(nogg), "session", "launch", "--role", "lead",
                                          "--bead", "SPEC-packed", "--agent", agent],
                                         cwd=consumer, env=env, text=True, capture_output=True, timeout=10)
                 assert result.returncode == 0, result.stderr
+                # #38 & #39: bare lead launch emits restricted/manual mode warning and explicit kickoff hint
+                assert "launched in restricted/manual mode" in result.stdout
+                assert "this session will not act until you send it a first message" in result.stdout
                 deadline = time.monotonic() + 5
                 received = arguments / agent
                 while not received.exists():
@@ -112,10 +203,14 @@ while True:
                 records = [json.loads(p.read_text()) for p in
                            (consumer / ".nogging/state/sessions").glob("*.json")
                            if not p.name.endswith(".settings.json")]
-                active = [record for record in records if record["agent"] == agent]
+                active = [record for record in records if record["agent"] == agent and record["state"] == "running"]
                 assert len(active) == 1 and active[0]["state"] == "running"
                 record = active[0]
                 assert pathlib.Path(record["log_path"]).is_file()
+                # #39: explicit kickoff on active session
+                kick = subprocess.run([str(nogg), "session", "kickoff", record["name"]],
+                                      cwd=consumer, env=env, text=True, capture_output=True, timeout=10)
+                assert kick.returncode == 0, kick.stderr
                 subprocess.run([str(nogg), "session", "stop", record["name"]],
                                cwd=consumer, env=env, stdout=subprocess.DEVNULL, check=True, timeout=10)
                 subprocess.run([str(nogg), "session", "cleanup", record["name"]],
