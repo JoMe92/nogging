@@ -37,6 +37,10 @@ class StoreError(RuntimeError):
     pass
 
 
+class StoreUnavailable(StoreError):
+    """Dolt could not run; retain pending facts and retry (unlike a conflict)."""
+
+
 def canonical_json(value):
     return json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=True, allow_nan=False)
 
@@ -106,11 +110,14 @@ class Store:
                 os.umask(old)
 
     def _dolt(self, *args, sql=None):
-        result = subprocess.run(['dolt', *args], cwd=self.database, input=sql,
-                                text=True, capture_output=True, timeout=120)
+        try:
+            result = subprocess.run(['dolt', *args], cwd=self.database, input=sql,
+                                    text=True, capture_output=True, timeout=120)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise StoreUnavailable('local Dolt could not run; usage evidence must remain pending') from exc
         if result.returncode:
             # Do not echo SQL payloads or possible credential-bearing diagnostics.
-            raise StoreError('local Dolt operation failed; usage evidence must remain pending')
+            raise StoreUnavailable('local Dolt operation failed; usage evidence must remain pending')
         return result.stdout
 
     def query(self, sql):
@@ -196,15 +203,23 @@ class Store:
             self.check_schema()
             statements = []
             seen = {}
-            for source, device_id in (owners or {}).items():
+            owners = owners or {}
+            for source, device_id in owners.items():
                 if not isinstance(source, str) or not source or len(source) > 512:
                     raise StoreError('invalid source identity')
                 uuid.UUID(device_id)
-                existing = self.query(f'SELECT device_id FROM source_owners WHERE source_id={literal(source)}')
-                if existing and existing[0]['device_id'] != device_id:
+            # One query per table (not per fact) keeps large batches bounded.
+            existing = {}
+            if owners:
+                existing = {row['source_id']: row['device_id'] for row in self.query(
+                    'SELECT source_id, device_id FROM source_owners WHERE source_id IN (%s)'
+                    % ', '.join(literal(source) for source in owners))}
+            for source, device_id in owners.items():
+                if source in existing and existing[source] != device_id:
                     raise StoreError('source ownership conflict; explicit ownership transfer required')
-                if not existing:
+                if source not in existing:
                     statements.append(f'INSERT INTO source_owners VALUES ({literal(source)}, {literal(device_id)})')
+            candidates = {}
             for table, identity, content, data in prepared:
                 key = (table, identity)
                 order = (table, data['source_id'], data['event_id'], data['source_ordinal'])
@@ -216,16 +231,24 @@ class Store:
                     raise StoreError('ambiguous source revision ordinal in batch')
                 seen[key] = content
                 seen[order] = identity
-                rows = self.query(f'SELECT fact_id, content_hash FROM {table} WHERE fact_id={literal(identity)} '
-                    f'OR (source_id={literal(data["source_id"])} AND event_id={literal(data["event_id"])} '
-                    f'AND source_ordinal={data["source_ordinal"]})')
-                if rows:
-                    if len(rows) != 1 or rows[0]['fact_id'] != identity or rows[0]['content_hash'] != content:
-                        raise StoreError('conflicting fact revision or source ordinal; retain evidence for recovery')
-                    continue
-                columns = ['fact_id', 'content_hash'] + sorted(data)
-                values = [identity, content] + [canonical_json(data[k]) if k in JSON_FIELDS and data[k] is not None else data[k] for k in sorted(data)]
-                statements.append(f'INSERT INTO {table} ({", ".join("`"+k+"`" for k in columns)}) VALUES ({", ".join(map(literal, values))})')
+                candidates.setdefault(table, []).append((identity, content, data))
+            for table, items in candidates.items():
+                clauses = [f'fact_id={literal(identity)} OR (source_id={literal(data["source_id"])} AND '
+                           f'event_id={literal(data["event_id"])} AND source_ordinal={data["source_ordinal"]})'
+                           for identity, _, data in items]
+                rows = self.query(f'SELECT fact_id, content_hash, source_id, event_id, source_ordinal FROM {table} '
+                                  f'WHERE {" OR ".join(clauses)}')
+                for identity, content, data in items:
+                    matches = [r for r in rows if r['fact_id'] == identity or (
+                        r['source_id'] == data['source_id'] and r['event_id'] == data['event_id']
+                        and int(r['source_ordinal']) == data['source_ordinal'])]
+                    if matches:
+                        if len(matches) != 1 or matches[0]['fact_id'] != identity or matches[0]['content_hash'] != content:
+                            raise StoreError('conflicting fact revision or source ordinal; retain evidence for recovery')
+                        continue
+                    columns = ['fact_id', 'content_hash'] + sorted(data)
+                    values = [identity, content] + [canonical_json(data[k]) if k in JSON_FIELDS and data[k] is not None else data[k] for k in sorted(data)]
+                    statements.append(f'INSERT INTO {table} ({", ".join("`"+k+"`" for k in columns)}) VALUES ({", ".join(map(literal, values))})')
             if statements:
                 # One CLI process/connection; failed transaction never advances a checkpoint.
                 self._dolt('sql', sql='SET autocommit=0; START TRANSACTION;\n' + ';\n'.join(statements) + ';\nCOMMIT;')

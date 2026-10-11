@@ -3074,6 +3074,170 @@ def usage_module():
     return module
 _USAGE_PENDING = {}
 
+def usage_collection_module():
+    """Load the host usage collector from scripts/lib beside this script."""
+    lib = str(Path(__file__).resolve().parent / "lib")
+    if lib not in sys.path:
+        sys.path.insert(0, lib)
+    sys.dont_write_bytecode = True
+    import token_usage_collect
+    return token_usage_collect
+def boot_id():
+    try:
+        return Path("/proc/sys/kernel/random/boot_id").read_text().strip() or None
+    except OSError:
+        return None
+def usage_now():
+    """Sub-second UTC time for usage segment boundaries (now() is whole seconds)."""
+    return dt.datetime.now(dt.timezone.utc).isoformat(timespec="microseconds")
+def monotonic_ms():
+    return time.monotonic_ns() // 1000000
+def usage_source(rec):
+    """The exact runtime source for a supervised record, or None if unproven.
+    Paths are derived from host-validated identities, never from agent input."""
+    agent = rec.get("agent") or "claude"
+    if agent == "claude" and rec.get("claude_session_id"):
+        d = Path.home() / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(rec.get("working_dir")))
+        return {"runtime": "claude", "id": rec["claude_session_id"], "path": str(d / f"{rec['claude_session_id']}.jsonl")}
+    if agent == "codex":
+        thread = resolve_codex_thread_id(rec, merge=True)
+        if thread:
+            matches = [p for p in _codex_rollout_files() if p.name.endswith(f"-{thread}.jsonl")]
+            return {"runtime": "codex", "id": thread, "path": str(matches[0]) if len(matches) == 1 else None}
+        return None
+    if agent == "antigravity" and rec.get("antigravity_conversation_id"):
+        return {"runtime": "antigravity", "id": rec["antigravity_conversation_id"]}
+    return None
+def collect_session_usage(recs, final=False, budget=None, lock_timeout=None):
+    """Host collection for supervised records. Usage failures never fail the
+    caller's session operation; with `final`, failure to make evidence durable
+    raises so cleanup can refuse instead of losing the only evidence."""
+    try:
+        collect = usage_collection_module()
+    except ImportError:
+        # Older payload without the collector: nothing is deleted by retiring a
+        # record (sources and the record itself remain), so never block on it.
+        print("NOTE: usage collector is not installed; run Nogging update", file=sys.stderr)
+        return None
+    try:
+        store = collect_store()
+        live = tmux_sessions()
+        # Resolve (and persist) exact sources before reading the segment list,
+        # so a just-discovered Codex thread already includes this record.
+        sources = [usage_source(rec) for rec in recs]
+        all_recs = [r for _, r in session_records()]
+        targets = []
+        for rec, source in zip(recs, sources):
+            segments = []
+            if source:
+                segments = [(collect.segment_id(r), collect.segment_start(r)) for r in all_recs
+                            if usage_source_key(r) == (source["runtime"], source["id"])]
+            targets.append({"record": rec, "source": source, "segments": segments,
+                            "live": rec.get("state") in SESSION_ACTIVE_STATES and rec.get("name") in live})
+        if budget is None:
+            budget = float(scfg("token_usage_drain_seconds", 20))
+        if lock_timeout is None:
+            lock_timeout = 60.0 if final else 5.0
+        report = collect.Collector(store).collect(targets, budget_seconds=budget, lock_timeout=lock_timeout)
+        if report.get("error"):
+            print(f"NOTE: usage facts are retained pending import ({report['error']}); see `nogg doctor`",
+                  file=sys.stderr)
+        return report
+    except Exception as exc:  # usage accounting must not fail the session operation
+        if final and exc.__class__.__name__ == "CollectorBusy":
+            raise RuntimeError("another usage collection pass is running; retry cleanup shortly") from exc
+        if final:
+            raise RuntimeError(f"usage evidence could not be made durable ({exc.__class__.__name__}: "
+                               f"{redact(str(exc))}); fix the owner-only usage state under "
+                               ".nogging/state/token-usage/ (see `nogg doctor`) and retry") from exc
+        print(f"NOTE: usage collection skipped ({exc.__class__.__name__}); see `nogg doctor`", file=sys.stderr)
+        return None
+def collect_store():
+    collect = usage_collection_module()
+    return collect.Store(ROOT, canonical_repository_state)
+COMPLEXITY_VOCABULARY_VERSION = "1"   # routine/standard/complex + unknown, Product Owner confirmed
+def complexity_snapshot(tier, explicit):
+    """(complexity, source) for usage attribution. An explicit --complexity that
+    disagrees with the selection tier refuses; absence stays `unknown` and is
+    never inferred from the model."""
+    if explicit is not None and explicit not in MODEL_SELECTION_TIERS:
+        raise RuntimeError(f"--complexity must be one of {', '.join(MODEL_SELECTION_TIERS)}; launch refused")
+    if tier is not None and explicit is not None and tier != explicit:
+        raise RuntimeError(f"--complexity {explicit} disagrees with selection tier {tier}; pass a "
+                           f"matching --complexity or drop one of them; launch refused")
+    if tier is not None:
+        return tier, "selection_tier"
+    if explicit is not None:
+        return explicit, "launch"
+    return "unknown", "absent"
+def launch_attribution(record, bead_recs, complexity, complexity_source, tier_selection, resume):
+    """Snapshot the launch attribution boundary. Later Bead or table edits never
+    rewrite it; an exact tier resume keeps the recorded selection provenance."""
+    labels = [l for r in bead_recs for l in (r.get("labels") or []) if isinstance(l, str)]
+    def label(prefix):
+        values = [l[len(prefix):] for l in labels if l.startswith(prefix)]
+        return values[0] if len(values) == 1 else None
+    version = digest = None
+    if tier_selection and resume:
+        prior = [r for _, r in session_records() if r.get("usage_attribution")
+                 and usage_source_key(r) == (record.get("agent"), resume)]
+        if prior:
+            version = prior[-1]["usage_attribution"][0].get("selection_version")
+            digest = prior[-1]["usage_attribution"][0].get("selection_hash")
+    elif tier_selection:
+        try:
+            raw = (ROOT / MODEL_SELECTION_PATH).read_bytes()
+            version = json.loads(raw).get("table_version")
+            digest = "sha256:" + hashlib.sha256(raw).hexdigest()
+        except (OSError, ValueError):
+            pass
+    return {"at": record.get("usage_started_at") or record["started_at"], "task_id": label("openspec:task:"),
+            "bead_id": record.get("bead_id"), "change_id": label("openspec:change:"),
+            "planning_id": record.get("planning_id"), "role": record.get("role"),
+            "complexity": complexity, "complexity_source": complexity_source,
+            "vocabulary_version": COMPLEXITY_VOCABULARY_VERSION,
+            "requested_model": record.get("requested_model"), "model_source": record.get("model_source"),
+            "configured_effort": record.get("reasoning_effort"),
+            "selection_version": version, "selection_hash": digest}
+def usage_source_key(rec):
+    """(runtime, conversation) without discovery side effects."""
+    agent = rec.get("agent") or "claude"
+    key = {"claude": "claude_session_id", "codex": "codex_thread_id",
+           "antigravity": "antigravity_conversation_id"}.get(agent)
+    return (agent, rec.get(key)) if key and rec.get(key) else None
+def refresh_session_usage(recs):
+    """Bounded refresh for live supervision passes: at most once per
+    `token_usage_refresh_seconds` (default 300) per session."""
+    interval = float(scfg("token_usage_refresh_seconds", 300))
+    if interval <= 0 or not recs:
+        return None
+    marker = data_dir(sessions_dir()) / ".usage-refresh.json"
+    try:
+        stamps = json.loads(marker.read_text())
+    except (OSError, ValueError):
+        stamps = {}
+    if not isinstance(stamps, dict):
+        stamps = {}
+    def last(name):
+        try:
+            return float(stamps.get(name, 0))
+        except (TypeError, ValueError):
+            return 0.0
+    now_s = time.time()
+    due = [r for r in recs if now_s - last(r.get("name")) >= interval]
+    if not due:
+        return None
+    report = collect_session_usage(due, budget=float(scfg("token_usage_refresh_drain_seconds", 5)),
+                                   lock_timeout=0)
+    if report is not None:
+        stamps.update({r.get("name"): now_s for r in due})
+        try:
+            temp = marker.with_name(f".usage-refresh.{os.getpid()}.tmp")
+            temp.write_text(json.dumps(stamps))
+            os.replace(temp, marker)
+        except OSError:
+            pass   # only rate limiting is lost; collection itself is idempotent
+    return report
 def usage_gate_admission(role_meta, agent, records, ignore):
     """Admit or refuse a launch against the `usage_gate` config.
 
@@ -3152,7 +3316,7 @@ def _session_launch(role, bead, cwd, read_only, owner,
                    profile=None, prompt=None, full_access=False, agent=None,
                    resume=None, kickoff=False, planning_id=None, description=None,
                    model=None, agent_state=(), tier=None, effort=None,
-                   ignore_usage_gate=False):
+                   ignore_usage_gate=False, complexity=None):
     """Start a supervised agent session for a Bead.
 
     `resume` names the exact prior conversation: Claude uses `--resume <id>`;
@@ -3177,6 +3341,9 @@ def _session_launch(role, bead, cwd, read_only, owner,
     # `--tier` resolves the model-selection table right after the agent and
     # before anything else, so every refusal precedes all side effects.
     tier_selection = resolve_launch_tier(tier, agent, resume) if tier is not None else None
+    # Complexity is snapshotted for usage attribution only; it never selects a
+    # model. A disagreement with the tier refuses before any side effect.
+    complexity, complexity_source = complexity_snapshot(tier_selection and tier_selection["tier"], complexity)
     role_meta, role_slug = normalize_role(role)
     is_orchestrator = role_meta == "orchestrator"
     is_planning = role_meta == "planning"
@@ -3439,7 +3606,13 @@ def _session_launch(role, bead, cwd, read_only, owner,
         "selection_tier_effort": tier_effort,
         "usage_gate": usage_gate,
         "session_pid": None, "session_pid_start": None,
+        # Usage attribution snapshot (session-token-usage-tracking): each launch,
+        # including an exact resume, is a new runtime segment.
+        "usage_segment_id": str(uuid.uuid4()), "usage_started_at": usage_now(),
+        "usage_boot_id": boot_id(), "usage_monotonic_start_ms": monotonic_ms(),
     }
+    record["usage_attribution"] = [launch_attribution(record, records, complexity, complexity_source,
+                                                      tier_selection, resume)]
     write_session(rec_path, record)                       # metadata before exec
     token = usage_gate.get("reservation_id")
     if token:
@@ -3519,6 +3692,26 @@ def reconciled_state(rec, live):
     if state in SESSION_ACTIVE_STATES and rec.get("name") not in live:
         return "failed"
     return state
+def usage_collection_notes():
+    """Advisory usage-collection health from the local collector status file:
+    a store outage, pending spool or quarantined conflicts. Never a FAIL, and
+    it never touches the usage store itself."""
+    try:
+        state = Path(canonical_repository_state(ROOT)["state_dir"]) / "token-usage/collector"
+        status = json.loads((state / "status.json").read_text())
+    except (OSError, ValueError, KeyError, RuntimeError, ToolError):
+        return []
+    notes = []
+    if status.get("last_error"):
+        notes.append(f"usage collection: {status['last_error']} (last pass {status.get('last_collection_at')}, "
+                     f"last success {status.get('last_success_at') or 'never'}); facts stay spooled and import "
+                     "on the next host pass")
+    if status.get("spooled_batches"):
+        notes.append(f"usage collection: {status['spooled_batches']} spooled batch(es) pending import under {state}/spool")
+    if status.get("quarantined_batches"):
+        notes.append(f"usage collection: {status['quarantined_batches']} conflicting batch(es) retained under "
+                     f"{state}/quarantine for owner review; they are never imported automatically")
+    return notes
 def blocked_running_sessions_notes():
     """NOTE per currently `running` Lead/specialist session whose Bead now has
     an unmet dependency — the retroactive case: a dependency recorded against
@@ -3614,6 +3807,7 @@ def session_reap():
                        exit_reason="tmux session vanished during a reap")
             reaped.append(rec.get("name"))
     if reaped:
+        collect_session_usage([r for _, r in session_records() if r.get("name") in reaped], budget=5)
         print(f"reaped {len(reaped)} vanished session(s): {', '.join(reaped)}")
         print("run `session cleanup` to retire them")
     else:
@@ -3638,8 +3832,16 @@ def session_cleanup(name, reap=False):
         if not targets:
             print("no terminal sessions to clean up"); return
     live = tmux_sessions()
+    refused = []
     for path, rec in targets:
         nm = rec.get("name")
+        try:
+            # Persist (or durably spool) the attribution and source evidence
+            # before the record retires; refuse rather than lose it.
+            collect_session_usage([rec], final=True)
+        except RuntimeError as exc:
+            refused.append(f"{nm}: cleanup refused: {exc}")
+            continue
         if nm in live:
             tmux("kill-session", "-t", nm, check=False)
         release_planning_lock(session_record=rec)
@@ -3651,6 +3853,8 @@ def session_cleanup(name, reap=False):
         if tmux_sessions():
             tmux("kill-server", check=False)
             print("no active sessions remain; Nogging tmux server stopped")
+    if refused:
+        raise RuntimeError("\n".join(refused))
 def session_stop(name, reason):
     """Interrupt the Claude process, terminate the pane/session after a grace
     period, and record a terminal state. Idempotent: a second stop on an
@@ -3669,8 +3873,10 @@ def session_stop(name, reason):
             time.sleep(0.2)
         if tmux_has_session(name):
             tmux("kill-session", "-t", name, check=False)      # hard terminate
-    transition(path, rec, "stopped", exit_reason=(reason or "stopped by operator"))
+    transition(path, rec, "stopped", exit_reason=(reason or "stopped by operator"),
+               usage_monotonic_end_ms=monotonic_ms(), usage_end_boot_id=boot_id())
     print(f"stopped {name} (reason: {rec['exit_reason']})")
+    collect_session_usage([rec], budget=0)                # spool-only final flush; never fails the stop
 def session_attach(name, read_only):
     """Attach the operator's terminal to a managed tmux session. This is the
     only subcommand that attaches; it is never invoked as a side effect."""
@@ -3875,11 +4081,14 @@ def watch_poll_once(tracked, stall_secs, fmt):
     unchanged for `stall_secs`. Factored out of `session_watch`'s loop so it
     is testable without a real `sleep`."""
     live = tmux_sessions()
+    running = []
     for name, st in tracked.items():
         try:
             _, rec = load_session(name)
         except RuntimeError:
             continue
+        if rec.get("state") in SESSION_ACTIVE_STATES and name in live:
+            running.append(rec)
         state, pane = classify_session(rec, live)
         prev = st.get("state")
         if state != prev:
@@ -3895,6 +4104,7 @@ def watch_poll_once(tracked, stall_secs, fmt):
             if log_path.exists() and (time.time() - log_path.stat().st_mtime) >= stall_secs:
                 _emit_watch_event(fmt, name, "stalled")
                 st["stalled"] = True
+    refresh_session_usage(running)   # bounded host usage refresh; never fails the watch
 def session_watch(names, interval, stall_after, fmt, once=False):
     stall_secs = parse_duration(stall_after)
     tracked = {name: {"state": None, "stalled": False} for name in _watch_targets(names)}
@@ -4035,7 +4245,7 @@ def _codex_rollout_session_meta(path):
     payload = line.get("payload") or {}
     thread_id, cwd, ts = payload.get("id"), payload.get("cwd"), payload.get("timestamp")
     return (thread_id, cwd, ts) if (thread_id and cwd and ts) else None
-def resolve_codex_thread_id(rec):
+def resolve_codex_thread_id(rec, merge=False):
     """Discover and cache the Codex-internal thread UUID for a codex session
     `scripts/nogg` launched, by matching the session's `working_dir` against
     the `session_meta` header Codex writes at the top of its own rollout file
@@ -4076,7 +4286,17 @@ def resolve_codex_thread_id(rec):
     candidates.sort()
     thread_id = candidates[0][1]
     rec["codex_thread_id"] = thread_id
-    write_session(sessions_dir() / f"{rec['name']}.json", rec)
+    path = sessions_dir() / f"{rec['name']}.json"
+    if merge:
+        # Host collection may hold a stale copy: merge only this one field
+        # into the latest record under the lifecycle lock.
+        with path.with_suffix(".lifecycle.lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            latest = json.loads(path.read_text()) if path.exists() else dict(rec)
+            latest["codex_thread_id"] = thread_id
+            write_session(path, latest)
+    else:
+        write_session(path, rec)
     return thread_id
 def codex_queue_send(rec, message):
     """Primary send path for a codex session: `codex queue --thread <THREAD>
@@ -4165,9 +4385,16 @@ def session_kickoff(name, message=None, change=None):
             raise RuntimeError("change scope requires a lead session assigned to that change")
         message = message or (f"Implement all mapped tasks in authorized change {change} in tasks.md order. "
                               "Follow the implementation, validation, commit and close protocol.")
+        boundary_at = usage_now()   # before the handoff message can cause usage
         session_kickoff(name, message)
         _, rec = load_session(name)
         rec["authorized_change"] = change
+        # Operator-directed task handoff: new usage belongs to the change;
+        # which Bead/task inside it is unproven, so those stay unknown.
+        boundaries = rec.get("usage_attribution")
+        if boundaries:
+            boundaries.append(dict(boundaries[-1], at=boundary_at, change_id=change,
+                                   bead_id=None, task_id=None))
         write_session(path, rec)
         return
     if rec.get("agent") != "antigravity":
@@ -4366,6 +4593,7 @@ def session_sweep(checks=False):
         print(_sweep_line(rec))
         if checks:
             print(f"  {session_sweep_checks(rec)}")
+    refresh_session_usage(running)   # bounded host usage refresh; never mutates a session
 # --- session observability: explicit CI check observations -------------
 # `session sweep --checks` is the only remote check path (design.md Decision
 # 4). It caches the PR head SHA and a check/run fingerprint per session in
@@ -4595,6 +4823,15 @@ def orchestrator_run(force=False):
                        "floor_lifted": True, "openspec_readonly": False,
                        "read_only": False, "effective_settings_path": None,
                        "owner": owner_identity(None)}
+            if rec.get("state") in SESSION_TERMINAL_STATES:
+                # The old segment's exit is final; the adopted run is a new
+                # usage segment, so restart downtime is never counted.
+                rec.update(usage_segment_id=str(uuid.uuid4()), usage_started_at=usage_now(),
+                           usage_boot_id=boot_id(), usage_monotonic_start_ms=monotonic_ms())
+                for key in ("usage_end_boot_id", "usage_monotonic_end_ms"):
+                    rec.pop(key, None)
+                if rec.get("usage_attribution"):
+                    rec["usage_attribution"] = [dict(rec["usage_attribution"][-1], at=rec["usage_started_at"])]
             rec["ended_at"] = None; rec["exit_reason"] = None
             transition(rec_path, rec, "running", adopted_at=now())
             writer = str((ROOT / "scripts/session-log-writer").resolve())
@@ -5253,6 +5490,7 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
     notes.extend(supervised_launch_permission_notes())
     notes.extend(model_selection_notes())
     notes.extend(blocked_running_sessions_notes())
+    notes.extend(usage_collection_notes())
     for note in notes: print(f"NOTE  {note}")
     recover_lines = []
     if with_recover:
@@ -5408,6 +5646,9 @@ def main():
                     "and effort from the table; --model still wins (see `nogg models`)")
     sl.add_argument("--effort", help="reasoning effort for Claude (low, medium, high, xhigh, max); "
                                      "overrides profile effort, which overrides the runtime default")
+    sl.add_argument("--complexity", choices=("routine", "standard", "complex"),
+                    help="task complexity recorded for usage attribution only (never selects a "
+                         "model); must match --tier when both are given")
     sl.add_argument("--ignore-usage-gate", action="store_true",
                     help="launch without usage admission; recorded on the session")
     sl.add_argument("--kickoff", action="store_true",
@@ -5486,7 +5727,7 @@ def session_cmd(args):
                        args.profile, args.prompt, args.full_access, args.agent,
                        resume=args.resume, kickoff=args.kickoff, planning_id=args.planning_id, description=args.description,
                        model=args.model, agent_state=args.agent_state, tier=args.tier, effort=args.effort,
-                       ignore_usage_gate=args.ignore_usage_gate)
+                       ignore_usage_gate=args.ignore_usage_gate, complexity=args.complexity)
     elif args.session_command == "list":
         session_list()
     elif args.session_command == "attach":
