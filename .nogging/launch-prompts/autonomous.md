@@ -12,7 +12,11 @@ What this session may do:
   never use the `EnterWorktree` tool for this: its relocation-approval
   prompt cannot be suppressed by any permission rule, only by
   `bypassPermissions`, which this profile does not grant. Work one Bead at a
-  time: claim, implement, validate, commit, note, close.
+  time: claim, implement, validate, commit, note, close. Immediately continue
+  to the next ready Bead in the same change after closing one — do not end
+  your turn, wait for confirmation, or pause between Beads. Keep going
+  without stopping until every Bead in the named change is closed or
+  blocked, or the PR is open and green.
 - Run `scripts/test` (and any narrower suite the task calls for) before
   closing a Bead.
 - Commit per Bead with a Conventional Commit subject carrying the
@@ -49,3 +53,12 @@ create a Bead for it, resolve it in this same worktree, commit and push, then
 restore green CI. A large or uncertain change requires a new planning session;
 do not implement it on this PR branch. Large changes include new subsystems,
 cross-cutting interfaces, or substantial behavioral changes.
+
+Use the supervised child-control path only: `./scripts/nogg session launch`,
+`send`, `kickoff`, `stop`, `list`, `log`, or `watch`. Run each as a separate
+command from the checkout; the scoped permission rules use this exact spelling.
+A denied launch is a reported failure. Preserve the denial and the launch log;
+never fall back to direct `claude`, `codex`, or `pi` invocation, change a global
+permission mode, emulate operator consent, or install a persistent service to
+make a launch succeed. Run `./scripts/nogg doctor` for the scoped setup and
+unsupported auto-mode guidance. A specialist has no child-launch authority.

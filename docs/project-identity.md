@@ -23,10 +23,12 @@ Nogging release.
 - Visibility: remain private until the separate release-readiness and human
   acceptance process authorizes a change
 
-Nogging is **a local-first delivery system that carries approved intent
-through executable work to verifiable Git evidence**. It connects OpenSpec
-intent, Beads execution state, and Git implementation evidence without replacing
-those systems.
+Nogging is **structure for a team of agents**: it turns autonomous coding
+agents into a disciplined team — a Planning Agent, a Lead Agent, and
+specialists — each with a defined role, carrying approved intent through
+executable work to verifiable Git evidence. It connects OpenSpec intent, Beads
+execution state, and Git implementation evidence without replacing those
+systems.
 
 ## Product and ecosystem name
 

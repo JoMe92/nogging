@@ -1,7 +1,8 @@
 # acceptance Specification
 
 ## Purpose
-TBD - created by archiving change end-to-end-acceptance. Update Purpose after archive.
+
+Defines reproducible mechanical and agent-driven acceptance evidence, keeping final product sign-off an explicit human action.
 
 ## Requirements
 

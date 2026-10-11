@@ -1,7 +1,8 @@
 # run-hygiene Specification
 
 ## Purpose
-TBD - created by archiving change harden-archive-and-records. Update Purpose after archive.
+
+Defines safe maintenance of archived change mappings, session records and runtime guard configuration without losing execution history.
 
 ## Requirements
 

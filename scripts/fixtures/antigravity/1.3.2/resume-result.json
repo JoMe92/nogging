@@ -1,0 +1,14 @@
+{
+  "conversation_id": "00000000-0000-4000-8000-000000000001",
+  "status": "SUCCESS",
+  "response": "You asked me to create [`probe.txt`](file:///workspace/probe/probe.txt).\n\nIt was **not** created because the tool execution was denied by the pre-tool hook (`Contract probe: deny every tool`).\n",
+  "duration_seconds": 35.629084392,
+  "num_turns": 2,
+  "usage": {
+    "input_tokens": 35379,
+    "output_tokens": 801,
+    "thinking_tokens": 565,
+    "cache_read_tokens": 14702,
+    "total_tokens": 36180
+  }
+}

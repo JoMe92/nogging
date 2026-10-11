@@ -1,0 +1,8 @@
+
+  Standing by. I will wait for your separate message directing the change or
+  Bead to begin work.
+
+────────────────────────────────────────────────────────────────────────────────
+> Accept-edits mode: file edits auto-approved (shift+tab to cycle)
+────────────────────────────────────────────────────────────────────────────────
+? for shortcuts                            accept-edits · Gemini 3.8 Flash · low

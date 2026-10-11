@@ -1,0 +1,23 @@
+{
+  "cwd": "/workspace/probe/.agents",
+  "payload": {
+    "artifactDirectoryPath": "/runtime/antigravity-cli/brain/00000000-0000-4000-8000-000000000006",
+    "conversationId": "00000000-0000-4000-8000-000000000006",
+    "modelName": "gemini-3.8-flash-high",
+    "stepIdx": 12,
+    "toolCall": {
+      "args": {
+        "CommandLine": "printf AGR_ALLOW_PROBE",
+        "Cwd": "/workspace/probe",
+        "WaitMsBeforeAsync": 5000,
+        "toolAction": "Running allow probe command",
+        "toolSummary": "Allow probe command"
+      },
+      "name": "run_command"
+    },
+    "transcriptPath": "/runtime/antigravity-cli/brain/00000000-0000-4000-8000-000000000006/.system_generated/logs/transcript_full.jsonl",
+    "workspacePaths": [
+      "/workspace/probe"
+    ]
+  }
+}

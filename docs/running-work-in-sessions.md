@@ -39,9 +39,11 @@ want to be able to stop independently.
 ./scripts/nogg session launch --role lead --bead SPEC-xxx --owner "$USER"
 ```
 
-`--bead` is required and must exist; `launch` runs a read-only `bd show` to
-check it and **makes no other Beads change** — being launched is not permission
-to start work. `--role` is `lead` or `specialist:<type>`. `--cwd <path>`
+For an execution role `--bead` is required and must exist; `launch` runs a
+read-only `bd show` to check it and **makes no other Beads change** — being
+launched is not permission to start work. `--role` is `lead`,
+`specialist:<type>` or `planning`. A planning session is Bead-optional — see
+*Start a planning session* below. `--cwd <path>`
 defaults to the repo root. `--read-only` starts the session in plan mode.
 `--profile` / `--prompt` / `--full-access` choose the authority the session
 runs under — see *Running with broader authority*.
@@ -49,8 +51,42 @@ runs under — see *Running with broader authority*.
 `launch` prints the session name, the log path and the attach command. It does
 not attach you — the session comes up idle at a prompt, waiting for direction.
 
+Before contacting tmux, launch verifies that its installed runtime helpers are
+executable and support every requested option. A refusal naming a helper
+contract calls for a pinned Nogging `update`; see `failure-recovery.md`.
+If the agent itself exits during startup, the failed record and redacted log
+retain the original error even when the pane has already disappeared. Check
+`session list` and `session log <name>` after a suspected quick failure.
+
 Then give it its task: attach (below) and tell it what to do, or point it at a
 briefing file.
+
+## Start a planning session
+
+```bash
+./scripts/nogg session launch --role planning \
+  --planning-id <planning-id> --description <description> [--bead SPEC-xxx]
+./scripts/nogg session kickoff <name>
+```
+
+Both identifiers are kebab-case. Launch allocates a dedicated planning
+worktree and records the true `planning` role. It takes no planning lock and
+makes no Beads change. An optional `--bead` is context only and is never
+claimed; an execution role cannot launch without a real Bead. The bare
+session stays idle. Its kickoff tells the planner to run `plan-begin` itself,
+which takes the canonical planning lock in the main checkout, owned by that
+session. A second planner given a kickoff reports the named owner and writes
+nothing. Nobody, the orchestrator included, acquires the lock on a child's
+behalf.
+
+The planner commits the validated spec as the `planning` writer before
+`materialize`, wires Beads
+dependencies explicitly, fast-forward integrates its branch, and removes only
+a clean, integrated worktree. Only then does it run `plan-end`, from a
+surviving canonical checkout. `session stop`, cleanup and recovery release
+only the planning lock owned by that session, never another session's.
+Execution sessions stay fenced from `openspec/` while any planning lock is
+held.
 
 If the session is **resuming** interrupted work — a previous session ran out of
 budget or crashed, or you are switching tools — have it run
@@ -79,7 +115,7 @@ agents, resolved differently:
 | Level | Claude | Codex |
 | --- | --- | --- |
 | `restricted` (default) | `restricted.json` settings — deny `git push`, Dolt sync, destructive shell, network | `--sandbox workspace-write --ask-for-approval on-request`, network access off |
-| `trusted` | `trusted.json` — `auto`, allows `git push`/`merge`/… | `--sandbox workspace-write --ask-for-approval never`, network access off |
+| `trusted` | `trusted.json` — `bypassPermissions`, allows `git push`/`merge`/… | `--sandbox workspace-write --ask-for-approval never`, network access off |
 
 So a Codex session is governed by Codex's own **sandbox mode** and **approval
 policy** rather than a Claude `permissions` file — there is no per-session
@@ -96,6 +132,92 @@ starts.
 
 Codex reads any credential it needs from its own `~/.codex/auth.json` — no
 token is ever passed on the command line, exactly as for Claude.
+
+## Choosing the model
+
+With no model setting a session runs on the runtime's own default. To pick one:
+
+```bash
+./scripts/nogg session launch --role lead --bead SPEC-xxx --model <model-name>
+```
+
+Precedence is `--model`, then an optional `model` key in the launch profile
+(Claude `.json`, Codex `.codex.toml`, Pi `.pi.toml`, Antigravity `.agy.toml`),
+then the runtime's native default. A Codex profile may also set
+`model_reasoning_effort`. The model reaches the runtime as one `--model` argv
+element for this launch only: neither the profile nor any user-global runtime
+setting (`~/.claude`, `~/.codex`, `~/.pi`) is written.
+
+The session record keeps `requested_model`, `model_source` (`launch`,
+`profile` or `runtime-default`), `reasoning_effort` and
+`reasoning_effort_source` (same three values). `session list` shows them in
+`MODEL` and `MODEL_SOURCE` columns. Without a model setting both show
+`runtime-default`: Nogging records that the runtime chose, not a guess at which
+model it chose. A record written before this was recorded shows `-`.
+
+### Choosing Claude reasoning effort
+
+A Claude session can request a reasoning effort for that launch only:
+
+```bash
+./scripts/nogg session launch --role lead --bead SPEC-xxx --effort high
+```
+
+Precedence is `--effort`, then an optional `effort` key in the Claude launch
+profile, then Claude's own default (no flag is passed). Allowed values are
+exactly `low`, `medium`, `high`, `xhigh` and `max`; anything else (including
+`auto`, `none`, case variants and an invalid profile value that a valid
+`--effort` would override) refuses before any worktree, settings, record or
+tmux side effect. The shipped profiles omit `effort`, so defaults are
+unchanged. To opt in, add it to a complete custom profile JSON:
+
+```json
+{
+  "permissions": {"defaultMode": "default", "deny": []},
+  "effort": "high"
+}
+```
+
+Nogging strips the `effort` key from the generated per-session settings and
+passes it as Claude's native `--effort <level>` argv (also on exact resumes);
+neither the source profile nor `~/.claude` is written. `--effort` is Claude-only:
+Codex keeps `model_reasoning_effort` in its `.codex.toml` profile, and Pi and
+Antigravity refuse both keys. A helper without the `claude-effort-forwarding`
+capability refuses the launch with an update remedy rather than dropping the
+effort. If the Claude CLI rejects the level for the chosen model, the session
+fails visibly and is not retried at another effort. Flag verified against
+Claude Code 2.1.296; which models accept which levels is the runtime's call.
+
+`session list` shows the request and its source in the `MODEL` cell for Claude
+and Codex: `effort=high (profile)`, `effort=low (launch)` or
+`effort=runtime-default`. A record that predates `reasoning_effort_source`
+shows a stored effort as `effort=<level> (unknown)` — provenance is never
+inferred — and otherwise keeps its old display. This is the *requested*
+setting; Nogging does not observe later `/effort` changes, environment
+overrides or the model default the runtime resolved.
+
+### Choosing by tier
+
+Instead of naming a model, name the task's complexity tier and let the shipped
+model-selection table pick the model and effort:
+
+```bash
+./scripts/nogg models --agent codex --tier standard   # see the entry
+./scripts/nogg session launch --role lead --bead SPEC-xxx --agent codex --tier standard
+```
+
+Tiers are `routine`, `standard` and `complex`. Per field, an explicit `--model`
+still beats the tier, and the tier beats the profile and the runtime default.
+Codex gets the tier effort as its `model_reasoning_effort`; Antigravity gets a
+model whose name carries the thinking level; Claude gets the tier model and the
+tier effort (as its native `--effort`, source `launch`; an explicit `--effort`
+beats the tier, and a helper without `claude-effort-forwarding` refuses rather
+than drop it).
+Pi has no table, so `--tier` with `--agent pi` refuses, as do an unknown tier
+and a missing or invalid table — all before any side effect. The record stores
+`selection_tier` and `session list` shows `tier=<tier>` in the `MODEL` cell. The
+Orchestration Agent launches every sub-session this way. See
+`model-selection.md` for the table, the precedence rules and the research.
 
 ## Watch without touching
 
@@ -146,7 +268,7 @@ a whole change unattended — commit per Bead, push its branch, merge to
 
 `--full-access` is shorthand for `--profile trusted --prompt autonomous`:
 
-- **`trusted`** starts in `auto` and allows `git push`, `git merge`,
+- **`trusted`** starts in `bypassPermissions` and allows `git push`, `git merge`,
   `git switch`, `git rebase`, `bd`, `openspec` (read commands), `npx` and
   `scripts/*`. It still denies `sudo`, `systemctl`, `curl`/`wget` and
   `WebFetch`.
@@ -248,7 +370,7 @@ orchestrate-only-by-default scope.
 
 | Command | Effect |
 | --- | --- |
-| `session launch --role <r> --bead <id> [--cwd <p>] [--read-only] [--owner <o>] [--agent <claude\|codex>] [--profile <n>] [--prompt <n>] [--full-access]` | start a supervised session; no Beads change |
+| `session launch --role <r> [--bead <id>] [--planning-id <id> --description <d>] [--cwd <p>] [--read-only] [--owner <o>] [--agent <claude\|codex>] [--profile <n>] [--prompt <n>] [--full-access]` | start a supervised session; no Beads change |
 | `session list` | list every session with live-reconciled state and its launch profile |
 | `session log <name> [--follow]` | print / tail the log; never attaches |
 | `session attach <name> [--read-only]` | attach the terminal; `Ctrl-b d` to detach |
@@ -268,3 +390,259 @@ to `.nogging/launch-profiles/` and `.nogging/launch-prompts/` and are
 overridable with `session_launch_profile_dir` / `session_launch_prompt_dir`; a
 `session_launch_profile` / `session_launch_prompt` key still pins a single file
 and wins over the directory default.
+
+## This repository’s autonomous Claude configuration
+
+This checkout opts into autonomous Claude operation at the Product Owner’s
+request. `.nogging/config.json` selects the trusted Claude profile and the
+autonomous prompt for new supervised sessions. Explicit `--profile` and
+`--prompt` selections still win. To start a restricted, manually directed
+session, pass both `--profile restricted --prompt no-autonomous-claim`.
+Codex and Pi retain their own profile defaults; the configured prompt is
+shared. Planning sessions retain their planning prompt. Existing running
+sessions keep their launch settings; these changes apply on a new launch.
+
+The trusted Claude profile uses `bypassPermissions` and no longer denies
+WebFetch, curl, wget or systemctl. The fixed Nogging command floor and
+execution OpenSpec write boundary still apply. This grants tool authority,
+while the autonomous prompt keeps work scoped to the assigned change and
+its review workflow. The orchestrator profile already uses bypass permissions
+and remains unchanged.
+
+For Anthropic-hosted Cloud, `.claude/settings.json` selects `acceptEdits`
+and pre-approves Bash, WebFetch and WebSearch, preserving the existing hooks.
+This is a broad shell grant requested by the repository owner. Cloud does
+not support bypass permissions. In an existing Cloud session, select
+**Accept edits** in the mode dropdown; a resumed session can retain Auto
+instead of adopting the new default. A broad Bash grant is suspended in
+Auto mode, so staying in Auto does not provide the same behavior.
+
+Provider-managed policy, protected paths, explicit ask/deny rules, hooks,
+network restrictions and connector-specific approvals can still require
+interaction. Repository settings do not configure `autoMode` trust rules.
+No classifier bypass or credential changes are installed. For interactive
+Orchestration Agent sessions, operators can adapt the template at
+`templates/claude/orchestrator-permissions.example.json` into user settings
+(`~/.claude/settings.json`); allow rules in that template do not bypass the
+classifier in Auto mode. Hosted Cloud behavior must be checked in an actual
+new Cloud session after the branch is integrated and available to clone.
+
+References: [Claude permission modes](https://code.claude.com/docs/en/permission-modes)
+and [Auto-mode configuration](https://code.claude.com/docs/en/auto-mode-config).
+
+## Sweep work scope and integration
+
+`session sweep` defaults to the assigned mapped task and its blocking dependency
+cone. An unrelated blocked sibling does not block that session. Specialists
+always retain this single-task scope. To explicitly authorize a lead to execute
+the whole assigned change at kickoff, use:
+
+```bash
+./scripts/nogg session kickoff <name> --change <change-name>
+```
+
+This records `authorized_change` in the session record. A custom kickoff message
+alone does not expand sweep scope. Sweep remains read-only: it neither claims
+work nor sends input. Idle duration and buffered input are separate observations.
+
+Completion requires closed mapped work and a verified merged PR for the current
+branch head, with no unresolved checks. Open PRs, unavailable evidence, reused
+branches and failed lookups cannot establish completion. Unknown work or
+integration evidence is displayed explicitly. A successful lookup that finds no
+PR also needs explicit local integration evidence: the operator records
+`integration_evidence` with `commit` (the full current HEAD SHA) and `target_ref`
+(`refs/heads/develop`) in the session record. Sweep verifies a clean worktree and
+that this commit is an ancestor of the target; the record alone is insufficient.
+
+## Explicit CI check observations
+
+Plain `session sweep` never reports check details. The explicit remote check
+path is:
+
+```bash
+./scripts/nogg session sweep --checks
+./scripts/nogg session checks-ack <name> [--fingerprint <fingerprint>]
+```
+
+`sweep --checks` looks up the PR for each running session's branch and prints
+its status (`passing`, `failing`, `pending`, `no-pr` or `unknown`), the PR head
+SHA and a check/run fingerprint. The fingerprint covers the head SHA and each
+check's name, outcome and run URL, so a new run (including a re-run that fails
+again) gets a new fingerprint. The observation is cached in
+`<session>.checks.json` beside the session record.
+
+Observing never acknowledges. A fingerprint stays `unchecked` until an operator
+runs `session checks-ack`, which acknowledges exactly the cached observation
+without a remote call (and refuses a `--fingerprint` that no longer matches).
+A lookup failure, ambiguous PRs or unparseable output is cached as `unknown`
+and can be neither acknowledged nor read as success.
+
+`doctor` reuses the cache and makes no check call. It prints a NOTE for a running
+session whose checks are unknown, unchecked, or stale (older than
+`session_checks_stale_seconds`, default 1800).
+
+## Nudging a session: placeholders are not input
+
+An idle Claude pane often shows a suggested next instruction in its `❯` input
+box. That suggestion is rendered dim and is a placeholder, not typed input, so
+`session nudge` never executes it. To submit an instruction, pass it explicitly:
+
+```bash
+./scripts/nogg session nudge <name> --message "<instruction>"
+```
+
+With `--message`, nudge clears any actual pending input, types the message,
+submits it and verifies submission: if the input is still pending it retries
+the submit step once, then fails. A pane whose input box cannot be identified
+also fails as unverified rather than reporting success. `send --verify`
+uses the same check.
+
+Without `--message`, nudge resends only single-line input that it can
+positively identify: non-dim text in Claude's framed input box, captured with
+attributes (`tmux capture-pane -e`). A placeholder-only, empty, multi-line or
+unidentifiable prompt sends no keys at all, and the command tells you to pass
+`--message`. Codex and other runtimes cannot expose the buffered text, so they
+always need `--message`. Nudge still refuses any session that is not running,
+before touching tmux. `session sweep` reports `has-unsent-input` as `yes`, `no`
+(a placeholder or empty prompt) or `unknown`.
+
+## Read-only quota inspection
+
+Run `./scripts/nogg usage --agent codex` or `--agent claude`; add `--json`
+for normalized machine-readable observations. Short and weekly windows are
+reported separately. Missing, unsupported, malformed, future-dated, older than
+600 seconds, and already-reset observations are unknown rather than zero.
+This observation command does not install capture, launch sessions, reserve
+headroom, or access authentication files. Account and model-group identities are reported as
+unknown; a source directory does not prove account or model-group identity.
+
+Codex observations come from `event_msg` / `token_count` metadata under
+`$CODEX_HOME/sessions` (default `~/.codex/sessions`), selected by event timestamp.
+The supported window fields are `used_percent`, `window_minutes`, and epoch
+`resets_at` in `rate_limits.primary` and `rate_limits.secondary`.
+
+Claude inspection reads the opt-in cache at
+`$XDG_CACHE_HOME/nogging/usage/claude.json` (default
+`~/.cache/nogging/usage/claude.json`). Cache schema version 1 contains
+`schema_version: 1`, an RFC3339 `observed_at` stamped at capture time, and the
+statusline `rate_limits` object. Its `five_hour` and `seven_day` windows contain
+`used_percentage` and epoch `resets_at`. Only these quota fields belong in the
+cache; do not copy the full statusline payload. Inspection does not modify
+Claude settings or install a statusline. The source schemas were verified with
+Codex 0.162.1 and Claude Code 2.1.296; other schemas report unknown.
+
+## Launch usage gate
+
+`./scripts/nogg session launch` admits an execution session (lead or
+specialist) only when every known usage window of the launching agent still
+fits: `used + reserved + estimate <= cap` per window. A refusal exits **75**
+and names each limiting window with its reset time and the latest reset to
+retry after; it happens before any helper negotiation, worktree, trust change,
+tmux session or session record. Planning and orchestrator launches are not
+gated by default. `./scripts/nogg usage` prints the same estimate, projection
+and fit (`gate` in `--json`). Admission checks and reserves headroom under a
+same-host lock in the owner-only user cache
+(`$XDG_CACHE_HOME/nogging/usage/reservations`, default `~/.cache`). This ledger
+is shared across repositories. Each window counts its outstanding estimates;
+a reset releases only reservations from that window's previous period.
+Failed launches release immediately. Pending launchers hold kernel file locks,
+so process death releases ownership across PID namespaces. Terminal sessions
+and dead pending launchers are reconciled on the next admission or usage inspection; live tmux
+sessions retain their reservation after the launcher exits.
+
+Current adapters do not identify accounts or model groups, so identity remains
+unknown in usage output. Reservations conservatively share an opaque scope
+per provider for the OS user, including across different source directories,
+rather than claiming separate account headroom. When an adapter
+provides account/group identity, those scopes are independent. The ledger
+stores no raw account identity or credentials. A launch admitted with unknown
+usage still reserves its estimate against subsequent fresh observations.
+Running sessions may already be part of `used`; their full outstanding
+estimates remain reserved conservatively, and no extra running-session count
+is added. The gate reduces risk but cannot guarantee a task fits. Cross-host
+coordination is unsupported in v1 even with `multi_machine: true`: the
+reservation ledger is strictly host-local, and other machines or external
+tools consuming the account's quota are only observed once local usage snapshots
+update.
+
+Configure it with the optional `usage_gate` object in `.nogging/config.json`;
+these are the defaults:
+
+```json
+"usage_gate": {
+  "enabled": true,
+  "cap_percent": 92,
+  "estimate_percent": 5,
+  "stale_seconds": 600,
+  "on_unknown": "warn",
+  "size_multipliers": {"small": 0.5, "medium": 1, "large": 2},
+  "exclude_roles": ["planning", "orchestrator"]
+}
+```
+
+`estimate_percent` may instead be an object per agent (`claude`, `codex`,
+`pi`, `antigravity`) with an optional `default`. A Bead labelled
+`size:<name>` scales only its reservation estimate by the matching multiplier;
+conflicting or unconfigured size labels refuse the launch. `exclude_roles`
+takes `lead`, `specialist`, `planning` and `orchestrator`. Unknown keys and
+out-of-range or mistyped values refuse every launch until fixed.
+
+Missing, stale, malformed or unsupported usage (Pi and Antigravity have no
+source yet) is unknown, never zero: the launch warns and continues, or exits 75
+with `"on_unknown": "deny"`. A known window over the cap denies even when the
+other window is unknown. `--ignore-usage-gate` launches without admission; it
+warns and is recorded as `usage_gate.decision: "ignored"` on the session
+record, alongside `admitted`, `unknown-admitted`, `disabled` or `excluded`.
+
+### Learned estimates and usage history
+
+Nogging learns base reservation estimates per agent and model from complete,
+attributable, non-reset intervals. Samples are collected only when a session
+runs in isolation; intervals spanning concurrent workers are rejected because
+account delta attribution cannot be known. Quota window resets, counter drops,
+and statistical outliers are also rejected.
+
+History is stored per agent/model in an owner-only cache
+(`$XDG_CACHE_HOME/nogging/usage/history/history.json`, mode 0600 in mode 0700
+directory) and is strictly bounded. When fewer than three valid samples exist,
+admission falls back conservatively to the configured `estimate_percent`.
+With sufficient samples, Nogging uses the conservative learned median
+(favoring the higher value on even sample counts). A Bead's `size:<name>` label
+scales the learned estimate by the configured multiplier. The history store
+records only deltas and timestamps; no credentials, tokens, or account
+identifiers are stored or exposed.
+
+### Statusline usage capture and doctor freshness
+
+Claude Code quota observation requires opt-in capture from Claude's statusline:
+
+```bash
+./scripts/nogg usage install-statusline
+```
+
+`usage install-statusline` installs a composable wrapper script to
+`$XDG_DATA_HOME/nogging/claude-statusline` (default `~/.local/share/nogging`)
+and configures `"statusLine"` in `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR`).
+If the user already has a custom statusline command configured, Nogging
+composes with it: Claude's stdin JSON is forwarded to the existing command and
+its stdout is rendered normally, while `rate_limits` are captured atomically to
+`$XDG_CACHE_HOME/nogging/usage/claude.json`. All unrelated settings in
+`settings.json` are preserved. If the existing configuration cannot be composed
+safely, the command refuses with manual configuration instructions.
+
+`./scripts/nogg doctor` reports advisory notes on quota cache freshness:
+- Missing observation sources (advising `nogg usage install-statusline` when
+  Claude statusline cache is absent).
+- Stale observations exceeding `stale_seconds` (default 600s).
+- Fresh observation caches.
+
+### Orchestrator retry guidance and scheduling
+
+When launch admission is denied (exit code 75):
+- The denial reports every limiting window and names the latest reset time
+  across all limiting windows (`retry after <timestamp>`).
+- The Orchestrator's scheduling guidance requires bounded retry at that latest
+  limiting reset time.
+- Model switching is explicitly prohibited as a limit workaround; the
+  orchestrator must wait for the limiting window to reset rather than switching
+  models to bypass account or bucket quotas.

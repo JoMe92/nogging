@@ -6,16 +6,18 @@
  * extension IS the floor for a Pi-supervised Nogging session: it
  * intercepts every `tool_call` event and denies a shell command matching
  * the Nogging command-floor patterns, or a write/edit under `openspec/`
- * while the write boundary is closed. Loads only once this project is
- * trusted (`--approve` or `/trust`), since `.pi/extensions/` is one of the
- * trust-gated resource directories.
+ * while the write boundary is closed. Supervised launches explicitly load
+ * this extension; project discovery in standalone Pi requires run approval.
  *
  * Deliberately over-inclusive on the shell-command matching: a false
  * positive just makes an operator explain themselves; a false negative is
  * an actual safety gap. None of these patterns attempt full shell parsing.
  */
-import { resolve, sep } from "node:path";
-import { existsSync } from "node:fs";
+import { dirname, resolve, sep } from "node:path";
+import { hostname } from "node:os";
+import { lstatSync, readFileSync, realpathSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 function hasShortFlagChar(cmd: string, ch: string): boolean {
@@ -65,17 +67,87 @@ export function matchesFloor(command: string): string | undefined {
 	return FLOOR_PATTERNS.find((p) => p.test(command))?.name;
 }
 
-export function isUnderOpenspec(inputPath: string, cwd: string): boolean {
-	const openspecRoot = resolve(cwd, "openspec");
-	const resolved = resolve(cwd, inputPath);
-	return resolved === openspecRoot || (resolved + sep).startsWith(openspecRoot + sep);
+function repositoryState(cwd: string) {
+	const helper = resolve(dirname(fileURLToPath(import.meta.url)), "../../scripts/nogg");
+	const env = { ...process.env };
+	delete env.NOGGING_ROOT;
+	return JSON.parse(execFileSync("python3", [helper, "repo-state", "--cwd", cwd],
+		{ encoding: "utf8", env, stdio: ["ignore", "pipe", "pipe"], timeout: 5000 }));
 }
 
-export function openspecBoundaryOpen(cwd: string): boolean {
-	// Mirrors scripts/nogg's SENTINEL: presence of
-	// .nogging/locks/openspec.readonly means CLOSED (read-only); absence
-	// means a planning session is active and the boundary is OPEN.
-	return !existsSync(resolve(cwd, ".nogging/locks/openspec.readonly"));
+function physicalPath(path: string): string {
+	try { return realpathSync(path); }
+	catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+		const parent = dirname(path);
+		if (parent === path) throw error;
+		return resolve(physicalPath(parent), path.slice(parent.length + 1));
+	}
+}
+
+export function isUnderOpenspec(inputPath: string, cwd: string): boolean {
+	try {
+		const state = repositoryState(cwd);
+		const target = physicalPath(resolve(cwd, inputPath));
+		if (!Array.isArray(state.checkout_roots) || !state.checkout_roots.length) throw new Error("missing checkout roots");
+		return state.checkout_roots.some((root: string) => {
+			if (typeof root !== "string") throw new Error("invalid repository root");
+			const spec = physicalPath(resolve(root, "openspec"));
+			return target === spec || target.startsWith(spec + sep);
+		});
+	} catch {
+		// Unknown layout or unreadable path cannot establish safe write scope.
+		return true;
+	}
+}
+
+export function openspecBoundaryOpen(cwd: string, role = process.env.NOGG_SESSION_ROLE ?? "execution"): boolean {
+	// Reuse the CLI's canonical Git/worktree resolver. An absent local locks
+	// directory must never hide a closed boundary in the main checkout.
+	if (role !== "planning") return false;
+	try {
+		const state = repositoryState(cwd);
+		if (typeof state.locks_dir !== "string" || typeof state.config_path !== "string") return false;
+		for (const sentinel of new Set([resolve(state.locks_dir, "openspec.readonly"),
+			resolve(cwd, ".nogging/locks/openspec.readonly")])) {
+			try {
+				lstatSync(sentinel);
+				return false;
+			} catch (error) {
+				if (!error || typeof error !== "object" || !("code" in error) || error.code !== "ENOENT") return false;
+			}
+		}
+		const config = JSON.parse(readFileSync(state.config_path, "utf8"));
+		if (!config || typeof config !== "object" || Array.isArray(config)) return false;
+		const ttl = config.planning_lock_ttl_seconds === undefined ? 7200 : config.planning_lock_ttl_seconds;
+		if (typeof ttl !== "number" || !Number.isFinite(ttl) || ttl <= 0) return false;
+		const lock = JSON.parse(readFileSync(resolve(state.locks_dir, "planning.lock"), "utf8"));
+		if (!lock || typeof lock !== "object" || Array.isArray(lock)
+			|| !Number.isInteger(lock.pid) || lock.pid <= 0
+			|| typeof lock.host !== "string" || !lock.host.trim()
+			|| typeof lock.created_at !== "string"
+			|| !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(lock.created_at)) return false;
+		if (lock.session_name !== undefined) {
+			if (lock.session_name !== process.env.NOGG_SESSION_NAME
+				|| lock.session_root !== resolve(process.env.NOGG_SESSION_ROOT ?? state.main_checkout)
+				|| typeof lock.pid_start !== "string") return false;
+			const sessionConfig = JSON.parse(readFileSync(resolve(lock.session_root, ".nogging/config.json"), "utf8"));
+			const session = JSON.parse(readFileSync(resolve(lock.session_root,
+				sessionConfig.session_state_dir ?? ".nogging/state/sessions", lock.session_name + ".json"), "utf8"));
+			if (lock.host !== hostname() || session.host !== lock.host
+				|| session.name !== lock.session_name || session.role !== "planning"
+				|| !["starting", "running", "idle"].includes(session.state)
+				|| session.session_pid !== lock.pid || session.session_pid_start !== lock.pid_start
+				|| resolve(session.working_dir) !== resolve(state.checkout_root)) return false;
+			const stat = readFileSync(`/proc/${lock.pid}/stat`, "utf8");
+			if (stat.slice(stat.lastIndexOf(")") + 2).trim().split(/\s+/)[19] !== lock.pid_start) return false;
+		} else if (process.env.NOGG_SESSION_NAME) return false;
+		const created = Date.parse(lock.created_at);
+		const age = Date.now() - created;
+		return Number.isFinite(created) && age >= 0 && age < ttl * 1000;
+	} catch {
+		return false;
+	}
 }
 
 export default function (pi: ExtensionAPI) {
@@ -90,7 +162,16 @@ export default function (pi: ExtensionAPI) {
 		}
 		if (event.toolName === "write" || event.toolName === "edit") {
 			const path = event.input.path as string;
-			if (isUnderOpenspec(path, ctx.cwd) && !openspecBoundaryOpen(ctx.cwd)) {
+			let allowed = openspecBoundaryOpen(ctx.cwd);
+			if (allowed && process.env.NOGG_SESSION_NAME) {
+				try {
+					const state = repositoryState(ctx.cwd);
+					const target = physicalPath(resolve(ctx.cwd, path));
+					const own = physicalPath(resolve(state.checkout_root, "openspec"));
+					allowed = target === own || target.startsWith(own + sep);
+				} catch { allowed = false; }
+			}
+			if (isUnderOpenspec(path, ctx.cwd) && !allowed) {
 				if (ctx.hasUI) ctx.ui.notify(`Blocked ${event.toolName} under openspec/: ${path}`, "warning");
 				return { block: true, reason: "openspec/ is read-only outside a planning session (Nogging write boundary)" };
 			}

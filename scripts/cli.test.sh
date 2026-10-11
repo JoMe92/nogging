@@ -42,10 +42,14 @@ check "dry-run writes nothing" [ -z "$(find "$repo" -type f -not -path '*/.git/*
 check "tool bridge installed"      test -f "$repo/scripts/nogg"
 check "install-hooks installed"    test -f "$repo/scripts/install-hooks"
 check "boundary hook installed"    test -f "$repo/scripts/hooks/pre-tool-use-openspec-guard"
+check "lead-launch guard hook installed" test -f "$repo/scripts/hooks/pre-tool-use-lead-launch-guard"
+check "lead-launch guard hook is executable" test -x "$repo/scripts/hooks/pre-tool-use-lead-launch-guard"
 check "bridge is executable"       test -x "$repo/scripts/nogg"
 check "skills copied"              test -f "$repo/.agents/skills/openspec-propose/SKILL.md"
 check "all Claude agents installed" diff -qr "$root/.claude/agents" "$repo/.claude/agents"
 check "all Claude commands installed" diff -qr "$root/.claude/commands" "$repo/.claude/commands"
+check "orchestrator permissions example template shipped" test -f "$repo/templates/claude/orchestrator-permissions.example.json"
+check "init never injects orchestrator permissions template into settings" bash -c "! grep -q 'git push --force' '$repo/.claude/settings.json'"
 check "launch profiles shipped"    test -f "$repo/.nogging/launch-profiles/restricted.json"
 check "launch profiles ship trusted" test -f "$repo/.nogging/launch-profiles/trusted.json"
 check "launch profiles ship codex fragments" test -f "$repo/.nogging/launch-profiles/restricted.codex.toml"
@@ -57,6 +61,7 @@ check "pi prompt plan.md installed"    test -f "$repo/.pi/prompts/plan.md"
 check "pi prompt discovery-review.md installed" test -f "$repo/.pi/prompts/discovery-review.md"
 check "pi prompt sync-now.md installed" test -f "$repo/.pi/prompts/sync-now.md"
 check "launch prompts shipped"     test -f "$repo/.nogging/launch-prompts/autonomous.md"
+check "planning prompt shipped" test -f "$repo/.nogging/launch-prompts/planning.md"
 check "reference docs under docs/nogging" test -f "$repo/docs/nogging/architecture.md"
 check "codex guide under docs/nogging" test -f "$repo/docs/nogging/using-with-codex.md"
 check "pi guide under docs/nogging" test -f "$repo/docs/nogging/using-with-pi.md"
@@ -154,6 +159,39 @@ guard_count=$(node -e "
   process.stdout.write(String(n));
 ")
 check "guard hook added exactly once" [ "$guard_count" = "1" ]
+
+# --- TASK-DAL-002/004: the Bash-matcher Lead-launch guard is a sibling entry,
+# inserted exactly once, leaving the Edit|Write guard entry untouched -------
+launch_guard_count=$(node -e "
+  const s = require('$merged/.claude/settings.json');
+  const pre = (s.hooks && s.hooks.PreToolUse) || [];
+  let n = 0;
+  for (const e of pre) for (const h of (e.hooks||[])) if ((h.command||'').includes('pre-tool-use-lead-launch-guard')) n++;
+  process.stdout.write(String(n));
+")
+check "lead-launch guard hook added exactly once" [ "$launch_guard_count" = "1" ]
+
+launch_guard_matcher=$(node -e "
+  const s = require('$merged/.claude/settings.json');
+  const pre = (s.hooks && s.hooks.PreToolUse) || [];
+  const entry = pre.find(e => (e.hooks||[]).some(h => (h.command||'').includes('pre-tool-use-lead-launch-guard')));
+  process.stdout.write((entry && entry.matcher) || '');
+")
+check "lead-launch guard entry matches Bash" [ "$launch_guard_matcher" = "Bash" ]
+
+openspec_guard_matcher=$(node -e "
+  const s = require('$merged/.claude/settings.json');
+  const pre = (s.hooks && s.hooks.PreToolUse) || [];
+  const entry = pre.find(e => (e.hooks||[]).some(h => (h.command||'').includes('pre-tool-use-openspec-guard')));
+  process.stdout.write((entry && entry.matcher) || '');
+")
+check "openspec guard entry still matches Edit|Write (untouched)" [ "$openspec_guard_matcher" = "Edit|Write" ]
+
+pre_tool_use_count=$(node -e "
+  const s = require('$merged/.claude/settings.json');
+  process.stdout.write(String(((s.hooks && s.hooks.PreToolUse) || []).length));
+")
+check "exactly two PreToolUse entries after a second update run" [ "$pre_tool_use_count" = "2" ]
 
 sess_kept=$(node -e "
   const s = require('$merged/.claude/settings.json');
@@ -329,11 +367,14 @@ if command -v npm >/dev/null 2>&1; then
     check "packed install ships pi prompt discovery-review.md" test -f "$packrepo/.pi/prompts/discovery-review.md"
     check "packed install ships pi prompt sync-now.md" test -f "$packrepo/.pi/prompts/sync-now.md"
     check "packed install ships launch prompts"     test -f "$packrepo/.nogging/launch-prompts/no-autonomous-claim.md"
+    check "packed install ships planning prompt" test -f "$packrepo/.nogging/launch-prompts/planning.md"
     check "packed install ships the Pi guide"       test -f "$packrepo/docs/nogging/using-with-pi.md"
     check "packed install ships the security guide" test -f "$packrepo/docs/nogging/security-model.md"
     check "packed install ships the compatibility guide" test -f "$packrepo/docs/nogging/compatibility.md"
     check "packed install ships the orchestrator profile" test -f "$packrepo/.nogging/launch-profiles/orchestrator.json"
     check "packed install ships the orchestrator prompt"  test -f "$packrepo/.nogging/launch-prompts/orchestrator.md"
+    check "packed install ships the orchestrator permissions template" \
+      test -f "$packrepo/templates/claude/orchestrator-permissions.example.json"
     check "packed install ships the orchestrator unit template" \
       test -f "$pkg/templates/systemd/nogg-orchestrator.service.tmpl"
     # A packed install WITH systemd renders the per-repo orchestrator unit.

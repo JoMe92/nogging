@@ -48,6 +48,7 @@ acceptance evidence is linked here.
 | Claude Code | Supported; validated with 2.1.260 | restricted/trusted profiles and hooks are tested; orchestrator is Claude-only |
 | OpenAI Codex CLI | Supported; validated with 0.148.0 | repo rules require workspace trust; prompt discovery needs the documented link helper |
 | Pi coding agent | Supported on Linux; validated with 0.85.0 | requires Node 22.19+ and has no filesystem/network sandbox |
+| Antigravity CLI | Experimental Linux integration; agy 1.3.2 (core) and 1.3.3 (quota) have unsigned live evidence in `docs/acceptance/2026-10-10-antigravity-core.md` | hook guards at both levels; no validated OS sandbox; quota gate reads `/usage` model-group buckets, unknown model mapping is unknown usage |
 | Other agents | Unsupported | they may read `AGENTS.md`, but no adapter or release evidence is supplied |
 
 The word “supported” covers Nogging's integration, not a guarantee about an
@@ -71,3 +72,4 @@ Current evidence entry points:
 - [Latest recorded Raspberry Pi acceptance](https://github.com/JoMe92/nogging/blob/develop/docs/acceptance/2026-09-14-raspberrypi.md)
 - [Codex integration evidence and limitations](using-with-codex.md)
 - [Pi integration evidence and limitations](using-with-pi.md)
+- [Antigravity integration evidence and limitations](using-with-antigravity.md)

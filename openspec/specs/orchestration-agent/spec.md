@@ -1,7 +1,8 @@
 # orchestration-agent Specification
 
 ## Purpose
-TBD - created by archiving change orchestration-agent. Update Purpose after archive.
+
+Defines the always-on orchestration persona, its supervision lifecycle and delegation boundaries within the Nogging operating model.
 
 ## Requirements
 
@@ -148,3 +149,31 @@ orchestrate-only behavior: the orchestrator still does not perform the
 - **THEN** it starts or directs a planning session to perform the archive step
 - **AND** it does not call `openspec archive` directly itself outside an
   explicit `/orchestrate takeover plan` instruction
+
+### Requirement: Interactive orchestrator sessions have a documented permission template
+
+Nogging SHALL ship a Claude settings template for interactive Orchestration Agent sessions containing allow rules for the repository's sibling worktree path pattern and `scripts/nogg` commands, and a deny list that includes every command-floor entry. The documentation SHALL state that allow rules do not bypass the auto-mode classifier, that `autoMode` configuration is read only from user settings, and that the operator applies the template manually. The installer SHALL NOT write the template into any settings file. A test SHALL verify the template is valid JSON and that its deny list is a superset of the command floor.
+
+#### Scenario: Floor drift is caught
+
+- **WHEN** a command-floor entry is added that the template's deny list lacks
+- **THEN** the template test fails
+
+#### Scenario: Install leaves user settings untouched
+
+- **WHEN** `nogg init` or `nogg update` runs
+- **THEN** no user or project settings file gains the template's rules
+
+### Requirement: The orchestrator classifies every launch into a complexity tier
+
+Before every sub-session launch of any role, the Orchestration Agent SHALL take three steps. It SHALL classify the task into one tier of the model-selection table (`routine`, `standard` or `complex`). It SHALL record a one-line reason in the Bead note or operator update. It SHALL launch with `--tier <tier>`. It SHALL take model and effort from the table, not from live research. It SHALL apply the documented escalation rules: when unsure, choose the higher tier, and on a relaunch after a failed or stalled attempt, escalate one tier. It SHALL NOT lower a tier because of quota pressure. A quota denial SHALL be handled by waiting for the limiting reset or by choosing another agent's entry for the same tier. Explicit model or effort overrides SHALL be used only on Product Owner instruction. This procedure SHALL be stated in the orchestrator launch prompt, the `/orchestrate` command and the operating model, so a fresh orchestrator session applies it without memory of earlier conversations.
+
+#### Scenario: Fresh orchestrator launches a Lead session
+
+- **WHEN** a newly started orchestrator with no prior conversation launches a Lead session for a Bead
+- **THEN** it records a tier with a reason and the launch carries `--tier`, which `session list` shows
+
+#### Scenario: Quota pressure does not downgrade
+
+- **WHEN** a task classified `complex` would exceed an account limit
+- **THEN** the orchestrator waits for the reset or uses another agent's `complex` entry, and never launches the task at a lower tier

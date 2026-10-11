@@ -54,9 +54,9 @@ the rest applies to every runtime — Claude Code, Codex, or another.
 
 OpenSpec owns approved product intent, Beads owns executable work, Git owns the
 implementation. `openspec/` is **read-only** for every execution agent and is
-writable only during a planning session that holds
-`.nogging/locks/planning.lock` (`./scripts/nogg plan-begin` …
-`plan-end`). The lock toggles a `.nogging/locks/openspec.readonly` sentinel;
+writable only during a planning session that holds the canonical
+`.nogging/locks/planning.lock` in the main checkout (`./scripts/nogg
+plan-begin` … `plan-end`). The lock toggles a `.nogging/locks/openspec.readonly` sentinel;
 the write guard consults it. Each tool also enforces this in its own way — see
 *Tool notes*.
 
@@ -181,9 +181,10 @@ steps by hand:
 - `/plan` — allocate `scripts/nogg worktree plan <planning-id>
   <description>` from updated `origin/develop`, then in that worktree run
   `plan-begin` → discovery review → author → `validate` → commit as the `planning` writer
-  → `materialize <change>` → integrate into `develop` → safe
-  cleanup → `plan-end`. The spec is committed **before** `materialize`, so a
-  crash between the two never leaves Beads without a committed spec.
+  → `materialize <change>` → wire dependencies → integrate into `develop` →
+  safe cleanup → `plan-end` from a surviving canonical checkout. The spec is
+  committed **before** `materialize`, so a crash between the two never leaves
+  Beads without a committed spec.
 - `/discovery-review` — `scripts/nogg discoveries` (+ `--ack`).
 - `/sync-now` — `scripts/nogg sync --now`.
 
@@ -193,14 +194,24 @@ Where each tool reads those command files is in *Tool notes*.
 
 The Planning Agent first allocates `./scripts/nogg worktree plan
 <planning-id> <description>` from updated `origin/develop` and works only in
-that dedicated worktree. It then runs `plan-begin`, writes or revises OpenSpec,
-runs validation, commits the change as the `planning` writer, and materializes
-Beads. It fast-forward integrates the planning branch into `develop` before
-removing only a clean worktree whose branch is integrated, then runs
-`plan-end`. Committing before `materialize` keeps a crash in that window
-recoverable (`materialize` is idempotent and the committed spec is the source
-of truth). If an active Bead loses its task mapping, stop and resolve the
-orphan explicitly; do not delete it.
+that dedicated worktree. A supervised planner gets its worktree at launch:
+`./scripts/nogg session launch --role planning --planning-id <planning-id>
+--description <description>`. A bare launch stays idle; an optional `--bead`
+is context only and is never claimed. After kickoff the planner runs
+`plan-begin` itself. That takes the canonical planning lock in the main
+checkout, owned by that session. Nobody acquires the lock on its behalf, and
+a second planner reports the named owner and stops. It then writes or revises
+OpenSpec, runs validation, commits the change as the `planning` writer, and
+materializes Beads. It wires Beads dependencies explicitly and does not infer
+them from task order. It fast-forward integrates the planning branch into
+`develop` before removing only a clean worktree whose branch is integrated.
+Only after that cleanup does it run `plan-end`, from a surviving canonical
+checkout, never through the removed worktree. Committing before `materialize`
+keeps a crash in that window recoverable (`materialize` is idempotent and the
+committed spec is the source of truth). Stop, cleanup and recovery never
+release another session's planning lock. A held planning lock never makes
+`openspec/` writable for an execution role. If an active Bead loses its task
+mapping, stop and resolve the orphan explicitly; do not delete it.
 
 ## Tool notes
 
@@ -267,3 +278,18 @@ the subsection for the tool you are running as, and ignore the others.
   `.pi/prompts/` directly from the repository — no symlink helper is needed
   (unlike Codex, which needs `codex-prompts-link` because it only reads
   custom prompts from `~/.codex/prompts/`).
+
+### Antigravity
+
+`--agent antigravity` (alias `agy`) uses `.agy.toml` profiles and the Python
+`scripts/hooks/agy-guard` PreToolUse hook from `.agents/hooks.json`. Both levels
+retain the command floor and canonical planning-lock OpenSpec boundary.
+Restricted requires verified ask permissions; global always-proceed is refused.
+No filesystem/network isolation is validated; requested sandbox mode refuses.
+Launch prepares trust only for the selected worktree and refuses missing guards
+or failed trust writes. Workflow skills are `.agents/skills/nogging-{plan,discovery-review,sync-now}`.
+Specialists run separately with `scripts/nogg session launch --agent agy
+--role specialist:<type> --bead <id>` on exactly one already-claimed Bead;
+never claim, re-status, close, commit or write OpenSpec. Return structured
+results and discoveries to the Main Worker. See [the Antigravity guide](docs/using-with-antigravity.md)
+for exact resume, lifecycle and pending acceptance/quota limitations.

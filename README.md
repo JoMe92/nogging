@@ -1,15 +1,16 @@
-![Nogging — structure for what's next](docs/brand/nogging-banner.png)
+![Nogging](docs/brand/nogging-banner.png)
 
 # Nogging
 
 [![Nogging validation](https://github.com/JoMe92/nogging/actions/workflows/nogging-validate.yml/badge.svg?branch=main)](https://github.com/JoMe92/nogging/actions/workflows/nogging-validate.yml)
 
-**Structure for what's next.**
+**Structure for a team of agents.**
 
-Nogging is a lean, local-first operating model for agentic software delivery.
-It gives product intent, executable tasks, and implementation evidence clear
-owners so autonomous agents can move quickly without quietly changing the
-plan. The command and installed state are named `nogg`.
+Nogging turns autonomous coding agents into a disciplined team, not a single
+black box: a Planning Agent, a Lead Agent, and specialists, each with a
+defined role and a write boundary. It gives product intent, executable tasks,
+and implementation evidence clear owners so the team can move quickly without
+quietly changing the plan. The command and installed state are named `nogg`.
 OpenSpec owns approved product intent, Beads owns executable work, and Git owns
 the implementation. A deterministic sync process mirrors execution evidence
 back into OpenSpec; it never makes product decisions.
@@ -68,7 +69,7 @@ whole toolchain (Node via `nvm`, the agent CLIs, `bd`, Dolt, `git`/`tmux`/`gh`)
 and then runs `init` for you:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/JoMe92/nogging/v2.1.0/scripts/bootstrap | bash
+curl -fsSL https://raw.githubusercontent.com/JoMe92/nogging/v2.2.0/scripts/bootstrap | bash
 ```
 
 Always pin a tagged release in that URL, never `main`/`develop`. Add
@@ -84,7 +85,7 @@ existing Git repository instead. The command is pinned because the initial
 distribution is GitHub-only:
 
 ```bash
-npx github:JoMe92/nogging#v2.1.0 init --no-systemd
+npx github:JoMe92/nogging#v2.2.0 init --no-systemd
 ./scripts/nogg doctor
 ./scripts/nogg validate
 ```
@@ -100,14 +101,23 @@ Maintainers developing Nogging itself clone the repository and run
 worktree before editing OpenSpec:
 
 ```bash
-./scripts/nogg worktree plan <planning-id> "Describe the change"
-cd ../nogging-plan-<planning-id>
+./scripts/nogg worktree plan <planning-id> <description>   # both kebab-case
+cd <printed planning worktree path>
 ./scripts/nogg plan-begin
 # Author and validate the OpenSpec change, with stable TASK-... IDs in tasks.md.
 ./scripts/nogg validate
+NOGGING_WRITER=planning git commit -m "docs(openspec): <summary>"  # commit before materialize
 ./scripts/nogg materialize <change-name>
-./scripts/nogg plan-end
+# Wire Beads dependencies explicitly, fast-forward the plan branch into develop,
+# then remove the clean, integrated planning worktree.
+cd <main checkout>
+./scripts/nogg plan-end   # after cleanup, from the surviving canonical checkout
 ```
+
+A supervised planner is started with `./scripts/nogg session launch --role
+planning --planning-id <planning-id> --description <description>`. It gets
+its own worktree, stays idle until kickoff and takes the canonical planning
+lock itself.
 
 The generated timer is enabled with
 `systemctl --user enable --now nogg-sync.timer`; `./scripts/nogg sync --now`
@@ -138,7 +148,7 @@ Nogging GitHub tag instead:
 
 ```bash
 cd /path/to/your-repo
-npx github:JoMe92/nogging#v2.1.0 init      # then: update, doctor
+npx github:JoMe92/nogging#v2.2.0 init      # then: update, doctor
 ```
 
 `init` copies the tool files verbatim, writes an OpenSpec scaffold only where one
@@ -164,6 +174,7 @@ Full index, grouped by concepts / using Nogging / releasing and maintaining:
 | Supported versions and platforms | [Compatibility matrix](docs/compatibility.md) |
 | Codex integration | [Using Nogging with Codex](docs/using-with-codex.md) |
 | Pi integration | [Using Nogging with Pi](docs/using-with-pi.md) |
+| Experimental Antigravity integration | [Using Nogging with Antigravity](docs/using-with-antigravity.md) |
 | Interrupted-run recovery | [Failure recovery](docs/failure-recovery.md) |
 | Acceptance procedure | [Acceptance runbook](docs/acceptance.md) |
 | Contributions and conduct | [Contributing](CONTRIBUTING.md) and [Code of Conduct](CODE_OF_CONDUCT.md) |

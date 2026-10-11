@@ -54,6 +54,38 @@ When a change is ready to execute, you **launch a Lead session**
 `--full-access` for an autonomous run) and steer it through its log and
 `attach`. You do not do the Lead session's Bead work yourself.
 
+## Choose a tier before every launch
+
+Before **every** `session launch` you start — planning, lead or specialist,
+for any agent — you choose the model through the model-selection table, never
+through live research:
+
+1. **Classify** the task into one tier: `routine` (mechanical, fully
+   specified, low blast radius), `standard` (a normal Bead with a clear spec,
+   multi-file work in one component, a revision of an existing change) or
+   `complex` (ambiguous or cross-cutting work, planning a new capability,
+   architecture, concurrency, security, failure recovery, acceptance runs).
+   Write a one-line reason to the Bead note
+   (`bd update <id> --append-notes "tier <tier>: <reason>"`) or to your
+   operator update.
+2. **Look up** the entry if you need to see it:
+   `scripts/nogg models --agent <agent> --tier <tier>`.
+3. **Launch** with `--tier <tier>`; `session list` then shows `tier=<tier>`.
+
+Escalation rules:
+
+- When unsure, choose the higher tier.
+- A relaunch after a failed or stalled attempt on the same task escalates one
+  tier.
+- **Quota never lowers a tier.** On a usage-limit denial, wait for the limiting
+  reset or launch the same tier on another agent's entry; never switch a
+  resumed session's model to dodge a limit.
+
+Pass an explicit `--model` only on Product Owner instruction. Never edit the
+table (`.nogging/model-selection.json`) yourself; a stale or drifted entry
+(see `doctor`'s `model-selection` NOTEs) goes to a planning session. Pi has no
+table: launch Pi without `--tier`. See `docs/model-selection.md`.
+
 ## Explicit takeover: one task, then back
 
 Only on an explicit in-session instruction from the operator of the form
@@ -69,7 +101,11 @@ you have.
   `scripts/nogg plan-begin` → review discoveries → author/revise the
   `openspec/` change → `openspec validate --strict` → commit `openspec/` with a
   Conventional Commit subject **and a `Nogging-Writer: planning` trailer** →
-  `scripts/nogg materialize <change>` → `scripts/nogg plan-end`.
+  `scripts/nogg materialize <change>` → wire Beads dependencies explicitly →
+  fast-forward integrate → safe cleanup → `scripts/nogg plan-end` from a
+  surviving canonical checkout. To start a separate planner instead, launch
+  `scripts/nogg session launch --role planning --planning-id <id>
+  --description <desc>` and kick it off; never pre-acquire its lock.
   The trailer is not optional: your session has no per-session `openspec/**`
   deny and the guard hook will not fire, so that trailer is the **only** thing
   that keeps the commit legal — a planning commit without it fails the CI
@@ -115,3 +151,12 @@ not collapse into the thing being checked. Leave the report with its
   the conductor is unfenced.
 - A Codex or Pi orchestrator is not shipped in this version — you are Claude
   Code only.
+
+Use the supervised child-control path only: `./scripts/nogg session launch`,
+`send`, `kickoff`, `stop`, `list`, `log`, or `watch`. Run each as a separate
+command from the checkout; the scoped permission rules use this exact spelling.
+A denied launch is a reported failure. Preserve the denial and the launch log;
+never fall back to direct `claude`, `codex`, or `pi` invocation, change a global
+permission mode, emulate operator consent, or install a persistent service to
+make a launch succeed. Run `./scripts/nogg doctor` for the scoped setup and
+unsupported auto-mode guidance. A specialist has no child-launch authority.

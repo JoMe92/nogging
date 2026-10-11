@@ -55,6 +55,44 @@ the Claude trusted path: it pushes the feature branch, fast-forward-merges into
 session has no network, so `git push`, `bd sync`, and `dolt push|pull` all fail;
 it stops and reports instead.
 
+Both levels explicitly add the shared Git directory and the current worktree's
+Git directory to `sandbox_workspace_write.writable_roots`, because Codex
+otherwise keeps them read-only and a Lead cannot fetch, commit or allocate a
+worktree. This also permits writes to Git hooks and configuration. The
+OpenSpec filesystem fence still applies.
+
+When `~/.ssh/config` exists and `GIT_SSH_COMMAND` is unset, the launcher uses
+`ssh -F ~/.ssh/config` for Git. This avoids system SSH configuration ownership
+errors inside the outer user namespace while retaining the operator's SSH
+settings. An explicit `GIT_SSH_COMMAND` takes precedence.
+
+Declare runtime directories in `.nogging/config.json`, for example:
+
+```json
+"agent_state_roots": {"antigravity": ["~/.gemini/antigravity-cli"]}
+```
+
+Declaration alone grants nothing. Label the Bead `agent-state:antigravity`
+or pass `session launch --agent-state antigravity` to grant these directories.
+Each requested entry must resolve to an existing directory strictly under
+`$HOME`; HOME itself, relative paths, missing directories and symlinks outside
+HOME are refused before session creation. Session records and `session list`
+show granted paths and their source (`label` or `option`). The directory may
+contain OAuth credentials and granting it permits the session to overwrite them.
+`NOGG_CODEX_EXTRA_WRITABLE_ROOTS` is retired: a nonempty value refuses launch.
+`doctor` reports a malformed declaration or a refused directory as a `WARN`, and
+a `NOTE` when `agy` is installed but `antigravity` is not declared.
+
+`./scripts/nogg doctor` diagnoses this policy from inside `codex sandbox`, using
+the same resolver as a launch: it creates and removes a uniquely named file in
+the shared Git directory and the worktree's gitdir, so a root the sandbox keeps
+read-only is reported even though the host can write it. `doctor --sandbox`
+also runs `git ls-remote origin` (SSH remotes only, 30 s) and `scripts/test`
+(bounded by `doctor_sandbox_test_timeout_seconds`, default 900) in the same
+sandbox and names failing suites. Every outcome, including a skip because
+`codex` or `codex sandbox` is absent, is a `NOTE` and never changes doctor's
+exit status.
+
 Both levels additionally pass `--add-dir <shared checkout root>`, unconditionally
 alongside `--cd <worktree>`, so the shared checkout's `.git`/`.beads` stay
 writable from inside the worktree sandbox even at `restricted` — `bd` and local
@@ -107,9 +145,10 @@ requirement is behavioural — the file can be rewritten without a spec change.
 
 The persona and step text are identical; only the invocation surface differs.
 Each is a thin wrapper over `scripts/nogg` — the mechanical steps
-(`plan-begin` → discovery review → author → `validate` → `materialize` →
-commit as the `planning` writer → `plan-end`; `discoveries` / `--ack`;
-`sync --now`) are agent-neutral.
+(`plan-begin` → discovery review → author → `validate` → commit as the
+`planning` writer → `materialize` → wire dependencies → integrate → safe
+cleanup → `plan-end` from a surviving canonical checkout; `discoveries` /
+`--ack`; `sync --now`) are agent-neutral.
 
 **Custom-prompt discovery is version-dependent.** codex-cli 0.148 loads custom
 prompts only from `${CODEX_HOME:-~/.codex}/prompts/` (user-scoped); repo-scoped
