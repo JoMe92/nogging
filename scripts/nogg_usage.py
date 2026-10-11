@@ -489,11 +489,44 @@ def evaluate_gate(report, config, estimate, reserved_percent=0):
         decision = 'unknown-denied' if config['on_unknown'] == 'deny' else 'unknown-admitted'
     else:
         decision = 'admitted'
-    return {'decision': decision, 'cap_percent': config['cap_percent'],
-            'estimate_percent': estimate, 'reserved_percent': max(reserved_percent.values(), default=0) if isinstance(reserved_percent, dict) else reserved_percent,
-            'fits': False if limiting else (None if unknown else True),
-            'retry_after': max((w['resets_at'] for w in limiting), default=None),
-            'windows': windows}
+    retry_after = max((w['resets_at'] for w in limiting), default=None)
+    result = {'decision': decision, 'cap_percent': config['cap_percent'],
+              'estimate_percent': estimate, 'reserved_percent': max(reserved_percent.values(), default=0) if isinstance(reserved_percent, dict) else reserved_percent,
+              'fits': False if limiting else (None if unknown else True),
+              'retry_after': retry_after,
+              'windows': windows}
+    guidance = orchestrator_retry_guidance(result)
+    if guidance is not None:
+        result['retry_guidance'] = guidance
+    return result
+
+
+def orchestrator_retry_guidance(gate):
+    """Scheduling guidance for orchestrators when admission is denied.
+
+    Uses all limiting reset windows (reporting the latest reset time) and
+    explicitly prohibits model switching to bypass account limits.
+    """
+    decision = gate.get('decision')
+    if decision not in ('denied', 'unknown-denied'):
+        return None
+    if decision == 'unknown-denied':
+        return {
+            'action': 'verify_source',
+            'retry_after': None,
+            'model_switching_allowed': False,
+            'guidance': 'unknown quota denied; verify local observation sources; do not switch models to bypass limits'
+        }
+    limiting = [w for w in gate.get('windows', []) if not w.get('fits', True)]
+    retry_after = gate.get('retry_after')
+    limiting_names = [w['bucket'] for w in limiting]
+    return {
+        'action': 'retry_after_reset',
+        'retry_after': retry_after,
+        'limiting_windows': limiting_names,
+        'model_switching_allowed': False,
+        'guidance': f"schedule bounded retry after latest reset {retry_after} across all limiting windows ({', '.join(limiting_names)}); do not switch models to bypass account limits"
+    }
 
 
 def observe(agent, config, *, now=None):
@@ -512,11 +545,11 @@ def describe_denial(gate):
     if gate['decision'] == 'unknown-denied':
         reasons = '; '.join(f"{w['bucket']}: {w['reason']}" for w in gate['windows'] if w['status'] != 'known')
         return f'usage unknown and usage_gate.on_unknown is deny ({reasons})'
-    parts = [f"{w['bucket']} {w['used_percent']:g}% used + {w.get('reserved_percent', gate['reserved_percent']):g}% reserved + "
-             f"{gate['estimate_percent']:g}% estimate = {w['projected_percent']:g}% > cap "
-             f"{gate['cap_percent']:g}% (resets {w['resets_at']})"
-             for w in gate['windows'] if w['fits'] is False]
-    return 'usage would exceed the cap: ' + '; '.join(parts) + f"; retry after {gate['retry_after']}"
+    parts = [f"{w['bucket']} {w.get('used_percent', 0):g}% used + {w.get('reserved_percent', gate.get('reserved_percent', 0)):g}% reserved + "
+             f"{gate.get('estimate_percent', 0):g}% estimate = {w.get('projected_percent', 0):g}% > cap "
+             f"{gate.get('cap_percent', 0):g}% (resets {w.get('resets_at')})"
+             for w in gate['windows'] if w.get('fits') is False]
+    return 'usage would exceed the cap: ' + '; '.join(parts) + f"; retry after {gate['retry_after']} (scheduling uses all limiting reset windows without model switching)"
 
 
 def usage_command(agent, json_output=False, config=None, model=None):
@@ -543,6 +576,8 @@ def usage_command(agent, json_output=False, config=None, model=None):
     print(f"  estimate {gate['estimate_percent']:g}% per launch; reserved {gate['reserved_percent']:g}%; "
           f"fits: {'unknown' if gate['fits'] is None else ('yes' if gate['fits'] else 'no')}"
           + ('' if config['enabled'] else ' (usage_gate disabled)'))
+    if gate.get('retry_guidance'):
+        print(f"  orchestrator retry guidance: {gate['retry_guidance']['guidance']}")
 
 
 
@@ -708,3 +743,243 @@ class Reservations:
             self._transaction(lambda entries: entries.pop(token, None))
         finally:
             self.finish(token)
+
+
+def _generate_statusline_wrapper(upstream_cmd):
+    serialized_upstream = repr(upstream_cmd)
+    return f"""#!/usr/bin/env python3
+# Nogging Claude statusline capture wrapper.
+# Generated automatically by `nogg usage install-statusline`.
+import datetime as dt
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+
+UPSTREAM_COMMAND = {serialized_upstream}
+
+def capture(raw):
+    try:
+        data = json.loads(raw)
+        if isinstance(data, dict) and "rate_limits" in data and isinstance(data["rate_limits"], dict):
+            now = dt.datetime.now(dt.timezone.utc)
+            cache_dir = Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))) / "nogging/usage"
+            cache_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+            try:
+                os.chmod(cache_dir, 0o700)
+            except OSError:
+                pass
+            cache_file = cache_dir / "claude.json"
+            record = {{
+                "schema_version": 1,
+                "observed_at": now.isoformat().replace("+00:00", "Z"),
+                "rate_limits": data["rate_limits"]
+            }}
+            with tempfile.NamedTemporaryFile("w", dir=cache_dir, prefix=".claude-usage-", delete=False) as tf:
+                tmp_path = Path(tf.name)
+                json.dump(record, tf, sort_keys=True)
+                tf.flush()
+                os.fsync(tf.fileno())
+            try:
+                os.chmod(tmp_path, 0o600)
+            except OSError:
+                pass
+            os.replace(tmp_path, cache_file)
+    except Exception:
+        pass
+
+def main():
+    if sys.stdin.isatty():
+        print("Nogging Claude statusline capture wrapper. Expects Claude statusline JSON on stdin.", file=sys.stderr)
+        sys.exit(0)
+    raw_stdin = sys.stdin.read()
+    capture(raw_stdin)
+    if UPSTREAM_COMMAND:
+        try:
+            res = subprocess.run(
+                UPSTREAM_COMMAND,
+                input=raw_stdin,
+                shell=True,
+                text=True
+            )
+            sys.exit(res.returncode)
+        except Exception:
+            sys.exit(1)
+    else:
+        sys.exit(0)
+
+if __name__ == "__main__":
+    main()
+"""
+
+
+def install_statusline(settings_path=None, wrapper_path=None):
+    """Explicitly install or compose the Claude Code statusline usage capture wrapper.
+
+    Preserves existing user statusline through composition, or refuses with
+    actionable manual instructions if composition is unsupported or conflicts.
+    Preserves all unrelated user settings in settings.json.
+    """
+    settings_file = Path(settings_path).expanduser().resolve() if settings_path else (
+        Path(os.environ.get('CLAUDE_CONFIG_DIR', str(Path.home() / '.claude'))) / 'settings.json'
+    )
+    wrapper_file = Path(wrapper_path).expanduser().resolve() if wrapper_path else (
+        Path(os.environ.get('XDG_DATA_HOME', str(Path.home() / '.local/share'))) / 'nogging/claude-statusline'
+    )
+
+    existing_settings = {}
+    if settings_file.exists():
+        try:
+            content = settings_file.read_text(encoding='utf-8')
+            parsed = json.loads(content)
+            if not isinstance(parsed, dict):
+                raise ValueError('root must be a JSON object')
+            existing_settings = parsed
+        except Exception as exc:
+            raise RuntimeError(
+                f"cannot automatically compose statusline: settings file {settings_file} is malformed or unreadable ({exc}).\n"
+                "Manual instructions:\n"
+                f"1. Repair {settings_file} to ensure it contains valid JSON.\n"
+                "2. Configure a statusLine command that captures Claude's stdin JSON to "
+                "$XDG_CACHE_HOME/nogging/usage/claude.json before invoking your custom statusline."
+            ) from exc
+
+    existing_statusline = existing_settings.get('statusLine')
+    upstream_cmd = None
+
+    if existing_statusline is not None:
+        if isinstance(existing_statusline, dict):
+            st_type = existing_statusline.get('type')
+            if st_type is not None and st_type != 'command':
+                raise RuntimeError(
+                    f"cannot automatically compose existing statusline: unsupported statusLine type '{st_type}'.\n"
+                    "Manual instructions:\n"
+                    "Nogging supports composing command-based statusLine configurations ({\"type\": \"command\", \"command\": \"...\"}).\n"
+                    "To capture usage manually, configure your statusline provider to write Claude's stdin to "
+                    "$XDG_CACHE_HOME/nogging/usage/claude.json (schema_version 1, observed_at UTC ISO8601, rate_limits)."
+                )
+            cmd = existing_statusline.get('command')
+            if not isinstance(cmd, str) or not cmd.strip():
+                raise RuntimeError(
+                    "cannot automatically compose existing statusline: statusLine object missing non-empty 'command'.\n"
+                    "Manual instructions:\n"
+                    f"Ensure 'statusLine.command' in {settings_file} specifies a valid command before installing, "
+                    "or remove 'statusLine' to use Nogging's standalone statusline capture."
+                )
+            if str(wrapper_file) in cmd or 'nogging/claude-statusline' in cmd:
+                return {
+                    'status': 'already_installed',
+                    'wrapper_path': str(wrapper_file),
+                    'settings_path': str(settings_file),
+                    'message': f"statusline capture already installed at {wrapper_file} and configured in {settings_file}"
+                }
+            upstream_cmd = cmd.strip()
+        elif isinstance(existing_statusline, str):
+            if str(wrapper_file) in existing_statusline or 'nogging/claude-statusline' in existing_statusline:
+                return {
+                    'status': 'already_installed',
+                    'wrapper_path': str(wrapper_file),
+                    'settings_path': str(settings_file),
+                    'message': f"statusline capture already installed at {wrapper_file} and configured in {settings_file}"
+                }
+            upstream_cmd = existing_statusline.strip()
+        else:
+            raise RuntimeError(
+                f"cannot automatically compose existing statusline: unsupported statusLine configuration ({type(existing_statusline).__name__}).\n"
+                "Manual instructions:\n"
+                f"Configure 'statusLine' in {settings_file} as {{\"type\": \"command\", \"command\": \"...\"}} or remove it."
+            )
+
+    import tempfile
+    wrapper_file.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
+    wrapper_content = _generate_statusline_wrapper(upstream_cmd)
+
+    with tempfile.NamedTemporaryFile('w', dir=wrapper_file.parent, prefix='.claude-statusline-', delete=False) as tf:
+        tmp_wrapper = Path(tf.name)
+        tf.write(wrapper_content)
+        tf.flush()
+        os.fsync(tf.fileno())
+    os.chmod(tmp_wrapper, 0o755)
+    os.replace(tmp_wrapper, wrapper_file)
+
+    new_settings = dict(existing_settings)
+    if isinstance(existing_statusline, dict):
+        new_statusline = dict(existing_statusline)
+        new_statusline['type'] = 'command'
+        new_statusline['command'] = str(wrapper_file)
+        new_settings['statusLine'] = new_statusline
+    else:
+        new_settings['statusLine'] = {
+            'type': 'command',
+            'command': str(wrapper_file)
+        }
+
+    settings_file.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
+    with tempfile.NamedTemporaryFile('w', dir=settings_file.parent, prefix='.claude-settings-', delete=False) as tf:
+        tmp_settings = Path(tf.name)
+        json.dump(new_settings, tf, indent=2, sort_keys=True)
+        tf.write('\n')
+        tf.flush()
+        os.fsync(tf.fileno())
+    os.chmod(tmp_settings, 0o600 if settings_file.exists() else 0o644)
+    os.replace(tmp_settings, settings_file)
+
+    return {
+        'status': 'installed',
+        'wrapper_path': str(wrapper_file),
+        'settings_path': str(settings_file),
+        'composed_upstream': upstream_cmd,
+        'message': f"installed statusline capture at {wrapper_file}" + (
+            f" (composed with existing command: {upstream_cmd})" if upstream_cmd else ""
+        )
+    }
+
+
+def quota_freshness_notes(config=None, now=None):
+    """Advisory doctor notes regarding local quota observation cache freshness.
+
+    Distinguishes missing, stale, and fresh observation sources for Claude
+    and Codex. Never raises; returns advisory lines for `doctor`.
+    """
+    cfg = gate_config(config)
+    stale_sec = cfg['stale_seconds']
+    notes = []
+
+    # Claude observation check
+    claude_cache = Path(os.environ.get('XDG_CACHE_HOME', str(Path.home() / '.cache'))) / 'nogging/usage/claude.json'
+    if not claude_cache.exists():
+        notes.append("quota observation (claude): missing statusline cache — run `nogg usage install-statusline` to opt in")
+    else:
+        try:
+            obs = inspect_usage('claude', source=claude_cache, now=now, stale_after=stale_sec)
+            if obs['status'] == 'known':
+                notes.append("quota observation (claude): fresh observation cache")
+            else:
+                reasons = '; '.join(w.get('reason') or 'unknown' for w in obs['windows'] if w.get('status') != 'known')
+                if 'stale observation' in reasons:
+                    notes.append(f"quota observation (claude): observation is stale (> {stale_sec}s old) — run Claude to refresh")
+                else:
+                    notes.append(f"quota observation (claude): cache unavailable ({reasons})")
+        except Exception as exc:
+            notes.append(f"quota observation (claude): unreadable cache ({exc})")
+
+    # Codex observation check
+    codex_sessions = Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex'))) / 'sessions'
+    try:
+        obs = inspect_usage('codex', source=codex_sessions, now=now, stale_after=stale_sec)
+        if obs['status'] == 'known':
+            notes.append("quota observation (codex): fresh observation metadata")
+        else:
+            reasons = '; '.join(w.get('reason') or 'unknown' for w in obs['windows'] if w.get('status') != 'known')
+            if 'missing usage source' in reasons:
+                notes.append("quota observation (codex): missing usage source (no rollout session metadata)")
+            elif 'stale observation' in reasons:
+                notes.append(f"quota observation (codex): observation is stale (> {stale_sec}s old) — run Codex to refresh")
+            else:
+                notes.append(f"quota observation (codex): observation unavailable ({reasons})")
+    except Exception as exc:
+        notes.append(f"quota observation (codex): unreadable metadata ({exc})")
+
+    return notes
