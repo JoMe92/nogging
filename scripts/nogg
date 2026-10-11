@@ -2511,12 +2511,15 @@ def reject_reasoning_effort(spec, origin):
     if "model_reasoning_effort" in spec:
         raise RuntimeError(
             f"{origin}: model_reasoning_effort is Codex-only; launch refused")
-def select_session_model(cli_model, spec):
-    """Model precedence: explicit `--model`, then the profile `model`, then
-    the runtime's native default (`None`). Returns `(model, source)` with
-    source `launch`, `profile` or `runtime-default`."""
+def select_session_model(cli_model, spec, tier_model=None):
+    """Model precedence: explicit `--model`, then the `--tier` table model,
+    then the profile `model`, then the runtime's native default (`None`).
+    Returns `(model, source)` with source `launch`, `profile` or
+    `runtime-default`; a tier-derived model is a launch-time selection."""
     if cli_model is not None:
         return validate_model_name(cli_model, "--model"), "launch"
+    if tier_model is not None:
+        return validate_model_name(tier_model, "--tier table model"), "launch"
     if spec and spec.get("model") is not None:
         return spec["model"], "profile"
     return None, "runtime-default"
@@ -2665,6 +2668,45 @@ def models_cmd(action, agent, tier, as_json, path=None):
     if not agent and not tier:
         for t in MODEL_SELECTION_TIERS:
             print(f"  {t}: {table['tiers'][t]['summary']}")
+# Claude effort forwarding ships with change support-claude-reasoning-effort
+# (TASK-CRE-002/003); until then a Claude tier applies its model only.
+CLAUDE_TIER_EFFORT_PENDING = "support-claude-reasoning-effort"
+def resolve_launch_tier(tier, agent, resume=None):
+    """Resolve `session launch --tier` for an already resolved agent, before any
+    side effect. Returns `{tier, model, effort}`; refuses (with a remedy) an
+    unknown tier, a missing or invalid table, and an agent without entries
+    (Pi). An exact resume keeps the selection recorded for that conversation
+    and never re-resolves against a possibly changed table."""
+    if tier not in MODEL_SELECTION_TIERS:
+        raise RuntimeError(f"--tier {tier!r} is not a model-selection tier; choose one of "
+                           f"{', '.join(MODEL_SELECTION_TIERS)} (see `nogg models`); launch refused")
+    if agent not in MODEL_SELECTION_AGENTS:
+        raise RuntimeError(f"--tier is not supported for agent {agent!r}: the model-selection table "
+                           f"has no {agent} entries (its model namespace is provider-dependent); "
+                           "drop --tier and select the model with --model or the launch profile; "
+                           "launch refused")
+    if resume and agent in ("claude", "antigravity"):
+        key = "claude_session_id" if agent == "claude" else "antigravity_conversation_id"
+        prior = [rec for _, rec in session_records()
+                 if rec.get(key) == resume and rec.get("agent", "claude") == agent]
+        if not prior or "selection_tier" not in prior[-1] or prior[-1]["selection_tier"] is None:
+            raise RuntimeError(f"--tier with --resume needs the recorded tier selection of "
+                               f"conversation {resume}, and no session record carries one; drop "
+                               "--tier to resume with the profile selection; launch refused")
+        rec = prior[-1]
+        if rec["selection_tier"] != tier:
+            raise RuntimeError(f"conversation {resume} was launched with tier "
+                               f"{rec['selection_tier']!r}; an exact resume keeps its recorded "
+                               f"selection, so pass --tier {rec['selection_tier']} or drop --tier; "
+                               "launch refused")
+        return {"tier": tier, "model": rec.get("requested_model"),
+                "effort": rec.get("selection_tier_effort")}
+    try:
+        table = load_model_selection()
+    except RuntimeError as exc:
+        raise RuntimeError(f"{exc}\n--tier {tier} launch refused")
+    entry = model_selection_entry(table, agent, tier)
+    return {"tier": tier, "model": entry["model"], "effort": entry["effort"]}
 CODEX_SANDBOX_MODES = ("read-only", "workspace-write", "danger-full-access")
 CODEX_APPROVAL_POLICIES = ("untrusted", "on-request", "never")
 def load_codex_spec(path):
@@ -2937,7 +2979,7 @@ def session_state_grants(bead, explicit=(), records=None):
 def session_launch(role, bead, cwd, read_only, owner,
                    profile=None, prompt=None, full_access=False, agent=None,
                    resume=None, kickoff=False, planning_id=None, description=None,
-                   model=None, agent_state=()):
+                   model=None, agent_state=(), tier=None):
     """Start a supervised agent session for a Bead.
 
     `resume` names the exact prior conversation: Claude uses `--resume <id>`;
@@ -2955,6 +2997,9 @@ def session_launch(role, bead, cwd, read_only, owner,
     if os.environ.get("NOGG_CODEX_EXTRA_WRITABLE_ROOTS"):
         session_state_grants(None)
     agent = resolve_agent(agent)
+    # `--tier` resolves the model-selection table right after the agent and
+    # before anything else, so every refusal precedes all side effects.
+    tier_selection = resolve_launch_tier(tier, agent, resume) if tier is not None else None
     role_meta, role_slug = normalize_role(role)
     is_orchestrator = role_meta == "orchestrator"
     is_planning = role_meta == "planning"
@@ -2998,11 +3043,20 @@ def session_launch(role, bead, cwd, read_only, owner,
     codex_spec = load_codex_spec(profile_path) if agent == "codex" else None
     pi_spec = load_pi_spec(profile_path) if agent == "pi" else None
     agy_spec = load_antigravity_spec(profile_path) if agent == "antigravity" else None
-    # Model precedence (--model, profile model, runtime default) is resolved and
+    # Model precedence (--model, --tier, profile model, runtime default) is resolved and
     # validated here, before any session exists on disk or in tmux.
     selected_model, model_source = select_session_model(
-        model, source_settings or codex_spec or pi_spec or agy_spec)
+        model, source_settings or codex_spec or pi_spec or agy_spec,
+        tier_selection and tier_selection["model"])
     reasoning_effort = (codex_spec or {}).get("model_reasoning_effort")
+    # Codex effort: tier over profile `model_reasoning_effort` over runtime
+    # default; it travels through the wrapper's existing --reasoning-effort.
+    # A Claude tier effort is reported, not applied, until Claude effort
+    # forwarding exists; Antigravity's effort is part of its model name.
+    tier_effort = tier_selection and tier_selection["effort"]
+    if agent == "codex" and tier_effort is not None:
+        reasoning_effort = tier_effort
+    unapplied_tier_effort = tier_effort if agent == "claude" else None
     if agy_spec and Path(profile_path).name == "restricted.agy.toml" and agy_spec["approval"] != "ask":
         raise RuntimeError("Antigravity restricted profile requires ask approval")
     if resume is not None and agent not in ("claude", "antigravity"):
@@ -3194,6 +3248,10 @@ def session_launch(role, bead, cwd, read_only, owner,
         # does not guess which model that is).
         "requested_model": selected_model, "model_source": model_source,
         "reasoning_effort": reasoning_effort,
+        # The `--tier` this launch resolved (or null). A Claude tier effort that
+        # was not applied is kept so an exact resume reuses the same selection.
+        "selection_tier": tier_selection and tier_selection["tier"],
+        "selection_tier_effort": tier_effort,
         "session_pid": None, "session_pid_start": None,
     }
     write_session(rec_path, record)                       # metadata before exec
@@ -3241,6 +3299,13 @@ def session_launch(role, bead, cwd, read_only, owner,
     print(f"  bead={bead or '-'} role={role_meta} cwd={workdir}")
     print(f"  log={log_path}")
     print(f"  attach: {tmux_bin()} -L {tmux_socket()} attach -t {name}  (or: nogg session attach {name})")
+    if tier_selection:
+        print(f"  tier={tier_selection['tier']} model={selected_model}"
+              + (f" effort={reasoning_effort}" if agent == "codex" and reasoning_effort else ""))
+    if unapplied_tier_effort:
+        print(f"NOTE: tier {tier_selection['tier']} Claude effort '{unapplied_tier_effort}' is not "
+              f"applied: Claude effort forwarding is pending change {CLAUDE_TIER_EFFORT_PENDING}; "
+              "the tier model was applied and Claude uses its own default effort.")
     if (role_meta == "lead" or role_meta.startswith("specialist:")) and not (
             profile or prompt or full_access):
         print(f"⚠ {name} launched in restricted/manual mode — it will not act "
@@ -3321,6 +3386,8 @@ def _model_display(rec):
     shown = rec.get("requested_model") or "runtime-default"
     if rec.get("reasoning_effort"):
         shown += f" effort={rec['reasoning_effort']}"
+    if rec.get("selection_tier"):
+        shown += f" tier={rec['selection_tier']}"
     return shown
 def _agent_display(rec):
     """`session list` AGENT cell: a record written before this column existed
@@ -5140,6 +5207,8 @@ def main():
     sl.add_argument("--resume", help="exact conversation ID (Antigravity or Claude); never latest")
     sl.add_argument("--model", help="model for this launch; overrides the profile model, "
                                     "which overrides the runtime default")
+    sl.add_argument("--tier", help="model-selection tier (routine, standard, complex): take the model "
+                    "and effort from the table; --model still wins (see `nogg models`)")
     sl.add_argument("--kickoff", action="store_true",
                     help="send the session its first message immediately after launch")
     ssub.add_parser("list")
@@ -5210,7 +5279,7 @@ def session_cmd(args):
         session_launch(args.role, args.bead, args.cwd, args.read_only, args.owner,
                        args.profile, args.prompt, args.full_access, args.agent,
                        resume=args.resume, kickoff=args.kickoff, planning_id=args.planning_id, description=args.description,
-                       model=args.model, agent_state=args.agent_state)
+                       model=args.model, agent_state=args.agent_state, tier=args.tier)
     elif args.session_command == "list":
         session_list()
     elif args.session_command == "attach":
