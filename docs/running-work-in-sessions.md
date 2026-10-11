@@ -587,3 +587,21 @@ with `"on_unknown": "deny"`. A known window over the cap denies even when the
 other window is unknown. `--ignore-usage-gate` launches without admission; it
 warns and is recorded as `usage_gate.decision: "ignored"` on the session
 record, alongside `admitted`, `unknown-admitted`, `disabled` or `excluded`.
+
+### Learned estimates and usage history
+
+Nogging learns base reservation estimates per agent and model from complete,
+attributable, non-reset intervals. Samples are collected only when a session
+runs in isolation; intervals spanning concurrent workers are rejected because
+account delta attribution cannot be known. Quota window resets, counter drops,
+and statistical outliers are also rejected.
+
+History is stored per agent/model in an owner-only cache
+(`$XDG_CACHE_HOME/nogging/usage/history/history.json`, mode 0600 in mode 0700
+directory) and is strictly bounded. When fewer than three valid samples exist,
+admission falls back conservatively to the configured `estimate_percent`.
+With sufficient samples, Nogging uses the conservative learned median
+(favoring the higher value on even sample counts). A Bead's `size:<name>` label
+scales the learned estimate by the configured multiplier. The history store
+records only deltas and timestamps; no credentials, tokens, or account
+identifiers are stored or exposed.
