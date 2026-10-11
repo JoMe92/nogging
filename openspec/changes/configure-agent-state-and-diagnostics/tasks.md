@@ -6,7 +6,7 @@
 
 - [x] TASK-ASD-003 Ship templates/claude/orchestrator-permissions.example.json (sibling worktree path pattern allows, scripts/nogg allows, deny list superset of FLOOR_DENY plus history-destroying Git) and document it with the auto-mode classifier and user-only autoMode limits after verifying them against installed Claude Code and official docs; add a drift test and verify init/update never apply it.
 
-- [ ] TASK-ASD-004 Reconcile the owner-requested autonomous Claude configuration already delivered by SPEC-u57h in commit 1ae9dab (pinned trusted profile/autonomous prompt labelled by file name, documented Cloud settings); verify it is on develop and the configured-launch session test passes, then close through task-done without re-implementation.
+- [x] TASK-ASD-004 Reconcile the owner-requested autonomous Claude configuration already delivered by SPEC-u57h in commit 1ae9dab (pinned trusted profile/autonomous prompt labelled by file name, documented Cloud settings); verify it is on develop and the configured-launch session test passes, then close through task-done without re-implementation.
 
 - [x] TASK-ASD-005 Run scripts/test, a live labelled Codex session that runs agy with its state root granted while an unlabelled session stays unwidened, and doctor plus doctor --sandbox on this host; record versions and evidence in the Bead notes without signing acceptance.
 

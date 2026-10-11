@@ -28,7 +28,7 @@
       actually runs from — implementer's call, confirm against where the
       sync timer's working directory actually is).
 
-- [ ] TASK-ACI-005 Add the `Co-authored-by:` instruction to the Lead Agent
+- [x] TASK-ACI-005 Add the `Co-authored-by:` instruction to the Lead Agent
       delegation protocol everywhere it's documented — `AGENTS.md`,
       `templates/claude-block.md`, `templates/agents-block.md`: when a
       specialist's delegated, incorporated work contributes to a commit, add
@@ -36,14 +36,14 @@
       email>` trailer naming that specialist, using the roster from
       TASK-ACI-001.
 
-- [ ] TASK-ACI-006 Add a `scripts/nogg doctor` check: report, as a NOTE, any
+- [x] TASK-ACI-006 Add a `scripts/nogg doctor` check: report, as a NOTE, any
       worktree whose `user.name` does not match its role's expected persona
       (helps catch a worktree created before this change, or one where
       identity-setting silently failed). Never a FAIL.
 
 ## Tier 2 — opt-in GitHub Apps
 
-- [ ] TASK-ACI-007 Write the Product-Owner-facing procedure (new doc,
+- [x] TASK-ACI-007 Write the Product-Owner-facing procedure (new doc,
       e.g. `docs/agent-identities.md`): how to register one GitHub App per
       persona slug (name, minimum permissions — Contents and Pull requests
       read/write), generate its private key, install it on the target
