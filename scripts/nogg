@@ -5,7 +5,7 @@ It intentionally contains no LLM call and makes no semantic product decision.
 """
 from __future__ import annotations
 
-import argparse, base64, datetime as dt, fcntl, getpass, hashlib, json, os, re, shlex, shutil, signal, socket, subprocess, sys, tempfile, time, uuid
+import argparse, base64, datetime as dt, fcntl, getpass, hashlib, importlib.util, json, os, re, shlex, shutil, signal, socket, subprocess, sys, tempfile, time, uuid
 import urllib.parse, urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -98,6 +98,8 @@ class PartialSyncError(RuntimeError):
     """Valid changes reconciled while scoped mapping failures remain (exit 3)."""
 class LockBusyError(RuntimeError):
     """Another sync holds the lock and it is not yet stale. Transient."""
+class UsageGateDenied(RuntimeError):
+    """Launch admission refused by the usage gate: exit 75 (EX_TEMPFAIL)."""
 class ToolError(RuntimeError):
     """A `git` / `bd` invocation exited non-zero. Treated as transient."""
 
@@ -3055,6 +3057,57 @@ def codex_sandbox_policy(workdir, grants=(), network=True):
             "network_access": bool(network), "git_ssh_command": ssh}
 
 
+def usage_module():
+    """Load the installed `nogg_usage.py` beside this script, without bytecode."""
+    path = Path(__file__).resolve().parent / "nogg_usage.py"
+    if not path.is_file():
+        raise RuntimeError(f"{path} is missing; the usage gate cannot run; run Nogging update")
+    sys.dont_write_bytecode = True
+    spec = importlib.util.spec_from_file_location("nogg_usage", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+def usage_gate_admission(role_meta, agent, records, ignore):
+    """Admit or refuse a launch against the `usage_gate` config.
+
+    Returns the decision recorded on the session. The config is validated for
+    every launch, so a bad `usage_gate` refuses even an excluded role. A known
+    window whose used + reserved + estimate exceeds the cap raises
+    UsageGateDenied (exit 75) naming its reset time; unknown usage warns and
+    continues, or is denied with `on_unknown: "deny"`. `--ignore-usage-gate`
+    skips observation and is recorded. Same-host reservations of running
+    launches are not yet counted (reserved 0)."""
+    usage = usage_module()
+    describe_denial, evaluate_gate, gate_config, launch_estimate, observe = (
+        usage.describe_denial, usage.evaluate_gate, usage.gate_config, usage.launch_estimate, usage.observe)
+    try:
+        config = gate_config(CFG.get("usage_gate"))
+    except ValueError as exc:
+        raise RuntimeError(f"invalid usage_gate in .nogging/config.json: {exc}; launch refused") from exc
+    group = "specialist" if role_meta.startswith("specialist:") else role_meta
+    if not config["enabled"]:
+        return {"decision": "disabled"}
+    if group in config["exclude_roles"]:
+        return {"decision": "excluded"}
+    labels = [label for record in records for label in record.get("labels", []) or []]
+    try:
+        estimate = launch_estimate(agent, labels, config)
+    except ValueError as exc:
+        raise RuntimeError(f"usage gate: {exc}; launch refused") from exc
+    if ignore:
+        print("warning: --ignore-usage-gate: launching without usage admission; "
+              "this is recorded on the session", file=sys.stderr)
+        return {"decision": "ignored", **estimate}
+    gate = evaluate_gate(observe(agent, config), config, estimate["estimate_percent"])
+    gate.update(size=estimate["size"], multiplier=estimate["multiplier"],
+                base_estimate_percent=estimate["base_percent"])
+    if gate["decision"] in ("denied", "unknown-denied"):
+        raise UsageGateDenied(f"usage gate denied {agent} launch: {describe_denial(gate)}")
+    if gate["decision"] == "unknown-admitted":
+        reasons = "; ".join(f"{w['bucket']}: {w['reason']}" for w in gate["windows"] if w["status"] != "known")
+        print(f"warning: {agent} usage is unknown ({reasons}); launching without known headroom "
+              "(usage_gate.on_unknown is warn)", file=sys.stderr)
+    return gate
 def session_state_grants(bead, explicit=(), records=None):
     if os.environ.get("NOGG_CODEX_EXTRA_WRITABLE_ROOTS"):
         raise RuntimeError("use agent_state_roots and the agent-state:<agent> label; NOGG_CODEX_EXTRA_WRITABLE_ROOTS is retired")
@@ -3076,7 +3129,8 @@ def session_state_grants(bead, explicit=(), records=None):
 def session_launch(role, bead, cwd, read_only, owner,
                    profile=None, prompt=None, full_access=False, agent=None,
                    resume=None, kickoff=False, planning_id=None, description=None,
-                   model=None, agent_state=(), tier=None, effort=None):
+                   model=None, agent_state=(), tier=None, effort=None,
+                   ignore_usage_gate=False):
     """Start a supervised agent session for a Bead.
 
     `resume` names the exact prior conversation: Claude uses `--resume <id>`;
@@ -3187,6 +3241,9 @@ def session_launch(role, bead, cwd, read_only, owner,
         if blocking:
             raise RuntimeError(
                 f"Bead {bead} has an unmet dependency on {', '.join(blocking)}; launch refused")
+    # Usage admission is the last refusal before helper negotiation, worktree,
+    # trust, tmux or record side effects.
+    usage_gate = usage_gate_admission(role_meta, agent, records, ignore_usage_gate)
     # The orchestrator is a singleton: a fixed, nonce-free `nogg-orchestrator-<slug>`
     # name (a stale terminal record of the same name is reused in place). Every
     # other role gets the deterministic `sf-<role>-<bead>-<nonce>` shape.
@@ -3356,6 +3413,7 @@ def session_launch(role, bead, cwd, read_only, owner,
         # was not applied is kept so an exact resume reuses the same selection.
         "selection_tier": tier_selection and tier_selection["tier"],
         "selection_tier_effort": tier_effort,
+        "usage_gate": usage_gate,
         "session_pid": None, "session_pid_start": None,
     }
     write_session(rec_path, record)                       # metadata before exec
@@ -5319,6 +5377,8 @@ def main():
                     "and effort from the table; --model still wins (see `nogg models`)")
     sl.add_argument("--effort", help="reasoning effort for Claude (low, medium, high, xhigh, max); "
                                      "overrides profile effort, which overrides the runtime default")
+    sl.add_argument("--ignore-usage-gate", action="store_true",
+                    help="launch without usage admission; recorded on the session")
     sl.add_argument("--kickoff", action="store_true",
                     help="send the session its first message immediately after launch")
     ssub.add_parser("list")
@@ -5359,9 +5419,10 @@ def main():
     if args.command == "credential-helper":
         credential_helper(args.slug, args.operation)
     elif args.command == "usage":
-        sys.dont_write_bytecode = True
-        from nogg_usage import usage_command
-        usage_command(args.agent, args.json)
+        try:
+            usage_module().usage_command(args.agent, args.json, CFG.get("usage_gate"))
+        except ValueError as exc:
+            raise RuntimeError(f"invalid usage_gate in .nogging/config.json: {exc}") from exc
     elif args.command == "repo-state":
         print(json.dumps(canonical_repository_state(args.cwd), sort_keys=True))
     elif args.command == "plan-begin":
@@ -5393,7 +5454,8 @@ def session_cmd(args):
         session_launch(args.role, args.bead, args.cwd, args.read_only, args.owner,
                        args.profile, args.prompt, args.full_access, args.agent,
                        resume=args.resume, kickoff=args.kickoff, planning_id=args.planning_id, description=args.description,
-                       model=args.model, agent_state=args.agent_state, tier=args.tier, effort=args.effort)
+                       model=args.model, agent_state=args.agent_state, tier=args.tier, effort=args.effort,
+                       ignore_usage_gate=args.ignore_usage_gate)
     elif args.session_command == "list":
         session_list()
     elif args.session_command == "attach":
@@ -5427,4 +5489,5 @@ def session_cmd(args):
 if __name__ == "__main__":
     try: main()
     except PartialSyncError as exc: print(f"nogg: {exc}", file=sys.stderr); sys.exit(3)
+    except UsageGateDenied as exc: print(f"nogg: {exc}", file=sys.stderr); sys.exit(75)
     except Exception as exc: print(f"nogg: {exc}", file=sys.stderr); sys.exit(1)

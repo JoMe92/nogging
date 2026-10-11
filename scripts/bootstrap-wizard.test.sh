@@ -357,7 +357,7 @@ else
 fi
 
 if command -v codex > /dev/null 2>&1; then
-  codex_real_out=$(codex login status 2>&1); codex_real_exit=$?
+  codex_real_exit=0; codex_real_out=$(codex login status 2>&1) || codex_real_exit=$?
   expected_codex=no
   case "$codex_real_out" in
     *"Logged in"*) [ "$codex_real_exit" -eq 0 ] && expected_codex=yes ;;
