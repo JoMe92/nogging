@@ -3199,6 +3199,154 @@ def collect_session_usage(recs, final=False, budget=None, lock_timeout=None):
                                ".nogging/state/token-usage/ (see `nogg doctor`) and retry") from exc
         print(f"NOTE: usage collection skipped ({exc.__class__.__name__}); see `nogg doctor`", file=sys.stderr)
         return None
+def usage_report_module():
+    usage_collection_module()          # puts scripts/lib on sys.path
+    import token_usage_report
+    return token_usage_report
+def usage_state_dir():
+    return Path(canonical_repository_state(ROOT)["state_dir"]) / "token-usage"
+def usage_context():
+    """Collector and sync freshness for honest coverage; never touches Dolt."""
+    state = usage_state_dir()
+    def read(path):
+        try:
+            value = json.loads(path.read_text())
+            return value if isinstance(value, dict) else {}
+        except (OSError, ValueError):
+            return {}
+    collector = read(state / "collector/status.json")
+    spool = state / "collector/spool"
+    quarantine = state / "collector/quarantine"
+    pending = {"spooled_batches": len(list(spool.glob("*.json"))) if spool.is_dir() else 0,
+               "quarantined_batches": len(list(quarantine.glob("*.json"))) if quarantine.is_dir() else 0,
+               "last_collection_at": collector.get("last_collection_at"),
+               "last_success_at": collector.get("last_success_at"),
+               "last_error": collector.get("last_error")}
+    sources = {name: info.get("diagnostics", {}) for name, info in (collector.get("sessions") or {}).items()
+               if isinstance(info, dict)}
+    sync = read(state / "sync-status.json") or {"state": "not_configured", "local_only": True}
+    return {"pending": pending, "sources": sources, "sync": sync}
+def token_usage_command(args):
+    """`nogg token-usage ...`: local consumption accounting (design 6)."""
+    rep = usage_report_module()
+    now_dt = dt.datetime.now(dt.timezone.utc)
+    if args.usage_command == "collect":
+        recs = [r for _, r in session_records()]
+        if args.session:
+            recs = [r for r in recs if r.get("name") == args.session]
+            if not recs:
+                raise RuntimeError(f"no supervised session named {args.session!r}; see `nogg session list`")
+        report = collect_session_usage(recs) if recs else {"sessions": {}, "spooled": 0, "imported": 0, "error": None}
+        if report is None:
+            raise RuntimeError("usage collection could not run; see `nogg doctor`")
+        doc = {"schema": "nogg.token-usage.collect/v1", "as_of": rep.iso(now_dt), **report}
+        if args.json:
+            print(json.dumps(doc, indent=2, sort_keys=True))
+        else:
+            print(f"collected {len(report['sessions'])} session(s): {report['spooled']} new fact(s) spooled, "
+                  f"{report['imported']} imported; pending {report.get('spooled_batches', 0)} batch(es), "
+                  f"quarantined {report.get('quarantined_batches', 0)}")
+            if report.get("error"):
+                print(f"NOTE: {report['error']}; facts stay pending")
+        return
+    store = collect_store()
+    if args.usage_command == "import":
+        meta, _ = rep.load_facts(store)
+        with open(args.file) as fh:
+            project, records = rep.import_records(fh, meta)
+        # A recovered store adopts the export's project identity.
+        store.initialize(project_id=None if meta else project)
+        added = store.append(records)
+        print(json.dumps({"schema": "nogg.token-usage.import/v1", "facts": len(records), "added": added})
+              if args.json else f"imported {len(records)} fact(s); {added} new (identical facts are no-ops)")
+        return
+    meta, facts = rep.load_facts(store)
+    context = dict(usage_context(), store="present" if meta else "absent")
+    if args.usage_command == "report":
+        start, end = rep.window(args.from_, args.to, now_dt)
+        filters = {k: getattr(args, k) for k in rep.FILTERS}
+        doc = rep.report(facts, meta, start, end, args.group_by, filters, now_dt, context)
+        print(json.dumps(doc, indent=2, sort_keys=True) if args.json else render_usage_report(doc))
+    elif args.usage_command == "session":
+        doc = rep.session(facts, meta, args.id, now_dt, context)
+        print(json.dumps(doc, indent=2, sort_keys=True) if args.json else render_usage_session(doc))
+    elif args.usage_command == "export":
+        start, end = rep.window(args.from_, args.to, now_dt)
+        for line in rep.export_lines(facts, meta, start, end, now_dt):
+            print(line)
+    elif args.usage_command == "status":
+        counts = {table: len(rows) for table, rows in facts.items()}
+        try:
+            device = (store.root / "device-id").read_text().strip() or None
+        except OSError:
+            device = None
+        doc = {"schema": rep.STATUS_SCHEMA, "as_of": rep.iso(now_dt), "store": context["store"],
+               "store_path": str(store.database), "project_id": (meta or {}).get("project_id"),
+               "schema_version": (meta or {}).get("schema_version"), "device_id": device,
+               "current_facts": counts, **{k: context[k] for k in ("pending", "sync")}}
+        if args.json:
+            print(json.dumps(doc, indent=2, sort_keys=True))
+        else:
+            pending, sync = doc["pending"], doc["sync"]
+            print(f"usage store: {doc['store']} ({doc['store_path']})")
+            print(f"  project {doc['project_id'] or '-'}  device {device or '-'}  schema {doc['schema_version'] or '-'}")
+            print("  current facts: " + ", ".join(f"{k}={v}" for k, v in counts.items()))
+            print(f"  collection: last {pending['last_collection_at'] or 'never'}, last success "
+                  f"{pending['last_success_at'] or 'never'}, pending {pending['spooled_batches']}, "
+                  f"quarantined {pending['quarantined_batches']}"
+                  + (f", error: {pending['last_error']}" if pending.get("last_error") else ""))
+            print(f"  sync: {sync.get('state')}" + (f", last success {sync['last_success_at']}"
+                                                    if sync.get("last_success_at") else "")
+                  + (" (local-only facts; not global consumption)" if sync.get("local_only") else ""))
+def _fmt_tokens(metrics):
+    t, u = metrics["tokens"], metrics["unknown_counters"]
+    def cell(key):
+        return f"{t[key]}" + ("+?" if u[key] else "")
+    return cell("input_tokens"), cell("output_tokens"), cell("cache_read_tokens"), cell("cache_write_tokens")
+def render_usage_report(doc):
+    w = doc["window"]
+    lines = [f"token usage {w['from']} .. {w['to']} (UTC, half-open) grouped by {doc['group_by']}"
+             + (f"; filters {doc['filters']}" if doc["filters"] else "")]
+    lines.append(f"{'GROUP':<26}  {'EVENTS':>6}  {'INPUT':>12}  {'OUTPUT':>10}  {'CACHE_READ':>12}  "
+                 f"{'CACHE_WRITE':>11}  {'INFER_S':>8}  RUNTIME")
+    for row in doc["rows"]:
+        group = row.get("bucket") or (row.get("session") or row.get("segment_id") or "-")
+        inp, out, cr, cw = _fmt_tokens(row)
+        runtime = "-" if row["wall_runtime_ms"] is None else f"{row['wall_runtime_ms'] // 1000}s"
+        if row["runtime_quality"] and row["runtime_quality"] != ["complete"]:
+            runtime += f" ({'/'.join(row['runtime_quality'])})"
+        lines.append(f"{group[:26]:<26}  {row['events']:>6}  {inp:>12}  {out:>10}  {cr:>12}  {cw:>11}  "
+                     f"{row['inference_duration_ms'] // 1000:>8}  {runtime}")
+        if doc["group_by"] == "session":
+            for name, metrics in sorted(row["by_model"].items()):
+                lines.append(f"  model {name}: {metrics['events']} events, input {metrics['tokens']['input_tokens']}, "
+                             f"output {metrics['tokens']['output_tokens']}")
+    for entry in doc["coarse"]:
+        lines.append(f"coarse {entry['interval_from']}..{entry['interval_to']}: input {entry['tokens']['input_tokens']}, "
+                     f"output {entry['tokens']['output_tokens']} (not split across buckets)")
+    c = doc["coverage"]
+    lines.append(f"coverage: {c['events_in_window']} events; unknown model {c['unknown_model']}, task "
+                 f"{c['unknown_task']}, complexity {c['unknown_complexity']}; untimed {c['untimed_events']}")
+    p, sync = doc["pending"], doc["sync"]
+    lines.append(f"as of {doc['as_of']}; pending {p.get('spooled_batches', 0)} batch(es); sync {sync.get('state')}"
+                 + (" (local-only)" if sync.get("local_only") else ""))
+    lines.extend(f"note: {n}" for n in doc["notes"])
+    lines.append("'+?' marks a sum with unknown counters")
+    return "\n".join(lines)
+def render_usage_session(doc):
+    inp, out, cr, cw = _fmt_tokens(doc["totals"])
+    lines = [f"session {doc['session'] or '-'} (segment {doc['segment_id']}, {doc['runtime'] or '-'})",
+             f"  runtime {doc['wall_runtime_ms'] // 1000 if doc['wall_runtime_ms'] is not None else '-'}s "
+             f"({doc['runtime_quality']}); inference {doc['totals']['inference_duration_ms'] // 1000}s",
+             f"  tokens: input {inp}, output {out}, cache read {cr}, cache write {cw} over {doc['totals']['events']} events"]
+    for name, metrics in sorted(doc["by_model"].items()):
+        lines.append(f"  model {name}: {metrics['events']} events, input {metrics['tokens']['input_tokens']}, "
+                     f"output {metrics['tokens']['output_tokens']}")
+    for b in doc["attribution"]:
+        lines.append(f"  from {b['at']}: task {b['task_id'] or '-'} change {b['change_id'] or '-'} "
+                     f"complexity {b['complexity']} ({b['complexity_source']})")
+    lines.extend(f"note: {n}" for n in doc["notes"])
+    return "\n".join(lines)
 def collect_store():
     collect = usage_collection_module()
     return collect.Store(ROOT, canonical_repository_state)
@@ -5632,6 +5780,25 @@ def main():
     ch.add_argument("operation", choices=("get", "store", "erase"))
     rs = sub.add_parser("repo-state", help="print canonical repository state without writes")
     rs.add_argument("--cwd", default=str(ROOT))
+    tu = sub.add_parser("token-usage", help="local token consumption accounting (no cost or quota percent)")
+    tusub = tu.add_subparsers(dest="usage_command", required=True)
+    tuc = tusub.add_parser("collect", help="explicit catch-up collection of supervised sessions")
+    tuc.add_argument("--session"); tuc.add_argument("--json", action="store_true")
+    tur = tusub.add_parser("report", help="UTC half-open window report (default: current UTC day, daily)")
+    tur.add_argument("--from", dest="from_"); tur.add_argument("--to")
+    tur.add_argument("--group-by", choices=("hour", "day", "session"), default="day")
+    for key in ("project", "device", "runtime", "provider", "model", "task", "complexity", "effort"):
+        tur.add_argument(f"--{key}")
+    tur.add_argument("--json", action="store_true")
+    tus = tusub.add_parser("session", help="lifetime facts for one session (name or segment ID)")
+    tus.add_argument("id"); tus.add_argument("--json", action="store_true")
+    tue = tusub.add_parser("export", help="versioned JSONL facts for audit and recovery")
+    tue.add_argument("--from", dest="from_"); tue.add_argument("--to")
+    tue.add_argument("--format", choices=("jsonl",), default="jsonl")
+    tui = tusub.add_parser("import", help="recover facts from a token-usage export (identities must match)")
+    tui.add_argument("--file", required=True); tui.add_argument("--json", action="store_true")
+    tust = tusub.add_parser("status", help="usage store, collection and sync freshness")
+    tust.add_argument("--json", action="store_true")
     usage = sub.add_parser("usage", help="inspect read-only local quota observations")
     usage.add_argument("--agent", choices=("codex", "claude"), default="codex")
     usage.add_argument("--model", default=None, help="inspect estimate and fit for a specific model")
@@ -5757,6 +5924,11 @@ def main():
     args = p.parse_args()
     if args.command == "credential-helper":
         credential_helper(args.slug, args.operation)
+    elif args.command == "token-usage":
+        try:
+            token_usage_command(args)
+        except ValueError as exc:   # ReportError carries the remedy
+            raise RuntimeError(str(exc)) from exc
     elif args.command == "usage":
         try:
             usage_module().usage_command(args.agent, args.json, CFG.get("usage_gate"), model=args.model)
