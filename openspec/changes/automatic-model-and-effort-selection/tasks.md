@@ -4,7 +4,7 @@
 
 ## 2. Tier-resolved launch
 
-- [ ] TASK-MES-002 Add session launch --tier: resolve after agent resolution with --model over tier over profile over default; forward Codex effort via the wrapper's --reasoning-effort and the Antigravity model; Claude gets the model plus a NOTE about the unapplied effort; refuse Pi/unknown/invalid before side effects; record selection_tier and list tier=. Verify stub argv per agent and tier, plus legacy records. Depends on TASK-MES-001; see design decisions 4–6.
+- [x] TASK-MES-002 Add session launch --tier: resolve after agent resolution with --model over tier over profile over default; forward Codex effort via the wrapper's --reasoning-effort and the Antigravity model; Claude gets the model plus a NOTE about the unapplied effort; refuse Pi/unknown/invalid before side effects; record selection_tier and list tier=. Verify stub argv per agent and tier, plus legacy records. Depends on TASK-MES-001; see design decisions 4–6.
 
 - [ ] TASK-MES-003 Add doctor NOTEs for Codex catalog drift, bounded agy models drift and an installed table older than the packaged one; report unavailable sources honestly and never change the exit status. Verify fixtures for present, absent and unavailable sources. Depends on TASK-MES-002; see design decision 8 and the drift requirement.
 
