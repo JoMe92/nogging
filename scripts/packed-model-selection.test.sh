@@ -1,11 +1,23 @@
 #!/usr/bin/env bash
-# Installed-payload model-selection acceptance (TASK-SCM-004, issue #51).
+# Installed-payload model-selection and tier launch acceptance (TASK-SCM-004, TASK-MES-006).
 #
 # Packs the package, installs it into a fresh consumer with the packaged
-# `bin/cli.js`, and launches real tmux sessions with stub Claude/Codex/Pi
+# `bin/cli.js`, and launches real tmux sessions with stub Claude/Codex/Pi/Antigravity
 # runtimes through the installed `scripts/nogg` and `scripts/session-launch`.
 #
 # Covered, against the installed payload rather than the source checkout:
+#   - packed init scaffolds .nogging/model-selection.json and docs/nogging/model-selection.md;
+#   - installed scripts/nogg models check validates the scaffolded table;
+#   - consumer edits to the table survive update byte-for-byte;
+#   - update scaffolds an absent table;
+#   - tier launch fixtures:
+#     - Claude --tier applies table model, emits no effort flag, prints unapplied effort NOTE;
+#     - Codex --tier applies table model and reasoning effort via wrapper argv;
+#     - Antigravity --tier applies table model without effort flag;
+#     - explicit --model beats tier model while tier supplies effort;
+#     - tier beats profile model and profile effort;
+#     - record stores selection_tier and session list displays tier=<tier>;
+#     - unknown tier, Pi with --tier, and invalid table refuse before tmux or session record;
 #   - `--model` overrides a profile model: the runtime receives the override
 #     as separate argv elements and the record/list show source `launch`;
 #   - a profile model alone reaches the runtime with source `profile`;
@@ -47,15 +59,45 @@ with tempfile.TemporaryDirectory(prefix="nogg packed model ") as directory:
     env = {k: v for k, v in os.environ.items()
            if not k.startswith("NOGG_") and k != "NOGGING_ROOT"}
     home = scratch / "home"
-    for d in (".claude", ".codex", ".pi/agent"):
+    cache = scratch / "cache"
+    cache.mkdir()
+    for d in (".claude", ".codex", ".pi/agent", ".gemini/antigravity-cli"):
         (home / d).mkdir(parents=True)
     (home / ".claude/settings.json").write_text('{"model":"global-claude-model"}\n')
     (home / ".codex/config.toml").write_text('model = "global-codex-model"\n')
     (home / ".pi/agent/settings.json").write_text('{"defaultModel":"global-pi-model"}\n')
+    (home / ".gemini/antigravity-cli/settings.json").write_text('{"toolPermission":"request-review"}\n')
     subprocess.run(["node", str(package / "bin/cli.js"), "init", "--no-beads", "--no-hooks",
                     "--no-systemd"], cwd=consumer, env=env, stdout=subprocess.DEVNULL, check=True)
     for name in ("nogg", "session-launch"):
         assert (consumer / "scripts" / name).read_bytes() == (package / "scripts" / name).read_bytes()
+
+    # Scaffold verification (TASK-MES-006): init scaffolds table and doc
+    table_file = consumer / ".nogging/model-selection.json"
+    template_table = package / "templates/model-selection.json"
+    assert table_file.read_bytes() == template_table.read_bytes(), "init did not scaffold model-selection.json"
+    assert (consumer / "docs/nogging/model-selection.md").is_file(), "init did not copy model-selection doc"
+    subprocess.run([str(consumer / "scripts/nogg"), "models", "check"], cwd=consumer, env=env,
+                   stdout=subprocess.DEVNULL, check=True)
+    print("packed model selection: init scaffold and models check passed")
+
+    # Consumer edits survive update
+    table_data = json.loads(table_file.read_text())
+    table_data["agents"]["codex"]["standard"]["effort"] = "high"
+    table_file.write_text(json.dumps(table_data, indent=2) + "\n ")
+    edited_sha = hashlib.sha256(table_file.read_bytes()).hexdigest()
+    subprocess.run(["node", str(package / "bin/cli.js"), "update", "--no-hooks",
+                    "--no-systemd"], cwd=consumer, env=env, stdout=subprocess.DEVNULL, check=True)
+    assert hashlib.sha256(table_file.read_bytes()).hexdigest() == edited_sha, "update mutated edited table"
+    print("packed model selection: consumer edits survive update")
+
+    # Update scaffolds an absent table
+    table_file.unlink()
+    subprocess.run(["node", str(package / "bin/cli.js"), "update", "--no-hooks",
+                    "--no-systemd"], cwd=consumer, env=env, stdout=subprocess.DEVNULL, check=True)
+    assert table_file.read_bytes() == template_table.read_bytes(), "update did not scaffold absent table"
+    print("packed model selection: update scaffolds absent table")
+
     binaries, arguments = scratch / "stub-bin", scratch / "received-args"
     binaries.mkdir()
     arguments.mkdir()
@@ -67,13 +109,16 @@ import json, os, pathlib, sys, time
 if "--help" in sys.argv:
     print("stub runtime")
     sys.exit(0)
+if sys.argv[1:] == ["models"]:
+    print("gemini-3.8-flash-low\\tlow\\ngemini-3.8-flash-medium\\tmed\\ngemini-3.8-flash-high\\thigh")
+    sys.exit(0)
 target = pathlib.Path(os.environ["NOGG_TEST_ARGS_DIR"]) / pathlib.Path(sys.argv[0]).name
 target.write_text(json.dumps(sys.argv[1:]))
 print("stub ready", flush=True)
 while True:
     time.sleep(0.1)
 '''
-    for agent in ("claude", "codex", "pi"):
+    for agent in ("claude", "codex", "pi", "agy"):
         binary = binaries / agent
         binary.write_text(runtime)
         binary.chmod(0o755)
@@ -82,8 +127,8 @@ while True:
     sock = "nogg-packed-model-" + uuid.uuid4().hex
     config.update(session_tmux_socket=sock, session_stop_grace_seconds=0.1)
     config_path.write_text(json.dumps(config))
-    env.update(HOME=str(home), NOGGING_ROOT=str(consumer), NOGG_TEST_ARGS_DIR=str(arguments),
-               PATH=str(binaries) + os.pathsep + env["PATH"])
+    env.update(HOME=str(home), XDG_CACHE_HOME=str(cache), NOGGING_ROOT=str(consumer),
+               NOGG_TEST_ARGS_DIR=str(arguments), PATH=str(binaries) + os.pathsep + env["PATH"])
     nogg = consumer / "scripts/nogg"
     profiles = consumer / ".nogging/launch-profiles"
     sessions = consumer / ".nogging/state/sessions"
@@ -97,9 +142,17 @@ while True:
         'model_reasoning_effort = "turbo"\n')
 
     def snapshot():
-        files = sorted(p for base in (profiles, home) for p in base.rglob("*")
-                       if p.is_file() and ".cache/nogging/usage" not in p.as_posix())
-        return {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in files}
+        user_globals = [
+            home / ".claude/settings.json",
+            home / ".codex/config.toml",
+            home / ".pi/agent/settings.json",
+        ]
+        files = sorted(p for p in (list(profiles.rglob("*")) + user_globals) if p.is_file())
+        snap = {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in files}
+        agy_settings = home / ".gemini/antigravity-cli/settings.json"
+        if agy_settings.is_file():
+            snap["agy_tool_permission"] = json.loads(agy_settings.read_text()).get("toolPermission")
+        return snap
 
     def records():
         return [json.loads(p.read_text()) for p in sessions.glob("*.json")
@@ -110,14 +163,17 @@ while True:
                              capture_output=True, text=True)
         return out.stdout.split() if out.returncode == 0 else []
 
-    def launch(label, agent, extra, model_args, absent, source, listed):
-        received = arguments / agent
+    def launch(label, agent, extra, model_args, absent, source, listed, tier=None, expect_notice=None):
+        received = arguments / (agent if agent != "antigravity" else "agy")
         received.unlink(missing_ok=True)
         before = snapshot()
         result = subprocess.run([str(nogg), "session", "launch", "--role", "lead",
                                  "--bead", "SPEC-model", "--agent", agent] + extra,
                                 cwd=consumer, env=env, text=True, capture_output=True, timeout=15)
         assert result.returncode == 0, (label, result.stderr)
+        output = result.stdout + result.stderr
+        if expect_notice:
+            assert expect_notice in output, (label, output)
         deadline = time.monotonic() + 5
         while not received.exists():
             assert time.monotonic() < deadline, f"{label}: {agent} never started"
@@ -132,6 +188,8 @@ while True:
             assert flag not in argv, f"{label}: unexpected {flag} in {argv}"
         [record] = [r for r in records() if r["state"] == "running"]
         assert record["model_source"] == source, (label, record)
+        if tier is not None:
+            assert record.get("selection_tier") == tier, (label, record)
         listing = subprocess.run([str(nogg), "session", "list"], cwd=consumer, env=env,
                                  text=True, capture_output=True, check=True).stdout
         row = next(line for line in listing.splitlines() if record["name"] in line)
@@ -139,10 +197,11 @@ while True:
         assert snapshot() == before, f"{label}: profile or user-global setting mutated"
         for verb in ("stop", "cleanup"):
             subprocess.run([str(nogg), "session", verb, record["name"]], cwd=consumer, env=env,
-                           stdout=subprocess.DEVNULL, check=True, timeout=10)
+                            stdout=subprocess.DEVNULL, check=True, timeout=10)
         print(f"packed model selection: {label} passed")
 
     try:
+        # Pre-existing SCM-004 scenarios
         launch("claude override beats profile", "claude",
                ["--profile", str(profiles / "model.json"), "--model", "claude-sonnet-5-5"],
                ["--model", "claude-sonnet-5-5"], ["claude-opus-5-5"], "launch", "claude-sonnet-5-5")
@@ -160,6 +219,33 @@ while True:
                "runtime-default")
         launch("pi model override", "pi", ["--model", "pi-model-x"], ["--model", "pi-model-x"],
                [], "launch", "pi-model-x")
+
+        # Tier launch fixtures (TASK-MES-006)
+        launch("claude routine tier", "claude", ["--tier", "routine"],
+               ["--model", "claude-sonnet-5-5"], ["--effort", "--reasoning-effort"], "launch",
+               "claude-sonnet-5-5 effort=runtime-default tier=routine", tier="routine",
+               expect_notice="NOTE: tier routine Claude effort 'low' is not applied")
+        launch("codex standard tier", "codex", ["--tier", "standard"],
+               ["--model", "gpt-6-luna", "-c", 'model_reasoning_effort="medium"'], [], "launch",
+               "gpt-6-luna effort=medium (launch) tier=standard", tier="standard")
+        launch("codex complex tier", "codex", ["--tier", "complex"],
+               ["--model", "gpt-6.1-sol", "-c", 'model_reasoning_effort="high"'], [], "launch",
+               "gpt-6.1-sol effort=high (launch) tier=complex", tier="complex")
+        launch("antigravity complex tier", "agy", ["--tier", "complex"],
+               ["--model", "gemini-3.8-flash-high"], ["--reasoning-effort"], "launch",
+               "gemini-3.8-flash-high tier=complex", tier="complex")
+
+        # Tier precedence fixtures
+        launch("codex model override beats tier", "codex",
+               ["--tier", "standard", "--model", "gpt-6.1-sol"],
+               ["--model", "gpt-6.1-sol", "-c", 'model_reasoning_effort="medium"'], [], "launch",
+               "gpt-6.1-sol effort=medium (launch) tier=standard", tier="standard")
+        launch("codex tier beats profile", "codex",
+               ["--profile", str(profiles / "model.codex.toml"), "--tier", "routine"],
+               ["--model", "gpt-6-luna", "-c", 'model_reasoning_effort="low"'], ["gpt-6-sol"], "launch",
+               "gpt-6-luna effort=low (launch) tier=routine", tier="routine")
+
+        # Refusal fixtures: invalid effort, unknown tier, Pi with tier, invalid table
         before, prior = snapshot(), len(records())
         result = subprocess.run([str(nogg), "session", "launch", "--role", "lead", "--bead",
                                  "SPEC-model", "--agent", "codex", "--profile",
@@ -169,6 +255,43 @@ while True:
         assert len(records()) == prior and not tmux_sessions(), "invalid effort created session state"
         assert snapshot() == before
         print("packed model selection: unsupported reasoning effort refused before tmux/record")
+
+        # Unknown tier refusal
+        before, prior = snapshot(), len(records())
+        result = subprocess.run([str(nogg), "session", "launch", "--role", "lead", "--bead",
+                                 "SPEC-model", "--agent", "claude", "--tier", "trivial"],
+                                cwd=consumer, env=env, text=True, capture_output=True, timeout=15)
+        assert result.returncode != 0 and "is not a model-selection tier" in result.stderr, result.stderr
+        assert len(records()) == prior and not tmux_sessions(), "unknown tier created session state"
+        assert snapshot() == before
+        print("packed model selection: unknown tier refused before tmux/record")
+
+        # Pi with tier refusal
+        before, prior = snapshot(), len(records())
+        result = subprocess.run([str(nogg), "session", "launch", "--role", "lead", "--bead",
+                                 "SPEC-model", "--agent", "pi", "--tier", "routine"],
+                                cwd=consumer, env=env, text=True, capture_output=True, timeout=15)
+        assert result.returncode != 0 and "is not supported for agent 'pi'" in result.stderr, result.stderr
+        assert len(records()) == prior and not tmux_sessions(), "pi tier created session state"
+        assert snapshot() == before
+        print("packed model selection: Pi with tier refused before tmux/record")
+
+        # Invalid table refusal
+        table_backup = table_file.read_bytes()
+        try:
+            bad_table = json.loads(table_backup.decode("utf-8"))
+            del bad_table["tiers"]["routine"]
+            table_file.write_text(json.dumps(bad_table))
+            before, prior = snapshot(), len(records())
+            result = subprocess.run([str(nogg), "session", "launch", "--role", "lead", "--bead",
+                                     "SPEC-model", "--agent", "claude", "--tier", "routine"],
+                                    cwd=consumer, env=env, text=True, capture_output=True, timeout=15)
+            assert result.returncode != 0 and "is invalid" in result.stderr, result.stderr
+            assert len(records()) == prior and not tmux_sessions(), "invalid table created session state"
+            assert snapshot() == before
+            print("packed model selection: invalid table refused before tmux/record")
+        finally:
+            table_file.write_bytes(table_backup)
     finally:
         subprocess.run(["tmux", "-L", sock, "kill-server"], capture_output=True)
 PY
