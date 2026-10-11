@@ -9,6 +9,31 @@ and GitHub Releases for that history.
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-10-11
+
+### Added
+
+- A fourth supervised agent runtime, **Google Antigravity (`agy`)**: `session launch --agent antigravity` (alias `agy`), `.agy.toml` launch profiles with model forwarding and exact-conversation resume, a fail-closed command-floor/`openspec/` write-boundary guard, a `session watch` pane adapter (working/idle/needs_input/limit), and three workflow skills (`nogging-plan`, `nogging-discovery-review`, `nogging-sync-now`). Shipped through the normal init/update/remove payload; `doctor` NOTEs when `agy` is absent or the repo isn't yet trusted.
+- **Researched model/effort selection**: a shipped `.nogging/model-selection.json` rule table (`routine`/`standard`/`complex` tiers × Claude/Codex/Antigravity) and `scripts/nogg models` to print/validate it; `session launch --tier <tier>` resolves the table, with an explicit `--model`/effort override still taking precedence over the tier, and the tier over the profile.
+- **Claude reasoning effort**, matching what Codex already had: optional `effort` in Claude launch profiles, `session launch --effort <level>`, forwarded through the wrapper as Claude's native `--effort` (including exact-conversation resumes), with the selection and its source recorded and shown in session listings.
+- **Pre-launch usage gating**: `nogg usage --agent ... --json`, a quota-aware admission check that exits `75` when a launch would exceed a configured cap, atomic same-host concurrent reservations so two simultaneous launches can't both spend the last slot, an opt-in Claude statusline composition, and bounded learned per-agent/model usage estimates for when live quota data is unavailable.
+- **Cross-session token usage tracking**: `nogg token-usage collect/report/session/export/status` persists attributable input/output/cache/thinking token counts, runtime, provider, model and task complexity for Claude, Codex and Antigravity sessions into a Nogging-owned sibling Dolt store (separate from Beads), with hourly/daily/session grouping, arbitrary time filters, and an explicit opt-in multi-device sync command.
+- An interactive, whiptail-based `scripts/bootstrap` wizard: a welcome screen, an install-path prompt, an optional-components checklist, a guided GitHub/Claude Code/Codex login step, and a closing summary — the fully-automated, non-interactive path is unchanged and remains the default outside a real TTY.
+- `scripts/nogg session launch` now refuses to start a Lead/specialist session whose Bead has an unmet, already-recorded dependency, naming the blocking Bead; a matching Claude-only `PreToolUse` hook catches the same case one step earlier. `doctor` also flags a currently-running session whose Bead became blocked after it started.
+- `scripts/nogg session kickoff`/`--kickoff`, `scripts/nogg session nudge` (clear a stale/unsent pane input and resubmit it, or an explicit message), a new `awaiting_manual_approval` pane state for Claude, and `scripts/nogg session sweep` (flags `change-complete`, `bead-blocked`, or `has-unsent-input`) — surfaced together by `doctor`.
+- A supervised `--role planning` session: it owns and releases the planning lock itself, gets role-specific kickoff and scoped orchestration permissions, while execution sessions stay fenced from `openspec/`.
+- A validated `agent_state_roots` config key granting a Codex session specific agent-runtime state directories (e.g. Antigravity's), replacing the interim `NOGG_CODEX_EXTRA_WRITABLE_ROOTS` env var; an offline-by-default Codex sandbox diagnosis in `doctor` (deeper probes under `doctor --sandbox`).
+
+### Changed
+
+- The `trusted` launch profile's `permissions.defaultMode` is now `bypassPermissions` (was `auto`): `auto` silently fell back to fully manual when Claude's classifier was unavailable, exactly the unattended-reliability gap `--full-access` is supposed to close. The existing `deny` list is unchanged.
+
+### Fixed
+
+- A repository missing the session-launch wrapper or log-writer (common right after a fresh install) could fail a supervised agent before its first turn; `init`/`update` now ship and refresh both and preserve a startup error durably before tmux can discard the pane.
+- One Bead with an incomplete OpenSpec label pair used to abort materialization and sync mirroring for every other, unrelated change; mapping failures are now quarantined to the affected change.
+- Worktree-local ignored state could make discovery acknowledgements disappear after a sync and let the Pi guard treat the `openspec/` write boundary as open from a linked worktree; both now resolve their canonical location from the shared repository.
+
 ## [2.1.0] - 2026-10-03
 
 ### Added
