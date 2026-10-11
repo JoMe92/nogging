@@ -6,7 +6,7 @@
 
 - [x] TASK-GSU-003 Add same-host atomic per-account/bucket admission reservations with lifecycle cleanup and stale-owner recovery; verify two simultaneous launches cannot both spend the final slot, failed launch releases reservation and unrelated accounts/groups are independent.
 
-- [ ] TASK-GSU-004 Record bounded per-agent/model usage history and conservative learned medians only for attributable complete non-reset intervals; verify overlap/reset/outlier samples are rejected, insufficient data uses fallback and no credential/account identifier is exposed.
+- [x] TASK-GSU-004 Record bounded per-agent/model usage history and conservative learned medians only for attributable complete non-reset intervals; verify overlap/reset/outlier samples are rejected, insufficient data uses fallback and no credential/account identifier is exposed.
 
 - [ ] TASK-GSU-005 Provide explicit statusline-cache installation/composition, doctor freshness hints and orchestrator retry guidance; verify existing statusline/user settings preserved, unknown warns by default and scheduling uses all limiting reset windows without model switching.
 
