@@ -16,4 +16,4 @@
 
 - [ ] TASK-MES-005 Forward Claude tier effort through the support-claude-reasoning-effort wrapper --effort under claude-effort-forwarding negotiation, with source launch and explicit --effort over tier; remove the pending NOTE and update the docs. Verify argv, stale-helper refusal and provenance. Depends on TASK-MES-004 and TASK-CRE-003; see design decision 6.
 
-- [ ] TASK-MES-006 Run scripts/test with inherited NOGG_* cleared and without bd, plus packed init/update scaffold and tier launch fixtures and a read-only live models/doctor probe; record unsigned versions and evidence. Depends on TASK-MES-004; see all delta scenarios.
+- [x] TASK-MES-006 Run scripts/test with inherited NOGG_* cleared and without bd, plus packed init/update scaffold and tier launch fixtures and a read-only live models/doctor probe; record unsigned versions and evidence. Depends on TASK-MES-004; see all delta scenarios.
