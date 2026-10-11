@@ -12,4 +12,4 @@
 
 ## 4. Installed and live verification
 
-- [ ] TASK-CRE-004 Verify packed init/update effort selection, contracts, argv, provenance, defaults and global/profile preservation plus other-agent regressions. Run scripts/test with inherited session env cleared and CI fixtures without bd; perform bounded real-Claude acceptance with isolated config/inert prompt and unsigned version/model/level evidence. Quota/auth blocks acceptance. Depends on TASK-CRE-003; see design decision 5 and all delta scenarios.
+- [x] TASK-CRE-004 Verify packed init/update effort selection, contracts, argv, provenance, defaults and global/profile preservation plus other-agent regressions. Run scripts/test with inherited session env cleared and CI fixtures without bd; perform bounded real-Claude acceptance with isolated config/inert prompt and unsigned version/model/level evidence. Quota/auth blocks acceptance. Depends on TASK-CRE-003; see design decision 5 and all delta scenarios.

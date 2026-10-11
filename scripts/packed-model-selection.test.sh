@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Installed-payload model-selection and tier launch acceptance (TASK-SCM-004, TASK-MES-006).
+# Installed-payload model-selection, tier launch and Claude effort acceptance
+# (TASK-SCM-004, TASK-MES-006, TASK-CRE-004).
 #
 # Packs the package, installs it into a fresh consumer with the packaged
 # `bin/cli.js`, and launches real tmux sessions with stub Claude/Codex/Pi/Antigravity
@@ -11,7 +12,7 @@
 #   - consumer edits to the table survive update byte-for-byte;
 #   - update scaffolds an absent table;
 #   - tier launch fixtures:
-#     - Claude --tier applies table model, emits no effort flag, prints unapplied effort NOTE;
+#     - Claude --tier applies table model and forwards its effort via --effort;
 #     - Codex --tier applies table model and reasoning effort via wrapper argv;
 #     - Antigravity --tier applies table model without effort flag;
 #     - explicit --model beats tier model while tier supplies effort;
@@ -24,6 +25,8 @@
 #   - a Codex profile `model_reasoning_effort` reaches Codex as its own
 #     `-c model_reasoning_effort="<level>"` argv pair;
 #   - a legacy profile passes no model flag and lists `runtime-default`;
+#   - a packed update retains the Claude effort helper contract and launches
+#     each supported effort from both profile and CLI sources with provenance;
 #   - Pi `--model` selection still reaches Pi;
 #   - an unsupported reasoning effort refuses before any tmux session or
 #     session record exists;
@@ -63,7 +66,8 @@ with tempfile.TemporaryDirectory(prefix="nogg packed model ") as directory:
     cache.mkdir()
     for d in (".claude", ".codex", ".pi/agent", ".gemini/antigravity-cli"):
         (home / d).mkdir(parents=True)
-    (home / ".claude/settings.json").write_text('{"model":"global-claude-model"}\n')
+    (home / ".claude/settings.json").write_text(
+        '{"model":"global-claude-model","effortLevel":"global-effort-level"}\n')
     (home / ".codex/config.toml").write_text('model = "global-codex-model"\n')
     (home / ".pi/agent/settings.json").write_text('{"defaultModel":"global-pi-model"}\n')
     (home / ".gemini/antigravity-cli/settings.json").write_text('{"toolPermission":"request-review"}\n')
@@ -71,6 +75,13 @@ with tempfile.TemporaryDirectory(prefix="nogg packed model ") as directory:
                     "--no-systemd"], cwd=consumer, env=env, stdout=subprocess.DEVNULL, check=True)
     for name in ("nogg", "session-launch"):
         assert (consumer / "scripts" / name).read_bytes() == (package / "scripts" / name).read_bytes()
+    def assert_effort_contract(label):
+        contract = json.loads(subprocess.check_output(
+            [str(consumer / "scripts/session-launch"), "--contract"], text=True))
+        assert "claude-effort-forwarding" in contract["features"], (label, contract)
+        assert contract["options"].get("--effort") == 1, (label, contract)
+        print(f"packed model selection: {label} exposes Claude effort forwarding")
+    assert_effort_contract("init")
 
     # Scaffold verification (TASK-MES-006): init scaffolds table and doc
     table_file = consumer / ".nogging/model-selection.json"
@@ -97,6 +108,9 @@ with tempfile.TemporaryDirectory(prefix="nogg packed model ") as directory:
                     "--no-systemd"], cwd=consumer, env=env, stdout=subprocess.DEVNULL, check=True)
     assert table_file.read_bytes() == template_table.read_bytes(), "update did not scaffold absent table"
     print("packed model selection: update scaffolds absent table")
+    for name in ("nogg", "session-launch"):
+        assert (consumer / "scripts" / name).read_bytes() == (package / "scripts" / name).read_bytes()
+    assert_effort_contract("update")
 
     binaries, arguments = scratch / "stub-bin", scratch / "received-args"
     binaries.mkdir()
@@ -134,6 +148,8 @@ while True:
     sessions = consumer / ".nogging/state/sessions"
     (profiles / "model.json").write_text(
         '{"permissions":{"defaultMode":"default","deny":[]},"model":"claude-opus-5-5"}\n')
+    (profiles / "effort.json").write_text(
+        '{"permissions":{"defaultMode":"default","deny":[]},"effort":"high"}\n')
     (profiles / "model.codex.toml").write_text(
         'sandbox = "workspace-write"\nask_for_approval = "on-request"\nnetwork_access = false\n'
         'model = "gpt-6-sol"\nmodel_reasoning_effort = "high"\n')
@@ -200,6 +216,43 @@ while True:
                             stdout=subprocess.DEVNULL, check=True, timeout=10)
         print(f"packed model selection: {label} passed")
 
+    def launch_claude_effort(label, level, source, override):
+        profile = profiles / "effort.json"
+        profile_level = "high" if override else level
+        profile.write_text(json.dumps({"permissions": {"defaultMode": "default", "deny": []},
+                                       "effort": profile_level}) + "\n")
+        extra = ["--profile", str(profile)]
+        if override:
+            extra += ["--effort", level]
+        received = arguments / "claude"
+        received.unlink(missing_ok=True)
+        before = snapshot()
+        result = subprocess.run([str(nogg), "session", "launch", "--role", "lead",
+                                 "--bead", "SPEC-model", "--agent", "claude"] + extra,
+                                cwd=consumer, env=env, text=True, capture_output=True, timeout=15)
+        assert result.returncode == 0, (label, result.stderr)
+        deadline = time.monotonic() + 5
+        while not received.exists():
+            assert time.monotonic() < deadline, f"{label}: Claude did not start"
+            time.sleep(0.02)
+        argv = json.loads(received.read_text())
+        assert argv.count("--effort") == 1, (label, argv)
+        assert argv[argv.index("--effort") + 1] == level, (label, argv)
+        [record] = [r for r in records() if r["state"] == "running"]
+        assert record["reasoning_effort"] == level, (label, record)
+        assert record["reasoning_effort_source"] == source, (label, record)
+        settings = json.loads((sessions / f"{record['name']}.settings.json").read_text())
+        assert "effort" not in settings, (label, settings)
+        listing = subprocess.run([str(nogg), "session", "list"], cwd=consumer, env=env,
+                                 text=True, capture_output=True, check=True).stdout
+        row = next(line for line in listing.splitlines() if record["name"] in line)
+        assert f"effort={level} ({source})" in row, (label, row)
+        assert snapshot() == before, f"{label}: profile or user-global setting mutated"
+        for verb in ("stop", "cleanup"):
+            subprocess.run([str(nogg), "session", verb, record["name"]], cwd=consumer, env=env,
+                           stdout=subprocess.DEVNULL, check=True, timeout=10)
+        print(f"packed model selection: {label} passed")
+
     try:
         # Pre-existing SCM-004 scenarios
         launch("claude override beats profile", "claude",
@@ -209,6 +262,9 @@ while True:
                ["--model", "claude-opus-5-5"], [], "profile", "claude-opus-5-5")
         launch("claude legacy profile", "claude", [], [], ["--model"], "runtime-default",
                "runtime-default")
+        for level in ("low", "medium", "high", "xhigh", "max"):
+            launch_claude_effort(f"Claude profile effort {level}", level, "profile", False)
+            launch_claude_effort(f"Claude override effort {level}", level, "launch", True)
         launch("codex override with profile effort", "codex",
                ["--profile", str(profiles / "model.codex.toml"), "--model", "gpt-6-luna"],
                ["--model", "gpt-6-luna"], ["gpt-6-sol"], "launch", "gpt-6-luna effort=high (profile)")
