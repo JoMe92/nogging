@@ -10,7 +10,7 @@
 
 - [x] TASK-CSL-005 Reconcile stale structured needs_input with live pane state and isolate session-observability tests from ambient NOGG_SESSION_NAME/NOGGING_ROOT; verify resolved rejection without Stop falls back, fresh real prompts stay needs_input and tests pass both inside/outside a supervised environment.
 
-- [ ] TASK-CSL-006 Run scripts/test and live supported-runtime acceptance including two consecutive ready Beads in one authorized change, first-time launch/kickoff, blocked sibling and CI transition; commit unsigned evidence and an issue-by-issue #37–#42 closure checklist with any remaining blockers explicitly recorded.
+- [x] TASK-CSL-006 Run scripts/test and live supported-runtime acceptance including two consecutive ready Beads in one authorized change, first-time launch/kickoff, blocked sibling and CI transition; commit unsigned evidence and an issue-by-issue #37–#42 closure checklist with any remaining blockers explicitly recorded.
 
 ## Execution contract
 
