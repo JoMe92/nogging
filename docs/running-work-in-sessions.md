@@ -496,9 +496,26 @@ and names each limiting window with its reset time and the latest reset to
 retry after; it happens before any helper negotiation, worktree, trust change,
 tmux session or session record. Planning and orchestrator launches are not
 gated by default. `./scripts/nogg usage` prints the same estimate, projection
-and fit (`gate` in `--json`). Same-host reservations for running launches are
-not counted yet (`reserved` is 0); running sessions may already be part of
-`used`, so the gate reduces risk but cannot guarantee a task fits.
+and fit (`gate` in `--json`). Admission checks and reserves headroom under a
+same-host lock in the owner-only user cache
+(`$XDG_CACHE_HOME/nogging/usage/reservations`, default `~/.cache`). This ledger
+is shared across repositories. Each window counts its outstanding estimates;
+a reset releases only reservations from that window's previous period.
+Failed launches release immediately. Pending launchers hold kernel file locks,
+so process death releases ownership across PID namespaces. Terminal sessions
+and dead pending launchers are reconciled on the next admission or usage inspection; live tmux
+sessions retain their reservation after the launcher exits.
+
+Current adapters do not identify accounts or model groups, so identity remains
+unknown in usage output. Reservations conservatively share an opaque scope
+per provider for the OS user, including across different source directories,
+rather than claiming separate account headroom. When an adapter
+provides account/group identity, those scopes are independent. The ledger
+stores no raw account identity or credentials. A launch admitted with unknown
+usage still reserves its estimate against subsequent fresh observations.
+Running sessions may already be part of `used`; their full outstanding
+estimates remain reserved conservatively, and no extra running-session count
+is added. The gate reduces risk but cannot guarantee a task fits.
 
 Configure it with the optional `usage_gate` object in `.nogging/config.json`;
 these are the defaults:

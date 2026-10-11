@@ -2224,6 +2224,9 @@ def transition(path, rec, state, **extra):
         for k, v in extra.items(): rec[k] = v
         write_session(path, rec)
     if state in SESSION_TERMINAL_STATES:
+        token = (rec.get("usage_gate") or {}).get("reservation_id")
+        if token:
+            usage_module().Reservations().release(token)
         release_planning_lock(session_record=rec)
     return rec
 def bead_records(bead_id):
@@ -3069,6 +3072,8 @@ def usage_module():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+_USAGE_PENDING = {}
+
 def usage_gate_admission(role_meta, agent, records, ignore):
     """Admit or refuse a launch against the `usage_gate` config.
 
@@ -3078,10 +3083,10 @@ def usage_gate_admission(role_meta, agent, records, ignore):
     UsageGateDenied (exit 75) naming its reset time; unknown usage warns and
     continues, or is denied with `on_unknown: "deny"`. `--ignore-usage-gate`
     skips observation and is recorded. Same-host reservations of running
-    launches are not yet counted (reserved 0)."""
+    launches are serialized through the same-host reservation ledger."""
     usage = usage_module()
-    describe_denial, evaluate_gate, gate_config, launch_estimate, observe = (
-        usage.describe_denial, usage.evaluate_gate, usage.gate_config, usage.launch_estimate, usage.observe)
+    describe_denial, gate_config, launch_estimate, observe = (
+        usage.describe_denial, usage.gate_config, usage.launch_estimate, usage.observe)
     try:
         config = gate_config(CFG.get("usage_gate"))
     except ValueError as exc:
@@ -3100,7 +3105,13 @@ def usage_gate_admission(role_meta, agent, records, ignore):
         print("warning: --ignore-usage-gate: launching without usage admission; "
               "this is recorded on the session", file=sys.stderr)
         return {"decision": "ignored", **estimate}
-    gate = evaluate_gate(observe(agent, config), config, estimate["estimate_percent"])
+    ledger = usage.Reservations()
+    gate = ledger.admit(observe(agent, config), config, estimate["estimate_percent"])
+    token = gate.get("reservation_id")
+    if token:
+        # Any failure between admission and a live session returns headroom,
+        # including helper negotiation, worktree/trust setup and record writes.
+        _USAGE_PENDING[token] = ledger
     gate.update(size=estimate["size"], multiplier=estimate["multiplier"],
                 base_estimate_percent=estimate["base_percent"])
     if gate["decision"] in ("denied", "unknown-denied"):
@@ -3128,7 +3139,16 @@ def session_state_grants(bead, explicit=(), records=None):
     return resolve_agent_state_roots(requests)
 
 
-def session_launch(role, bead, cwd, read_only, owner,
+def session_launch(*args, **kwargs):
+    pending_before = set(_USAGE_PENDING)
+    try:
+        return _session_launch(*args, **kwargs)
+    finally:
+        for token in set(_USAGE_PENDING) - pending_before:
+            _USAGE_PENDING.pop(token).release(token)
+
+
+def _session_launch(role, bead, cwd, read_only, owner,
                    profile=None, prompt=None, full_access=False, agent=None,
                    resume=None, kickoff=False, planning_id=None, description=None,
                    model=None, agent_state=(), tier=None, effort=None,
@@ -3421,6 +3441,11 @@ def session_launch(role, bead, cwd, read_only, owner,
         "session_pid": None, "session_pid_start": None,
     }
     write_session(rec_path, record)                       # metadata before exec
+    token = usage_gate.get("reservation_id")
+    if token:
+        # Bind before starting tmux: even a hard-killed launcher must not
+        # orphan the reservation of a child it already started.
+        usage_module().Reservations().bind(token, rec_path, name, tmux_bin(), tmux_socket())
     with log_path.open("a") as fh:                        # append-only log before exec
         fh.write(f"# nogg session {name} for {bead or 'no bead'} ({role_meta}) started {record['started_at']}\n")
     try:
@@ -3461,6 +3486,8 @@ def session_launch(role, bead, cwd, read_only, owner,
     transition(rec_path, record, "running")
     if record.get("state") == "failed":
         raise ToolError(record.get("exit_reason") or "agent startup failed")
+    if token:
+        _USAGE_PENDING.pop(token).finish(token)
     print(f"launched {name}")
     print(f"  bead={bead or '-'} role={role_meta} cwd={workdir}")
     print(f"  log={log_path}")
