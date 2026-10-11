@@ -6,6 +6,12 @@
 # server. Tests that need `bd` stub it (see scripts/nogg.test.sh).
 set -euo pipefail
 
+# Tests construct their own repositories and supervised-session fixtures.
+# Keep the delivery session's identity, root and task-tick broker out of
+# those subprocesses; each fixture explicitly supplies the context it needs.
+unset NOGGING_ROOT NOGG_SESSION_NAME NOGG_SESSION_ROOT NOGG_SESSION_ROLE
+unset NOGG_SESSION_AGENT NOGG_TASK_DONE_SOCKET NOGG_OPENSPEC_FENCED NOGG_OPENSPEC_FENCE
+
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
 tests=()
