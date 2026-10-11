@@ -2347,7 +2347,13 @@ def load_antigravity_spec(path):
                 continue
             key, sep, value = line.partition("=")
             key, value = key.strip(), value.strip()
-            if not sep or key in spec or key not in ("mode", "sandbox", "approval", "model"):
+            if not sep or key in spec:
+                raise ValueError("duplicate, unknown or malformed key")
+            if key == "effort":
+                raise ValueError("effort is Claude-only; launch refused")
+            if key == "model_reasoning_effort":
+                raise ValueError("model_reasoning_effort is Codex-only; launch refused")
+            if key not in ("mode", "sandbox", "approval", "model"):
                 raise ValueError("duplicate, unknown or malformed key")
             parsed, end = json.JSONDecoder().raw_decode(value)
             tail = value[end:].strip()
@@ -2490,12 +2496,15 @@ def load_profile_settings(path):
             f"launch profile {path} has no 'permissions' object; launch refused")
     if "model" in data:
         validate_model_name(data["model"], f"launch profile {path}: model")
+    if "effort" in data:
+        validate_claude_effort(data["effort"], f"launch profile {path}")
     reject_reasoning_effort(data, f"launch profile {path}")
     return data
 # Reasoning-effort values the installed Codex CLI (0.162.1) accepts for its
 # `model_reasoning_effort` config key. Whether a given model supports a value
 # is left to Codex itself; Nogging keeps no list of model names.
 CODEX_REASONING_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra")
+CLAUDE_EFFORTS = ("low", "medium", "high", "xhigh", "max")
 def validate_model_name(value, origin):
     """A model name is forwarded to the runtime as one argv element and the
     runtime validates it natively. Nogging only refuses values that cannot be
@@ -2507,10 +2516,19 @@ def validate_model_name(value, origin):
             f"{origin} must be a non-empty model name without whitespace or a leading '-', "
             f"got {value!r}; launch refused")
     return value
+def validate_claude_effort(value, origin):
+    if not isinstance(value, str) or value not in CLAUDE_EFFORTS:
+        raise RuntimeError(
+            f"{origin}: effort {value!r} must be one of {', '.join(CLAUDE_EFFORTS)}; launch refused")
+    return value
 def reject_reasoning_effort(spec, origin):
     if "model_reasoning_effort" in spec:
         raise RuntimeError(
             f"{origin}: model_reasoning_effort is Codex-only; launch refused")
+def reject_effort(spec, origin):
+    if "effort" in spec:
+        raise RuntimeError(
+            f"{origin}: effort is Claude-only; launch refused")
 def select_session_model(cli_model, spec, tier_model=None):
     """Model precedence: explicit `--model`, then the `--tier` table model,
     then the profile `model`, then the runtime's native default (`None`).
@@ -2522,6 +2540,14 @@ def select_session_model(cli_model, spec, tier_model=None):
         return validate_model_name(tier_model, "--tier table model"), "launch"
     if spec and spec.get("model") is not None:
         return spec["model"], "profile"
+    return None, "runtime-default"
+def select_session_effort(cli_effort, spec, agent):
+    """Effort precedence: explicit `--effort`, then profile `effort`, then runtime default.
+    Returns `(effort, source)` with source `launch`, `profile` or `runtime-default`."""
+    if cli_effort is not None:
+        return validate_claude_effort(cli_effort, "--effort"), "launch"
+    if agent == "claude" and spec and "effort" in spec and spec["effort"] is not None:
+        return spec["effort"], "profile"
     return None, "runtime-default"
 # The researched model-selection rule table (change
 # automatic-model-and-effort-selection, design decisions 1-3). Shipped as
@@ -2827,6 +2853,7 @@ def load_codex_spec(path):
         raise RuntimeError(
             f"Codex launch spec {path}: model_reasoning_effort {effort!r} "
             f"not one of {CODEX_REASONING_EFFORTS}; launch refused")
+    reject_effort(spec, f"Codex launch spec {path}")
     return spec
 def load_pi_spec(path):
     """Read a `.pi.toml` launch fragment: two OPTIONAL flat keys, `provider`
@@ -2857,6 +2884,7 @@ def load_pi_spec(path):
                 f"Pi launch spec {path}: value for {key!r} must be a quoted "
                 f"string, got {value!r}")
     reject_reasoning_effort(spec, f"Pi launch spec {path}")
+    reject_effort(spec, f"Pi launch spec {path}")
     return spec
 def resolve_agent(agent):
     """The agent binary a launch runs: the explicit `--agent` flag wins, then
@@ -3048,7 +3076,7 @@ def session_state_grants(bead, explicit=(), records=None):
 def session_launch(role, bead, cwd, read_only, owner,
                    profile=None, prompt=None, full_access=False, agent=None,
                    resume=None, kickoff=False, planning_id=None, description=None,
-                   model=None, agent_state=(), tier=None):
+                   model=None, agent_state=(), tier=None, effort=None):
     """Start a supervised agent session for a Bead.
 
     `resume` names the exact prior conversation: Claude uses `--resume <id>`;
@@ -3066,6 +3094,10 @@ def session_launch(role, bead, cwd, read_only, owner,
     if os.environ.get("NOGG_CODEX_EXTRA_WRITABLE_ROOTS"):
         session_state_grants(None)
     agent = resolve_agent(agent)
+    if effort is not None:
+        if agent != "claude":
+            raise RuntimeError("--effort is Claude-only; launch refused")
+        validate_claude_effort(effort, "--effort")
     # `--tier` resolves the model-selection table right after the agent and
     # before anything else, so every refusal precedes all side effects.
     tier_selection = resolve_launch_tier(tier, agent, resume) if tier is not None else None
@@ -3117,6 +3149,7 @@ def session_launch(role, bead, cwd, read_only, owner,
     selected_model, model_source = select_session_model(
         model, source_settings or codex_spec or pi_spec or agy_spec,
         tier_selection and tier_selection["model"])
+    selected_effort, effort_source = select_session_effort(effort, source_settings, agent)
     reasoning_effort = (codex_spec or {}).get("model_reasoning_effort")
     # Codex effort: tier over profile `model_reasoning_effort` over runtime
     # default; it travels through the wrapper's existing --reasoning-effort.
@@ -3125,7 +3158,9 @@ def session_launch(role, bead, cwd, read_only, owner,
     tier_effort = tier_selection and tier_selection["effort"]
     if agent == "codex" and tier_effort is not None:
         reasoning_effort = tier_effort
-    unapplied_tier_effort = tier_effort if agent == "claude" else None
+    elif agent == "claude":
+        reasoning_effort = selected_effort
+    unapplied_tier_effort = tier_effort if agent == "claude" and reasoning_effort is None else None
     if agy_spec and Path(profile_path).name == "restricted.agy.toml" and agy_spec["approval"] != "ask":
         raise RuntimeError("Antigravity restricted profile requires ask approval")
     if resume is not None and agent not in ("claude", "antigravity"):
@@ -3187,7 +3222,7 @@ def session_launch(role, bead, cwd, read_only, owner,
         # So does the profile `model`: the selected model travels only as the
         # `--model` argv element, never as a second settings value.
         base_settings = {k: v for k, v in source_settings.items()
-                         if k not in ("//", "nogging_floor", "nogging_openspec_readonly", "model")}
+                         if k not in ("//", "nogging_floor", "nogging_openspec_readonly", "model", "effort")}
         base_settings = merge_supervised_launch_permissions(base_settings, role_meta)
         settings_out = base_settings if floor_lifted else merge_floor(base_settings)
         if openspec_readonly:
@@ -5279,6 +5314,8 @@ def main():
                                     "which overrides the runtime default")
     sl.add_argument("--tier", help="model-selection tier (routine, standard, complex): take the model "
                     "and effort from the table; --model still wins (see `nogg models`)")
+    sl.add_argument("--effort", help="reasoning effort for Claude (low, medium, high, xhigh, max); "
+                                     "overrides profile effort, which overrides the runtime default")
     sl.add_argument("--kickoff", action="store_true",
                     help="send the session its first message immediately after launch")
     ssub.add_parser("list")
@@ -5349,7 +5386,7 @@ def session_cmd(args):
         session_launch(args.role, args.bead, args.cwd, args.read_only, args.owner,
                        args.profile, args.prompt, args.full_access, args.agent,
                        resume=args.resume, kickoff=args.kickoff, planning_id=args.planning_id, description=args.description,
-                       model=args.model, agent_state=args.agent_state, tier=args.tier)
+                       model=args.model, agent_state=args.agent_state, tier=args.tier, effort=args.effort)
     elif args.session_command == "list":
         session_list()
     elif args.session_command == "attach":

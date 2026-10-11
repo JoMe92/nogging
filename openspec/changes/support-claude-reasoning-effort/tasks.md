@@ -1,6 +1,6 @@
 ## 1. Profile selection and validation
 
-- [ ] TASK-CRE-001 Implement Claude profile effort and session launch --effort precedence; preserve Codex and reject cross-agent inputs. Verify all five levels, omission, invalid inputs even when overridden, configured-agent resolution and refusal before worktree/settings/record/tmux side effects. See design decisions 1–2 and delta selection requirement.
+- [x] TASK-CRE-001 Implement Claude profile effort and session launch --effort precedence; preserve Codex and reject cross-agent inputs. Verify all five levels, omission, invalid inputs even when overridden, configured-agent resolution and refusal before worktree/settings/record/tmux side effects. See design decisions 1–2 and delta selection requirement.
 
 ## 2. Native transport and helper compatibility
 
