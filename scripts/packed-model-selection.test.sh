@@ -222,9 +222,8 @@ while True:
 
         # Tier launch fixtures (TASK-MES-006)
         launch("claude routine tier", "claude", ["--tier", "routine"],
-               ["--model", "claude-sonnet-5-5"], ["--effort", "--reasoning-effort"], "launch",
-               "claude-sonnet-5-5 effort=runtime-default tier=routine", tier="routine",
-               expect_notice="NOTE: tier routine Claude effort 'low' is not applied")
+               ["--model", "claude-sonnet-5-5", "--effort", "low"], ["--reasoning-effort"], "launch",
+               "claude-sonnet-5-5 effort=low (launch) tier=routine", tier="routine")
         launch("codex standard tier", "codex", ["--tier", "standard"],
                ["--model", "gpt-6-luna", "-c", 'model_reasoning_effort="medium"'], [], "launch",
                "gpt-6-luna effort=medium (launch) tier=standard", tier="standard")
