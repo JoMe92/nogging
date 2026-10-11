@@ -70,7 +70,7 @@
       `scripts/nogg credential-helper <slug>`. A persona with no
       `github_app` block is unaffected (stays on Tier 1 from TASK-ACI-002).
 
-- [ ] TASK-ACI-010 Run `scripts/test`. Manually verify Tier 1: a freshly
+- [x] TASK-ACI-010 Run `scripts/test`. Manually verify Tier 1: a freshly
       allocated planning and implementation worktree each show the correct
       persona in `git config --worktree --get user.name` and a resulting
       commit's author matches, while the shared checkout and other
