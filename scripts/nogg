@@ -3428,8 +3428,8 @@ def classify_session(rec, live=None):
     (the session's own `<name>.events.jsonl`) when present and non-empty for
     a Claude session, else Layer-1 pane-scraping. Returns `(state,
     pane_text)` — `pane_text` is still the real pane capture even on a
-    Layer-2 hit, so callers needing it (e.g. a `limit` reset time) are
-    unaffected; Layer 2 never reports `limit` so this never matters there."""
+    Layer-2 hit. A saved permission notification is advisory: reliable live
+    evidence can resolve it even when no subsequent Stop hook fired."""
     name = rec.get("name")
     live = tmux_sessions() if live is None else live
     if name not in live:
@@ -3439,6 +3439,10 @@ def classify_session(rec, live=None):
     if agent == "claude":
         layer2 = _layer2_state(name)
         if layer2 is not None:
+            if layer2 == "needs_input":
+                live_state = classify(pane, CLAUDE_ADAPTER)
+                if live_state != "unknown":
+                    return live_state, pane
             return layer2, pane
     adapter = ADAPTERS.get(agent)
     if adapter is None:
