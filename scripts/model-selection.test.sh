@@ -10,7 +10,9 @@
 #     bad date, duplicate key, missing file) are refused naming the entry;
 #   - `models --agent codex --tier standard` prints the Codex standard entry,
 #     `agy` aliases `antigravity`, `--json` lookups, and nothing is written;
-#   - docs/model-selection.md mirrors the shipped JSON table;
+#   - docs/model-selection.md mirrors the shipped JSON table and the CLI help;
+#   - the orchestrator prompt, /orchestrate and operating-model state the
+#     mandatory tier procedure (TASK-MES-004);
 #   - init scaffolds the table and update leaves a consumer edit byte-identical.
 set -euo pipefail
 
@@ -167,6 +169,43 @@ assert f"`researched_at` {t['researched_at']}" in doc, "doc researched_at"
 PY
 then ok "docs/model-selection.md agrees with the shipped JSON"
 else bad "docs/model-selection.md agrees with the shipped JSON"; fi
+
+# The docs match the CLI help, and the orchestrator procedure (tier before
+# every launch, escalation, no quota downgrade) is stated everywhere a fresh
+# orchestrator reads it (TASK-MES-004).
+"$nogg" session launch --help >"$work/launch-help" 2>&1 || true
+"$nogg" models --help >"$work/models-help" 2>&1 || true
+if python3 - "$template" "$repo_root" "$work/launch-help" "$work/models-help" >"$out" 2>&1 <<'PY'
+import json, re, sys
+from pathlib import Path
+t = json.load(open(sys.argv[1])); root = Path(sys.argv[2])
+launch_help = re.sub(r"\s+", " ", open(sys.argv[3]).read())
+models_help = open(sys.argv[4]).read()
+tiers = list(t["tiers"])
+m = re.search(r"--tier TIER\s+model-selection tier \(([^)]*)\)", launch_help)
+assert m and [x.strip() for x in m.group(1).split(",")] == tiers, f"launch --tier help: {m and m.group(1)}"
+assert "--model still wins" in launch_help, "launch help: --model over tier"
+assert "{" + ",".join(tiers) + "}" in models_help, "models --tier choices"
+m = re.search(r"--agent \{([^}]*)\}", models_help)
+assert m and set(m.group(1).split(",")) == set(t["agents"]) | {"agy"}, f"models --agent: {m and m.group(1)}"
+assert "{check}" in models_help, "models check"
+doc = (root / "docs/model-selection.md").read_text()
+for snippet in ["scripts/nogg models check", "--agent agy", "--json", "session launch",
+                "--tier standard", "explicit `--model` > tier > profile `model` > runtime default",
+                "tier > profile `model_reasoning_effort` > runtime default", "selection_tier",
+                "tier=<tier>", "--agent pi", "support-claude-reasoning-effort",
+                "quota never lowers a tier", "## Drift"]:
+    assert snippet in doc, f"docs/model-selection.md lacks {snippet!r}"
+for rel in [".nogging/launch-prompts/orchestrator.md", ".claude/commands/orchestrate.md",
+            "docs/operating-model.md"]:
+    text = re.sub(r"\s+", " ", (root / rel).read_text()).lower()
+    for snippet in ["--tier <tier>", "scripts/nogg models --agent <agent> --tier <tier>",
+                    "routine", "standard", "complex", "higher tier", "escalates one tier",
+                    "quota never lowers a tier", "one-line reason", "product owner instruction"]:
+        assert snippet in text, f"{rel} lacks {snippet!r}"
+PY
+then ok "docs match the CLI help; orchestrator procedure stated in prompt, command and operating model"
+else bad "docs match the CLI help; orchestrator procedure stated in prompt, command and operating model"; fi
 
 # init scaffolds the table; update keeps a consumer edit byte-for-byte.
 if command -v node >/dev/null; then
