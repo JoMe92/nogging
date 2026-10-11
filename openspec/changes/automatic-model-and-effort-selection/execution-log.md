@@ -1,0 +1,10 @@
+# Execution log
+
+<!-- nogg:SPEC-9wpk:2026-10-11T08:43:36Z -->
+- 2026-10-11T08:56:40+00:00 — SPEC-9wpk closed for TASK-MES-001 (Bead closed at 2026-10-11T08:43:36Z).
+  - implementation commits: fa7c4d8bab6c
+  - Bead note:
+    Non-blocking discovery: the design's Migration Plan says init and update scaffold the model-selection table only when absent, but the installer's update command had no scaffold step at all (only init wrote scaffold files). To meet the plan without changing update behaviour for the other scaffold files (openspec/config.yaml, openspec/project.md, .nogging/config.json), the manifest scaffold entry for templates/model-selection.json now carries onUpdate: true and update scaffolds only entries with that flag. A later planning session may want to state this per-file update scaffolding rule in the spec.
+    commit fa7c4d8; scripts/test all green (incl. new scripts/model-selection.test.sh: 36 checks — shipped table valid and complete, 17 invalid-table refusals naming the entry, codex standard lookup, agy alias, --json, no writes, doc/JSON agreement, init scaffold, update keeps an edited table byte-identical and scaffolds an absent one, installed nogg models check). task-done tick applied via the session task-done broker to the shared checkout, not bundled in the commit.
+    PR https://github.com/JoMe92/nogging/pull/95 (branch feat/automatic-model-and-effort-selection; #94 closed after the branch-name invariant required the change slug). Required CI green: 30 pass, 2 skipping.
+    Non-blocking discovery (tooling, not this change's scope): scripts/nogg pr ci calls 'gh pr checks <url> --json name,state,bucket', but the delivery host's gh rejects --json for pr checks ('unknown flag: --json'). pull_request_ci then sees empty output and reports 'ci_pending (all checks; no runs reported yet)' forever even when every check has finished. PR #95 CI was verified green with plain 'gh pr checks 95' (30 pass, 2 skipping). Either the host gh needs upgrading or pr ci needs a fallback that treats a non-zero exit with unparseable output as a query failure rather than pending.
