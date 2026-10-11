@@ -3155,7 +3155,7 @@ def usage_source(rec):
     if agent == "antigravity" and rec.get("antigravity_conversation_id"):
         return {"runtime": "antigravity", "id": rec["antigravity_conversation_id"]}
     return None
-def collect_session_usage(recs, final=False, budget=None, lock_timeout=None):
+def collect_session_usage(recs, final=False, budget=None, lock_timeout=None, quiet=False):
     """Host collection for supervised records. Usage failures never fail the
     caller's session operation; with `final`, failure to make evidence durable
     raises so cleanup can refuse instead of losing the only evidence."""
@@ -3186,7 +3186,7 @@ def collect_session_usage(recs, final=False, budget=None, lock_timeout=None):
         if lock_timeout is None:
             lock_timeout = 60.0 if final else 5.0
         report = collect.Collector(store).collect(targets, budget_seconds=budget, lock_timeout=lock_timeout)
-        if report.get("error"):
+        if report.get("error") and not quiet:   # --json callers read the error from the document
             print(f"NOTE: usage facts are retained pending import ({report['error']}); see `nogg doctor`",
                   file=sys.stderr)
         return report
@@ -3280,7 +3280,8 @@ def token_usage_command(args):
             recs = [r for r in recs if r.get("name") == args.session]
             if not recs:
                 raise RuntimeError(f"no supervised session named {args.session!r}; see `nogg session list`")
-        report = collect_session_usage(recs) if recs else {"sessions": {}, "spooled": 0, "imported": 0, "error": None}
+        report = (collect_session_usage(recs, quiet=args.json) if recs
+                  else {"sessions": {}, "spooled": 0, "imported": 0, "error": None})
         if report is None:
             raise RuntimeError("usage collection could not run; see `nogg doctor`")
         doc = {"schema": "nogg.token-usage.collect/v1", "as_of": rep.iso(now_dt), **report}

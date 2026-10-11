@@ -16,7 +16,8 @@ nogg="$here/nogg"
 repo_root="$(cd "$here/.." && pwd)"
 work=$(mktemp -d)
 out=$(mktemp)
-trap 'chmod -R u+rwx "$work" 2>/dev/null || true; rm -f "$out"; rm -rf "$work"' EXIT
+err=$(mktemp)   # JSON assertions read stdout only; stderr is kept for failures
+trap 'chmod -R u+rwx "$work" 2>/dev/null || true; rm -f "$out" "$err"; rm -rf "$work"' EXIT
 command -v dolt >/dev/null 2>&1 || { echo "ok   - dolt not installed; sync CLI checks skipped"; exit 0; }
 
 mkdir -p "$work/bin"
@@ -38,7 +39,7 @@ mkdir -p "$HOME" "$DOLT_ROOT_PATH"
 
 fail=0
 ok() { echo "ok   - $1"; }
-bad() { echo "FAIL - $1"; cat "$out"; fail=1; }
+bad() { echo "FAIL - $1"; cat "$out" "$err"; fail=1; }
 expect() { [[ "$2" == "$3" ]] && ok "$1" || { echo "  got: $2 want: $3" >"$out"; bad "$1"; }; }
 j() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(eval(sys.argv[2], {"d": d}))' "$out" "$1"; }
 
@@ -102,12 +103,12 @@ store.append([("usage_events", {"source_id": "claude:x", "event_id": "e", "revis
 PY
 mkdir "$work/unreachable"; chmod 000 "$work/unreachable"   # fetch and push cannot succeed
 (cd "$usage/database" && dolt remote add origin "file://$work/unreachable")
-"$nogg" token-usage collect --json >"$out" 2>&1 && ok "collect works with an unreachable remote" || bad "collect"
-"$nogg" token-usage report --from 2026-10-11 --to 2026-10-12 --json >"$out" 2>&1 \
+"$nogg" token-usage collect --json >"$out" 2>"$err" && ok "collect works with an unreachable remote" || bad "collect"
+"$nogg" token-usage report --from 2026-10-11 --to 2026-10-12 --json >"$out" 2>"$err" \
   && expect "report is local-only before any sync" "$(j 'd["sync"]["state"], d["sync"]["local_only"], d["rows"][0]["tokens"]["input_tokens"]')" \
        "('not_configured', True, 7)" || bad "report"
 [[ ! -e "$usage/sync-status.json" ]] && ok "no remote contact or sync status from collect/report" || bad "sync status appeared"
-"$nogg" token-usage sync --json >"$out" 2>&1 && bad "unreachable sync should exit non-zero" \
+"$nogg" token-usage sync --json >"$out" 2>"$err" && bad "unreachable sync should exit non-zero" \
   || expect "unreachable remote leaves sync pending" "$(j 'd["state"], d["local_only"]')" "('pending', True)"
 "$nogg" doctor >"$out" 2>&1 || true
 grep -qF "usage sync pending" "$out" && ok "doctor notes pending sync" || bad "doctor sync note"
@@ -115,13 +116,13 @@ grep -qF "usage sync pending" "$out" && ok "doctor notes pending sync" || bad "d
 # --- operator sync to a reachable remote ------------------------------------------
 mkdir "$work/remote"
 (cd "$usage/database" && dolt remote remove origin && dolt remote add origin "file://$work/remote")
-"$nogg" token-usage sync --json >"$out" 2>&1 \
+"$nogg" token-usage sync --json >"$out" 2>"$err" \
   && expect "operator sync pushes" "$(j 'd["state"], d["caller"], d["remote"].startswith("file://")')" "('synchronized', 'operator', True)" \
   || bad "sync"
-"$nogg" token-usage report --from 2026-10-11 --to 2026-10-12 --json >"$out" 2>&1 \
+"$nogg" token-usage report --from 2026-10-11 --to 2026-10-12 --json >"$out" 2>"$err" \
   && expect "report shows synchronization freshness" "$(j 'd["sync"]["state"], d["sync"]["local_only"], bool(d["sync"]["last_success_at"])')" \
        "('synchronized', False, True)" || bad "report after sync"
-"$nogg" token-usage status --json >"$out" 2>&1 && expect "status shows sync" "$(j 'd["sync"]["state"]')" "synchronized" || bad "status"
+"$nogg" token-usage status --json >"$out" 2>"$err" && expect "status shows sync" "$(j 'd["sync"]["state"]')" "synchronized" || bad "status"
 "$nogg" token-usage sync >"$out" 2>&1 && grep -qF "usage sync: synchronized" "$out" && ok "text sync renders" || bad "text sync"
 
 exit "$fail"
