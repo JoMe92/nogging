@@ -256,8 +256,11 @@ sys.exit(1)
             if sib_name in r_sweep.stdout:
                 break
             time.sleep(0.1)
-        assert r_sweep is not None and r_sweep.returncode == 0, f"sweep failed: code={getattr(r_sweep, 'returncode', None)}, out={getattr(r_sweep, 'stdout', None)}, err={getattr(r_sweep, 'stderr', None)}"
-        assert sib_name in r_sweep.stdout, f"sib_name {sib_name} not in sweep stdout: {r_sweep.stdout}"
+        if sib_name not in r_sweep.stdout:
+            curr_rec = json.loads((consumer / f".nogging/state/sessions/{sib_name}.json").read_text())
+            log_txt = (consumer / f".nogging/state/sessions/{sib_name}.log").read_text()
+            tmux_out = subprocess.run(["tmux", "-L", sock, "list-sessions"], capture_output=True, text=True).stdout
+            raise AssertionError(f"sib_name {sib_name} not in sweep stdout: {r_sweep.stdout}; rec={curr_rec}; tmux={tmux_out}; log={log_txt}")
         assert "active" in r_sweep.stdout, f"'active' not in sweep stdout: {r_sweep.stdout}"
         assert "bead-blocked" not in r_sweep.stdout, f"'bead-blocked' unexpectedly in sweep stdout: {r_sweep.stdout}"
 
