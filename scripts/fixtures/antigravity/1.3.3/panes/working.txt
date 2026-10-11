@@ -1,0 +1,14 @@
+  • Child session control will strictly use ./scripts/nogg session ...
+  without unauthorized fallback or bypass.
+
+  Standing by. I will wait for your separate message directing the change or
+  Bead to begin work.
+
+────────────────────────────────────────────────────────────
+> Run exactly this one shell command and nothing else: sleep 3; echo
+  AGY_PANE_PROBE. Then reply with the single word DONE.
+⣽  Generating...
+────────────────────────────────────────────────────────────────────────────────
+>
+────────────────────────────────────────────────────────────────────────────────
+esc to cancel                              accept-edits · Gemini 3.8 Flash · low

@@ -1912,7 +1912,23 @@ CODEX_ADAPTER = Adapter(
     # message failure mode itself (#23) — pane text otherwise reads idle.
     needs_input=_pats(r"Pasted Content"),
 )
-ADAPTERS = {"claude": CLAUDE_ADAPTER, "codex": CODEX_ADAPTER}
+# Antigravity (agy 1.3.3) patterns come from live panes: the idle footer is
+# `? for shortcuts`, a working turn shows a braille spinner then `Generating...`,
+# and permission/trust dialogs print `Run this command?` / `Requesting
+# permission for` / `Do you trust the contents of this project?`. Both a
+# working and a prompting pane show `esc to cancel`, so it is deliberately not
+# a working signal. The limit patterns come from imported runtime wording and
+# stay unvalidated live: they only ever add a `limit` classification.
+ANTIGRAVITY_ADAPTER = Adapter(
+    name="antigravity",
+    working=_pats(r"^\s*[\u2800-\u28ff]\s+Generating\.\.\."),
+    needs_input=_pats(r"^\s*Run this command\?", r"^\s*Requesting permission for",
+                      r"^\s*Do you trust the contents of this project\?"),
+    limit=_pats(r"AI credits balance is too low", r"(?:usage|quota|rate) limit (?:reached|exceeded|exhausted)",
+                flags=re.I),
+    idle=_pats(r"\? for shortcuts"),
+)
+ADAPTERS = {"claude": CLAUDE_ADAPTER, "codex": CODEX_ADAPTER, "antigravity": ANTIGRAVITY_ADAPTER}
 # Classification precedence, fixed: `limit` > `needs_input` > `working` >
 # `waiting_background` > `idle` (narrowed to `awaiting_manual_approval` when
 # `adapter.manual_mode` also matches), else `unknown`.
@@ -2237,7 +2253,7 @@ def record_session_usage(rec):
     try:
         usage = usage_module()
         config = usage.gate_config(CFG.get("usage_gate"))
-        end_obs = usage.observe(agent, config)
+        end_obs = usage.observe(agent, config, model=model)
         history = usage.UsageHistory()
         history.record_interval(agent, model, start_obs, end_obs,
                                 overlapping=overlapping, complete=True)
@@ -3543,7 +3559,7 @@ def usage_gate_admission(role_meta, agent, records, ignore, model=None):
         print("warning: --ignore-usage-gate: launching without usage admission; "
               "this is recorded on the session", file=sys.stderr)
         return {"decision": "ignored", **estimate}
-    obs = observe(agent, config)
+    obs = observe(agent, config, model=model)
     ledger = usage.Reservations()
     gate = ledger.admit(obs, config, estimate["estimate_percent"])
     token = gate.get("reservation_id")
@@ -4398,7 +4414,8 @@ def watch_poll_once(tracked, stall_secs, fmt):
         if state != prev:
             fields = {}
             if state == "limit":
-                until = resolve_clock_time(pane)
+                until = (_antigravity_resume_status(rec, 60)[1] if rec.get("agent") == "antigravity"
+                         else resolve_clock_time(pane))
                 if until:
                     fields["until"] = until
             _emit_watch_event(fmt, name, state, **fields)
@@ -5020,6 +5037,18 @@ def session_checks_ack(name, fingerprint=None):
 DEFAULT_RESUME_MESSAGE = ("the usage limit has reset, continue exactly where "
                           "you left off per your original instructions")
 _SWITCH_MODEL_RE = re.compile(r"switch.*model", re.I)
+def _antigravity_resume_status(rec, stale_after):
+    """(status, resume_at) for an Antigravity session at its limit, from the
+    runtime's own `/usage` buckets for the session's model group. Every
+    exhausted applicable bucket counts, so a weekly bucket still exhausted
+    after the 5h window reset keeps `wait`. Any failure is `unknown`."""
+    usage = usage_module()
+    model = (rec.get("usage_gate") or {}).get("model") or rec.get("requested_model")
+    try:
+        result = usage.antigravity_resume(model, stale_after=stale_after)
+    except (ValueError, TypeError, OSError):
+        return "unknown", None
+    return result["status"], result["resume_at"]
 def session_resume_when_ready(name, message=None, poll_interval=60):
     """Wait out a `limit` state using its resolved reset timestamp (never a
     tight spin-loop — falls back to a bounded `poll_interval` cadence when
@@ -5033,6 +5062,17 @@ def session_resume_when_ready(name, message=None, poll_interval=60):
         state, pane = classify_session(rec)
         if state != "limit":
             break
+        if rec.get("agent") == "antigravity":
+            # The pane carries no reset clock: quota buckets are authoritative.
+            status, resume_at = _antigravity_resume_status(rec, poll_interval)
+            if status == "ready":
+                break
+            wait = poll_interval
+            if resume_at:
+                remaining = (usage_module().timestamp(resume_at) - dt.datetime.now(dt.timezone.utc)).total_seconds()
+                wait = max(0.0, min(remaining, poll_interval))
+            time.sleep(wait)
+            continue
         until_iso = resolve_clock_time(pane)
         if until_iso:
             wait = (dt.datetime.fromisoformat(until_iso) - dt.datetime.now()).total_seconds()
@@ -5701,9 +5741,10 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
         notes.append("agy is installed but agent_state_roots.antigravity is not declared; "
                      "add \"antigravity\": [\"~/.gemini/antigravity-cli\"] to the "
                      "agent_state_roots key in .nogging/config.json")
-    notes.append("agy available; baseline 1.3.2 has unsigned core live evidence; quota pending AGR-005"
+    notes.append("agy available; baselines 1.3.2 (core) and 1.3.3 (quota) have unsigned live evidence"
                  if agy_present else "agy not installed; only needed for the Antigravity agent path")
-    notes.append("Antigravity: no validated filesystem/network sandbox; sandbox requests refuse; quota support pending AGR-005")
+    notes.append("Antigravity: no validated filesystem/network sandbox; sandbox requests refuse; "
+                 "quota gating uses the runtime /usage model-group buckets (unknown model mapping is unknown usage)")
     if agy_present:
         try:
             validate_antigravity_guard(ROOT)
@@ -5903,7 +5944,7 @@ def main():
                        help="opt-in usage helpers (install-statusline)")
     usage.add_argument("--settings", default=None, help="path to claude settings.json for statusline installation")
     usage.add_argument("--wrapper-path", default=None, help="path to write statusline capture wrapper")
-    usage.add_argument("--agent", choices=("codex", "claude"), default="codex")
+    usage.add_argument("--agent", choices=("codex", "claude", "antigravity", "agy"), default="codex")
     usage.add_argument("--model", default=None, help="inspect estimate and fit for a specific model")
     usage.add_argument("--json", action="store_true")
     sub.add_parser("validate")
@@ -6045,7 +6086,8 @@ def main():
                 sys.exit(1)
         else:
             try:
-                usage_module().usage_command(args.agent, args.json, CFG.get("usage_gate"), model=args.model)
+                usage_module().usage_command("antigravity" if args.agent == "agy" else args.agent,
+                                             args.json, CFG.get("usage_gate"), model=args.model)
             except ValueError as exc:
                 raise RuntimeError(f"invalid usage_gate in .nogging/config.json: {exc}") from exc
     elif args.command == "repo-state":
