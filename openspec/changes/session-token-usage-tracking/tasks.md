@@ -1,6 +1,6 @@
 ## 1. Durable identities and runtime adapters
 
-- [ ] TASK-TUC-001 Add canonical sibling Dolt store, versioned facts/views and replay-safe identities; verify transactions, worktree sharing, copied-source dedup and schema refusal. See design 1–3 and token-store-sync storage requirement.
+- [x] TASK-TUC-001 Add canonical sibling Dolt store, versioned facts/views and replay-safe identities; verify transactions, worktree sharing, copied-source dedup and schema refusal. See design 1–3 and token-store-sync storage requirement.
 - [ ] TASK-TUC-002 Add Claude/Codex adapters and durable ingestion/checkpoints; verify repeated/revised messages, overlapping summaries, cache semantics, partial lines and rotation. Depends on TASK-TUC-001; see design 2–3 and token-accounting normalization/recovery requirements.
 - [ ] TASK-TUC-003 Verify exact supervised Antigravity usage/model retrieval and implement its adapter; verify nonzero counts, resume boundaries and command/quota separation, or file a blocking discovery. Depends on TASK-TUC-001; see design context/3 and token-accounting normalization requirement.
 
