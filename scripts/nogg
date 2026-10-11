@@ -2668,6 +2668,75 @@ def models_cmd(action, agent, tier, as_json, path=None):
     if not agent and not tier:
         for t in MODEL_SELECTION_TIERS:
             print(f"  {t}: {table['tiers'][t]['summary']}")
+# The packaged table's `table_version`. scripts/nogg is overwritten on every
+# `update`, so this constant always names the version the installed package
+# ships, even in a consumer that never receives templates/. A test pins it to
+# templates/model-selection.json; a planning session bumps both together.
+PACKAGED_MODEL_SELECTION_TABLE_VERSION = "2026-10-11"
+def codex_catalog_models():
+    """Model slugs in the local Codex catalog (`<CODEX_HOME>/models_cache.json`).
+    Returns `(slugs, None)`, or `(None, reason)` when the source is unavailable."""
+    path = codex_home() / "models_cache.json"
+    try:
+        models = json.loads(path.read_text()).get("models")
+        slugs = {m["slug"] for m in models if isinstance(m, dict) and isinstance(m.get("slug"), str)}
+    except FileNotFoundError:
+        return None, f"{path} is absent"
+    except (OSError, ValueError, AttributeError, TypeError) as exc:
+        return None, f"{path} is unreadable ({exc.__class__.__name__})"
+    if not slugs:
+        return None, f"{path} lists no models"
+    return slugs, None
+def agy_listed_models():
+    """Model names from a bounded `agy models` probe: the first field of each
+    tab-separated line. Returns `(names, None)` or `(None, reason)`."""
+    if not tool_on_path("agy"):
+        return None, "agy is not installed"
+    timeout = int(scfg("doctor_agy_models_timeout_seconds", 15))
+    try:
+        result = subprocess.run(["agy", "models"], capture_output=True, text=True,
+                                timeout=timeout, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        return None, f"`agy models` timed out after {timeout} s"
+    except OSError as exc:
+        return None, f"`agy models` could not run ({exc.__class__.__name__})"
+    if result.returncode:
+        return None, f"`agy models` exited {result.returncode}"
+    names = {line.split("\t", 1)[0].strip() for line in result.stdout.splitlines() if "\t" in line}
+    names.discard("")
+    if not names:
+        return None, "`agy models` listed no models"
+    return names, None
+def model_selection_notes():
+    """Doctor NOTEs for model-selection table drift (design decision 8). Never a
+    FAIL and never a launch-time probe: a Codex table model absent from the
+    local catalog, an Antigravity table model absent from a bounded `agy
+    models` probe, and an installed table older than the packaged one. An
+    unavailable source is reported as unavailable, not as drift. Claude entries
+    are only format-checked (by the loader); Claude has no list command."""
+    try:
+        table = load_model_selection()
+    except RuntimeError as exc:
+        return [f"model-selection: {str(exc).splitlines()[0]}; `session launch --tier` refuses "
+                "until it is fixed (run `scripts/nogg models check`)"]
+    notes = []
+    if table["table_version"] < PACKAGED_MODEL_SELECTION_TABLE_VERSION:
+        notes.append(f"model-selection: installed table_version {table['table_version']} is older "
+                     f"than the packaged {PACKAGED_MODEL_SELECTION_TABLE_VERSION}; review "
+                     "docs/nogging/model-selection.md and merge the new entries into "
+                     f"{MODEL_SELECTION_PATH} (update never overwrites it)")
+    for agent, probe, source in (("codex", codex_catalog_models, "the local Codex model catalog"),
+                                 ("antigravity", agy_listed_models, "`agy models`")):
+        listed, reason = probe()
+        if listed is None:
+            notes.append(f"model-selection: {agent} drift not checked: {source} unavailable ({reason})")
+            continue
+        for tier in MODEL_SELECTION_TIERS:
+            model = table["agents"][agent][tier]["model"]
+            if model not in listed:
+                notes.append(f"model-selection: {agent} {tier} model {model} is not listed by "
+                             f"{source}; it may be retired - revise the table in a planning session")
+    return notes
 # Claude effort forwarding ships with change support-claude-reasoning-effort
 # (TASK-CRE-002/003); until then a Claude tier applies its model only.
 CLAUDE_TIER_EFFORT_PENDING = "support-claude-reasoning-effort"
@@ -5058,6 +5127,7 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
     notes.extend(persona_mismatch_notes())
     notes.extend(launch_profile_notes())
     notes.extend(supervised_launch_permission_notes())
+    notes.extend(model_selection_notes())
     notes.extend(blocked_running_sessions_notes())
     for note in notes: print(f"NOTE  {note}")
     recover_lines = []
