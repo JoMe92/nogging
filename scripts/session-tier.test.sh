@@ -8,8 +8,9 @@
 #     --reasoning-effort, Antigravity (and its agy alias) --model;
 #   - precedence: --model beats the tier model while the tier still supplies
 #     the Codex effort; the tier beats the profile model and profile effort;
-#   - a Claude tier applies the model only, emits no effort flag and prints a
-#     NOTE naming the unapplied effort and the pending change;
+#   - a Claude tier forwards model and effort (wrapper --effort, source
+#     launch), an explicit --effort beats the tier, the tier beats profile
+#     effort, and a stale helper refuses before any side effect;
 #   - an unknown tier, a missing or invalid table, and Pi refuse with a remedy
 #     before any session record, settings file or tmux session exists;
 #   - records store selection_tier (null without --tier); `session list` shows
@@ -109,11 +110,11 @@ expect_record() { [[ "$(record "$2")" == "$3" ]] && ok "$1" || { echo "  got: $(
 while read -r tier claude claude_effort codex codex_effort agy; do
   launch_ok "claude-$tier" --full-access --tier "$tier"
   has "claude-$tier: table model forwarded" "--model $claude"
-  lacks "claude-$tier: no effort flag" "--effort"
+  has "claude-$tier: tier effort via --effort" "--effort $claude_effort"
   lacks "claude-$tier: no reasoning-effort flag" "--reasoning-effort"
-  grep -q "NOTE: tier $tier Claude effort '$claude_effort' is not applied" "$out" \
-    && grep -q "support-claude-reasoning-effort" "$out" \
-    && ok "claude-$tier: NOTE names the unapplied effort and pending change" || bad "claude-$tier: NOTE"
+  ! grep -q "NOTE:" "$out" && ok "claude-$tier: no pending NOTE" || bad "claude-$tier: unexpected NOTE"
+  expect_record "claude-$tier: record reasoning_effort" reasoning_effort "$claude_effort"
+  expect_record "claude-$tier: effort source launch" reasoning_effort_source launch
   expect_record "claude-$tier: record selection_tier" selection_tier "$tier"
   expect_record "claude-$tier: model source launch" model_source launch
 
@@ -138,6 +139,28 @@ PY
 )
 
 # --- precedence -------------------------------------------------------------
+launch_ok "claude-effort-over-tier" --full-access --tier standard --effort max
+has "claude-effort-over-tier: explicit --effort wins" "--effort max"
+expect_record "claude-effort-over-tier: source launch" reasoning_effort_source launch
+expect_record "claude-effort-over-tier: tier still recorded" selection_tier standard
+new_root
+printf '%s\n' '{"permissions":{"defaultMode":"default","deny":[]},"effort":"low"}' >"$root/pe.json"
+run_launch --profile "$root/pe.json" --tier complex && ok "claude-tier-over-profile-effort: launched" \
+  || bad "claude-tier-over-profile-effort: launch errored"
+expect_record "claude-tier-over-profile-effort: tier effort beats profile" reasoning_effort "$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["agents"]["claude"]["complex"]["effort"])' "$root/.nogging/model-selection.json")"
+expect_record "claude-tier-over-profile-effort: source launch" reasoning_effort_source launch
+
+# --- stale helper refuses rather than dropping the tier effort ---------------
+new_root
+python3 - "$root/scripts/session-launch" <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); p.write_text(p.read_text().replace(',"claude-effort-forwarding"', ''))
+PY
+if run_launch --full-access --tier standard; then bad "stale helper: tier launch accepted"; else
+  grep -q "Claude effort forwarding" "$out" && ok "stale helper: refused with update remedy" || bad "stale helper: wrong refusal"
+  [[ -z "$(ls "$root/.nogging/state/sessions" 2>/dev/null)" ]] && ok "stale helper: no session record" || bad "stale helper: record left"
+fi
+
 launch_ok "codex-model-over-tier" --agent codex --full-access --tier standard --model gpt-x
 has "codex-model-over-tier: explicit --model wins" "--model gpt-x"
 has "codex-model-over-tier: tier still supplies effort" "--reasoning-effort medium"
@@ -228,7 +251,8 @@ run_launch --full-access --tier standard --resume "$sid" && ok "resume: launched
 has "resume: recorded model kept" "--model claude-sonnet-5-5"
 lacks "resume: changed table not re-resolved" "claude-changed"
 has "resume: exact conversation" "--resume $sid"
-grep -q "Claude effort 'high' is not applied" "$out" && ok "resume: recorded effort reported" || bad "resume: NOTE"
+has "resume: recorded tier effort forwarded" "--effort high"
+! grep -q "NOTE:" "$out" && ok "resume: no pending NOTE" || bad "resume: unexpected NOTE"
 KEEP_ROOT=1 launch_refused "resume-other-tier" "pass --tier standard or drop --tier" \
   --full-access --tier complex --resume "$sid" || true
 KEEP_ROOT=1 launch_refused "resume-without-recorded-tier" "no session record carries one" \
