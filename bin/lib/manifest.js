@@ -7,7 +7,8 @@
 // File classes:
 //   verbatim  - copied and overwritten on every `init` and `update`
 //   docs      - reference docs, copied verbatim into docs/nogging/
-//   scaffold  - written only when absent, never overwritten
+//   scaffold  - written only when absent, never overwritten (by `update` too
+//               when the item sets onUpdate)
 //   merge     - foreign files edited idempotently (see lib/merge.js)
 //   rendered  - generated from templates/ with target-specific values
 
@@ -15,6 +16,16 @@ module.exports = {
   // Individual files copied verbatim.
   verbatim: [
     'scripts/nogg',
+    'scripts/nogg_usage.py',
+    'scripts/lib/token_usage_adapters.py',
+    'scripts/lib/token_usage_antigravity.py',
+    'scripts/lib/token_usage_collect.py',
+    'scripts/lib/token_usage_report.py',
+    'scripts/lib/token_usage_store.py',
+    'scripts/lib/token_usage_sync.py',
+    'scripts/session-launch',
+    'scripts/openspec-sandbox',
+    'scripts/session-log-writer',
     'scripts/install-hooks',
     'scripts/test',
     'scripts/nogg.test.sh',
@@ -23,16 +34,21 @@ module.exports = {
     'scripts/hooks/commit-msg',
     'scripts/hooks/pre-commit',
     'scripts/hooks/pre-push',
+    'scripts/hooks/agy-guard',
     'scripts/hooks/pre-tool-use-openspec-guard',
+    'scripts/hooks/pre-tool-use-lead-launch-guard',
     'scripts/hooks/session-start-cloud-bootstrap',
     'scripts/hooks/commit-msg.test.sh',
     'scripts/hooks/branch-name.test.sh',
+    'scripts/hooks/pre-tool-use-lead-launch-guard.test.sh',
     'scripts/hooks/session-start-cloud-bootstrap.test.sh',
+    'templates/claude/orchestrator-permissions.example.json',
   ],
 
   // Directories copied verbatim (recursive).
   verbatimDirs: [
     { from: '.agents/skills', to: '.agents/skills' },
+    { from: 'templates/antigravity/skills', to: '.agents/skills' },
     // The Claude Code payload: specialist definitions and repository-scoped
     // workflow commands. Settings remain under mergeClaudeSettings() so a
     // target repository's unrelated Claude configuration is preserved.
@@ -64,8 +80,11 @@ module.exports = {
     { from: 'docs/failure-recovery.md', to: 'docs/nogging/failure-recovery.md' },
     { from: 'docs/using-with-codex.md', to: 'docs/nogging/using-with-codex.md' },
     { from: 'docs/using-with-pi.md', to: 'docs/nogging/using-with-pi.md' },
+    { from: 'docs/using-with-antigravity.md', to: 'docs/nogging/using-with-antigravity.md' },
     { from: 'docs/security-model.md', to: 'docs/nogging/security-model.md' },
     { from: 'docs/worktree-workflow.md', to: 'docs/nogging/worktree-workflow.md' },
+    { from: 'docs/model-selection.md', to: 'docs/nogging/model-selection.md' },
+    { from: 'docs/token-usage.md', to: 'docs/nogging/token-usage.md' },
   ],
 
   // Written only when the destination does not already exist.
@@ -77,18 +96,29 @@ module.exports = {
       to: '.nogging/config.json',
       transform: 'noggingConfig',
     },
+    // onUpdate: also scaffolded by `update`, so upgraded installs gain it.
+    {
+      from: 'templates/model-selection.json',
+      to: '.nogging/model-selection.json',
+      onUpdate: true,
+    },
   ],
 
   // chmod 0755 after copying (destination-relative).
   executable: [
     'scripts/nogg',
+    'scripts/session-launch',
+    'scripts/openspec-sandbox',
+    'scripts/session-log-writer',
     'scripts/install-hooks',
     'scripts/test',
     'scripts/check-branch-name',
     'scripts/hooks/commit-msg',
     'scripts/hooks/pre-commit',
     'scripts/hooks/pre-push',
+    'scripts/hooks/agy-guard',
     'scripts/hooks/pre-tool-use-openspec-guard',
+    'scripts/hooks/pre-tool-use-lead-launch-guard',
     'scripts/hooks/session-start-cloud-bootstrap',
   ],
 

@@ -1,0 +1,25 @@
+{
+  "nogging-guard": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ../scripts/hooks/agy-guard",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  },
+  "nogging-observability": {
+    "Stop": [
+      {
+        "type": "command",
+        "command": "[ -z \"${NOGG_SESSION_NAME:-}\" ] || NOGGING_ROOT=\"$NOGG_SESSION_ROOT\" python3 ../scripts/nogg session emit turn_end",
+        "timeout": 10
+      }
+    ]
+  }
+}

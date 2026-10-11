@@ -11,13 +11,17 @@
 # refused by the always-on `.codex/rules/nogging.rules` floor. The
 # `restricted` level keeps `network_access = false`.
 #
-# Keys (all three are required; `session_launch()` reads exactly these):
+# Required keys (`session_launch()` refuses a spec without them):
 #   sandbox           one of read-only | workspace-write | danger-full-access
 #                     -> codex --sandbox <mode>
 #   ask_for_approval  one of untrusted | on-request | never
 #                     -> codex --ask-for-approval <policy>
 #   network_access    bool; true  -> codex -c 'sandbox_workspace_write.network_access=true'
 #                           false -> codex -c 'sandbox_workspace_write.network_access=false'
+#
+# Optional keys (omit them to keep Codex's own defaults):
+#   model                   quoted model name; `session launch --model` overrides it
+#   model_reasoning_effort  one of none | minimal | low | medium | high | xhigh | max | ultra
 sandbox          = "workspace-write"
 ask_for_approval = "never"
 network_access   = true

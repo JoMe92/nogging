@@ -31,6 +31,7 @@ cat > "$runner" <<'NODE'
 import { pathToFileURL } from "node:url";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 
 const guardPath = process.argv[2];
@@ -117,6 +118,7 @@ allowed("git filter-branch", "echo hello");
 
 // --- openspec/ write-boundary predicates, against a throwaway fixture dir --
 const fixture = mkdtempSync(path.join(tmpdir(), "pi-guard-fixture-"));
+execFileSync("git", ["-C", fixture, "init", "-q"]);
 
 check(
   "isUnderOpenspec: openspec/changes/foo/tasks.md -> true",
@@ -132,9 +134,12 @@ check(
 );
 
 check(
-  "openspecBoundaryOpen: open when no lock file is present",
-  openspecBoundaryOpen(fixture) === true,
+  "openspecBoundaryOpen: non-Git path fails closed",
+  openspecBoundaryOpen(tmpdir()) === false,
 );
+
+check("openspecBoundaryOpen: a checkout alone grants no authorization", openspecBoundaryOpen(fixture) === false);
+check("openspecBoundaryOpen: planning role without a lock denies", openspecBoundaryOpen(fixture, "planning") === false);
 
 mkdirSync(path.join(fixture, ".nogging", "locks"), { recursive: true });
 writeFileSync(path.join(fixture, ".nogging", "locks", "openspec.readonly"), "");

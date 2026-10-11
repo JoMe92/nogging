@@ -28,7 +28,7 @@
       actually runs from — implementer's call, confirm against where the
       sync timer's working directory actually is).
 
-- [ ] TASK-ACI-005 Add the `Co-authored-by:` instruction to the Lead Agent
+- [x] TASK-ACI-005 Add the `Co-authored-by:` instruction to the Lead Agent
       delegation protocol everywhere it's documented — `AGENTS.md`,
       `templates/claude-block.md`, `templates/agents-block.md`: when a
       specialist's delegated, incorporated work contributes to a commit, add
@@ -36,14 +36,14 @@
       email>` trailer naming that specialist, using the roster from
       TASK-ACI-001.
 
-- [ ] TASK-ACI-006 Add a `scripts/nogg doctor` check: report, as a NOTE, any
+- [x] TASK-ACI-006 Add a `scripts/nogg doctor` check: report, as a NOTE, any
       worktree whose `user.name` does not match its role's expected persona
       (helps catch a worktree created before this change, or one where
       identity-setting silently failed). Never a FAIL.
 
 ## Tier 2 — opt-in GitHub Apps
 
-- [ ] TASK-ACI-007 Write the Product-Owner-facing procedure (new doc,
+- [x] TASK-ACI-007 Write the Product-Owner-facing procedure (new doc,
       e.g. `docs/agent-identities.md`): how to register one GitHub App per
       persona slug (name, minimum permissions — Contents and Pull requests
       read/write), generate its private key, install it on the target
@@ -51,7 +51,7 @@
       (`~/.config/nogging/bot-identities/<slug>.pem`) plus the App ID in
       the persona's `github_app` config block.
 
-- [ ] TASK-ACI-008 Add `scripts/nogg credential-helper <slug>`: implements
+- [x] TASK-ACI-008 Add `scripts/nogg credential-helper <slug>`: implements
       git's credential-helper protocol; on `get`, mints a short-lived
       GitHub App installation access token (signed JWT exchange against
       GitHub's Apps API) for the named persona's configured App and private
@@ -60,7 +60,7 @@
       printed) if the key is missing or the exchange fails — never falls
       back to an ambient personal credential silently.
 
-- [ ] TASK-ACI-009 When `worktree plan`/`worktree implement` allocates a
+- [x] TASK-ACI-009 When `worktree plan`/`worktree implement` allocates a
       worktree for a persona whose roster entry has a `github_app` block:
       set that worktree's `user.email` to the GitHub-assigned bot format
       (`<app-user-id>+<slug>[bot]@users.noreply.github.com`, read from the
@@ -70,7 +70,7 @@
       `scripts/nogg credential-helper <slug>`. A persona with no
       `github_app` block is unaffected (stays on Tier 1 from TASK-ACI-002).
 
-- [ ] TASK-ACI-010 Run `scripts/test`. Manually verify Tier 1: a freshly
+- [x] TASK-ACI-010 Run `scripts/test`. Manually verify Tier 1: a freshly
       allocated planning and implementation worktree each show the correct
       persona in `git config --worktree --get user.name` and a resulting
       commit's author matches, while the shared checkout and other

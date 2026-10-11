@@ -152,6 +152,7 @@ if [[ "$op_ln" -lt "$cl_ln" ]]; then echo "ok   - closed-disc: open listed befor
 
 # --- Scenario: acknowledging a discovery stops it being surfaced -----------
 ackroot="$work/ackroot"; mkdir -p "$ackroot/.nogging/state"
+git -C "$ackroot" init -q
 cp "$repo_root/.nogging/config.json" "$ackroot/.nogging/config.json"
 export NOGGING_ROOT="$ackroot"
 "$nogg" discoveries >"$out" 2>&1
@@ -175,6 +176,8 @@ make_root() {
   local r="$1"
   mkdir -p "$r/.nogging/state" "$r/.nogging/locks" "$r/openspec/changes/demo"
   cp "$repo_root/.nogging/config.json" "$r/.nogging/config.json"
+  mkdir -p "$r/scripts"
+  cp "$repo_root/scripts/session-launch" "$repo_root/scripts/session-log-writer" "$repo_root/scripts/openspec-sandbox" "$r/scripts/"
   cat >"$r/openspec/changes/demo/tasks.md" <<'MD'
 # Tasks
 
@@ -533,7 +536,7 @@ export BD_FIXTURE="$work/fail-perm-beads.json"
 cat >"$BD_FIXTURE" <<'JSON'
 [
   {"id": "SPEC-x01", "status": "open",
-   "labels": ["openspec:change:demo", "openspec:task:TASK-DEMO-404"]}
+   "labels": ["openspec:task:TASK-DEMO-404"]}
 ]
 JSON
 rec="$root/.nogging/state/sync-failure.json"
@@ -1290,9 +1293,15 @@ cat >"$BD_FIXTURE" <<'JSON'
    "labels": ["openspec:change:demo", "openspec:task:TASK-DEMO-001"]}
 ]
 JSON
-grep -q '"claim_stale_seconds"' "$root/.nogging/config.json" \
-  && echo "ok   - rec-stale-claim: config carries claim_stale_seconds" \
-  || { echo "FAIL - rec-stale-claim: claim_stale_seconds not in config"; fail=1; }
+# This key is optional in consumer configs. Exercise its supported default.
+python3 - "$root/.nogging/config.json" <<'PYCFG'
+import json, sys
+p = sys.argv[1]
+cfg = json.load(open(p))
+cfg.pop("claim_stale_seconds", None)
+with open(p, "w") as fh:
+    json.dump(cfg, fh)
+PYCFG
 "$nogg" recover >"$out" 2>&1 \
   && echo "ok   - rec-stale-claim: a stale claim alone does not fail recover" \
   || { echo "FAIL - rec-stale-claim: recover exited non-zero for a stale claim only"; cat "$out"; fail=1; }
@@ -1491,6 +1500,83 @@ refute "cxf-doctor: NOTE is gone once every prompt is linked" \
 rm -f "$work/bin/codex"
 "$nogg" codex-prompts-link --unlink >/dev/null 2>&1 || true
 unset NOGGING_ROOT BD_FIXTURE BD_STUB_DIR CODEX_HOME
+
+# ===========================================================================
+# Scenario: doctor flags a misconfigured or drifted bypass-permissions launch
+# profile (TASK-HTA-002/005) — a NOTE only, never a FAIL, and silent for the
+# real shipped files.
+# ===========================================================================
+root="$work/hta-doctor"; make_root "$root"
+export NOGGING_ROOT="$root"
+export BD_FIXTURE="$work/hta-doctor-beads.json"; printf '[]\n' >"$BD_FIXTURE"
+mkdir -p "$root/.nogging/launch-profiles"
+cp "$repo_root/.nogging/launch-profiles/trusted.json" "$root/.nogging/launch-profiles/trusted.json"
+cp "$repo_root/.nogging/launch-profiles/orchestrator.json" "$root/.nogging/launch-profiles/orchestrator.json"
+grep -qF '"defaultMode": "bypassPermissions"' "$root/.nogging/launch-profiles/trusted.json" \
+  && echo "ok   - hta-shipped: trusted.json carries defaultMode bypassPermissions" \
+  || { echo "FAIL - hta-shipped: trusted.json defaultMode is not bypassPermissions"; fail=1; }
+grep -qF '"skipDangerousModePermissionPrompt": true' "$root/.nogging/launch-profiles/trusted.json" \
+  && echo "ok   - hta-shipped: trusted.json carries skipDangerousModePermissionPrompt: true" \
+  || { echo "FAIL - hta-shipped: trusted.json is missing skipDangerousModePermissionPrompt: true"; fail=1; }
+cat >"$root/.nogging/launch-profiles/missing-key.json" <<'JSON'
+{ "permissions": { "defaultMode": "bypassPermissions", "allow": [], "deny": [] } }
+JSON
+"$nogg" doctor >"$out" 2>&1 || true
+check "hta-doctor: missing-key fixture flagged" \
+  "launch profile missing-key.json sets permissions.defaultMode: bypassPermissions without a top-level skipDangerousModePermissionPrompt: true"
+refute "hta-doctor: real trusted.json is silent" "launch profile trusted.json"
+refute "hta-doctor: real orchestrator.json is silent" "launch profile orchestrator.json"
+rm -f "$root/.nogging/launch-profiles/missing-key.json"
+python3 -c "
+import json, sys
+p = '$root/.nogging/launch-profiles/trusted.json'
+d = json.load(open(p))
+d['permissions']['defaultMode'] = 'auto'
+json.dump(d, open(p, 'w'))
+"
+"$nogg" doctor >"$out" 2>&1 || true
+check "hta-doctor: drifted trusted.json fixture flagged" \
+  "launch profile trusted.json has permissions.defaultMode 'auto', expected 'bypassPermissions'"
+unset NOGGING_ROOT BD_FIXTURE
+
+# ===========================================================================
+# TASK-SLK-004/006: bead_change() / change_beads() -- the bd-stub-backed
+# helpers shared by `session kickoff` and `session sweep`.
+# ===========================================================================
+run_py() {
+  python3 - "$nogg" <<PY
+import sys
+from importlib.machinery import SourceFileLoader
+m = SourceFileLoader("sf_nogg_slk", sys.argv[1]).load_module()
+$1
+PY
+}
+
+export BD_STUB_DIR="$work/slk-bd"; mkdir -p "$BD_STUB_DIR"
+printf '[{"id":"SPEC-bc1","labels":["openspec:change:demo-change","openspec:task:TASK-X"]}]\n' \
+  >"$BD_STUB_DIR/show-SPEC-bc1.json"
+printf '[{"id":"SPEC-bc2","labels":["openspec:task:TASK-Y"]}]\n' \
+  >"$BD_STUB_DIR/show-SPEC-bc2.json"
+got=$(run_py "print(m.bead_change('SPEC-bc1'))")
+[[ "$got" == "demo-change" ]] \
+  && echo "ok   - bead_change: resolves the openspec:change: label" \
+  || { echo "FAIL - bead_change: expected demo-change, got $got"; fail=1; }
+got=$(run_py "print(m.bead_change('SPEC-bc2'))")
+[[ "$got" == "None" ]] \
+  && echo "ok   - bead_change: a Bead with no openspec:change: label returns None" \
+  || { echo "FAIL - bead_change: expected None, got $got"; fail=1; }
+got=$(run_py "print(m.bead_change('SPEC-missing'))")
+[[ "$got" == "None" ]] \
+  && echo "ok   - bead_change: a nonexistent Bead returns None" \
+  || { echo "FAIL - bead_change: expected None for a missing Bead, got $got"; fail=1; }
+
+export BD_FIXTURE="$work/slk-change-beads.json"
+printf '[{"id":"SPEC-cb1","status":"closed"},{"id":"SPEC-cb2","status":"blocked"}]\n' >"$BD_FIXTURE"
+got=$(run_py "print(sorted(i['id'] for i in m.change_beads('demo-change')))")
+[[ "$got" == "['SPEC-cb1', 'SPEC-cb2']" ]] \
+  && echo "ok   - change_beads: returns every Bead materialized under the change label" \
+  || { echo "FAIL - change_beads: got $got"; fail=1; }
+unset BD_STUB_DIR BD_FIXTURE
 
 if [[ $fail -ne 0 ]]; then echo "nogg checks failed" >&2; exit 1; fi
 echo "all nogg checks passed"

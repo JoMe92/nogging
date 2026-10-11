@@ -5,6 +5,31 @@ mapping errors and the last sync failure without modifying data. Run
 `./scripts/nogg audit` for the same invariant checks plus a timestamped
 local report.
 
+## Session helper or startup failures
+
+`doctor` checks that `scripts/session-launch` and `scripts/session-log-writer`
+are executable and implement the interface expected by the installed CLI.
+A missing helper or incompatible contract means the managed payload is partial
+or mixed. Run the pinned Nogging package's `update` from a release containing
+the helper-contract repair, then run `./scripts/nogg doctor` again. Updating
+from an older package that omitted the wrappers does not fix the installation.
+Use the same distribution for the CLI and both helpers; do not patch wrapper
+flags by hand. Existing worktrees need the repaired payload as well.
+
+Contract refusal happens before tmux or session files, so it requires no session
+cleanup. If a runtime starts and then exits, its record becomes `failed` and
+its stderr is redacted and saved even if the pane disappears before logging
+can attach. Run `./scripts/nogg session list`, then
+`./scripts/nogg session log <name>` to inspect the underlying error (for example,
+an unsupported runtime option or a missing executable). Fix that cause, retire
+the terminal session with `session cleanup <name>`, and launch again. A quick
+failure can occur just after the launcher returns; check the record and log
+before assuming the agent is running.
+
+Normal `update` replaces managed helpers while preserving OpenSpec, Beads,
+custom profiles and unrelated agent settings. It does not upgrade the agent
+CLI itself or grant additional authority.
+
 ## Resuming an interrupted run
 
 A planning or development run can stop mid-way — the token budget runs out, the
@@ -15,7 +40,7 @@ next start — fresh, resumed, or after a tool switch — every agent runs
 
 | `recover` reports | Action |
 | --- | --- |
-| Stale `planning.lock` | Confirm no planning session is actually running, then `./scripts/nogg plan-end --force`. |
+| Stale `planning.lock` | Confirm no planning session is actually running, then `./scripts/nogg plan-end --force`. A lock that names a supervised session is refused while that owner is alive; `recover` names the owner. Never release another session's lock by stopping or cleaning up your own. |
 | Fresh `planning.lock`, not yours | A planning session is active elsewhere. Do not start execution that depends on unmaterialized work — wait or coordinate. |
 | `LIMBO: <id> committed … but status=<status>` | The work is **done**. `git show` the commit, run `scripts/test`, add the evidence note (`bd update <id> --append-notes "commit <sha>; <evidence>"`), `bd close <id>`. **Do not re-implement it** — that produces a duplicate commit. |
 | `in_progress` Bead, `resumable` | Same as `LIMBO`: it has a commit, so the work is done — verify, note, close. Never re-implement. |
@@ -28,6 +53,22 @@ next start — fresh, resumed, or after a tool switch — every agent runs
 
 ## A failed sync
 
+Sync exit status distinguishes a complete/intentional no-op pass (`0`), a
+repository-wide failure (`1`), and a degraded partial pass (`3`). A skipped
+pass does not update the last-complete timestamp; inspect `last-skip.json`.
+
+A partial pass quarantines every identifiable affected change and reconciles
+independent valid changes. It writes `.nogging/state/sync-mapping-health.json`
+with the last partial timestamp, processed/skipped changes, and current
+per-change Bead IDs, reasons, first-seen and last-seen times. `doctor` names
+both last complete and last partial passes and the age of each active scope.
+The separate `last-success.json` changes only after a complete pass. Partial
+passes do not schedule a repository-wide retry or repeat completed mirror
+writes: rerunning is idempotent. After manual repair, rerun sync; only resolved
+scopes clear, while the last partial pass remains as historical evidence.
+Preserve a malformed health file and repair it before retrying: sync refuses
+to overwrite unreadable durable health or mirror new evidence through it.
+
 A failed sync writes `.nogging/state/sync-failure.json` and appends the same
 data to `.nogging/state/sync-failures.jsonl` (a retained history). `doctor`
 prints the active record: its `classification`, the `attempts` / `max_attempts`
@@ -39,8 +80,10 @@ count, and `next_retry_after`.
   `.nogging/config.json`). Usually no action is needed; if it keeps failing,
   read the `error` field and clear the blockage (for example a genuinely stale
   `.nogging/locks/sync.lock`).
-- **`permanent`** — a failed invariant audit, a mapping conflict, or a missing
-  task. Not retried automatically. Run `./scripts/nogg audit`, resolve the
+- **`permanent`** — repository-wide identity ambiguity, duplicate global task
+  definitions, or unreadable durable mapping health. Identifiable mapping
+  conflicts and missing tasks use the scoped degraded result above. Not retried
+  automatically. Run `./scripts/nogg audit`, resolve the
   disagreement in Beads or `openspec/` (a planning session for the latter),
   then rerun `./scripts/nogg sync`.
 
@@ -169,25 +212,79 @@ retrying with a different model.
 
 ## `openspec/` stuck read-only or stuck writable
 
-The OpenSpec write boundary is a sentinel file,
-`.nogging/locks/openspec.readonly`, plus a per-session read-only `openspec/`
-root for launched execution sessions. `./scripts/nogg doctor` prints its
-state (`openspec write boundary: OPEN` / `LOCKED` / `LOCKED (stale planning lock
-present …)`).
+The canonical boundary lives in the **main checkout's** `.nogging/locks`,
+shared by linked worktrees. Run `./scripts/nogg repo-state --cwd "$PWD"` to
+resolve the exact paths; `doctor` prints them. Unsupported or unavailable Git
+metadata denies authorization. Do not create a local lock as a substitute.
 
-- **Stuck read-only** — a planning session cannot edit `openspec/` because a
-  sentinel was left behind or `plan-begin` crashed. Run
-  `./scripts/nogg plan-begin` (add `--force` if a stale planning lock
-  lingers); it removes the sentinel and opens the boundary. Deleting
-  `.nogging/locks/openspec.readonly` by hand has the same effect on the
-  `PreToolUse` fast path — the sentinel is local, additive state and safe to
-  delete.
-- **Stuck writable** — a forgotten `plan-end` left `openspec/` open. Run
-  `./scripts/nogg plan-end` (add `--force` if the planning lock is already
-  gone) to re-close it. `doctor` surfaces the open boundary meanwhile; a
-  launched execution session is unaffected because it keys its read-only root
-  off its own role, and the stale-lock TTL eventually re-closes the `PreToolUse`
-  path on its own.
+Pi permits OpenSpec writes only for an explicit planning role with a valid,
+fresh canonical `planning.lock` and no closed sentinel. The main checkout's
+`planning_lock_ttl_seconds` applies (default 7200); invalid values, future
+locks, unreadable state and dangling sentinel symlinks deny authorization.
+Execution roles remain read-only while another planning session is open.
+
+- **Stuck read-only:** inspect canonical state and confirm the lock owner.
+  Use `plan-begin` only in the authorized planning workflow. Use `--force`
+  only after confirming the stale owner is gone. A legacy worktree-local
+  `openspec.readonly` also closes Pi's boundary: prefer a fresh worktree, or
+  remove the legacy sentinel only after confirming no live owner needs it.
+  Deleting the canonical sentinel alone does not authorize Pi writes.
+- **Stuck writable:** run `plan-end` to release the lock and restore the
+  canonical sentinel. If the lock is absent, `plan-end --force` closes the
+  boundary. Check `doctor` again; never grant an execution role planning
+  authority to work around a guard failure.
+
+Discovery acknowledgements share the main checkout's
+`.nogging/state/acknowledged-discoveries.json`. Invoking a legacy worktree
+merges its IDs under an exclusive lock and preserves source snapshots in
+`acknowledged-discoveries.backups/` before atomic replacement. Malformed or
+unreadable ledgers refuse the operation rather than erase IDs. Preserve the
+original file, inspect the reported source and recovery snapshots, then repair
+or restore a valid ledger with all known acknowledged IDs and original
+timestamps. Retry `discoveries`; never infer acknowledgements from Bead status.
+An interrupted replacement leaves the previous ledger usable; retry normally.
+
+## Non-task follow-ups and trace-preserving mapping repair
+
+Use a regular materialized Bead for work that implements an approved task.
+For related work that has no approved checkbox, create an explicit non-task
+follow-up, retaining the change association and a human explanation:
+
+```bash
+bd create "Investigate related behavior" --type task \
+  --labels "openspec:followup,openspec:change:<change-name>" \
+  --description "What remains, the evidence, and why this is a non-task follow-up."
+```
+
+Do not copy an existing task label onto the follow-up. If it must block mapped
+work, add the dependency explicitly in the correct direction:
+
+```bash
+bd dep add <mapped-bead-id> <followup-bead-id> --type blocks
+```
+
+An open or blocked follow-up without that edge does not prevent completion of
+the mapped change. Nonblocking traceability edges do not substitute for
+`blocks`. A missing or unreadable blocking prerequisite prevents completion.
+Follow-ups are never mirrored to an invented task or execution-log entry.
+
+For a malformed mapping, first inspect the named Bead, its notes/commit
+history, the approved task definition and every other Bead with the same task
+label. Establish which Bead is the canonical mapped task. In a deliberate
+planning repair, either restore the correct unique mapping or classify the
+extra work as a follow-up: remove its erroneous task label, retain the one
+correct change label, and add `openspec:followup`. Record the reason and the
+canonical Bead ID in a human note. Preserve closure status, commit evidence,
+discoveries and dependency edges; never delete a closed Bead to make audit pass.
+Conflicting change labels need an explicit ownership decision before repair.
+
+Run `./scripts/nogg audit` again, then `./scripts/nogg materialize <change>`
+for any missing approved work and `./scripts/nogg sync --now` to reconcile.
+Audit remains nonzero while any defect exists. A scoped defect allows unrelated
+valid changes to proceed with degraded exit `3`; duplicate global task IDs,
+ambiguous tracker identities or unreadable tracker state refuse every mirror
+write. See the partial-pass health section above to confirm repaired scopes
+have cleared without losing historical diagnostics.
 
 ## Orphaned Beads and bad mirrors
 

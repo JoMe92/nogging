@@ -59,6 +59,7 @@ run_guard "src/feature.py" || true
 
 # with a FRESH planning lock present the guard steps aside (planning session only)
 mkdir -p "$root/.nogging/locks"
+printf '{"planning_lock_ttl_seconds":7200}\n' >"$root/.nogging/config.json"
 printf '{"pid":1,"host":"h","created_at":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%S+00:00)" \
   >"$root/.nogging/locks/planning.lock"
 run_guard "openspec/changes/demo/spec.md" || true

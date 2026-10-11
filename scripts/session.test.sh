@@ -29,7 +29,9 @@ trap 'rm -f "$out"; rm -rf "$work"' EXIT
 mkdir -p "$work/bin"
 
 # bd: `show <id> --json` returns a record for any id under $BD_KNOWN (space
-# separated); every other call is logged to $BD_MUTATION_LOG and fails.
+# separated); `dep list <id> --json` returns $BD_DEP_LIST_JSON (default `[]`,
+# i.e. no recorded dependency) for any id; every other call is logged to
+# $BD_MUTATION_LOG and fails.
 cat >"$work/bin/bd" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -39,6 +41,10 @@ if [[ "${1:-}" == "show" ]]; then
     if [[ "$k" == "$id" ]]; then printf '[{"id":"%s","title":"stub bead"}]\n' "$id"; exit 0; fi
   done
   echo '[]'; exit 1
+fi
+if [[ "${1:-}" == "dep" && "${2:-}" == "list" ]]; then
+  printf '%s\n' "${BD_DEP_LIST_JSON:-[]}"
+  exit 0
 fi
 printf 'bd %s\n' "$*" >>"${BD_MUTATION_LOG:-/dev/null}"
 echo "stub bd: refusing mutation in session tests: $*" >&2
@@ -63,7 +69,17 @@ case "$cmd" in
       || { echo "tmux stub: no metadata record before exec" >&2; exit 90; }
     ls "$NOGGING_ROOT"/.nogging/state/sessions/*.log  >/dev/null 2>&1 \
       || { echo "tmux stub: no log file before exec" >&2; exit 91; }
-    touch "$d/sess-$name" ;;
+    touch "$d/sess-$name"
+    if [[ -n "${TMUX_STUB_FAST_EXIT:-}" ]]; then
+      env_args=()
+      while [[ $# -gt 0 ]]; do
+        if [[ "$1" == "--" ]]; then shift; break; fi
+        if [[ "$1" == "-e" ]]; then env_args+=("$2"); shift; fi
+        shift
+      done
+      env "${env_args[@]}" "$@" >/dev/null 2>/dev/null || true
+      rm -f "$d/sess-$name"
+    fi ;;
   has-session)
     [[ -n "${TMUX_STUB_ALL_COLLIDE:-}" ]] && exit 0
     name="$(arg_after -t "$@")"; [[ -f "$d/sess-$name" ]] ;;
@@ -75,7 +91,11 @@ case "$cmd" in
   kill-session)
     name="$(arg_after -t "$@")"; rm -f "$d/sess-$name" ;;
   kill-server) rm -f "$d"/sess-* ;;
-  pipe-pane|attach) : ;;
+  pipe-pane)
+    if [[ -n "${TMUX_STUB_FAST_EXIT:-}" ]]; then
+      echo 'cannot find pane' >&2; exit 1
+    fi ;;
+  attach) : ;;
   *) : ;;
 esac
 STUB
@@ -90,7 +110,12 @@ refute() { if grep -qF -- "$2" "$out"; then echo "FAIL - $1 (present: $2)"; cat 
 # make_root <dir> [grace] — minimal Nogging checkout for the session layer.
 make_root() {
   local r="$1" grace="${2:-10}"
-  mkdir -p "$r/.nogging/state"
+  mkdir -p "$r/.nogging/state" "$r/scripts" "$r/openspec"
+  cp "$repo_root/scripts/session-launch" "$repo_root/scripts/session-log-writer" "$repo_root/scripts/openspec-sandbox" "$r/scripts/"
+  # A bare, commit-less `git init` is enough for `git worktree list
+  # --porcelain` to succeed — needed by doctor()'s persona_mismatch_notes(),
+  # which this file's dal-doctor scenario exercises via a real `doctor` call.
+  git init -q "$r"
   # the launch profile / prompt files the bridge resolves and now reads
   cp "$repo_root/.nogging/session-launch-profile.json" "$r/.nogging/" 2>/dev/null || true
   cp "$repo_root/.nogging/session-launch-prompt.md" "$r/.nogging/" 2>/dev/null || true
@@ -99,6 +124,9 @@ make_root() {
   python3 - "$repo_root/.nogging/config.json" "$r/.nogging/config.json" "$grace" <<'PY'
 import json, sys
 cfg = json.load(open(sys.argv[1]))
+# Generic fixtures exercise shipped CLI defaults independently of owner opt-ins.
+cfg.pop("session_launch_profile", None)
+cfg.pop("session_launch_prompt", None)
 cfg["session_stop_grace_seconds"] = float(sys.argv[3])
 json.dump(cfg, open(sys.argv[2], "w"), indent=2)
 PY
@@ -128,6 +156,9 @@ name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.setting
 grep -qF "new-session " "$TMUX_STUB_DIR/calls.log" \
   && echo "ok   - launch: tmux new-session reached with metadata+log already on disk" \
   || { echo "FAIL - launch: new-session not called"; cat "$TMUX_STUB_DIR/calls.log"; fail=1; }
+grep -qF 'NOGG_SESSION_ROLE=lead' "$TMUX_STUB_DIR/calls.log" \
+  && echo 'ok   - launch: explicit execution role reaches the runtime environment' \
+  || { echo 'FAIL - launch: role context missing'; fail=1; }
 grep -qF "pipe-pane " "$TMUX_STUB_DIR/calls.log" \
   && echo "ok   - launch: pipe-pane log stream started" \
   || { echo "FAIL - launch: pipe-pane not called"; fail=1; }
@@ -397,7 +428,7 @@ grep -qE -- "--prompt [^ ]*/no-autonomous-claim\.md" "$TMUX_STUB_DIR/calls.log" 
   || { echo "FAIL - lp-default: record profile is $(record "$rec" profile)"; fail=1; }
 cp "$eff" "$out"
 check "lp-default: keeps the restricted defaultMode" '"defaultMode": "default"'
-refute "lp-default: grants nothing extra (no allow list)" '"allow"'
+check "lp-default: grants scoped supervised child launch" 'Bash(./scripts/nogg session launch:*)'
 diff -q "$root/.nogging/launch-profiles/restricted.json" \
         "$repo_root/.nogging/launch-profiles/restricted.json" >/dev/null \
   && echo "ok   - lp-default: source profile left unmutated" \
@@ -412,9 +443,7 @@ check "twb-launch: effective settings deny a Write under openspec/"  'Write(open
 unset NOGGING_ROOT
 
 # ===========================================================================
-# Scenario: a launch during a fresh planning session keeps openspec/ writable
-# (TASK-TWB-004). The read-only root keys off the session's role + the planning
-# lock, not the sentinel.
+# Scenario: an execution launch stays fenced during another planning session.
 # ===========================================================================
 root="$work/twb-planning"; make_root "$root"
 export NOGGING_ROOT="$root"
@@ -428,9 +457,9 @@ printf '{"pid":1,"host":"h","created_at":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%S+
 name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
 rec="$root/.nogging/state/sessions/$name.json"
 cp "$(record "$rec" effective_settings_path)" "$out"
-refute "twb-planning: no openspec deny while a fresh planning lock is held" 'Edit(openspec/**)'
-[[ "$(record "$rec" openspec_readonly)" == "False" ]] \
-  && echo "ok   - twb-planning: record marks openspec_readonly false during planning" \
+check "twb-planning: execution keeps openspec deny while a planning lock is held" 'Edit(openspec/**)'
+[[ "$(record "$rec" openspec_readonly)" == "True" ]] \
+  && echo "ok   - twb-planning: record keeps execution openspec_readonly true during planning" \
   || { echo "FAIL - twb-planning: openspec_readonly is $(record "$rec" openspec_readonly)"; fail=1; }
 unset NOGGING_ROOT
 
@@ -447,7 +476,7 @@ name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.setting
 rec="$root/.nogging/state/sessions/$name.json"
 eff="$(record "$rec" effective_settings_path)"
 cp "$eff" "$out"
-check "lp-named: trusted defaultMode carried through" '"defaultMode": "auto"'
+check "lp-named: trusted defaultMode carried through" '"defaultMode": "bypassPermissions"'
 check "lp-named: trusted still allows git push" 'Bash(git push:*)'
 check "lp-named: floor unioned into deny (sudo)" 'Bash(sudo:*)'
 check "lp-named: floor unioned into deny (rm -rf)" 'Bash(rm -rf:*)'
@@ -464,6 +493,37 @@ diff -q "$root/.nogging/launch-profiles/trusted.json" \
         "$repo_root/.nogging/launch-profiles/trusted.json" >/dev/null \
   && echo "ok   - lp-named: source trusted profile left unmutated" \
   || { echo "FAIL - lp-named: source profile changed"; fail=1; }
+unset NOGGING_ROOT
+
+# ===========================================================================
+# Scenario: owner-configured autonomy reaches launch and is reported accurately.
+# ===========================================================================
+root="$work/lp-configured"; make_root "$root"
+export NOGGING_ROOT="$root"
+export TMUX_STUB_DIR="$work/lp-configured-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-lpc"
+python3 - "$root/.nogging/config.json" <<'PYCONFIG'
+import json, sys
+path = sys.argv[1]
+cfg = json.load(open(path))
+cfg["session_launch_profile"] = ".nogging/launch-profiles/trusted.json"
+cfg["session_launch_prompt"] = ".nogging/launch-prompts/autonomous.md"
+json.dump(cfg, open(path, "w"))
+PYCONFIG
+"$nogg" session launch --role lead --bead SPEC-lpc >"$out" 2>&1 \
+  || { echo "FAIL - lp-configured: launch errored"; cat "$out"; fail=1; }
+name="$(ls "$root/.nogging/state/sessions" | grep '\.json$' | grep -v '\.settings\.json$' | sed 's/\.json$//')"
+rec="$root/.nogging/state/sessions/$name.json"
+[[ "$(record "$rec" profile)" == "trusted" ]] \
+  && echo "ok   - lp-configured: configured profile reported as trusted" \
+  || { echo "FAIL - lp-configured: incorrect profile label"; fail=1; }
+cp "$(record "$rec" effective_settings_path)" "$out"
+check "lp-configured: configured launch bypasses routine prompts" '"defaultMode": "bypassPermissions"'
+check "lp-configured: execution boundary preserved" 'Edit(openspec/**)'
+check "lp-configured: command floor preserved" 'Bash(sudo:*)'
+grep -qE -- "--prompt [^ ]*/autonomous\.md" "$TMUX_STUB_DIR/calls.log" \
+  && echo "ok   - lp-configured: autonomous prompt passed" \
+  || { echo "FAIL - lp-configured: autonomous prompt missing"; fail=1; }
 unset NOGGING_ROOT
 
 # ===========================================================================
@@ -537,7 +597,9 @@ grep -qE -- "--prompt [^ ]*/autonomous\.md" "$TMUX_STUB_DIR/calls.log" \
   && echo "ok   - lp-full: selects the autonomous prompt" \
   || { echo "FAIL - lp-full: autonomous prompt not passed"; fail=1; }
 cp "$(record "$rec" effective_settings_path)" "$out"
-check "lp-full: floored trusted settings written" '"defaultMode": "auto"'
+check "lp-full: floored trusted settings written" '"defaultMode": "bypassPermissions"'
+check "lp-full: disclaimer-skip key carried into effective settings" \
+  '"skipDangerousModePermissionPrompt": true'
 unset NOGGING_ROOT
 
 # ===========================================================================
@@ -820,11 +882,14 @@ unset NOGGING_ROOT
 # that would suppress or bypass the always-on guard extension
 # ===========================================================================
 export PI_ARGV_LOG="$work/pi-argv.log"; : >"$PI_ARGV_LOG"
+mkdir -p "$work/pi-full/.pi/extensions"
+cp "$here/../.pi/extensions/nogging-guard.ts" "$work/pi-full/.pi/extensions/"
 "$here/session-launch" --agent pi --provider anthropic --model claude-x \
   --prompt "$work/pi-full/.nogging/launch-prompts/autonomous.md" \
   --cwd "$work/pi-full" --bead SPEC-pia >"$out" 2>&1 \
   || { echo "FAIL - pi-wrap: wrapper errored"; cat "$out"; fail=1; }
 cp "$PI_ARGV_LOG" "$out"
+check "pi-wrap: explicitly loads the guard" "<--extension> <$work/pi-full/.pi/extensions/nogging-guard.ts>"
 check "pi-wrap: always passes --approve"                       "<--approve>"
 check "pi-wrap: forwards --provider"                           "<--provider> <anthropic>"
 check "pi-wrap: forwards --model"                              "<--model> <claude-x>"
@@ -962,7 +1027,7 @@ export TMUX_STUB_DIR="$work/orc-bead-tmux"; mkdir -p "$TMUX_STUB_DIR"
 "$nogg" session launch --role lead >"$out" 2>&1 \
   && { echo "FAIL - orc-bead: lead without --bead should fail"; fail=1; } \
   || echo "ok   - orc-bead: lead without --bead is refused"
-check "orc-bead: the message names the orchestrator exception" "except 'orchestrator'"
+check "orc-bead: the message names the Bead-optional roles" "optional for planning and orchestrator"
 unset NOGGING_ROOT
 
 # ===========================================================================
@@ -1000,6 +1065,210 @@ export TMUX_STUB_DIR="$work/orc-codex-tmux"; mkdir -p "$TMUX_STUB_DIR"
   && { echo "FAIL - orc-codex: should be refused"; fail=1; } \
   || echo "ok   - orc-codex: --role orchestrator --agent codex is refused"
 unset NOGGING_ROOT
+
+# ===========================================================================
+# Scenario: a Lead launch is refused for a Bead with a recorded, unmet
+# dependency — no tmux session, no metadata record (TASK-DAL-001/004)
+# ===========================================================================
+root="$work/dal-blocked"; make_root "$root"
+export NOGGING_ROOT="$root"
+export TMUX_STUB_DIR="$work/dal-blocked-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-dal1"
+export BD_DEP_LIST_JSON='[{"id":"SPEC-blocker","status":"open"}]'
+"$nogg" session launch --role lead --bead SPEC-dal1 >"$out" 2>&1 \
+  && { echo "FAIL - dal-blocked: launch should be refused"; fail=1; } \
+  || echo "ok   - dal-blocked: lead launch refused for an unmet dependency"
+check "dal-blocked: the message names the blocking Bead" "SPEC-blocker"
+[[ -z "$(ls "$root/.nogging/state/sessions" 2>/dev/null)" ]] \
+  && echo "ok   - dal-blocked: no session record was created" \
+  || { echo "FAIL - dal-blocked: a session record exists"; fail=1; }
+[[ -z "$(ls "$TMUX_STUB_DIR" 2>/dev/null | grep '^sess-')" ]] \
+  && echo "ok   - dal-blocked: no tmux session was created" \
+  || { echo "FAIL - dal-blocked: a tmux session exists"; fail=1; }
+unset BD_DEP_LIST_JSON NOGGING_ROOT
+
+# ===========================================================================
+# Scenario: the same specialist launch is refused too, then allowed once the
+# dependency is closed (TASK-DAL-001/004)
+# ===========================================================================
+root="$work/dal-specialist"; make_root "$root"
+export NOGGING_ROOT="$root"
+export TMUX_STUB_DIR="$work/dal-specialist-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-dal2"
+export BD_DEP_LIST_JSON='[{"id":"SPEC-blocker2","status":"in_progress"}]'
+"$nogg" session launch --role specialist:backend-engineer --bead SPEC-dal2 >"$out" 2>&1 \
+  && { echo "FAIL - dal-specialist: launch should be refused"; fail=1; } \
+  || echo "ok   - dal-specialist: specialist launch refused for an unmet dependency"
+check "dal-specialist: the message names the blocking Bead" "SPEC-blocker2"
+export BD_DEP_LIST_JSON='[{"id":"SPEC-blocker2","status":"closed"}]'
+"$nogg" session launch --role specialist:backend-engineer --bead SPEC-dal2 >"$out" 2>&1 \
+  || { echo "FAIL - dal-specialist: launch should be allowed once closed"; cat "$out"; fail=1; }
+check "dal-specialist: launch allowed once the dependency is closed" "launched sf-spec-backend-engineer-spec-dal2-"
+unset BD_DEP_LIST_JSON NOGGING_ROOT
+
+# ===========================================================================
+# Scenario: a Bead with zero recorded dependencies, and --role orchestrator,
+# are both unaffected (TASK-DAL-001/004)
+# ===========================================================================
+root="$work/dal-unaffected"; make_root "$root"
+export NOGGING_ROOT="$root"
+export TMUX_STUB_DIR="$work/dal-unaffected-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-dal3"
+export BD_DEP_LIST_JSON='[]'
+"$nogg" session launch --role lead --bead SPEC-dal3 >"$out" 2>&1 \
+  || { echo "FAIL - dal-unaffected: lead launch with no deps should succeed"; cat "$out"; fail=1; }
+check "dal-unaffected: a Bead with zero dependencies launches as before" "launched sf-lead-spec-dal3-"
+export BD_DEP_LIST_JSON='[{"id":"SPEC-whatever","status":"open"}]'
+"$nogg" session launch --role orchestrator --profile orchestrator >"$out" 2>&1 \
+  || { echo "FAIL - dal-unaffected: orchestrator launch should be unaffected"; cat "$out"; fail=1; }
+check "dal-unaffected: --role orchestrator is unaffected by dependency state" "launched nogg-orchestrator-"
+unset BD_DEP_LIST_JSON NOGGING_ROOT
+
+# ===========================================================================
+# Scenario: doctor flags a running Lead session whose Bead became blocked
+# after launch, and stays silent once the dependency is closed (TASK-DAL-003/004)
+# ===========================================================================
+root="$work/dal-doctor"; make_root "$root"
+export NOGGING_ROOT="$root"
+export TMUX_STUB_DIR="$work/dal-doctor-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-dal4"
+export BD_DEP_LIST_JSON='[]'
+"$nogg" session launch --role lead --bead SPEC-dal4 >/dev/null 2>&1 \
+  || { echo "FAIL - dal-doctor: setup launch failed"; fail=1; }
+export BD_DEP_LIST_JSON='[{"id":"SPEC-blocker4","status":"open"}]'
+"$nogg" doctor >"$out" 2>&1 || true
+check "dal-doctor: a retroactively blocked running session is flagged" "now has an unmet dependency on SPEC-blocker4"
+export BD_DEP_LIST_JSON='[{"id":"SPEC-blocker4","status":"closed"}]'
+"$nogg" doctor >"$out" 2>&1 || true
+refute "dal-doctor: the NOTE is gone once the dependency is closed" "now has an unmet dependency"
+unset BD_DEP_LIST_JSON NOGGING_ROOT
+
+# Contract failures must happen before tmux mutations or settings writes.
+# Admission may query has-session while reconciling existing reservations.
+for defect in missing-launch nonexec-launch missing-writer stale-version session-id remote-control sandbox approval network readonly-root provider model; do
+  root="$work/contract-$defect"; make_root "$root"
+  export NOGGING_ROOT="$root" TMUX_STUB_DIR="$work/contract-$defect-tmux"
+  export BD_KNOWN="SPEC-contract"
+  python3 - "$root" "$defect" <<'PYFIX'
+import json, pathlib, subprocess, sys
+root, defect = pathlib.Path(sys.argv[1]), sys.argv[2]
+helper = root / 'scripts/session-launch'
+if defect == 'missing-launch':
+    helper.unlink()
+elif defect == 'nonexec-launch':
+    helper.chmod(0o644)
+elif defect == 'missing-writer':
+    (root / 'scripts/session-log-writer').unlink()
+else:
+    contract = json.loads(subprocess.check_output([str(helper), '--contract']))
+    if defect == 'stale-version':
+        contract['version'] = 0
+    else:
+        contract['options'].pop('--' + defect)
+    helper.write_text('#!/usr/bin/env python3\nprint(' + repr(json.dumps(contract)) + ')\n')
+PYFIX
+  args=(--role lead --bead SPEC-contract)
+  case "$defect" in
+    resume) args+=(--resume 00000000-0000-4000-8000-000000000001) ;;
+    remote-control) args=(--role orchestrator) ;;
+    sandbox|approval|network|readonly-root) args+=(--agent codex) ;;
+    provider|model)
+      printf 'provider = "test"\nmodel = "test"\n' >"$root/.nogging/launch-profiles/custom.pi.toml"
+      args+=(--agent pi --profile "$root/.nogging/launch-profiles/custom.pi.toml") ;;
+  esac
+  if "$nogg" session launch "${args[@]}" >"$out" 2>&1; then
+    echo "FAIL - contract $defect accepted"; fail=1
+  fi
+  check "contract $defect gives update remedy" "update"
+  if [[ -d "$root/.nogging/state/sessions" ]] ||
+      { [[ -e "$TMUX_STUB_DIR/calls.log" ]] && grep -qv '^has-session ' "$TMUX_STUB_DIR/calls.log"; }; then
+    echo "FAIL - contract $defect caused side effects"; fail=1
+  else
+    echo "ok   - contract $defect refuses before tmux mutations or session files"
+  fi
+  unset NOGGING_ROOT
+ done
+
+# Exact resume is an internal orchestrator call, not a public launch flag.
+root="$work/contract-resume"; make_root "$root"
+export NOGGING_ROOT="$root" TMUX_STUB_DIR="$work/contract-resume-tmux"
+python3 - "$root/scripts/session-launch" <<'PYFIX'
+import json, pathlib, subprocess, sys
+p = pathlib.Path(sys.argv[1])
+c = json.loads(subprocess.check_output([str(p), '--contract']))
+c['options'].pop('--resume')
+p.write_text('#!/usr/bin/env python3\nprint(' + repr(json.dumps(c)) + ')\n')
+PYFIX
+python3 - "$nogg" >"$out" 2>&1 <<'PYTEST'
+from importlib.machinery import SourceFileLoader
+import sys
+m = SourceFileLoader('resume_contract', sys.argv[1]).load_module()
+try:
+    m.session_launch('orchestrator', None, None, False, None,
+                     resume='00000000-0000-4000-8000-000000000001')
+except RuntimeError as exc:
+    print(exc)
+else:
+    raise AssertionError('incompatible resume contract accepted')
+PYTEST
+check "contract resume checks internal exact-conversation flag" "cannot accept --resume"
+if [[ -e "$TMUX_STUB_DIR/calls.log" || -d "$root/.nogging/state/sessions" ]]; then
+  echo 'FAIL - resume contract caused side effects'; fail=1
+fi
+unset NOGGING_ROOT
+
+# Execute the real wrapper before pipe-pane can attach, as with a fast CLI error.
+for failure in unknown-flag exec-failure; do
+  root="$work/startup-$failure"; make_root "$root"
+  cp "$nogg" "$root/scripts/nogg"
+  # This fixture tests fast runtime startup errors, not mount enforcement.
+  # CI may prohibit user namespaces. Keep the real wrapper and substitute
+  # only this fixture's boundary helper; dedicated fence tests use the real one.
+  cp "$root/scripts/openspec-sandbox" "$root/scripts/openspec-sandbox-real"
+  cat >"$root/scripts/openspec-sandbox" <<'BOUNDARY'
+#!/bin/sh
+if [ "${1:-}" = --contract ]; then
+  exec "$(dirname "$0")/openspec-sandbox-real" --contract
+fi
+NOGG_OPENSPEC_FENCED=1 exec "$@"
+BOUNDARY
+  chmod +x "$root/scripts/openspec-sandbox"
+  export NOGGING_ROOT="$root" TMUX_STUB_DIR="$work/startup-$failure-tmux"
+  export BD_KNOWN="SPEC-startup" TMUX_STUB_FAST_EXIT=1
+  export NOGG_TEST_API_TOKEN='fixture-private-value'
+  if [[ "$failure" == unknown-flag ]]; then
+    cat >"$work/bin/claude" <<'RUNTIME'
+#!/usr/bin/env bash
+printf 'runtime: unknown option --session-id; token=%s\n' "$NOGG_TEST_API_TOKEN" >&2
+exit 64
+RUNTIME
+    expected='runtime: unknown option --session-id'
+  else
+    cat >"$work/bin/claude" <<'RUNTIME'
+#!/usr/bin/env bash
+exec nogging-nonexistent-runtime-fixture
+RUNTIME
+    expected='nogging-nonexistent-runtime-fixture'
+  fi
+  chmod +x "$work/bin/claude"
+  if "$nogg" session launch --role lead --bead SPEC-startup >"$out" 2>&1; then
+    echo "FAIL - startup $failure accepted"; fail=1
+  fi
+  check "startup $failure reports real error" "$expected"
+  refute "startup $failure redacts console" "$NOGG_TEST_API_TOKEN"
+  python3 - "$root" "$expected" <<'PYTEST'
+import json, pathlib, sys
+root = pathlib.Path(sys.argv[1]) / '.nogging/state/sessions'
+records = [p for p in root.glob('*.json') if not p.name.endswith('.settings.json')]
+assert len(records) == 1
+record = json.loads(records[0].read_text())
+assert record['state'] == 'failed'
+assert sys.argv[2] in record['exit_reason']
+assert sys.argv[2] in pathlib.Path(record['log_path']).read_text()
+assert 'fixture-private-value' not in ''.join(p.read_text() for p in root.iterdir() if p.is_file())
+PYTEST
+  unset NOGGING_ROOT TMUX_STUB_FAST_EXIT NOGG_TEST_API_TOKEN
+ done
 
 if [[ $fail -ne 0 ]]; then echo "session checks failed" >&2; exit 1; fi
 echo "all session checks passed"

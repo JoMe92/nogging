@@ -1,7 +1,8 @@
 # session-observability Specification
 
 ## Purpose
-TBD - created by archiving change session-observability. Update Purpose after archive.
+
+Defines observable agent activity, operator input delivery and usage-limit recovery for supervised Nogging sessions.
 
 ## Requirements
 
@@ -107,3 +108,226 @@ the session's input box, and SHALL retry the submit step once if it was not.
 - **AND** the pane afterward shows the message still sitting unsubmitted in
   the input box
 - **THEN** `send` retries the submit step once before returning
+
+### Requirement: Watch classifies an idle Claude session stuck in manual mode distinctly
+
+For a Claude session, `classify()` SHALL report `awaiting_manual_approval`
+instead of `idle` when the pane is otherwise idle and its permission-mode
+status line reads `⏸ manual mode on`. This state SHALL NOT apply to Codex
+sessions, which have no equivalent status line.
+
+#### Scenario: An idle manual-mode session is distinguished from plain idle
+
+- **WHEN** a Claude session's pane shows an empty prompt and `⏸ manual mode
+  on` in its status line
+- **THEN** `classify()` reports `awaiting_manual_approval`, not `idle`
+
+#### Scenario: A working or auto-mode session is unaffected
+
+- **WHEN** a Claude session's pane shows `⏵⏵ auto mode on` or is otherwise
+  classified `working`
+- **THEN** `classify()` reports that state as before; `awaiting_manual_approval`
+  never overrides a non-idle classification
+
+### Requirement: `session launch` warns when a lead or specialist session will not act unattended
+
+`scripts/nogg session launch` SHALL print a one-line warning to the
+launching terminal when `--role lead` or `--role specialist:*` is launched
+with none of `--profile`, `--prompt`, or `--full-access` given. The warning
+SHALL name the session and state that it will not act without a human
+attached. `--role orchestrator` SHALL never trigger this warning.
+
+#### Scenario: A bare lead launch warns
+
+- **WHEN** `session launch --role lead --bead <id>` runs with no `--profile`,
+  `--prompt`, or `--full-access`
+- **THEN** the launch output includes a warning naming the session and the
+  restricted/manual-mode consequence
+
+#### Scenario: An explicit profile suppresses the warning
+
+- **WHEN** `session launch --role lead --bead <id> --full-access` runs
+- **THEN** no such warning is printed
+
+#### Scenario: Orchestrator launches are unaffected
+
+- **WHEN** `session launch --role orchestrator` runs
+- **THEN** no such warning is printed, regardless of profile arguments
+
+### Requirement: `session launch` names the missing kickoff step, and `session kickoff` delivers it
+
+`scripts/nogg session launch`'s success output SHALL name the fact that the
+session will not act until it receives a first message, and the exact
+follow-up command, whenever `--kickoff` was not passed. `scripts/nogg session
+kickoff <name> [--message TEXT]` SHALL deliver that first message: with
+`--message`, that exact text; without it, a role-specific message composed from its recorded scope. A Lead message names its Bead and change and directs only authorized work; a specialist message names its already-claimed Bead and forbids claiming, committing or closing; a planning message names its planning identifier and dedicated worktree and directs acquisition of its own planning lock before spec writes. `session kickoff` SHALL refuse, sending
+nothing, when the named session is not `running`, or when no `--message` is
+given and an execution-role session record carries no `bead_id`. `--kickoff` on `session
+launch` SHALL chain a `session kickoff` call immediately after a successful
+launch.
+
+#### Scenario: A bare launch names the missing step
+
+- **WHEN** `session launch --role lead --bead <id>` runs with no `--kickoff`
+- **THEN** its output includes a line naming the missing kickoff step and
+  the exact command to run
+
+#### Scenario: Kickoff composes the expected message
+
+- **WHEN** `session kickoff <name>` runs with no `--message` for a `running`
+  Lead session whose record carries a `bead_id`
+- **THEN** a message naming that Bead ID and its change is sent to the
+  session and is confirmed submitted
+
+#### Scenario: Kickoff refuses on a non-running session
+
+- **WHEN** `session kickoff <name>` runs for a session that is not `running`
+- **THEN** it refuses with a clear error and sends nothing
+
+#### Scenario: Kickoff refuses with no message and no Bead
+
+- **WHEN** `session kickoff <name>` runs with no `--message` for a `running`
+  execution-role session whose record carries no `bead_id`
+- **THEN** it refuses with a clear error and sends nothing
+
+#### Scenario: `--kickoff` chains automatically
+
+- **WHEN** `session launch --role lead --bead <id> --kickoff` runs
+- **THEN** the resulting session has already received its first message by
+  the time the command returns
+
+#### Scenario: Planning kickoff needs no placeholder Bead
+
+- **WHEN** kickoff targets a running planning session with a valid planning identifier and dedicated worktree
+- **THEN** it sends a planning instruction directing that session to acquire its own lock without selecting or claiming any Bead
+
+#### Scenario: Specialist kickoff respects delegation authority
+
+- **WHEN** kickoff targets a running specialist assigned one already-claimed Bead
+- **THEN** it directs only that Bead work and does not authorize claiming, committing, closing or selecting sibling tasks
+
+### Requirement: `session nudge` reliably submits a pane regardless of prior input
+
+Session nudge SHALL refuse non-running sessions. With --message it SHALL deliberately replace actual pending input and submit the supplied text with bounded verification. Without --message it SHALL resend only positively identified actual input; placeholder suggestions and ambiguous pane text SHALL never be executed and SHALL produce a no-op or request for an explicit message.
+
+#### Scenario: Placeholder-only prompt
+
+- **WHEN** an idle pane displays only a suggested next instruction and nudge has no message
+- **THEN** nothing is submitted and the operator is told to provide an explicit message
+
+#### Scenario: Explicit replacement
+
+- **WHEN** nudge receives --message for a running session
+- **THEN** the supplied message replaces actual prior input and is verified submitted
+
+#### Scenario: Non-running session
+
+- **WHEN** nudge targets a stopped session
+- **THEN** no keys or message are sent
+
+#### Scenario: A stale pre-filled suggestion is resubmitted
+
+- **WHEN** a pane shows a stale suggested placeholder and the operator supplies that instruction explicitly with --message
+- **THEN** the supplied instruction is submitted; the suggestion alone is never automatically executed
+
+#### Scenario: An explicit message overrides stale pane content
+
+- **WHEN** nudge receives --message and the session has unrelated actual buffered input
+- **THEN** the explicit message replaces the actual input and is verified submitted
+
+#### Scenario: Nudging an empty pane is a reported no-op
+
+- **WHEN** nudge has no message and no actual buffered input can be positively identified
+- **THEN** no text is submitted and the command reports that an explicit message is needed
+
+#### Scenario: Nudging a non-running session is refused
+
+- **WHEN** nudge targets a non-running session
+- **THEN** it refuses without sending input
+
+### Requirement: `send --verify` detects an unsubmitted Claude message, not only Codex
+
+`scripts/nogg session send <name> "<message>" --verify`'s retry-on-
+unsubmitted check SHALL detect pending input for a Claude session using the
+same pane-reading mechanism `session nudge` uses, not only for Codex
+sessions.
+
+#### Scenario: A Claude send retries when left unsubmitted
+
+- **WHEN** `session send <name> "..." --verify` runs against a Claude
+  session
+- **AND** the pane afterward shows that message still sitting unsubmitted
+- **THEN** `send` retries the submit step once, exactly as it already does
+  for Codex
+
+### Requirement: `session sweep` reports whether a running session's own work still needs it
+
+Session sweep SHALL distinguish change-complete, bead-blocked and active for the session authorized scope, and SHALL expose unknown evidence rather than inventing completion. A blocked unrelated sibling SHALL NOT block runnable assigned work. Completion SHALL require mapped work closed and merged PR or explicit integration evidence; open or unknown integration status SHALL prevent completion. Sweep SHALL show idle duration and input certainty separately and SHALL NOT stop, nudge or claim work.
+
+#### Scenario: Unrelated blocked sibling
+
+- **WHEN** the assigned task is runnable while a sibling outside its dependency cone is blocked
+- **THEN** the session is not classified bead-blocked solely because of that sibling
+
+#### Scenario: Integrated complete scope
+
+- **WHEN** all authorized mapped work is closed and integration is evidenced
+- **THEN** the session is classified change-complete
+
+#### Scenario: Unknown PR
+
+- **WHEN** PR lookup or cached integration evidence is unavailable
+- **THEN** the session is not marked complete and unknown evidence is visible
+
+#### Scenario: A session whose change is fully merged is flagged complete
+
+- **WHEN** every mapped Bead in the authorized change is closed and its PR is verified merged
+- **THEN** sweep reports change-complete
+
+#### Scenario: A session correctly self-blocked is flagged, not hidden
+
+- **WHEN** its own assigned Bead or an unmet dependency in its authorized scope is blocked
+- **THEN** sweep reports bead-blocked with the blocking Bead ID; an unrelated sibling alone does not qualify
+
+#### Scenario: A genuinely active session is reported as active
+
+- **WHEN** assigned work is runnable and completion or blocking evidence does not apply
+- **THEN** sweep reports active with separate idle/input evidence
+
+### Requirement: `doctor` surfaces flagged sessions without a per-session manual audit
+
+`scripts/nogg doctor` SHALL report one `NOTE` per currently running session
+classified `awaiting_manual_approval`, `change-complete`, or `bead-blocked`,
+naming the session and the reason, using the same detection `session sweep`
+performs.
+
+#### Scenario: A flagged session appears in one doctor pass
+
+- **WHEN** one or more running sessions are `change-complete`,
+  `bead-blocked`, or `awaiting_manual_approval`
+- **AND** an operator runs `scripts/nogg doctor`
+- **THEN** its output includes one `NOTE` per such session, naming it and
+  the reason, without a separate `tmux capture-pane` per session
+
+### Requirement: CI observations are explicit and bounded
+
+Session sweep --checks SHALL expose PR head/check fingerprints and whether they have been explicitly acknowledged. Doctor SHALL use cached evidence without mandatory remote calls. New or changed checks SHALL remain unchecked until an explicit checks-ack observation; missing/stale/network-failed evidence SHALL be visible as unknown.
+
+#### Scenario: New failed checks
+
+- **WHEN** a PR check fingerprint changes after its last acknowledgement
+- **THEN** sweep --checks reports the failure as unchecked and doctor can show the cached result
+
+#### Scenario: Read-only inspection
+
+- **WHEN** sweep observes checks without checks-ack
+- **THEN** the observation is not silently acknowledged
+
+### Requirement: Stale hook state cannot pin a resolved permission prompt
+
+Structured session events SHALL be reconciled with current live evidence when the last needs_input event is stale or contradicted by a resolved prompt. A missing Stop event SHALL NOT indefinitely override a reliable live idle/working classification; fresh active prompts SHALL remain needs_input.
+
+#### Scenario: Denied tool without Stop
+
+- **WHEN** a needs_input event remains but the live pane shows the prompt resolved
+- **THEN** watch reports current live state rather than permanently needs_input

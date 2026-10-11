@@ -1,0 +1,28 @@
+{
+  "cwd": "/workspace/probe/.agents",
+  "payload": {
+    "artifactDirectoryPath": "/runtime/antigravity-cli/brain/00000000-0000-4000-8000-000000000005",
+    "conversationId": "00000000-0000-4000-8000-000000000005",
+    "modelName": "gemini-3.8-flash-low",
+    "stepIdx": 2,
+    "toolCall": {
+      "args": {
+        "AllowMultiple": false,
+        "Description": "Replace alpha with ALPHA",
+        "EndLine": 1,
+        "Instruction": "Replace alpha with ALPHA",
+        "ReplacementContent": "ALPHA",
+        "StartLine": 1,
+        "TargetContent": "alpha",
+        "TargetFile": "/workspace/probe/edit-probe.txt",
+        "toolAction": "Replacing alpha with ALPHA",
+        "toolSummary": "Replace alpha with ALPHA"
+      },
+      "name": "replace_file_content"
+    },
+    "transcriptPath": "/runtime/antigravity-cli/brain/00000000-0000-4000-8000-000000000005/.system_generated/logs/transcript_full.jsonl",
+    "workspacePaths": [
+      "/workspace/probe"
+    ]
+  }
+}

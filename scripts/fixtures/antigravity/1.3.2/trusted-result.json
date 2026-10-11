@@ -1,0 +1,14 @@
+{
+  "conversation_id": "00000000-0000-4000-8000-000000000010",
+  "status": "SUCCESS",
+  "response": "The command has been executed successfully:\n`printf AGR_TRUSTED_PROBE > trusted-probe.txt` in [/workspace/probe](file:///workspace/probe).\n",
+  "duration_seconds": 4.195564439,
+  "num_turns": 1,
+  "usage": {
+    "input_tokens": 32677,
+    "output_tokens": 171,
+    "thinking_tokens": 0,
+    "cache_read_tokens": 0,
+    "total_tokens": 32848
+  }
+}
