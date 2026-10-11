@@ -5134,6 +5134,9 @@ def main():
     ch.add_argument("operation", choices=("get", "store", "erase"))
     rs = sub.add_parser("repo-state", help="print canonical repository state without writes")
     rs.add_argument("--cwd", default=str(ROOT))
+    usage = sub.add_parser("usage", help="inspect read-only local quota observations")
+    usage.add_argument("--agent", choices=("codex", "claude"), default="codex")
+    usage.add_argument("--json", action="store_true")
     sub.add_parser("validate")
     dp = sub.add_parser("doctor")
     dp.add_argument("--recover", action="store_true",
@@ -5248,6 +5251,10 @@ def main():
     args = p.parse_args()
     if args.command == "credential-helper":
         credential_helper(args.slug, args.operation)
+    elif args.command == "usage":
+        sys.dont_write_bytecode = True
+        from nogg_usage import usage_command
+        usage_command(args.agent, args.json)
     elif args.command == "repo-state":
         print(json.dumps(canonical_repository_state(args.cwd), sort_keys=True))
     elif args.command == "plan-begin":

@@ -1,6 +1,6 @@
 ## 1. Implementation and validation
 
-- [ ] TASK-GSU-001 Verify installed Codex rollout/Claude statusline usage schema and implement read-only normalized adapters plus nogg usage text/JSON; test both windows, missing/stale/malformed records, timezone/reset rollover and absence of credential/transcript output.
+- [x] TASK-GSU-001 Verify installed Codex rollout/Claude statusline usage schema and implement read-only normalized adapters plus nogg usage text/JSON; test both windows, missing/stale/malformed records, timezone/reset rollover and absence of credential/transcript output.
 
 - [ ] TASK-GSU-002 Implement validated usage_gate config and cap/estimate/size-label calculation with explicit unknown policy and --ignore-usage-gate; verify supported defaults, bad configuration rejection and denied admission exit 75 before any worktree/trust/tmux/record side effect.
 
