@@ -248,16 +248,29 @@ sys.exit(1)
         # Bare kickoff: scope is assigned task SPEC-csl1
         run_nogg("session", "kickoff", sib_name)
 
-        r_sweep = run_nogg("session", "sweep")
-        assert r_sweep.returncode == 0, f"sweep failed: code={r_sweep.returncode}, out={r_sweep.stdout}, err={r_sweep.stderr}"
+        # Poll sweep with a short bounded deadline to account for tmux pane/process settling
+        deadline = time.monotonic() + 5
+        r_sweep = None
+        while time.monotonic() < deadline:
+            r_sweep = run_nogg("session", "sweep")
+            if sib_name in r_sweep.stdout:
+                break
+            time.sleep(0.1)
+        assert r_sweep is not None and r_sweep.returncode == 0, f"sweep failed: code={getattr(r_sweep, 'returncode', None)}, out={getattr(r_sweep, 'stdout', None)}, err={getattr(r_sweep, 'stderr', None)}"
         assert sib_name in r_sweep.stdout, f"sib_name {sib_name} not in sweep stdout: {r_sweep.stdout}"
         assert "active" in r_sweep.stdout, f"'active' not in sweep stdout: {r_sweep.stdout}"
         assert "bead-blocked" not in r_sweep.stdout, f"'bead-blocked' unexpectedly in sweep stdout: {r_sweep.stdout}"
 
         # Whole-change scope surfaces bead-blocked if change sibling is blocked
         run_nogg("session", "kickoff", sib_name, "--change", "test-change")
-        r_sweep_ch = run_nogg("session", "sweep")
-        assert "bead-blocked (SPEC-blocked-sib)" in r_sweep_ch.stdout, f"bead-blocked (SPEC-blocked-sib) not in sweep_ch stdout: {r_sweep_ch.stdout}"
+        deadline = time.monotonic() + 5
+        r_sweep_ch = None
+        while time.monotonic() < deadline:
+            r_sweep_ch = run_nogg("session", "sweep")
+            if "bead-blocked (SPEC-blocked-sib)" in r_sweep_ch.stdout:
+                break
+            time.sleep(0.1)
+        assert r_sweep_ch is not None and "bead-blocked (SPEC-blocked-sib)" in r_sweep_ch.stdout, f"bead-blocked (SPEC-blocked-sib) not in sweep_ch stdout: {getattr(r_sweep_ch, 'stdout', None)}"
 
         # Unblock / close the auxiliary tasks and their external blockers
         subprocess.run([str(binaries / "bd"), "close", "SPEC-blocked-sib"], check=True)
