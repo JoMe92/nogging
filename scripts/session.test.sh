@@ -1143,7 +1143,8 @@ export BD_DEP_LIST_JSON='[{"id":"SPEC-blocker4","status":"closed"}]'
 refute "dal-doctor: the NOTE is gone once the dependency is closed" "now has an unmet dependency"
 unset BD_DEP_LIST_JSON NOGGING_ROOT
 
-# Contract failures must happen before even a read-only tmux call or settings write.
+# Contract failures must happen before tmux mutations or settings writes.
+# Admission may query has-session while reconciling existing reservations.
 for defect in missing-launch nonexec-launch missing-writer stale-version session-id remote-control sandbox approval network readonly-root provider model; do
   root="$work/contract-$defect"; make_root "$root"
   export NOGGING_ROOT="$root" TMUX_STUB_DIR="$work/contract-$defect-tmux"
@@ -1179,10 +1180,11 @@ PYFIX
     echo "FAIL - contract $defect accepted"; fail=1
   fi
   check "contract $defect gives update remedy" "update"
-  if [[ -e "$TMUX_STUB_DIR/calls.log" || -d "$root/.nogging/state/sessions" ]]; then
+  if [[ -d "$root/.nogging/state/sessions" ]] ||
+      { [[ -e "$TMUX_STUB_DIR/calls.log" ]] && grep -qv '^has-session ' "$TMUX_STUB_DIR/calls.log"; }; then
     echo "FAIL - contract $defect caused side effects"; fail=1
   else
-    echo "ok   - contract $defect refuses before tmux or session files"
+    echo "ok   - contract $defect refuses before tmux mutations or session files"
   fi
   unset NOGGING_ROOT
  done
