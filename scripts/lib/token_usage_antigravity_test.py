@@ -139,7 +139,7 @@ class AdapterTests(unittest.TestCase):
         first = self.read(segments=segments)
         self.assertEqual(first.records[0][1]['segment_id'], 'segment-a')
         # The conversation resumes in a new supervised segment and continues.
-        segments.append(('segment-b', '2026-10-10T20:00:00Z'))
+        segments.append(('segment-b', '2026-10-10T20:00:00+00:00'))  # mixed ISO forms compare as times
         self.fx.add(1, generation(steps=[2], cache_read=14500, response_id='resp-2'), steps=[(2, 1791664000)])
         increment = self.read(after_ordinal=first.high_water, segments=segments)
         self.assertEqual([(r['event_id'], r['segment_id']) for _, r in increment.records], [('generation:1', 'segment-b')])
