@@ -133,7 +133,14 @@ class Store:
             raise StoreError('invalid usage project identity') from exc
         return rows[0]
 
-    def initialize(self):
+    def initialize(self, project_id=None):
+        """Create the store lazily. project_id adopts an existing project
+        identity (export recovery); otherwise a new UUID is generated."""
+        if project_id is not None:
+            try:
+                project_id = str(uuid.UUID(project_id))
+            except (TypeError, ValueError) as exc:
+                raise StoreError('invalid usage project identity') from exc
         with self.locked():
             if (self.database / '.dolt').exists():
                 return self.check_schema()
@@ -143,7 +150,7 @@ class Store:
             self._dolt('init', '--name', 'Nogging Usage', '--email', 'usage@nogging.local')
             statements = [
                 'CREATE TABLE store_meta (singleton INT PRIMARY KEY, schema_version INT NOT NULL, identity_version INT NOT NULL, project_id VARCHAR(36) NOT NULL)',
-                f'INSERT INTO store_meta VALUES (1, {SCHEMA_VERSION}, {IDENTITY_VERSION}, {literal(str(uuid.uuid4()))})',
+                f'INSERT INTO store_meta VALUES (1, {SCHEMA_VERSION}, {IDENTITY_VERSION}, {literal(project_id or str(uuid.uuid4()))})',
                 'CREATE TABLE devices (device_id VARCHAR(36) PRIMARY KEY, hostname VARCHAR(512) NOT NULL)',
                 'CREATE TABLE source_owners (source_id VARCHAR(512) PRIMARY KEY, device_id VARCHAR(36) NOT NULL)',
             ]
