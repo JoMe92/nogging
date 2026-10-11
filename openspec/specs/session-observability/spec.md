@@ -208,39 +208,42 @@ launch.
 
 ### Requirement: `session nudge` reliably submits a pane regardless of prior input
 
-`scripts/nogg session nudge <name> [--message TEXT]` SHALL clear the
-session's pane input line before sending anything. With `--message`, it
-SHALL send that text after clearing. With no `--message`, it SHALL read the
-pane's pending input text before clearing and resend exactly that text; if
-the pane had no pending text, it SHALL send nothing further and report that
-there was nothing to nudge. `session nudge` SHALL refuse, sending nothing,
-when the named session is not `running`.
+Session nudge SHALL refuse non-running sessions. With --message it SHALL deliberately replace actual pending input and submit the supplied text with bounded verification. Without --message it SHALL resend only positively identified actual input; placeholder suggestions and ambiguous pane text SHALL never be executed and SHALL produce a no-op or request for an explicit message.
+
+#### Scenario: Placeholder-only prompt
+
+- **WHEN** an idle pane displays only a suggested next instruction and nudge has no message
+- **THEN** nothing is submitted and the operator is told to provide an explicit message
+
+#### Scenario: Explicit replacement
+
+- **WHEN** nudge receives --message for a running session
+- **THEN** the supplied message replaces actual prior input and is verified submitted
+
+#### Scenario: Non-running session
+
+- **WHEN** nudge targets a stopped session
+- **THEN** no keys or message are sent
 
 #### Scenario: A stale pre-filled suggestion is resubmitted
 
-- **WHEN** a session's pane has non-empty, unsent text at its prompt
-- **AND** `session nudge <name>` runs with no `--message`
-- **THEN** the pane is cleared and that same text is resent and confirmed
-  submitted
+- **WHEN** a pane shows a stale suggested placeholder and the operator supplies that instruction explicitly with --message
+- **THEN** the supplied instruction is submitted; the suggestion alone is never automatically executed
 
 #### Scenario: An explicit message overrides stale pane content
 
-- **WHEN** a session's pane has unrelated unsent text at its prompt
-- **AND** `session nudge <name> --message "..."` runs
-- **THEN** the pane is cleared first, then the given message is sent and
-  confirmed submitted
+- **WHEN** nudge receives --message and the session has unrelated actual buffered input
+- **THEN** the explicit message replaces the actual input and is verified submitted
 
 #### Scenario: Nudging an empty pane is a reported no-op
 
-- **WHEN** a session's pane prompt is empty
-- **AND** `session nudge <name>` runs with no `--message`
-- **THEN** nothing is sent and the command reports there was nothing to
-  nudge
+- **WHEN** nudge has no message and no actual buffered input can be positively identified
+- **THEN** no text is submitted and the command reports that an explicit message is needed
 
 #### Scenario: Nudging a non-running session is refused
 
-- **WHEN** `session nudge <name>` runs for a session that is not `running`
-- **THEN** it refuses with a clear error and sends nothing
+- **WHEN** nudge targets a non-running session
+- **THEN** it refuses without sending input
 
 ### Requirement: `send --verify` detects an unsubmitted Claude message, not only Codex
 
@@ -259,34 +262,37 @@ sessions.
 
 ### Requirement: `session sweep` reports whether a running session's own work still needs it
 
-`scripts/nogg session sweep` SHALL report, for every `running` session with
-a `bead_id`, one of `change-complete` (every Bead materialized under the
-Bead's `openspec:change:` label is `closed`, and any pull request for the
-session's worktree branch is `MERGED`), `bead-blocked` (the session's own
-Bead or another Bead under the same label is `blocked`, naming the blocking
-Bead), or `active` (neither). Each reported line SHALL also show whether the
-pane currently has unsubmitted pending input and an idle-duration figure
-derived from the session's worktree and log activity. `session sweep` SHALL
-NOT stop, nudge, or otherwise change any session or Bead.
+Session sweep SHALL distinguish change-complete, bead-blocked and active for the session authorized scope, and SHALL expose unknown evidence rather than inventing completion. A blocked unrelated sibling SHALL NOT block runnable assigned work. Completion SHALL require mapped work closed and merged PR or explicit integration evidence; open or unknown integration status SHALL prevent completion. Sweep SHALL show idle duration and input certainty separately and SHALL NOT stop, nudge or claim work.
+
+#### Scenario: Unrelated blocked sibling
+
+- **WHEN** the assigned task is runnable while a sibling outside its dependency cone is blocked
+- **THEN** the session is not classified bead-blocked solely because of that sibling
+
+#### Scenario: Integrated complete scope
+
+- **WHEN** all authorized mapped work is closed and integration is evidenced
+- **THEN** the session is classified change-complete
+
+#### Scenario: Unknown PR
+
+- **WHEN** PR lookup or cached integration evidence is unavailable
+- **THEN** the session is not marked complete and unknown evidence is visible
 
 #### Scenario: A session whose change is fully merged is flagged complete
 
-- **WHEN** every Bead under a running session's `openspec:change:` label is
-  `closed` and that session's worktree branch has a `MERGED` pull request
-- **THEN** `session sweep` reports that session as `change-complete`
+- **WHEN** every mapped Bead in the authorized change is closed and its PR is verified merged
+- **THEN** sweep reports change-complete
 
 #### Scenario: A session correctly self-blocked is flagged, not hidden
 
-- **WHEN** a running session's own Bead, or a sibling Bead under the same
-  change, is `status: blocked`
-- **THEN** `session sweep` reports that session as `bead-blocked`, naming
-  the blocking Bead
+- **WHEN** its own assigned Bead or an unmet dependency in its authorized scope is blocked
+- **THEN** sweep reports bead-blocked with the blocking Bead ID; an unrelated sibling alone does not qualify
 
 #### Scenario: A genuinely active session is reported as active
 
-- **WHEN** a running session's assigned change has open, unblocked Beads and
-  none of the above conditions hold
-- **THEN** `session sweep` reports that session as `active`
+- **WHEN** assigned work is runnable and completion or blocking evidence does not apply
+- **THEN** sweep reports active with separate idle/input evidence
 
 ### Requirement: `doctor` surfaces flagged sessions without a per-session manual audit
 
@@ -302,3 +308,26 @@ performs.
 - **AND** an operator runs `scripts/nogg doctor`
 - **THEN** its output includes one `NOTE` per such session, naming it and
   the reason, without a separate `tmux capture-pane` per session
+
+### Requirement: CI observations are explicit and bounded
+
+Session sweep --checks SHALL expose PR head/check fingerprints and whether they have been explicitly acknowledged. Doctor SHALL use cached evidence without mandatory remote calls. New or changed checks SHALL remain unchecked until an explicit checks-ack observation; missing/stale/network-failed evidence SHALL be visible as unknown.
+
+#### Scenario: New failed checks
+
+- **WHEN** a PR check fingerprint changes after its last acknowledgement
+- **THEN** sweep --checks reports the failure as unchecked and doctor can show the cached result
+
+#### Scenario: Read-only inspection
+
+- **WHEN** sweep observes checks without checks-ack
+- **THEN** the observation is not silently acknowledged
+
+### Requirement: Stale hook state cannot pin a resolved permission prompt
+
+Structured session events SHALL be reconciled with current live evidence when the last needs_input event is stale or contradicted by a resolved prompt. A missing Stop event SHALL NOT indefinitely override a reliable live idle/working classification; fresh active prompts SHALL remain needs_input.
+
+#### Scenario: Denied tool without Stop
+
+- **WHEN** a needs_input event remains but the live pane shows the prompt resolved
+- **THEN** watch reports current live state rather than permanently needs_input
