@@ -12,5 +12,5 @@
 ## 3. Multi-device delivery
 
 - [x] TASK-TUC-006 Add explicit independent usage sync with bounded retries and conflict diagnostics; verify two offline clones, both sync orders, replay, rejected pushes, outages and schema/identity conflicts. Depends on TASK-TUC-001; see design 7 and token-store-sync requirements.
-- [ ] TASK-TUC-007 Ship helpers/docs through packed install/update/remove with owner-only lazy state; verify CLI payload, user-data/hook preservation and recovery/export guidance. Depends on TASK-TUC-005 and TASK-TUC-006; see design migration and token-store-sync storage requirement.
+- [x] TASK-TUC-007 Ship helpers/docs through packed install/update/remove with owner-only lazy state; verify CLI payload, user-data/hook preservation and recovery/export guidance. Depends on TASK-TUC-005 and TASK-TUC-006; see design migration and token-store-sync storage requirement.
 - [ ] TASK-TUC-008 Run full isolated scripts/test and packed/live acceptance; record nonzero usage for all three runtimes, model/task/complexity queries, Pi timing measurements and two-device convergence in unsigned evidence. Depends on TASK-TUC-007; see all delta scenarios and design risks.
