@@ -149,10 +149,52 @@ element for this launch only: neither the profile nor any user-global runtime
 setting (`~/.claude`, `~/.codex`, `~/.pi`) is written.
 
 The session record keeps `requested_model`, `model_source` (`launch`,
-`profile` or `runtime-default`) and `reasoning_effort`. `session list` shows
-them in `MODEL` and `MODEL_SOURCE` columns. Without a model setting both show
+`profile` or `runtime-default`), `reasoning_effort` and
+`reasoning_effort_source` (same three values). `session list` shows them in
+`MODEL` and `MODEL_SOURCE` columns. Without a model setting both show
 `runtime-default`: Nogging records that the runtime chose, not a guess at which
 model it chose. A record written before this was recorded shows `-`.
+
+### Choosing Claude reasoning effort
+
+A Claude session can request a reasoning effort for that launch only:
+
+```bash
+./scripts/nogg session launch --role lead --bead SPEC-xxx --effort high
+```
+
+Precedence is `--effort`, then an optional `effort` key in the Claude launch
+profile, then Claude's own default (no flag is passed). Allowed values are
+exactly `low`, `medium`, `high`, `xhigh` and `max`; anything else (including
+`auto`, `none`, case variants and an invalid profile value that a valid
+`--effort` would override) refuses before any worktree, settings, record or
+tmux side effect. The shipped profiles omit `effort`, so defaults are
+unchanged. To opt in, add it to a complete custom profile JSON:
+
+```json
+{
+  "permissions": {"defaultMode": "default", "deny": []},
+  "effort": "high"
+}
+```
+
+Nogging strips the `effort` key from the generated per-session settings and
+passes it as Claude's native `--effort <level>` argv (also on exact resumes);
+neither the source profile nor `~/.claude` is written. `--effort` is Claude-only:
+Codex keeps `model_reasoning_effort` in its `.codex.toml` profile, and Pi and
+Antigravity refuse both keys. A helper without the `claude-effort-forwarding`
+capability refuses the launch with an update remedy rather than dropping the
+effort. If the Claude CLI rejects the level for the chosen model, the session
+fails visibly and is not retried at another effort. Flag verified against
+Claude Code 2.1.296; which models accept which levels is the runtime's call.
+
+`session list` shows the request and its source in the `MODEL` cell for Claude
+and Codex: `effort=high (profile)`, `effort=low (launch)` or
+`effort=runtime-default`. A record that predates `reasoning_effort_source`
+shows a stored effort as `effort=<level> (unknown)` — provenance is never
+inferred — and otherwise keeps its old display. This is the *requested*
+setting; Nogging does not observe later `/effort` changes, environment
+overrides or the model default the runtime resolved.
 
 ### Choosing by tier
 

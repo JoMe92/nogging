@@ -73,7 +73,8 @@ PY
 
 snapshot() {  # snapshot <root> -> hashes of every file a launch must not mutate
   (cd "$1" && find .nogging/launch-profiles -type f -print0 | sort -z | xargs -0 sha256sum)
-  find "$HOME" -type f -print0 | sort -z | xargs -0 sha256sum
+  # Nogging's own usage-gate reservations are not user-global runtime settings.
+  find "$HOME" -type f -not -path "$HOME/.cache/nogging/usage/*" -print0 | sort -z | xargs -0 sha256sum
 }
 
 n=0
@@ -124,7 +125,7 @@ claude_model='{"permissions":{"defaultMode":"default","deny":[]},"model":"claude
 PROFILE_NAME=m.json PROFILE_BODY="$claude_model" launch "claude-override" --model claude-sonnet-5-5
 record "claude-override: record has the override with source launch" \
   'r["requested_model"] == "claude-sonnet-5-5" and r["model_source"] == "launch" and r["reasoning_effort"] is None'
-listing "claude-override: list shows the model and source launch" "claude-sonnet-5-5 +launch "
+listing "claude-override: list shows the model and source launch" "claude-sonnet-5-5 effort=runtime-default +launch "
 grep -qF '"model":"claude-opus-5-5"' "$root/.nogging/launch-profiles/m.json" \
   && ok "claude-override: profile still names its own model" || bad "claude-override: profile model changed"
 python3 - "$root/.nogging/state/sessions" <<'PY' && ok "claude-override: effective settings carry no model key" || { echo "FAIL - claude-override: model written into settings"; fail=1; }
@@ -137,7 +138,7 @@ PY
 PROFILE_NAME=m.json PROFILE_BODY="$claude_model" launch "claude-profile"
 record "claude-profile: record has the profile model with source profile" \
   'r["requested_model"] == "claude-opus-5-5" and r["model_source"] == "profile"'
-listing "claude-profile: list shows source profile" "claude-opus-5-5 +profile "
+listing "claude-profile: list shows source profile" "claude-opus-5-5 effort=runtime-default +profile "
 
 codex_body='sandbox = "workspace-write"
 ask_for_approval = "on-request"
@@ -147,7 +148,7 @@ model_reasoning_effort = "high"'
 PROFILE_NAME=m.codex.toml PROFILE_BODY="$codex_body" launch "codex-override" --agent codex --model gpt-6-luna
 record "codex-override: record has override and effort" \
   'r["requested_model"] == "gpt-6-luna" and r["model_source"] == "launch" and r["reasoning_effort"] == "high"'
-listing "codex-override: list shows model, effort and source" "gpt-6-luna effort=high +launch "
+listing "codex-override: list shows model, effort and source" "gpt-6-luna effort=high \\(profile\\) +launch "
 
 launch "pi-override" --agent pi --model pi-model-x
 record "pi-override: record has the override" \
@@ -157,7 +158,7 @@ record "pi-override: record has the override" \
 launch "legacy-claude" --full-access
 record "legacy-claude: record has null model and source runtime-default" \
   'r["requested_model"] is None and r["model_source"] == "runtime-default" and r["reasoning_effort"] is None'
-listing "legacy-claude: list honestly shows runtime-default" "runtime-default +runtime-default "
+listing "legacy-claude: list honestly shows runtime-default" "runtime-default effort=runtime-default +runtime-default "
 launch "legacy-codex" --agent codex
 record "legacy-codex: record has source runtime-default" \
   'r["requested_model"] is None and r["model_source"] == "runtime-default"'

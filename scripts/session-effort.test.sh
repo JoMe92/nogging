@@ -315,5 +315,62 @@ model_reasoning_effort = \"$e\""
     || { bad "codex-preserved-$e: wrong reasoning_effort in record"; }
 done
 
+# --- Provenance (TASK-CRE-003): reasoning_effort_source record + list rendering ---
+src_check() { # label expr (python over record r)
+  python3 -c "import json, sys; r = json.loads(sys.argv[1]); assert $2, r" "$(session_rec)" \
+    && ok "$1" || bad "$1"
+}
+list_has() { "$nogg" session list >"$out" 2>&1; grep -qE -- "$2" "$out" && ok "$1" || bad "$1: missing /$2/"; }
+
+PROFILE_NAME=pv.json PROFILE_BODY='{"permissions":{"defaultMode":"default","deny":[]},"effort":"high"}' \
+  launch_ok "prov-claude-profile"
+src_check "prov-claude-profile: source profile" "r['reasoning_effort']=='high' and r['reasoning_effort_source']=='profile'"
+list_has "prov-claude-profile: list shows effort=high (profile)" "effort=high \(profile\)"
+
+PROFILE_NAME=pv.json PROFILE_BODY='{"permissions":{"defaultMode":"default","deny":[]},"effort":"high"}' \
+  launch_ok "prov-claude-launch" --effort low
+src_check "prov-claude-launch: source launch" "r['reasoning_effort']=='low' and r['reasoning_effort_source']=='launch'"
+list_has "prov-claude-launch: list shows effort=low (launch)" "effort=low \(launch\)"
+
+launch_ok "prov-claude-default" --full-access
+src_check "prov-claude-default: null effort, runtime-default" "r['reasoning_effort'] is None and r['reasoning_effort_source']=='runtime-default'"
+list_has "prov-claude-default: list shows effort=runtime-default" "effort=runtime-default"
+
+PROFILE_NAME=pv.codex.toml PROFILE_BODY='sandbox = "read-only"
+ask_for_approval = "untrusted"
+network_access = false
+model_reasoning_effort = "high"' launch_ok "prov-codex-profile" --agent codex
+src_check "prov-codex-profile: source profile" "r['reasoning_effort']=='high' and r['reasoning_effort_source']=='profile'"
+list_has "prov-codex-profile: list shows effort=high (profile)" "effort=high \(profile\)"
+
+launch_ok "prov-codex-default" --agent codex --full-access
+src_check "prov-codex-default: runtime-default" "r['reasoning_effort'] is None and r['reasoning_effort_source']=='runtime-default'"
+
+launch_ok "prov-pi" --agent pi
+list_has "prov-pi: other agents show no effort" "SPEC-cre .*pi "
+! grep -q "effort=" "$out" && ok "prov-pi: no effort text for pi" || bad "prov-pi: pi row shows effort"
+
+# Legacy records: effort present shows (unknown); absent keeps prior display; not rewritten.
+new_root
+mkdir -p "$root/.nogging/state/sessions"
+cat >"$root/.nogging/state/sessions/legacy-e.json" <<'LEG'
+{"name": "legacy-e", "bead_id": "SPEC-old", "role": "lead", "state": "ended", "agent": "codex",
+ "started_at": "2026-01-01T00:00:00+00:00", "working_dir": "/x",
+ "requested_model": "old-model", "model_source": "profile", "reasoning_effort": "high"}
+LEG
+cat >"$root/.nogging/state/sessions/legacy-n.json" <<'LEG'
+{"name": "legacy-n", "bead_id": "SPEC-old2", "role": "lead", "state": "ended",
+ "started_at": "2026-01-01T00:00:00+00:00", "working_dir": "/x",
+ "requested_model": "old-model", "model_source": "profile", "reasoning_effort": null}
+LEG
+before=$(sha256sum "$root/.nogging/state/sessions/"legacy-*.json)
+"$nogg" session list >"$out" 2>&1 || bad "legacy list failed"
+grep -E "^legacy-e .*old-model effort=high \(unknown\)" "$out" >/dev/null \
+  && ok "legacy-effort: shows (unknown) provenance" || bad "legacy-effort display"
+grep -E "^legacy-n .*old-model +profile" "$out" >/dev/null && ! grep -E "^legacy-n .*effort=" "$out" >/dev/null \
+  && ok "legacy-no-effort: prior display preserved" || bad "legacy-no-effort display"
+[[ "$before" == "$(sha256sum "$root/.nogging/state/sessions/"legacy-*.json)" ]] \
+  && ok "legacy records not rewritten" || bad "legacy records rewritten"
+
 if [[ $fail -ne 0 ]]; then echo "session effort checks failed" >&2; exit 1; fi
 echo "all session effort checks passed"
