@@ -30,6 +30,19 @@ If `orchestrator status` shows the unit enabled but linger **off**, run
 login. If it shows the workspace untrusted, run `claude` once in the repo root
 and accept the trust prompt.
 
+## Model selection: a tier on every launch
+
+Before every sub-session launch (planning, lead or specialist) the orchestrator
+classifies the task into a tier — `routine`, `standard` or `complex` — records
+a one-line reason in the Bead note or operator update, optionally checks
+`scripts/nogg models --agent <agent> --tier <tier>`, and launches with
+`--tier <tier>`. When unsure it picks the higher tier, a relaunch after a
+failed or stalled attempt escalates one tier, and quota never lowers a tier.
+An explicit `--model` is used only on Product Owner instruction. The full
+procedure is in `.nogging/launch-prompts/orchestrator.md` and
+`docs/operating-model.md` *Orchestration*; the table and its rationale are in
+`docs/model-selection.md`.
+
 ## Giving the orchestrator a takeover task
 
 By default the orchestrator is **orchestrate-only**: it reads state and drives
