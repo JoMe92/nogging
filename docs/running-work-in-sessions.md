@@ -364,3 +364,27 @@ new Cloud session after the branch is integrated and available to clone.
 
 References: [Claude permission modes](https://code.claude.com/docs/en/permission-modes)
 and [Auto-mode configuration](https://code.claude.com/docs/en/auto-mode-config).
+
+## Sweep work scope and integration
+
+`session sweep` defaults to the assigned mapped task and its blocking dependency
+cone. An unrelated blocked sibling does not block that session. Specialists
+always retain this single-task scope. To explicitly authorize a lead to execute
+the whole assigned change at kickoff, use:
+
+```bash
+./scripts/nogg session kickoff <name> --change <change-name>
+```
+
+This records `authorized_change` in the session record. A custom kickoff message
+alone does not expand sweep scope. Sweep remains read-only: it neither claims
+work nor sends input. Idle duration and buffered input are separate observations.
+
+Completion requires closed mapped work and a verified merged PR for the current
+branch head, with no unresolved checks. Open PRs, unavailable evidence, reused
+branches and failed lookups cannot establish completion. Unknown work or
+integration evidence is displayed explicitly. A successful lookup that finds no
+PR also needs explicit local integration evidence: the operator records
+`integration_evidence` with `commit` (the full current HEAD SHA) and `target_ref`
+(`refs/heads/develop`) in the session record. Sweep verifies a clean worktree and
+that this commit is an ancestor of the target; the record alone is insufficient.
