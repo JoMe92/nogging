@@ -3394,6 +3394,7 @@ def _session_launch(role, bead, cwd, read_only, owner,
         tier_selection and tier_selection["model"])
     selected_effort, effort_source = select_session_effort(effort, source_settings, agent)
     reasoning_effort = (codex_spec or {}).get("model_reasoning_effort")
+    reasoning_effort_source = "profile" if reasoning_effort is not None else "runtime-default"
     # Codex effort: tier over profile `model_reasoning_effort` over runtime
     # default; it travels through the wrapper's existing --reasoning-effort.
     # A Claude tier effort is reported, not applied, until Claude effort
@@ -3401,8 +3402,10 @@ def _session_launch(role, bead, cwd, read_only, owner,
     tier_effort = tier_selection and tier_selection["effort"]
     if agent == "codex" and tier_effort is not None:
         reasoning_effort = tier_effort
+        reasoning_effort_source = "launch"
     elif agent == "claude":
         reasoning_effort = selected_effort
+        reasoning_effort_source = effort_source
     unapplied_tier_effort = tier_effort if agent == "claude" and reasoning_effort is None else None
     if agy_spec and Path(profile_path).name == "restricted.agy.toml" and agy_spec["approval"] != "ask":
         raise RuntimeError("Antigravity restricted profile requires ask approval")
@@ -3600,6 +3603,11 @@ def _session_launch(role, bead, cwd, read_only, owner,
         # does not guess which model that is).
         "requested_model": selected_model, "model_source": model_source,
         "reasoning_effort": reasoning_effort,
+        # Where the requested effort came from (`launch`, `profile` or
+        # `runtime-default`); recorded for Claude and Codex only. It describes
+        # the launch request, never a later interactive change.
+        "reasoning_effort_source": (
+            reasoning_effort_source if agent in ("claude", "codex") else None),
         # The `--tier` this launch resolved (or null). A Claude tier effort that
         # was not applied is kept so an exact resume reuses the same selection.
         "selection_tier": tier_selection and tier_selection["tier"],
@@ -3765,13 +3773,22 @@ def _profile_display(rec):
 def _model_display(rec):
     """`session list` MODEL cell: the requested model, `runtime-default` when
     none was requested (the effective model is the runtime's choice and is not
-    invented here), with a ` effort=<level>` suffix for a Codex reasoning
-    effort. A record from before model selection was recorded shows `-`."""
+    invented here), with an effort suffix for Claude and Codex: new records
+    show `effort=<level> (<source>)` or `effort=runtime-default`; a record
+    predating `reasoning_effort_source` shows a stored effort as
+    `effort=<level> (unknown)` (historical provenance is never inferred) and
+    otherwise keeps its prior display. A record from before model selection
+    was recorded shows `-`."""
     if "model_source" not in rec:
         return "-"
     shown = rec.get("requested_model") or "runtime-default"
-    if rec.get("reasoning_effort"):
-        shown += f" effort={rec['reasoning_effort']}"
+    effort = rec.get("reasoning_effort")
+    if "reasoning_effort_source" in rec:
+        if rec.get("reasoning_effort_source") is not None:
+            shown += (f" effort={effort} ({rec['reasoning_effort_source']})"
+                      if effort else " effort=runtime-default")
+    elif effort:
+        shown += f" effort={effort} (unknown)"
     if rec.get("selection_tier"):
         shown += f" tier={rec['selection_tier']}"
     return shown
