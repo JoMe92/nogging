@@ -1,6 +1,6 @@
 ## 1. Implementation and validation
 
-- [ ] TASK-CSL-001 Run a traceable acceptance audit of existing #37–#40 behavior on installed payload: blocked/ready/orchestrator launches, default warning, explicit kickoff, trusted disclaimer handling and deny preservation; add only missing regressions and record exact versions without duplicating closed tasks.
+- [x] TASK-CSL-001 Run a traceable acceptance audit of existing #37–#40 behavior on installed payload: blocked/ready/orchestrator launches, default warning, explicit kickoff, trusted disclaimer handling and deny preservation; add only missing regressions and record exact versions without duplicating closed tasks.
 
 - [ ] TASK-CSL-002 Correct sweep work scope and completion/integration evidence for lead and specialist sessions using mapped tasks and dependency cones; verify unrelated blocked siblings do not over-block, open/unknown PRs prevent completion and no-PR completion requires explicit integration evidence.
 
