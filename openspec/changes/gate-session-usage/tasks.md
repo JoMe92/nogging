@@ -8,7 +8,7 @@
 
 - [x] TASK-GSU-004 Record bounded per-agent/model usage history and conservative learned medians only for attributable complete non-reset intervals; verify overlap/reset/outlier samples are rejected, insufficient data uses fallback and no credential/account identifier is exposed.
 
-- [ ] TASK-GSU-005 Provide explicit statusline-cache installation/composition, doctor freshness hints and orchestrator retry guidance; verify existing statusline/user settings preserved, unknown warns by default and scheduling uses all limiting reset windows without model switching.
+- [x] TASK-GSU-005 Provide explicit statusline-cache installation/composition, doctor freshness hints and orchestrator retry guidance; verify existing statusline/user settings preserved, unknown warns by default and scheduling uses all limiting reset windows without model switching.
 
 - [ ] TASK-GSU-006 Run scripts/test plus concurrent stub admission and installed-payload tests; perform read-only live quota observation and an authorized single scratch launch, recording #53 evidence and documenting same-host scope and estimation limits.
 
