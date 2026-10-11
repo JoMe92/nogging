@@ -139,10 +139,18 @@ def _segment(timestamp, segments):
 
     Deterministic for any collection pass, so a resume never re-attributes
     (and never recharges) generations completed in an earlier segment."""
-    owner = None
-    for segment_id, started in sorted(segments or (), key=lambda s: s[1]):
-        if timestamp is not None and started <= timestamp:
-            owner = segment_id
+    def parsed(value):
+        try:
+            stamp = datetime.fromisoformat(value.replace('Z', '+00:00'))
+        except (AttributeError, ValueError):
+            return None
+        return stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)
+
+    owner, latest, stamp = None, None, parsed(timestamp)
+    for segment_id, started in segments or ():
+        start = parsed(started)
+        if stamp and start and start <= stamp and (latest is None or start >= latest):
+            owner, latest = segment_id, start
     return owner
 
 
