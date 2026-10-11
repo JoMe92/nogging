@@ -10,7 +10,7 @@
 
 - [x] TASK-GSU-005 Provide explicit statusline-cache installation/composition, doctor freshness hints and orchestrator retry guidance; verify existing statusline/user settings preserved, unknown warns by default and scheduling uses all limiting reset windows without model switching.
 
-- [ ] TASK-GSU-006 Run scripts/test plus concurrent stub admission and installed-payload tests; perform read-only live quota observation and an authorized single scratch launch, recording #53 evidence and documenting same-host scope and estimation limits.
+- [x] TASK-GSU-006 Run scripts/test plus concurrent stub admission and installed-payload tests; perform read-only live quota observation and an authorized single scratch launch, recording #53 evidence and documenting same-host scope and estimation limits.
 
 ## Execution contract
 
