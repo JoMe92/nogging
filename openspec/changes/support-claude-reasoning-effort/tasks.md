@@ -4,7 +4,7 @@
 
 ## 2. Native transport and helper compatibility
 
-- [ ] TASK-CRE-002 Forward native Claude --effort on cold/exact-resume launches; strip the Nogging key from effective settings and add wrapper validation, contract capability and doctor checks. Verify exact argv, empty-input refusal, stale-helper refusal, native failure propagation and unchanged authority/profile/global state; preserve Codex. Depends on TASK-CRE-001; see design decision 3 and delta transport requirement.
+- [x] TASK-CRE-002 Forward native Claude --effort on cold/exact-resume launches; strip the Nogging key from effective settings and add wrapper validation, contract capability and doctor checks. Verify exact argv, empty-input refusal, stale-helper refusal, native failure propagation and unchanged authority/profile/global state; preserve Codex. Depends on TASK-CRE-001; see design decision 3 and delta transport requirement.
 
 ## 3. Provenance and operator guidance
 

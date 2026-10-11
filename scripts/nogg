@@ -2920,6 +2920,8 @@ def validate_launch_contract(contract, argv, agent):
         raise RuntimeError(f"session-launch contract does not support agent {agent}; run Nogging update")
     if not isinstance(contract.get("features"), list) or "startup-stderr" not in contract["features"]:
         raise RuntimeError("session-launch contract lacks startup stderr capture; run Nogging update")
+    if "--effort" in argv[1:] and "claude-effort-forwarding" not in contract["features"]:
+        raise RuntimeError("session-launch contract lacks Claude effort forwarding; run Nogging update")
     options = contract.get("options")
     if not isinstance(options, dict):
         raise RuntimeError("session-launch contract has no option schema; run Nogging update")
@@ -2953,7 +2955,7 @@ def session_helper_diagnostics():
     argv = [str(wrapper)]
     for flag in ("--agent", "--settings", "--prompt", "--cwd", "--bead",
                  "--sandbox", "--approval", "--network", "--readonly-root",
-                 "--provider", "--model", "--reasoning-effort", "--mode", "--session-id", "--resume", "--remote-control"):
+                 "--provider", "--model", "--reasoning-effort", "--effort", "--mode", "--session-id", "--resume", "--remote-control"):
         argv += [flag, "probe"]
     argv += ["--read-only", "--continue"]
     try:
@@ -3289,6 +3291,8 @@ def session_launch(role, bead, cwd, read_only, owner,
         inner[1:1] = ["--settings", effective_settings_path]
         if selected_model is not None:
             inner += ["--model", selected_model]
+        if reasoning_effort is not None:
+            inner += ["--effort", reasoning_effort]
     elif agent == "codex":  # no per-session permissions file — the floor is
            # the repo's `.codex/rules/` execpolicy directory, which Codex loads
            # from the working tree. That floor file ships with `codex-onboarding`;
