@@ -7,6 +7,11 @@
 # Covers the `Auto-update failed` false-positive regression explicitly.
 set -euo pipefail
 
+# Fixture roots and explicit emit tests own these variables. Inheriting the
+# supervising agent's identity would write events to the wrong session and
+# make the missing-identity assertion depend on how this suite was launched.
+unset NOGG_SESSION_NAME NOGGING_ROOT
+
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 nogg="$here/nogg"
 
@@ -564,6 +569,34 @@ print(m.classify_session({'name': 's1', 'agent': 'claude'})[0])
 [[ "$got" == "needs_input" ]] \
   && ok "watch: Layer 2 follows the most recent event (needs_input after turn_end)" \
   || bad "watch: expected needs_input from the latest event, got $got"
+
+for expected in idle working waiting_background awaiting_manual_approval limit; do
+  case "$expected" in
+    idle) pane='❯ ' ;;
+    working) pane='esc to interrupt' ;;
+    waiting_background) pane='2 shells still running' ;;
+    awaiting_manual_approval) pane=$'⏸ manual mode on\n❯ ' ;;
+    limit) pane='usage limit reached' ;;
+  esac
+  got=$(PANE_TEXT="$pane" run_py "
+m.tmux_sessions = lambda: {'s1'}
+m.session_pane_text = lambda name: m.os.environ['PANE_TEXT']
+print(m.classify_session({'name': 's1', 'agent': 'claude'})[0])
+")
+  [[ "$got" == "$expected" ]] \
+    && ok "watch: resolved permission without Stop follows live $expected" \
+    || bad "watch: expected resolved $expected, got $got"
+done
+
+got=$(run_py "
+m.session_events_path('s1').write_text(m.json.dumps({'timestamp': m.now(), 'event': 'needs_input'}) + '\\n')
+m.tmux_sessions = lambda: {'s1'}
+m.session_pane_text = lambda name: 'Do you want to proceed?\\n❯ 1. Yes\\n❯ '
+print(m.classify_session({'name': 's1', 'agent': 'claude'})[0])
+")
+[[ "$got" == "needs_input" ]] \
+  && ok "watch: fresh active permission prompt remains needs_input" \
+  || bad "watch: fresh prompt was $got"
 
 got=$(run_py "
 m.tmux_sessions = lambda: {'s2'}
