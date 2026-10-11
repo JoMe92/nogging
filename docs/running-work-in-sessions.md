@@ -415,3 +415,28 @@ and can be neither acknowledged nor read as success.
 `doctor` reuses the cache and makes no check call. It prints a NOTE for a running
 session whose checks are unknown, unchecked, or stale (older than
 `session_checks_stale_seconds`, default 1800).
+
+## Nudging a session: placeholders are not input
+
+An idle Claude pane often shows a suggested next instruction in its `❯` input
+box. That suggestion is rendered dim and is a placeholder, not typed input, so
+`session nudge` never executes it. To submit an instruction, pass it explicitly:
+
+```bash
+./scripts/nogg session nudge <name> --message "<instruction>"
+```
+
+With `--message`, nudge clears any actual pending input, types the message,
+submits it and verifies submission: if the input is still pending it retries
+the submit step once, then fails. A pane whose input box cannot be identified
+also fails as unverified rather than reporting success. `send --verify`
+uses the same check.
+
+Without `--message`, nudge resends only single-line input that it can
+positively identify: non-dim text in Claude's framed input box, captured with
+attributes (`tmux capture-pane -e`). A placeholder-only, empty, multi-line or
+unidentifiable prompt sends no keys at all, and the command tells you to pass
+`--message`. Codex and other runtimes cannot expose the buffered text, so they
+always need `--message`. Nudge still refuses any session that is not running,
+before touching tmux. `session sweep` reports `has-unsent-input` as `yes`, `no`
+(a placeholder or empty prompt) or `unknown`.

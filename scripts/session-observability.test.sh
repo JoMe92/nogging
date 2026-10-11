@@ -130,7 +130,7 @@ PY
 # `nudge`, `send --verify`'s Claude branch, and `sweep`'s has-unsent-input.
 # ===========================================================================
 got=$(run_py "
-m.session_pane_text = lambda name: 'some prior output\n❯ draft a reply and send it\n'
+m.session_pane_text = lambda name, escapes=False: 'some prior output\n────────────────────\n❯ draft a reply and send it\n────────────────────\n  ⏵⏵ footer\n'
 print(repr(m.pending_input_text('s1', 'claude')))
 ")
 [[ "$got" == "'draft a reply and send it'" ]] \
@@ -138,7 +138,7 @@ print(repr(m.pending_input_text('s1', 'claude')))
   || bad "pending_input_text: expected the stripped text, got $got"
 
 got=$(run_py "
-m.session_pane_text = lambda name: 'some prior output\n❯ \n'
+m.session_pane_text = lambda name, escapes=False: 'some prior output\n────────────────────\n❯ \n────────────────────\n'
 print(repr(m.pending_input_text('s1', 'claude')))
 ")
 [[ "$got" == "''" ]] \
@@ -146,7 +146,7 @@ print(repr(m.pending_input_text('s1', 'claude')))
   || bad "pending_input_text: expected '', got $got"
 
 got=$(run_py "
-m.session_pane_text = lambda name: ''
+m.session_pane_text = lambda name, escapes=False: ''
 print(repr(m.pending_input_text('s1', 'claude')))
 ")
 [[ "$got" == "''" ]] \
@@ -154,7 +154,7 @@ print(repr(m.pending_input_text('s1', 'claude')))
   || bad "pending_input_text: expected '' for an empty pane, got $got"
 
 got=$(run_py "
-m.session_pane_text = lambda name: 'some prior output\n❯ draft a reply\n'
+m.session_pane_text = lambda name, escapes=False: 'some prior output\n────────────────────\n❯ draft a reply\n────────────────────\n'
 print(m._pane_input_pending('s1', 'claude'))
 ")
 [[ "$got" == "True" ]] \
@@ -271,7 +271,11 @@ case "$cmd" in
   kill-session)
     name="$(arg_after -t "$@")"; rm -f "$d/sess-$name" ;;
   kill-server) rm -f "$d"/sess-* ;;
-  send-keys|pipe-pane|attach|display-message) : ;;
+  send-keys)
+    # A pane-<name>.after fixture models the pane once Enter submitted input.
+    name="$(arg_after -t "$@")"
+    if [[ " $* " == *" Enter "* && -f "$d/pane-$name.after" ]]; then mv "$d/pane-$name.after" "$d/pane-$name.txt"; fi ;;
+  pipe-pane|attach|display-message) : ;;
   *) : ;;
 esac
 STUB
@@ -645,7 +649,8 @@ export BD_KNOWN="SPEC-n01"
 name="$(sess_name "$root")"
 out_n=$(mktemp)
 
-printf 'previous turn output\n❯ draft a reply and send it\n' >"$TMUX_STUB_DIR/pane-$name.txt"
+printf 'previous turn output\n────────────────────\n❯ draft a reply and send it\n────────────────────\n' >"$TMUX_STUB_DIR/pane-$name.txt"
+printf '────────────────────\n❯ \n────────────────────\n' >"$TMUX_STUB_DIR/pane-$name.after"
 : >"$TMUX_STUB_DIR/calls.log"
 "$nogg" session nudge "$name" >"$out_n" 2>&1 \
   || { echo "FAIL - nudge: errored"; cat "$out_n"; fail=1; }
@@ -658,21 +663,22 @@ resend_line=$(grep -nF -- "send-keys -t $name -l draft a reply and send it" "$TM
   && ok "nudge: clears the pane (C-u) before resending the pending text" \
   || { echo "FAIL - nudge: C-u/resend ordering wrong"; cat "$TMUX_STUB_DIR/calls.log"; fail=1; }
 
-printf 'previous turn output\n❯ \n' >"$TMUX_STUB_DIR/pane-$name.txt"
+printf 'previous turn output\n────────────────────\n❯ \n────────────────────\n' >"$TMUX_STUB_DIR/pane-$name.txt"
 : >"$TMUX_STUB_DIR/calls.log"
 "$nogg" session nudge "$name" >"$out_n" 2>&1 \
   || { echo "FAIL - nudge (empty): errored"; cat "$out_n"; fail=1; }
-grep -qF "nothing to nudge" "$out_n" \
-  && ok "nudge: an empty pane is reported as nothing to nudge" \
+grep -qF "nothing to nudge" "$out_n" && grep -qF -- "--message" "$out_n" \
+  && ok "nudge: an empty pane is reported as nothing to nudge and asks for --message" \
   || { echo "FAIL - nudge: expected nothing-to-nudge message"; cat "$out_n"; fail=1; }
-grep -qF -- "send-keys -t $name C-u" "$TMUX_STUB_DIR/calls.log" \
-  && ok "nudge: the C-u still runs on an empty pane" \
-  || { echo "FAIL - nudge: C-u missing on empty-pane nudge"; cat "$TMUX_STUB_DIR/calls.log"; fail=1; }
+! grep -qF -- "send-keys" "$TMUX_STUB_DIR/calls.log" \
+  && ok "nudge: no key at all is sent on an empty pane (TASK-CSL-004)" \
+  || { echo "FAIL - nudge: keys sent on empty-pane nudge"; cat "$TMUX_STUB_DIR/calls.log"; fail=1; }
 ! grep -qF -- "send-keys -t $name -l" "$TMUX_STUB_DIR/calls.log" \
   && ok "nudge: nothing further is sent when the pane was empty" \
   || { echo "FAIL - nudge: unexpected send-keys -l on an empty pane"; cat "$TMUX_STUB_DIR/calls.log"; fail=1; }
 
-printf 'previous turn output\n❯ unrelated stale text\n' >"$TMUX_STUB_DIR/pane-$name.txt"
+printf 'previous turn output\n────────────────────\n❯ unrelated stale text\n────────────────────\n' >"$TMUX_STUB_DIR/pane-$name.txt"
+printf '────────────────────\n❯ \n────────────────────\n' >"$TMUX_STUB_DIR/pane-$name.after"
 : >"$TMUX_STUB_DIR/calls.log"
 "$nogg" session nudge "$name" --message "explicit override" >"$out_n" 2>&1 \
   || { echo "FAIL - nudge --message: errored"; cat "$out_n"; fail=1; }
@@ -847,7 +853,7 @@ m.beads = lambda: [{'id': 'B1', 'labels': ['openspec:change:demo-change', 'opens
 m.task_map = lambda **kwargs: ({'TASK-OBS-B1': {'change': 'demo-change'}}, [])
 m._session_worktree_branch = lambda rec: 'feat/demo'
 m._pr_state_for_branch = lambda branch: 'MERGED'
-m.pending_input_text = lambda name, agent: ''
+m.pane_input = lambda name, agent: ('empty', '')
 m._idle_minutes = lambda rec: 5
 buf = io.StringIO()
 with contextlib.redirect_stdout(buf):
@@ -867,7 +873,7 @@ m.tmux_sessions = lambda: {'sess-blocked'}
 m.bead_change = lambda bead_id: 'demo-change'
 m.beads = lambda: [{'id': 'B2', 'labels': ['openspec:change:demo-change', 'openspec:task:TASK-OBS-B2'], 'status': 'open', 'dependencies': [{'type': 'blocks', 'depends_on_id': 'B3'}]}, {'id': 'B3', 'labels': ['openspec:change:demo-change', 'openspec:task:TASK-OBS-B3'], 'status': 'blocked'}]
 m.task_map = lambda **kwargs: ({'TASK-OBS-B2': {'change': 'demo-change'}, 'TASK-OBS-B3': {'change': 'demo-change'}}, [])
-m.pending_input_text = lambda name, agent: 'draft text'
+m.pane_input = lambda name, agent: ('input', 'draft text')
 m._idle_minutes = lambda rec: None
 buf = io.StringIO()
 with contextlib.redirect_stdout(buf):
@@ -888,7 +894,7 @@ m.tmux_sessions = lambda: {'sess-active', 'sess-orc'}
 m.bead_change = lambda bead_id: 'demo-change'
 m.beads = lambda: [{'id': 'B4', 'labels': ['openspec:change:demo-change', 'openspec:task:TASK-OBS-B4'], 'status': 'open'}]
 m.task_map = lambda **kwargs: ({'TASK-OBS-B4': {'change': 'demo-change'}}, [])
-m.pending_input_text = lambda name, agent: ''
+m.pane_input = lambda name, agent: ('empty', '')
 m._idle_minutes = lambda rec: 1
 buf = io.StringIO()
 with contextlib.redirect_stdout(buf):
