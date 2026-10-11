@@ -17,6 +17,12 @@ module.exports = {
   verbatim: [
     'scripts/nogg',
     'scripts/nogg_usage.py',
+    'scripts/lib/token_usage_adapters.py',
+    'scripts/lib/token_usage_antigravity.py',
+    'scripts/lib/token_usage_collect.py',
+    'scripts/lib/token_usage_report.py',
+    'scripts/lib/token_usage_store.py',
+    'scripts/lib/token_usage_sync.py',
     'scripts/session-launch',
     'scripts/openspec-sandbox',
     'scripts/session-log-writer',
@@ -78,6 +84,7 @@ module.exports = {
     { from: 'docs/security-model.md', to: 'docs/nogging/security-model.md' },
     { from: 'docs/worktree-workflow.md', to: 'docs/nogging/worktree-workflow.md' },
     { from: 'docs/model-selection.md', to: 'docs/nogging/model-selection.md' },
+    { from: 'docs/token-usage.md', to: 'docs/nogging/token-usage.md' },
   ],
 
   // Written only when the destination does not already exist.
