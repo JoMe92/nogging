@@ -3322,10 +3322,12 @@ def resolve_clock_time(text, now=None):
     if candidate < now:
         candidate += dt.timedelta(days=1)
     return candidate.isoformat()
-def session_pane_text(name):
+def session_pane_text(name, escapes=False):
     """The session's current visible pane (no scrollback), or '' if its tmux
-    session does not exist."""
-    res = tmux("capture-pane", "-p", "-t", name, check=False)
+    session does not exist. `escapes` keeps SGR attributes (`capture-pane
+    -e`), which is how a dim placeholder suggestion is told from input."""
+    args = ["capture-pane", "-p", "-e", "-t", name] if escapes else ["capture-pane", "-p", "-t", name]
+    res = tmux(*args, check=False)
     return res.stdout if res.returncode == 0 else ""
 def session_events_path(name):
     return sessions_dir() / f"{name}.events.jsonl"
@@ -3507,29 +3509,95 @@ def _submit_pane_input(name, agent):
         # Known quirk: Claude Code requires a second bare Enter to actually
         # submit a multi-line paste.
         tmux("send-keys", "-t", name, "Enter")
-def pending_input_text(name, agent):
-    """The text currently sitting unsubmitted at a session's pane prompt, or
-    '' if there is none. Captures the pane (`session_pane_text`, the same
-    helper `watch`/`classify` use) and takes its last non-empty line; for a
-    Claude session, strips a leading `❯` prompt marker plus any following
-    whitespace before treating the remainder as pending text (a bare `❯` or
-    blank line yields ''). Shared by `session nudge`, `_pane_input_pending`'s
-    Claude branch, and `session sweep`'s `has-unsent-input` check."""
-    lines = [ln for ln in session_pane_text(name).splitlines() if ln.strip()]
-    if not lines:
-        return ""
-    last = lines[-1]
+_SGR_RE = re.compile(r"\x1b\[([0-9;]*)m")
+_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+_PROMPT_RULE_RE = re.compile(r"^\s*─{10,}\s*$")
+_CLAUDE_PROMPT_RE = re.compile(r"^❯[ \u00a0]?")
+def _dim_segments(line):
+    """Split one SGR-attributed line into (text, dim) runs."""
+    runs, dim, pos = [], False, 0
+    for match in _SGR_RE.finditer(line):
+        runs.append((line[pos:match.start()], dim))
+        codes = [c for c in match.group(1).split(";") if c] or ["0"]
+        for code in codes:
+            if code == "2": dim = True
+            elif code in ("0", "22"): dim = False
+        pos = match.end()
+    runs.append((line[pos:], dim))
+    return [(_ANSI_RE.sub("", text), d) for text, d in runs]
+def _claude_prompt_input(pane):
+    """Classify Claude's input box: ("input", text), ("empty", ""),
+    ("placeholder", "") or ("unknown", ""). The box is the `❯` line framed
+    by horizontal rules. Claude renders a suggested next instruction dim;
+    that is a placeholder, never input. Anything that cannot be positively
+    identified (no framed box, mixed attributes) is unknown (#42)."""
+    lines = pane.splitlines()
+    plain = [_ANSI_RE.sub("", ln) for ln in lines]
+    rules = [i for i, ln in enumerate(plain) if _PROMPT_RULE_RE.match(ln)]
+    if len(rules) < 2:
+        return "unknown", ""
+    top, bottom = rules[-2], rules[-1]
+    body = list(range(top + 1, bottom))
+    if not body or not _CLAUDE_PROMPT_RE.match(plain[body[0]]):
+        return "unknown", ""
+    first = lines[body[0]]
+    first = first[first.index("❯") + 1:]
+    texts, dims = [], set()
+    for raw in [first] + [lines[i] for i in body[1:]]:
+        segments = _dim_segments(raw)
+        dims.update(d for text, d in segments if text.replace("\u00a0", " ").strip())
+        texts.append("".join(text for text, _d in segments).replace("\u00a0", " ").rstrip())
+    text = "\n".join(texts).strip()
+    if not text:
+        return "empty", ""
+    if dims == {True}:
+        return "placeholder", ""
+    if dims == {False}:
+        return "input", text
+    return "unknown", ""
+def pane_input(name, agent):
+    """(kind, text) for a session's unsubmitted prompt input; kind is
+    `input`, `empty`, `placeholder` or `unknown`. Only an adapter that can
+    positively identify buffered input reports `input`: Claude via its
+    framed, non-dim input box; Codex via its `undelivered_input` signal
+    (text not extractable). Every other runtime is `unknown`."""
     if agent == "claude":
-        last = re.sub(r"^❯\s*", "", last)
-    return last.strip()
+        return _claude_prompt_input(session_pane_text(name, escapes=True))
+    if agent == "codex":
+        if classify(session_pane_text(name), CODEX_ADAPTER) == "needs_input":
+            return "input", ""
+        return "unknown", ""
+    return "unknown", ""
+def pending_input_text(name, agent):
+    """The positively identified text sitting unsubmitted at a session's
+    prompt, or '' when there is none, it is only a placeholder suggestion,
+    or it cannot be identified. Shared by `session nudge` and `send
+    --verify`'s Claude branch."""
+    kind, text = pane_input(name, agent)
+    return text if kind == "input" else ""
 def _pane_input_pending(name, agent):
     """Whether a just-sent message is still sitting unsubmitted. For codex
     this is exactly the adapter's `needs_input` (`undelivered_input`) signal
-    (design.md); for claude this is `pending_input_text` returning non-empty
-    — a real structural signal, not the previous hardcoded False."""
+    (design.md); for claude it is positively identified, non-placeholder
+    input in the framed input box. Other runtimes keep the last-line check."""
     if agent == "codex":
         return classify(session_pane_text(name), CODEX_ADAPTER) == "needs_input"
-    return bool(pending_input_text(name, agent))
+    if agent == "claude":
+        return pane_input(name, agent)[0] == "input"
+    lines = [ln for ln in session_pane_text(name).splitlines() if ln.strip()]
+    return bool(lines and lines[-1].strip())
+def _verify_submitted(name, agent):
+    """Bounded verification: one retry of the submit step, then fail.
+    A Claude pane whose input box cannot be identified is unverified, not
+    submitted."""
+    time.sleep(float(scfg("session_submit_verify_delay_seconds", 0.5)))
+    if _pane_input_pending(name, agent):
+        _submit_pane_input(name, agent)             # retry the submit step once
+        time.sleep(float(scfg("session_submit_verify_delay_seconds", 0.5)))
+        if _pane_input_pending(name, agent):
+            raise RuntimeError(f"{name}: message still unsubmitted after a retry")
+    if agent == "claude" and pane_input(name, agent)[0] == "unknown":
+        raise RuntimeError(f"{name}: submission could not be verified (input box not identifiable)")
 def _require_running(name):
     """Return `(path, rec)` for `name`, refusing with no tmux key-sending
     unless its reconciled state is `running`. Shared by `nudge` and
@@ -3631,28 +3699,33 @@ def session_send(name, message, verify=False):
         return
     tmux("send-keys", "-t", name, "-l", message)
     _submit_pane_input(name, agent)
-    if verify and _pane_input_pending(name, agent):
-        _submit_pane_input(name, agent)             # retry the submit step once
-        if _pane_input_pending(name, agent):
-            raise RuntimeError(f"{name}: message still unsubmitted after a retry")
+    if verify:
+        _verify_submitted(name, agent)
     print(f"sent to {name}")
 def session_nudge(name, message=None):
-    """Reliably submit a session's pane regardless of what was already
-    sitting there: clear the input line, then resend. With `message`, always
-    clears first and sends that text, overriding whatever the pane showed.
-    With no `message`, reads back the pane's pending text *before* clearing
-    it and resends exactly that; if there was none, the `C-u` still runs but
-    nothing further is sent, and that is reported rather than left silent."""
+    """Submit a running session's prompt deliberately (#42). With `message`,
+    clear any actual pending input and submit that text, verified with one
+    bounded retry. Without `message`, resend only positively identified,
+    single-line actual input. A placeholder suggestion, an empty box or
+    unidentifiable pane text is never executed: no key is sent and the
+    operator is told to pass --message."""
     _, rec = _require_running(name)
     agent = rec.get("agent") or "claude"
-    pending = None if message else pending_input_text(name, agent)
+    if message:
+        text = message
+    else:
+        kind, text = pane_input(name, agent)
+        if kind != "input" or not text or "\n" in text:
+            reason = {"empty": "the prompt is empty",
+                      "placeholder": "the prompt shows only a suggested placeholder, not input",
+                      "input": "the pending input cannot be resent safely"}.get(kind, "the pane input cannot be positively identified")
+            print(f"{name}: nothing to nudge ({reason}); nothing was submitted — "
+                  f"pass --message \"<instruction>\" to send an explicit instruction")
+            return
     tmux("send-keys", "-t", name, "C-u")
-    text = message or pending
-    if not text:
-        print(f"{name}: nothing to nudge (pane input was empty)")
-        return
     tmux("send-keys", "-t", name, "-l", text)
     _submit_pane_input(name, agent)
+    _verify_submitted(name, agent)
     print(f"nudged {name}")
 def _compose_kickoff_message(bead_id, change):
     return (f"Claim Bead {bead_id} and implement its mapped task in change {change}. "
@@ -3862,7 +3935,8 @@ def _sweep_line(rec):
     session (design.md Decision 4)."""
     name = rec.get("name")
     agent = rec.get("agent") or "claude"
-    pending = "yes" if pending_input_text(name, agent) else "no"
+    kind = pane_input(name, agent)[0]
+    pending = "yes" if kind == "input" else "unknown" if kind == "unknown" else "no"
     idle_m = _idle_minutes(rec)
     idle_s = f"{idle_m}m" if idle_m is not None else "unknown"
     return f"{name}: {_sweep_state(rec)}  has-unsent-input={pending}  idle for {idle_s}"
