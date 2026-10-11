@@ -440,3 +440,28 @@ unidentifiable prompt sends no keys at all, and the command tells you to pass
 always need `--message`. Nudge still refuses any session that is not running,
 before touching tmux. `session sweep` reports `has-unsent-input` as `yes`, `no`
 (a placeholder or empty prompt) or `unknown`.
+
+## Read-only quota inspection
+
+Run `./scripts/nogg usage --agent codex` or `--agent claude`; add `--json`
+for normalized machine-readable observations. Short and weekly windows are
+reported separately. Missing, unsupported, malformed, future-dated, older than
+600 seconds, and already-reset observations are unknown rather than zero.
+This observation command does not install capture, launch sessions, reserve
+headroom, or access authentication files. Account and model-group identities are reported as
+unknown; a source directory does not prove account or model-group identity.
+
+Codex observations come from `event_msg` / `token_count` metadata under
+`$CODEX_HOME/sessions` (default `~/.codex/sessions`), selected by event timestamp.
+The supported window fields are `used_percent`, `window_minutes`, and epoch
+`resets_at` in `rate_limits.primary` and `rate_limits.secondary`.
+
+Claude inspection reads the opt-in cache at
+`$XDG_CACHE_HOME/nogging/usage/claude.json` (default
+`~/.cache/nogging/usage/claude.json`). Cache schema version 1 contains
+`schema_version: 1`, an RFC3339 `observed_at` stamped at capture time, and the
+statusline `rate_limits` object. Its `five_hour` and `seven_day` windows contain
+`used_percentage` and epoch `resets_at`. Only these quota fields belong in the
+cache; do not copy the full statusline payload. Inspection does not modify
+Claude settings or install a statusline. The source schemas were verified with
+Codex 0.162.1 and Claude Code 2.1.296; other schemas report unknown.
