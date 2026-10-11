@@ -30,6 +30,7 @@ FIELDS = {
         'model', 'effort', 'source_schema', 'completeness', 'semantics', 'raw_usage'},
 }
 NUMBERS = set(COUNTERS) | {'source_ordinal', 'monotonic_ms'}
+LOOKUP_CHUNK = 100
 JSON_FIELDS = {'raw_usage', 'semantics'}
 
 
@@ -133,7 +134,14 @@ class Store:
             raise StoreError('invalid usage project identity') from exc
         return rows[0]
 
-    def initialize(self):
+    def initialize(self, project_id=None):
+        """Create the store lazily. project_id adopts an existing project
+        identity (export recovery); otherwise a new UUID is generated."""
+        if project_id is not None:
+            try:
+                project_id = str(uuid.UUID(project_id))
+            except (TypeError, ValueError) as exc:
+                raise StoreError('invalid usage project identity') from exc
         with self.locked():
             if (self.database / '.dolt').exists():
                 return self.check_schema()
@@ -143,7 +151,7 @@ class Store:
             self._dolt('init', '--name', 'Nogging Usage', '--email', 'usage@nogging.local')
             statements = [
                 'CREATE TABLE store_meta (singleton INT PRIMARY KEY, schema_version INT NOT NULL, identity_version INT NOT NULL, project_id VARCHAR(36) NOT NULL)',
-                f'INSERT INTO store_meta VALUES (1, {SCHEMA_VERSION}, {IDENTITY_VERSION}, {literal(str(uuid.uuid4()))})',
+                f'INSERT INTO store_meta VALUES (1, {SCHEMA_VERSION}, {IDENTITY_VERSION}, {literal(project_id or str(uuid.uuid4()))})',
                 'CREATE TABLE devices (device_id VARCHAR(36) PRIMARY KEY, hostname VARCHAR(512) NOT NULL)',
                 'CREATE TABLE source_owners (source_id VARCHAR(512) PRIMARY KEY, device_id VARCHAR(36) NOT NULL)',
             ]
@@ -191,6 +199,30 @@ class Store:
                 self._commit('Register usage device')
             return device_id
 
+    def registry(self):
+        """Device and source-ownership rows (not facts) for recovery exports."""
+        return {'devices': self.query('SELECT device_id, hostname FROM devices'),
+                'source_owners': self.query('SELECT source_id, device_id FROM source_owners')}
+
+    def register_devices(self, rows):
+        """Insert recovered device rows; an existing device keeps its row."""
+        with self.locked():
+            self.check_schema()
+            known = {r['device_id'] for r in self.query('SELECT device_id FROM devices')}
+            statements = []
+            for row in rows:
+                device_id = str(uuid.UUID(row['device_id']))
+                hostname = row.get('hostname')
+                if not isinstance(hostname, str) or len(hostname) > 512:
+                    raise StoreError('invalid device hostname')
+                if device_id not in known:
+                    statements.append(f'INSERT INTO devices VALUES ({literal(device_id)}, {literal(hostname)})')
+                    known.add(device_id)
+            if statements:
+                self._dolt('sql', sql=';\n'.join(statements) + ';')
+                self._commit('Register recovered usage devices')
+            return len(statements)
+
     def append(self, records, owners=None):
         """Atomically append a batch; exact replay is a no-op, collisions refuse.
 
@@ -233,11 +265,14 @@ class Store:
                 seen[order] = identity
                 candidates.setdefault(table, []).append((identity, content, data))
             for table, items in candidates.items():
-                clauses = [f'fact_id={literal(identity)} OR (source_id={literal(data["source_id"])} AND '
-                           f'event_id={literal(data["event_id"])} AND source_ordinal={data["source_ordinal"]})'
-                           for identity, _, data in items]
-                rows = self.query(f'SELECT fact_id, content_hash, source_id, event_id, source_ordinal FROM {table} '
-                                  f'WHERE {" OR ".join(clauses)}')
+                rows = []
+                # Bounded lookups keep each `dolt sql -q` argument far below ARG_MAX.
+                for start in range(0, len(items), LOOKUP_CHUNK):
+                    clauses = [f'fact_id={literal(identity)} OR (source_id={literal(data["source_id"])} AND '
+                               f'event_id={literal(data["event_id"])} AND source_ordinal={data["source_ordinal"]})'
+                               for identity, _, data in items[start:start + LOOKUP_CHUNK]]
+                    rows += self.query(f'SELECT fact_id, content_hash, source_id, event_id, source_ordinal FROM {table} '
+                                       f'WHERE {" OR ".join(clauses)}')
                 for identity, content, data in items:
                     matches = [r for r in rows if r['fact_id'] == identity or (
                         r['source_id'] == data['source_id'] and r['event_id'] == data['event_id']
