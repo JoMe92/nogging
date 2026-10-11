@@ -193,7 +193,9 @@ sys.exit(1)
         assert "launched in restricted/manual mode" in r_bare.stdout
         assert "this session will not act until you send it a first message" in r_bare.stdout
         ready_recs = [json.loads(p.read_text()) for p in (consumer / ".nogging/state/sessions").glob("*.json")
-                      if "spec-ready" in p.name.lower() and not p.name.endswith(".settings.json")]
+                      if "spec-ready" in p.name.lower() and not p.name.endswith(".settings.json")
+                      and json.loads(p.read_text()).get("state") == "running"]
+        assert len(ready_recs) == 1
         ready_name = ready_recs[0]["name"]
 
         # 1.3 Kickoff execution (#39)
@@ -210,7 +212,9 @@ sys.exit(1)
         assert r_with_kick.returncode == 0
         assert "this session will not act until you send it a first message" not in r_with_kick.stdout
         with_kick_recs = [json.loads(p.read_text()) for p in (consumer / ".nogging/state/sessions").glob("*.json")
-                          if "spec-ready" in p.name.lower() and not p.name.endswith(".settings.json")]
+                          if "spec-ready" in p.name.lower() and not p.name.endswith(".settings.json")
+                          and json.loads(p.read_text()).get("state") == "running"]
+        assert len(with_kick_recs) == 1
         wk_name = with_kick_recs[0]["name"]
         run_nogg("session", "stop", wk_name)
         run_nogg("session", "cleanup", wk_name)
@@ -220,7 +224,9 @@ sys.exit(1)
         assert r_full.returncode == 0
         assert "launched in restricted/manual mode" not in r_full.stdout
         full_recs = [json.loads(p.read_text()) for p in (consumer / ".nogging/state/sessions").glob("*.json")
-                     if "spec-ready" in p.name.lower() and not p.name.endswith(".settings.json")]
+                     if "spec-ready" in p.name.lower() and not p.name.endswith(".settings.json")
+                     and json.loads(p.read_text()).get("state") == "running"]
+        assert len(full_recs) == 1
         full_rec = full_recs[0]
         assert full_rec["profile"] == "trusted"
         settings = json.loads(pathlib.Path(full_rec["effective_settings_path"]).read_text())
@@ -235,7 +241,9 @@ sys.exit(1)
         r_sib = run_nogg("session", "launch", "--role", "lead", "--bead", "SPEC-csl1", "--agent", "claude")
         assert r_sib.returncode == 0
         sib_recs = [json.loads(p.read_text()) for p in (consumer / ".nogging/state/sessions").glob("*.json")
-                    if "spec-csl1" in p.name.lower() and not p.name.endswith(".settings.json")]
+                    if "spec-csl1" in p.name.lower() and not p.name.endswith(".settings.json")
+                    and json.loads(p.read_text()).get("state") == "running"]
+        assert len(sib_recs) == 1
         sib_name = sib_recs[0]["name"]
         # Bare kickoff: scope is assigned task SPEC-csl1
         run_nogg("session", "kickoff", sib_name)
@@ -296,7 +304,9 @@ sys.exit(1)
         # === 4. CI transition, explicit checks-ack & doctor cache reuse (#41) ===
         r_ci = run_nogg("session", "launch", "--role", "lead", "--bead", "SPEC-ready", "--agent", "claude")
         ci_recs = [json.loads(p.read_text()) for p in (consumer / ".nogging/state/sessions").glob("*.json")
-                   if "spec-ready" in p.name.lower() and not p.name.endswith(".settings.json")]
+                   if "spec-ready" in p.name.lower() and not p.name.endswith(".settings.json")
+                   and json.loads(p.read_text()).get("state") == "running"]
+        assert len(ci_recs) == 1
         ci_name = ci_recs[0]["name"]
 
         gh_data = {
