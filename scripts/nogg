@@ -2169,7 +2169,7 @@ def session_records():
     variants, and the `session_launch` collision guard all read through here."""
     out = []
     for p in sorted(sessions_dir().glob("*.json")):
-        if p.name.endswith(".settings.json"): continue
+        if p.name.endswith((".settings.json", ".checks.json")): continue
         try: rec = json.loads(p.read_text())
         except (ValueError, OSError): continue
         # A true record has a `name` and a `bead_id` key (the orchestrator's is
@@ -3866,12 +3866,13 @@ def _sweep_line(rec):
     idle_m = _idle_minutes(rec)
     idle_s = f"{idle_m}m" if idle_m is not None else "unknown"
     return f"{name}: {_sweep_state(rec)}  has-unsent-input={pending}  idle for {idle_s}"
-def session_sweep():
+def session_sweep(checks=False):
     """Read-only per-session liveness detection (design.md Decision 4): for
     every `running` session with a `bead_id`, report `change-complete`,
     `bead-blocked`, or `active`, alongside `has-unsent-input` and an
     idle-duration figure. Never stops, nudges, or otherwise mutates a
-    session or Bead."""
+    session or Bead. `checks` adds the explicit remote CI observation,
+    cached for doctor but never acknowledged."""
     live = tmux_sessions()
     running = [rec for _path, rec in session_records()
                if reconciled_state(rec, live) == "running" and rec.get("bead_id")]
@@ -3880,6 +3881,126 @@ def session_sweep():
         return
     for rec in running:
         print(_sweep_line(rec))
+        if checks:
+            print(f"  {session_sweep_checks(rec)}")
+# --- session observability: explicit CI check observations -------------
+# `session sweep --checks` is the only remote check path (design.md Decision
+# 4). It caches the PR head SHA and a check/run fingerprint per session in
+# `<name>.checks.json`; `doctor` reads that cache without network calls.
+# Observing never acknowledges: only `session checks-ack` records an
+# acknowledgement, and lookup failure is cached as `unknown`, never success.
+CHECKS_PASS = {"SUCCESS", "NEUTRAL", "SKIPPED"}
+CHECKS_PENDING = {"", "PENDING", "EXPECTED", "QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED"}
+def _checks_cache_path(name): return sessions_dir() / f"{name}.checks.json"
+def _load_checks_cache(name):
+    try: cache = json.loads(_checks_cache_path(name).read_text())
+    except (OSError, ValueError): return {}
+    return cache if isinstance(cache, dict) else {}
+def _write_checks_cache(name, cache):
+    atomic_json_state(_checks_cache_path(name), cache)
+def _check_outcome(check):
+    """Classify one statusCheckRollup entry (CheckRun or StatusContext)."""
+    conclusion = str(check.get("conclusion") or "").upper()
+    if conclusion:
+        return "pass" if conclusion in CHECKS_PASS else "fail"
+    state = str(check.get("state") or "").upper()
+    if state:
+        if state == "SUCCESS": return "pass"
+        return "pending" if state in CHECKS_PENDING else "fail"
+    return "pending"
+def _observe_checks(branch):
+    """One remote observation of the PR checks for `branch`. Any lookup or
+    decode failure yields status `unknown` with the reason; it never
+    produces a passing result."""
+    obs = {"observed_at": now(), "branch": branch}
+    if not branch:
+        return dict(obs, status="unknown", error="session branch unknown")
+    res = run("gh", "pr", "list", "--head", branch, "--base", "develop", "--state", "all",
+              "--json", "number,url,state,headRefOid,statusCheckRollup", check=False)
+    if res.returncode != 0:
+        return dict(obs, status="unknown", error="pull request lookup failed")
+    try:
+        rows = json.loads(res.stdout or "[]")
+        if not isinstance(rows, list): raise ValueError
+        if not rows: return dict(obs, status="no-pr")
+        open_rows = [row for row in rows if row.get("state") == "OPEN"]
+        if len(open_rows) > 1 or (not open_rows and len(rows) != 1):
+            return dict(obs, status="unknown", error="ambiguous pull requests for branch")
+        row = (open_rows or rows)[0]
+        head, rollup = row.get("headRefOid"), row.get("statusCheckRollup")
+        if not isinstance(head, str) or not head or not isinstance(rollup, list):
+            raise ValueError
+        entries = sorted((str(c.get("name") or c.get("context") or "unnamed"),
+                          str(c.get("workflowName") or ""), _check_outcome(c),
+                          str(c.get("detailsUrl") or c.get("targetUrl") or ""))
+                         for c in rollup)
+    except (ValueError, TypeError, AttributeError):
+        return dict(obs, status="unknown", error="could not parse pull request checks")
+    failed = [e[0] for e in entries if e[2] == "fail"]
+    pending = [e[0] for e in entries if e[2] == "pending"]
+    status = "failing" if failed else "pending" if pending or not entries else "passing"
+    # The run/details URL identifies the run, so a re-run that fails again
+    # gets a new fingerprint and is unchecked until acknowledged.
+    digest = hashlib.sha256(json.dumps([head, entries]).encode()).hexdigest()[:16]
+    local = run("git", "rev-parse", "--verify", f"refs/heads/{branch}", check=False)
+    return dict(obs, status=status, pr_number=row.get("number"), pr_url=row.get("url"),
+                pr_state=row.get("state"), head_sha=head, fingerprint=digest,
+                failed=failed, pending=pending, total=len(entries),
+                local_head=local.stdout.strip() if local.returncode == 0 else None)
+def _checks_stale_seconds():
+    return int(CFG.get("session_checks_stale_seconds", 1800))
+def _checks_summary(cache, now_ts=None):
+    """(text, attention) for a cached observation; never performs I/O
+    beyond the clock. `attention` is True for unknown, stale or unchecked."""
+    obs = cache.get("observation")
+    if not isinstance(obs, dict):
+        return "checks unknown (no cached observation; run `session sweep --checks`)", True
+    status = obs.get("status") or "unknown"
+    if status == "unknown":
+        return f"checks unknown ({obs.get('error') or 'no evidence'})", True
+    try:
+        age = (now_ts or time.time()) - dt.datetime.fromisoformat(obs["observed_at"]).timestamp()
+    except (KeyError, TypeError, ValueError):
+        return "checks unknown (observation time unreadable)", True
+    stale = age > _checks_stale_seconds()
+    suffix = f"; stale, observed {int(age // 60)}m ago" if stale else ""
+    if status == "no-pr":
+        return f"checks no-pr{suffix}", stale
+    ack = cache.get("ack") if isinstance(cache.get("ack"), dict) else {}
+    acked = ack.get("fingerprint") == obs.get("fingerprint")
+    parts = [f"checks {status}", f"pr=#{obs.get('pr_number')}",
+             f"head={str(obs.get('head_sha'))[:12]}", f"fingerprint={obs.get('fingerprint')}",
+             "acknowledged" if acked else "unchecked"]
+    if obs.get("failed"): parts.append("failed=" + ",".join(obs["failed"]))
+    if obs.get("pending"): parts.append("pending=" + ",".join(obs["pending"]))
+    if obs.get("local_head") and obs.get("local_head") != obs.get("head_sha"):
+        parts.append("local-head-differs")
+    return "  ".join(parts) + suffix, stale or not acked
+def session_sweep_checks(rec):
+    """Observe and cache one session's PR checks, preserving any prior
+    acknowledgement unchanged (observation is never acknowledgement)."""
+    name = rec.get("name")
+    cache = _load_checks_cache(name)
+    cache["observation"] = _observe_checks(_session_worktree_branch(rec))
+    _write_checks_cache(name, cache)
+    return _checks_summary(cache)[0]
+def session_checks_ack(name, fingerprint=None):
+    """Record an explicit operator acknowledgement of the cached observation.
+    No remote call: it acknowledges exactly what was last observed."""
+    load_session(name)
+    cache = _load_checks_cache(name)
+    obs = cache.get("observation")
+    if not isinstance(obs, dict) or obs.get("status") in (None, "unknown", "no-pr") or not obs.get("fingerprint"):
+        raise RuntimeError(f"{name}: no known check observation to acknowledge; "
+                           "run `session sweep --checks` first")
+    if fingerprint is not None and fingerprint != obs["fingerprint"]:
+        raise RuntimeError(f"{name}: fingerprint {fingerprint} does not match the cached "
+                           f"observation {obs['fingerprint']}; re-run `session sweep --checks`")
+    cache["ack"] = {"fingerprint": obs["fingerprint"], "head_sha": obs.get("head_sha"),
+                    "status": obs.get("status"), "observed_at": obs.get("observed_at"),
+                    "acknowledged_at": now(), "acknowledged_by": owner_identity()}
+    _write_checks_cache(name, cache)
+    print(f"{name}: acknowledged checks {obs.get('status')} fingerprint={obs['fingerprint']}")
 # --- session observability: resume-when-ready -------------------------
 DEFAULT_RESUME_MESSAGE = ("the usage limit has reset, continue exactly where "
                           "you left off per your original instructions")
@@ -4627,6 +4748,10 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
             state = _sweep_state(rec)
             if state != "active":
                 notes.append(f"session {sess_name}: {state}")
+            # Cached evidence only: doctor never makes the remote check call.
+            summary, attention = _checks_summary(_load_checks_cache(sess_name))
+            if attention:
+                notes.append(f"session {sess_name}: {summary}")
         cstate, _pane = classify_session(rec, live_sessions)
         if cstate == "awaiting_manual_approval":
             notes.append(f"session {sess_name}: awaiting_manual_approval "
@@ -4813,7 +4938,11 @@ def main():
     skick = ssub.add_parser("kickoff")
     skick.add_argument("name"); skick.add_argument("--message")
     skick.add_argument("--change", help="explicitly authorize the assigned lead to execute the whole change")
-    ssub.add_parser("sweep")
+    ssw = ssub.add_parser("sweep")
+    ssw.add_argument("--checks", action="store_true",
+                     help="also observe PR checks remotely and cache them (never acknowledges)")
+    sack = ssub.add_parser("checks-ack", help="acknowledge the cached check observation")
+    sack.add_argument("name"); sack.add_argument("--fingerprint")
     srw = ssub.add_parser("resume-when-ready")
     srw.add_argument("name"); srw.add_argument("--message")
     semit = ssub.add_parser("emit")
@@ -4875,7 +5004,9 @@ def session_cmd(args):
     elif args.session_command == "kickoff":
         session_kickoff(args.name, args.message, args.change)
     elif args.session_command == "sweep":
-        session_sweep()
+        session_sweep(args.checks)
+    elif args.session_command == "checks-ack":
+        session_checks_ack(args.name, args.fingerprint)
     elif args.session_command == "resume-when-ready":
         session_resume_when_ready(args.name, args.message)
     elif args.session_command == "emit":
