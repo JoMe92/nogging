@@ -3226,6 +3226,50 @@ def usage_context():
                if isinstance(info, dict)}
     sync = read(state / "sync-status.json") or {"state": "not_configured", "local_only": True}
     return {"pending": pending, "sources": sources, "sync": sync}
+def process_ancestors(pid=None):
+    """(pid, start) pairs from the parent of `pid` up to init."""
+    out, pid = [], os.getppid() if pid is None else pid
+    for _ in range(64):
+        if pid <= 1:
+            break
+        out.append((pid, process_start(pid)))
+        try:
+            pid = int(Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[1])
+        except (OSError, IndexError, ValueError):
+            break
+    return out
+def calling_session_record():
+    """The supervised session this process runs inside, proven by process
+    ancestry (session PID plus start time); None for an operator shell. A
+    session environment that ancestry does not confirm fails closed, so a
+    restricted process cannot claim another session's authority by name."""
+    records = [r for _, r in session_records()]
+    name = os.environ.get("NOGG_SESSION_NAME")
+    ancestry = set(process_ancestors())
+    proven = next((rec for rec in records
+                   if rec.get("state") in SESSION_ACTIVE_STATES and type(rec.get("session_pid")) is int
+                   and (rec["session_pid"], rec.get("session_pid_start")) in ancestry), None)
+    if proven is not None:
+        if name and name != proven.get("name"):
+            raise RuntimeError(f"session environment names {name} but this process runs inside "
+                               f"{proven.get('name')}; refusing remote usage operations")
+        return proven
+    if name:
+        known = any(rec.get("name") == name for rec in records)
+        raise RuntimeError(f"session {name} is {'not running this process' if known else 'not a known supervised session'}"
+                           "; cannot prove its authority, refusing remote usage operations")
+    return None
+def require_usage_sync_authority():
+    """Remote usage sync is trusted operator/orchestrator authority only;
+    restricted sessions keep collecting locally."""
+    rec = calling_session_record()
+    if rec is None:
+        return "operator"
+    if rec.get("role") == "orchestrator" or rec.get("floor_lifted") or rec.get("profile") == "trusted":
+        return rec.get("name")
+    raise RuntimeError(f"token-usage sync/import needs trusted operator or orchestrator authority; session "
+                       f"{rec.get('name')} runs profile {rec.get('profile') or 'restricted'!r}, so remote sync is "
+                       "refused (its usage is still collected locally by host supervision)")
 def token_usage_command(args):
     """`nogg token-usage ...`: local consumption accounting (design 6)."""
     rep = usage_report_module()
@@ -3250,7 +3294,31 @@ def token_usage_command(args):
                 print(f"NOTE: {report['error']}; facts stay pending")
         return
     store = collect_store()
+    if args.usage_command == "sync":
+        caller = require_usage_sync_authority()
+        usage_collection_module()
+        import token_usage_sync
+        collect = usage_collection_module()
+        remote = args.remote or scfg("token_usage_remote", "origin")
+        try:
+            status = token_usage_sync.Sync(store, collect.Collector(store), remote=remote).run()
+        except token_usage_sync.SyncRefused as exc:
+            raise RuntimeError(str(exc)) from exc
+        doc = {"schema": "nogg.token-usage.sync/v1", "caller": caller, **status}
+        if args.json:
+            print(json.dumps(doc, indent=2, sort_keys=True))
+        else:
+            print(f"usage sync: {status['state']}" + (f" with {status['remote']}" if status.get("remote") else "")
+                  + (f" after {status['attempts']} attempt(s)" if status.get("attempts") else ""))
+            for item in status.get("conflicts") or []:
+                print(f"  {item['kind']} in {item['table']}: {item['count']}")
+            if status.get("last_error"):
+                print(f"  {status['last_error']}")
+        if status["state"] != "synchronized":
+            sys.exit(1)
+        return
     if args.usage_command == "import":
+        require_usage_sync_authority()   # recovery writes facts a trusted sync may later push
         meta, _ = rep.load_facts(store)
         with open(args.file) as fh:
             project, records = rep.import_records(fh, meta)
@@ -3903,9 +3971,13 @@ def usage_collection_notes():
     it never touches the usage store itself."""
     try:
         state = Path(canonical_repository_state(ROOT)["state_dir"]) / "token-usage/collector"
-        status = json.loads((state / "status.json").read_text())
-    except (OSError, ValueError, KeyError, RuntimeError, ToolError):
+    except (KeyError, RuntimeError, ToolError):
         return []
+    try:
+        status = json.loads((state / "status.json").read_text())
+    except (OSError, ValueError):
+        status = {}
+    status = status if isinstance(status, dict) else {}
     notes = []
     if status.get("last_error"):
         notes.append(f"usage collection: {status['last_error']} (last pass {status.get('last_collection_at')}, "
@@ -3916,6 +3988,13 @@ def usage_collection_notes():
     if status.get("quarantined_batches"):
         notes.append(f"usage collection: {status['quarantined_batches']} conflicting batch(es) retained under "
                      f"{state}/quarantine for owner review; they are never imported automatically")
+    try:
+        sync = json.loads((state.parent / "sync-status.json").read_text())
+    except (OSError, ValueError):
+        sync = {}
+    if isinstance(sync, dict) and sync.get("state") in ("conflict", "refused", "pending"):
+        notes.append(f"usage sync {sync['state']} at {sync.get('last_attempt_at')}: {sync.get('last_error')} "
+                     f"(last success {sync.get('last_success_at') or 'never'})")
     return notes
 def blocked_running_sessions_notes():
     """NOTE per currently `running` Lead/specialist session whose Bead now has
@@ -5797,6 +5876,10 @@ def main():
     tue.add_argument("--format", choices=("jsonl",), default="jsonl")
     tui = tusub.add_parser("import", help="recover facts from a token-usage export (identities must match)")
     tui.add_argument("--file", required=True); tui.add_argument("--json", action="store_true")
+    tusy = tusub.add_parser("sync", help="explicit fetch/merge/push with the configured usage remote "
+                            "(trusted operator/orchestrator only)")
+    tusy.add_argument("--remote", help="usage remote name (default: token_usage_remote config, then origin)")
+    tusy.add_argument("--json", action="store_true")
     tust = tusub.add_parser("status", help="usage store, collection and sync freshness")
     tust.add_argument("--json", action="store_true")
     usage = sub.add_parser("usage", help="inspect read-only local quota observations")

@@ -36,6 +36,8 @@ case "$cmd" in has-session) exit 1 ;; *) : ;; esac
 STUB
 chmod +x "$work/bin/bd" "$work/bin/tmux"
 export PATH="$work/bin:$PATH" HOME="$work/home"
+# This suite may itself run inside a supervised session; start as a plain operator shell.
+unset NOGG_SESSION_NAME NOGG_SESSION_ROLE NOGG_SESSION_AGENT NOGG_SESSION_ROOT NOGG_OPENSPEC_FENCE
 mkdir -p "$HOME"
 
 fail=0
