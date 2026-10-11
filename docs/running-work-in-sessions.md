@@ -388,3 +388,30 @@ PR also needs explicit local integration evidence: the operator records
 `integration_evidence` with `commit` (the full current HEAD SHA) and `target_ref`
 (`refs/heads/develop`) in the session record. Sweep verifies a clean worktree and
 that this commit is an ancestor of the target; the record alone is insufficient.
+
+## Explicit CI check observations
+
+Plain `session sweep` never reports check details. The explicit remote check
+path is:
+
+```bash
+./scripts/nogg session sweep --checks
+./scripts/nogg session checks-ack <name> [--fingerprint <fingerprint>]
+```
+
+`sweep --checks` looks up the PR for each running session's branch and prints
+its status (`passing`, `failing`, `pending`, `no-pr` or `unknown`), the PR head
+SHA and a check/run fingerprint. The fingerprint covers the head SHA and each
+check's name, outcome and run URL, so a new run (including a re-run that fails
+again) gets a new fingerprint. The observation is cached in
+`<session>.checks.json` beside the session record.
+
+Observing never acknowledges. A fingerprint stays `unchecked` until an operator
+runs `session checks-ack`, which acknowledges exactly the cached observation
+without a remote call (and refuses a `--fingerprint` that no longer matches).
+A lookup failure, ambiguous PRs or unparseable output is cached as `unknown`
+and can be neither acknowledged nor read as success.
+
+`doctor` reuses the cache and makes no check call. It prints a NOTE for a running
+session whose checks are unknown, unchecked, or stale (older than
+`session_checks_stale_seconds`, default 1800).
