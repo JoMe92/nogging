@@ -32,3 +32,11 @@
   - Bead note:
     commit 1eb9804; tier procedure in orchestrator prompt, /orchestrate, operating-model Orchestration; docs/model-selection.md launch/procedure/quota/drift sections; session+architecture+README docs updated. scripts/model-selection.test.sh new check (docs vs CLI help + procedure in 3 sources) ok; scripts/test exit 0 (all script tests passed).
     PR #98 closed (invariants: branch name must match change dir); reopened from feat/automatic-model-and-effort-selection (fast-forward of merged 0c50a40 to 1eb9804).
+
+<!-- nogg:SPEC-2u2m:2026-10-11T14:09:42Z -->
+- 2026-10-11T14:14:44+00:00 — SPEC-2u2m closed for TASK-MES-006 (Bead closed at 2026-10-11T14:09:42Z).
+  - implementation commits: 4fc3e90
+  - Bead note:
+    progress: claimed bead; allocating dedicated worktree
+    progress: worktree allocated at /home/jome/src/nogging-spec-2u2m; inspecting task requirements and existing tests
+    commit 4fc3e90: verified packed init/update scaffold, tier launch across agents, precedence and refusals in scripts/packed-model-selection.test.sh; recorded acceptance evidence in docs/acceptance/2026-10-11-automatic-model-and-effort-selection.md; full scripts/test green.

@@ -8,7 +8,7 @@
 
 ## 3. Provenance and operator guidance
 
-- [ ] TASK-CRE-003 Add reasoning_effort_source and backward-compatible record/list rendering for Claude/Codex; document custom profile JSON, override/default behavior, CLI version and limitations in session guidance/architecture. Verify launch/profile/default/Codex/legacy cases, other-agent display and examples. Depends on TASK-CRE-002; see design decision 4 and delta provenance requirement.
+- [x] TASK-CRE-003 Add reasoning_effort_source and backward-compatible record/list rendering for Claude/Codex; document custom profile JSON, override/default behavior, CLI version and limitations in session guidance/architecture. Verify launch/profile/default/Codex/legacy cases, other-agent display and examples. Depends on TASK-CRE-002; see design decision 4 and delta provenance requirement.
 
 ## 4. Installed and live verification
 
