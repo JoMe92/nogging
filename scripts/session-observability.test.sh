@@ -865,7 +865,7 @@ m.session_records = lambda: [
 ]
 m.tmux_sessions = lambda: {'sess-blocked'}
 m.bead_change = lambda bead_id: 'demo-change'
-m.beads = lambda: [{'id': 'B2', 'labels': ['openspec:change:demo-change', 'openspec:task:TASK-OBS-B2'], 'status': 'open'}, {'id': 'B3', 'labels': ['openspec:change:demo-change', 'openspec:task:TASK-OBS-B3'], 'status': 'blocked'}]
+m.beads = lambda: [{'id': 'B2', 'labels': ['openspec:change:demo-change', 'openspec:task:TASK-OBS-B2'], 'status': 'open', 'dependencies': [{'type': 'blocks', 'depends_on_id': 'B3'}]}, {'id': 'B3', 'labels': ['openspec:change:demo-change', 'openspec:task:TASK-OBS-B3'], 'status': 'blocked'}]
 m.task_map = lambda **kwargs: ({'TASK-OBS-B2': {'change': 'demo-change'}, 'TASK-OBS-B3': {'change': 'demo-change'}}, [])
 m.pending_input_text = lambda name, agent: 'draft text'
 m._idle_minutes = lambda rec: None
@@ -875,7 +875,7 @@ with contextlib.redirect_stdout(buf):
 print(buf.getvalue().strip())
 ")
 [[ "$got" == "sess-blocked: bead-blocked (B3)  has-unsent-input=yes  idle for unknown" ]] \
-  && ok "sweep: a blocked sibling Bead reports bead-blocked, naming it" \
+  && ok "sweep: a blocked dependency reports bead-blocked, naming it" \
   || bad "sweep: bead-blocked line was: $got"
 
 got=$(run_py "
@@ -918,7 +918,7 @@ m.tmux_sessions = lambda: {'sess-complete', 'sess-blocked', 'sess-manual', 'sess
 def fake_change_beads(change):
     return {
         'demo-complete': [{'id': 'B1', 'status': 'closed'}],
-        'demo-blocked': [{'id': 'B2', 'status': 'open'}, {'id': 'B5', 'status': 'blocked'}],
+        'demo-blocked': [{'id': 'B2', 'status': 'open', 'dependencies': [{'type': 'blocks', 'depends_on_id': 'B5'}]}, {'id': 'B5', 'status': 'blocked'}],
         'demo-manual': [{'id': 'B3', 'status': 'open'}],
         'demo-active': [{'id': 'B4', 'status': 'open'}],
     }[change]
@@ -935,8 +935,8 @@ m.task_map = lambda **kwargs: ({'TASK-OBS-' + issue['id']: {'change': m.mapping(
 m.bead_change = lambda bead_id: {
     'B1': 'demo-complete', 'B2': 'demo-blocked', 'B3': 'demo-manual', 'B4': 'demo-active',
 }[bead_id]
-m._session_worktree_branch = lambda rec: None
-m._pr_state_for_branch = lambda branch: None
+m._session_worktree_branch = lambda rec: 'feat/demo'
+m._pr_state_for_branch = lambda branch: 'MERGED'
 def fake_classify_session(rec, live=None):
     if rec['name'] == 'sess-manual':
         return ('awaiting_manual_approval', '')

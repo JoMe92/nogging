@@ -1360,14 +1360,15 @@ class ChangeCompletion:
     blocking_ids: tuple[str, ...] = ()
     reason: str = ""
 
-def change_completion(change, tasks, issues):
+def change_completion(change, tasks, issues, scope_tasks=None):
     """Approved mapped tasks plus their explicit blocking dependency closure.
 
     Non-task follow-ups have no effect unless reachable through a blocking
     edge. Unknown tracker/edge state cannot establish completion.
     """
     approved = {task for task, info in tasks.items()
-                if info["change"] == change and not info.get("archived")}
+                if info["change"] == change and (scope_tasks is not None or not info.get("archived"))
+                and (scope_tasks is None or task in scope_tasks)}
     if not approved:
         return ChangeCompletion(False, reason="no approved live tasks")
     by_id, mapped = {}, {}
@@ -1386,6 +1387,8 @@ def change_completion(change, tasks, issues):
         if classified.task in approved and classified.change != change:
             return ChangeCompletion(False, reason="task owner mismatch")
         if classified.change == change:
+            if scope_tasks is not None and classified.task not in approved:
+                continue
             if classified.task not in approved or classified.task in mapped:
                 return ChangeCompletion(False, reason="missing or duplicate approved mapping")
             mapped[classified.task] = issue
@@ -3672,9 +3675,19 @@ def specialist_kickoff_message(bead_id):
             "Do not claim, re-status, close or commit any Bead, select sibling tasks, or edit openspec/. "
             "Return your structured result and validation evidence to the Main Worker.")
 
-def session_kickoff(name, message=None):
+def session_kickoff(name, message=None, change=None):
     """Send one kickoff only, after the runtime's startup turn finishes."""
     path, rec = _require_running(name)
+    if change is not None:
+        if (rec.get("role") or "lead") != "lead" or bead_change(rec.get("bead_id")) != change:
+            raise RuntimeError("change scope requires a lead session assigned to that change")
+        message = message or (f"Implement all mapped tasks in authorized change {change} in tasks.md order. "
+                              "Follow the implementation, validation, commit and close protocol.")
+        session_kickoff(name, message)
+        _, rec = load_session(name)
+        rec["authorized_change"] = change
+        write_session(path, rec)
+        return
     if rec.get("agent") != "antigravity":
         return _session_kickoff(name, message)
     await_antigravity_first_turn(name)
@@ -3740,16 +3753,55 @@ def _session_worktree_branch(rec):
     res = run("git", "-C", rec.get("working_dir") or ".", "branch", "--show-current", check=False)
     return res.stdout.strip() or None if res.returncode == 0 else None
 def _pr_state_for_branch(branch):
-    """The `state` of a pull request headed at `branch`, or None if `gh`
-    found none or the lookup failed — e.g. a branch never pushed yet."""
-    res = run("gh", "pr", "list", "--head", branch, "--json", "state", check=False)
+    """All PR states, including merged/closed; lookup failure is unknown."""
+    res = run("gh", "pr", "list", "--head", branch, "--base", "develop", "--state", "all",
+              "--json", "state,statusCheckRollup,headRefOid", check=False)
     if res.returncode != 0:
         return None
     try:
         rows = json.loads(res.stdout or "[]")
-    except ValueError:
+        if not isinstance(rows, list):
+            return None
+        if not rows:
+            return "ABSENT"
+        # A reopened/reused branch must never inherit an older merged PR.
+        if any(row.get("state") == "OPEN" for row in rows):
+            return "OPEN"
+        if len(rows) != 1:
+            return None
+        row = rows[0]
+        head = run("git", "rev-parse", "--verify", f"refs/heads/{branch}", check=False)
+        if head.returncode or not row.get("headRefOid") or head.stdout.strip() != row["headRefOid"]:
+            return None
+        checks = row.get("statusCheckRollup")
+        if not isinstance(checks, list):
+            return None
+        for check in checks:
+            outcome = check.get("conclusion") or check.get("state")
+            if outcome not in ("SUCCESS", "NEUTRAL", "SKIPPED"):
+                return "CHECKS_UNRESOLVED"
+        return row.get("state")
+    except (ValueError, TypeError, AttributeError):
         return None
-    return rows[0].get("state") if rows else None
+
+def _local_integration_verified(rec):
+    """Verify an operator-recorded no-PR integration against local Git."""
+    evidence = rec.get("integration_evidence")
+    if not isinstance(evidence, dict):
+        return False
+    commit, target = evidence.get("commit"), evidence.get("target_ref")
+    if not isinstance(commit, str) or not re.fullmatch(r"[0-9a-f]{40}", commit):
+        return False
+    if target != "refs/heads/develop":
+        return False
+    cwd = rec.get("working_dir") or "."
+    head = run("git", "-C", cwd, "rev-parse", "HEAD", check=False)
+    clean = run("git", "-C", cwd, "status", "--porcelain", check=False)
+    return (head.returncode == 0 and head.stdout.strip() == commit
+            and clean.returncode == 0 and not clean.stdout.strip()
+            and run("git", "-C", cwd, "merge-base", "--is-ancestor", commit,
+                    target, check=False).returncode == 0)
+
 def _idle_minutes(rec):
     """Minutes since a session's worktree or log file last changed, whichever
     is more recent. None if neither can be determined — the caller then
@@ -3773,28 +3825,38 @@ def _idle_minutes(rec):
         return None
     return max(0, int((time.time() - newest) // 60))
 def _sweep_state(rec):
-    """`change-complete` / `bead-blocked (<id>)` / `active` for one running,
-    Bead-assigned session — the classification half of a sweep line, shared
-    with `doctor`'s NOTEs (design.md Decision 4: one detection function, two
-    call sites)."""
-    change = bead_change(rec.get("bead_id"))
-    if not change:
-        return "active"
+    """Read-only proof for the assigned mapped task or explicit change scope."""
     try:
         tasks, duplicates = task_map(include_archived=True)
-        if duplicates:
+        issues = beads()
+        assigned = [issue for issue in issues if str(issue_id(issue)) == rec.get("bead_id")]
+        if duplicates or len(assigned) != 1:
+            return "active (work evidence unknown)"
+        classified = classify_mapping(assigned[0])
+        if classified.kind != "mapped" or classified.task not in tasks:
+            return "active (work evidence unknown)"
+        change = classified.change
+        authorized = rec.get("authorized_change")
+        specialist = (rec.get("role") or "lead").startswith("specialist:")
+        if authorized and authorized != change:
+            return "active (work scope unknown)"
+        scope = None if authorized and not specialist else {classified.task}
+        completion = change_completion(change, tasks, issues, scope_tasks=scope)
+        if completion.blocking_ids:
+            return f"bead-blocked ({completion.blocking_ids[0]})"
+        if not completion.complete:
+            if completion.reason != "mapped work or blocking dependencies unresolved":
+                return "active (work evidence unknown)"
             return "active"
-        completion = change_completion(change, tasks, beads())
-    except Exception:
-        return "active"  # best-effort UI must never invent completion
-    if completion.blocking_ids:
-        return f"bead-blocked ({completion.blocking_ids[0]})"
-    if completion.complete:
         branch = _session_worktree_branch(rec)
         pr_state = _pr_state_for_branch(branch) if branch else None
-        if pr_state is None or pr_state == "MERGED":
+        if pr_state == "MERGED" or (pr_state == "ABSENT" and _local_integration_verified(rec)):
             return "change-complete"
-    return "active"
+        if pr_state is None or pr_state == "ABSENT":
+            return "active (integration unknown)"
+        return "active"
+    except Exception:
+        return "active (work evidence unknown)"
 def _sweep_line(rec):
     """One `session sweep` report line for a single running, Bead-assigned
     session (design.md Decision 4)."""
@@ -4750,6 +4812,7 @@ def main():
     snud.add_argument("name"); snud.add_argument("--message")
     skick = ssub.add_parser("kickoff")
     skick.add_argument("name"); skick.add_argument("--message")
+    skick.add_argument("--change", help="explicitly authorize the assigned lead to execute the whole change")
     ssub.add_parser("sweep")
     srw = ssub.add_parser("resume-when-ready")
     srw.add_argument("name"); srw.add_argument("--message")
@@ -4810,7 +4873,7 @@ def session_cmd(args):
     elif args.session_command == "nudge":
         session_nudge(args.name, args.message)
     elif args.session_command == "kickoff":
-        session_kickoff(args.name, args.message)
+        session_kickoff(args.name, args.message, args.change)
     elif args.session_command == "sweep":
         session_sweep()
     elif args.session_command == "resume-when-ready":
