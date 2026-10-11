@@ -40,3 +40,14 @@
     progress: claimed bead; allocating dedicated worktree
     progress: worktree allocated at /home/jome/src/nogging-spec-2u2m; inspecting task requirements and existing tests
     commit 4fc3e90: verified packed init/update scaffold, tier launch across agents, precedence and refusals in scripts/packed-model-selection.test.sh; recorded acceptance evidence in docs/acceptance/2026-10-11-automatic-model-and-effort-selection.md; full scripts/test green.
+
+<!-- nogg:SPEC-77zl:2026-10-11T14:49:31Z -->
+- 2026-10-11T15:35:06+00:00 — SPEC-77zl closed for TASK-MES-005 (Bead closed at 2026-10-11T14:49:31Z).
+  - implementation commits: 92b972a9ad66, 83aa738ea395
+  - Bead note:
+    progress: existing partial diff reviewed; tier precedence and pre-side-effect capability gate are present; next run required targeted and full validation, inspect results, commit and close with evidence
+    The full scripts/test runner did not complete: scripts/installed-diagnostics.test.sh launches the consumer scripts/test, which includes installed-diagnostics.test.sh again, causing unbounded nested full-suite runs. Evidence: scripts/test stalled at installed diagnostics; scripts/doctor-sandbox-diagnosis.test.sh passed on isolated rerun. Suggested follow-up: guard or exclude the recursive installed-diagnostics test in consumer self-tests.
+    commit 83aa738; scripts/session-tier.test.sh passed (including effort argv, explicit-over-tier, tier-over-profile, source launch, stale-helper refusal and resume); scripts/doctor-sandbox-diagnosis.test.sh passed; git diff --check passed. scripts/test did not complete because of the nested installed-diagnostics run. Rebase onto origin/develop was attempted and refused by the filesystem: sibling worktree paths are read-only.
+    progress: implementation committed as 83aa738; next requires a writable allocated worktree to rebase onto origin/develop, complete validation, run task-done, and resume close/push/PR handoff
+    Blocking: the allocated implementation worktree /home/jome/src/nogging-spec-77zl is outside this session filesystem writable root. Git rebase origin/develop failed with Read-only file system while replacing tracked files, so I cannot safely finish current-base validation, task-done, close, push, or open a reviewable PR in the authorized worktree. Resume in a session whose writable root includes this allocated worktree.
+    commit 92b972a9ad6633b66c5b232f185dc41b12cbd6b7; Claude tier effort forwarded via wrapper --effort (source launch), explicit --effort > tier > profile, stale helper refuses before side effects, pending NOTE and constant removed, docs updated. Evidence: scripts/session-tier.test.sh 115 ok (argv per tier, override, profile, stale helper, resume); scripts/model-selection.test.sh passes after updating the obsolete doc-snippet check; full scripts/test: only that script failed, now fixed (rerun in isolation green).
