@@ -2520,6 +2520,151 @@ def select_session_model(cli_model, spec):
     if spec and spec.get("model") is not None:
         return spec["model"], "profile"
     return None, "runtime-default"
+# The researched model-selection rule table (change
+# automatic-model-and-effort-selection, design decisions 1-3). Shipped as
+# templates/model-selection.json and scaffolded to the path below only when
+# absent, so a consumer's edits survive `update`. The JSON is authoritative;
+# docs/model-selection.md mirrors it.
+MODEL_SELECTION_PATH = ".nogging/model-selection.json"
+MODEL_SELECTION_TIERS = ("routine", "standard", "complex")
+MODEL_SELECTION_AGENTS = ("claude", "codex", "antigravity")
+CLAUDE_EFFORTS = ("low", "medium", "high", "xhigh", "max")
+MODEL_SELECTION_EFFORTS = {"claude": CLAUDE_EFFORTS, "codex": CODEX_REASONING_EFFORTS}
+def model_selection_errors(table):
+    """Every reason `table` is not a valid model-selection table, each naming
+    the offending entry. An empty list means the table is valid."""
+    errors = []
+    def keys(obj, where, required, optional=()):
+        if not isinstance(obj, dict):
+            errors.append(f"{where}: must be an object")
+            return False
+        for key in sorted(set(obj) - set(required) - set(optional)):
+            errors.append(f"{where}: unknown key {key!r}")
+        for key in required:
+            if key not in obj:
+                errors.append(f"{where}: missing key {key!r}")
+        return True
+    def text(value, where):
+        if not isinstance(value, str) or not value.strip() or "\n" in value:
+            errors.append(f"{where}: must be a non-empty one-line string")
+    if not keys(table, "table", ("schema", "table_version", "researched_at", "tiers", "agents")):
+        return errors
+    if "schema" in table and (type(table["schema"]) is not int or table["schema"] != 1):
+        errors.append(f"schema: unsupported value {table['schema']!r}; expected 1")
+    for key in ("table_version", "researched_at"):
+        if key in table:
+            try:
+                dt.date.fromisoformat(table[key])
+            except (TypeError, ValueError):
+                errors.append(f"{key}: must be an ISO date (YYYY-MM-DD), got {table[key]!r}")
+    if "tiers" in table and keys(table["tiers"], "tiers", MODEL_SELECTION_TIERS):
+        for tier in MODEL_SELECTION_TIERS:
+            info, where = table["tiers"].get(tier), f"tiers.{tier}"
+            if info is None or not keys(info, where, ("summary", "examples")):
+                continue
+            if "summary" in info:
+                text(info["summary"], f"{where}.summary")
+            examples = info.get("examples")
+            if "examples" in info and (not isinstance(examples, list) or not examples):
+                errors.append(f"{where}.examples: must be a non-empty list")
+            elif isinstance(examples, list):
+                for i, example in enumerate(examples):
+                    text(example, f"{where}.examples[{i}]")
+    if "agents" in table and keys(table["agents"], "agents", MODEL_SELECTION_AGENTS):
+        for agent in MODEL_SELECTION_AGENTS:
+            tiers = table["agents"].get(agent)
+            if tiers is None or not keys(tiers, f"agents.{agent}", MODEL_SELECTION_TIERS):
+                continue
+            for tier in MODEL_SELECTION_TIERS:
+                entry, where = tiers.get(tier), f"agents.{agent}.{tier}"
+                if entry is None:
+                    continue
+                if agent == "antigravity" and isinstance(entry, dict) and "effort" in entry:
+                    errors.append(f"{where}: 'effort' is not allowed; an Antigravity model "
+                                  "name carries its effort (e.g. gemini-3.8-flash-medium)")
+                    entry = {k: v for k, v in entry.items() if k != "effort"}
+                required = ("model",) if agent == "antigravity" else ("model", "effort")
+                if not keys(entry, where, required):
+                    continue
+                model = entry.get("model")
+                if "model" in entry and (
+                        not isinstance(model, str) or not model or model.startswith("-")
+                        or any(c.isspace() or not c.isprintable() for c in model)):
+                    errors.append(f"{where}.model: must be a non-empty model name without "
+                                  f"whitespace or a leading '-', got {model!r}")
+                if "effort" in entry and agent in MODEL_SELECTION_EFFORTS:
+                    allowed = MODEL_SELECTION_EFFORTS[agent]
+                    if not isinstance(entry["effort"], str) or entry["effort"] not in allowed:
+                        errors.append(f"{where}.effort: {entry['effort']!r} is not one of "
+                                      f"{', '.join(allowed)}")
+    return errors
+def load_model_selection(path=None):
+    """Read and validate the installed model-selection table. Raises a
+    RuntimeError with a remedy when it is missing, unreadable or invalid."""
+    path = Path(path) if path else ROOT / MODEL_SELECTION_PATH
+    remedy = ("restore it from the packaged templates/model-selection.json "
+              "(`nogg update` scaffolds it when absent) or fix it in a planning session")
+    def no_duplicates(pairs):
+        seen = {}
+        for key, value in pairs:
+            if key in seen:
+                raise ValueError(f"duplicate key {key!r}")
+            seen[key] = value
+        return seen
+    try:
+        table = json.loads(path.read_text(), object_pairs_hook=no_duplicates)
+    except FileNotFoundError:
+        raise RuntimeError(f"model-selection table {path} is missing; {remedy}")
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"model-selection table {path} is not valid JSON ({exc}); {remedy}")
+    errors = model_selection_errors(table)
+    if errors:
+        raise RuntimeError(f"model-selection table {path} is invalid:\n  "
+                           + "\n  ".join(errors) + f"\n{remedy}")
+    return table
+def model_selection_entry(table, agent, tier):
+    """One validated lookup as {agent, tier, model, effort}; `agy` is an alias
+    for `antigravity`, whose effort lives in the model name (effort None)."""
+    agent = "antigravity" if agent == "agy" else agent
+    if agent not in MODEL_SELECTION_AGENTS:
+        raise RuntimeError(f"model-selection table has no entries for agent {agent!r}; "
+                           f"choose one of {', '.join(MODEL_SELECTION_AGENTS)}")
+    if tier not in MODEL_SELECTION_TIERS:
+        raise RuntimeError(f"unknown tier {tier!r}; choose one of {', '.join(MODEL_SELECTION_TIERS)}")
+    entry = table["agents"][agent][tier]
+    return {"agent": agent, "tier": tier, "model": entry["model"], "effort": entry.get("effort")}
+def models_cmd(action, agent, tier, as_json, path=None):
+    """`nogg models [check] [--agent A] [--tier T] [--json]`: print the table,
+    a filtered view or one lookup; `check` only validates. Read-only, no probe."""
+    table = load_model_selection(path)
+    if action == "check":
+        location = Path(path) if path else ROOT / MODEL_SELECTION_PATH
+        print(f"model-selection table {location} is valid "
+              f"(table_version {table['table_version']}, {len(MODEL_SELECTION_TIERS)} tiers x "
+              f"{len(MODEL_SELECTION_AGENTS)} agents)")
+        return
+    agents = [agent] if agent else list(MODEL_SELECTION_AGENTS)
+    tiers = [tier] if tier else list(MODEL_SELECTION_TIERS)
+    entries = [model_selection_entry(table, a, t) for t in tiers for a in agents]
+    if as_json:
+        if agent and tier:
+            print(json.dumps(entries[0], indent=2))
+        elif not agent and not tier:
+            print(json.dumps(table, indent=2))
+        else:
+            print(json.dumps({"table_version": table["table_version"],
+                              "researched_at": table["researched_at"],
+                              "entries": entries}, indent=2))
+        return
+    if not (agent and tier):
+        print(f"model-selection table_version={table['table_version']} "
+              f"researched_at={table['researched_at']}")
+    for e in entries:
+        effort = f" effort={e['effort']}" if e["effort"] else ""
+        print(f"{e['tier']:<9} {e['agent']:<12} model={e['model']}{effort}")
+    if not agent and not tier:
+        for t in MODEL_SELECTION_TIERS:
+            print(f"  {t}: {table['tiers'][t]['summary']}")
 CODEX_SANDBOX_MODES = ("read-only", "workspace-write", "danger-full-access")
 CODEX_APPROVAL_POLICIES = ("untrusted", "on-request", "never")
 def load_codex_spec(path):
@@ -4943,6 +5088,12 @@ def main():
         help="symlink .codex/prompts/*.md into <CODEX_HOME>/prompts/ as nogging-<name>.md")
     cpl.add_argument("--unlink", action="store_true",
         help="remove only the nogging-* prompt symlinks this command created")
+    mod = sub.add_parser("models", help="print or check the model-selection rule table (no live probe)")
+    mod.add_argument("action", nargs="?", choices=("check",),
+        help="validate the table and exit non-zero on error")
+    mod.add_argument("--agent", choices=MODEL_SELECTION_AGENTS + ("agy",))
+    mod.add_argument("--tier", choices=MODEL_SELECTION_TIERS)
+    mod.add_argument("--json", action="store_true")
     wt = sub.add_parser("worktree", help="allocate and safely manage isolated agent worktrees")
     wtsub = wt.add_subparsers(dest="worktree_command", required=True)
     wtp = wtsub.add_parser("plan", help="allocate a planning worktree from updated origin/develop")
@@ -5040,6 +5191,7 @@ def main():
     elif args.command == "materialize": materialize(args.change)
     elif args.command == "task-done": task_done(args.bead_id)
     elif args.command == "codex-prompts-link": codex_prompts_link(args.unlink)
+    elif args.command == "models": models_cmd(args.action, args.agent, args.tier, args.json)
     elif args.command == "worktree":
         if args.worktree_command == "plan": planning_worktree(args.planning_id, args.description, args.path)
         elif args.worktree_command == "implement": implementation_worktree(args.bead_id, args.branch, args.path)

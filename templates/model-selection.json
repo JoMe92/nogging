@@ -1,0 +1,57 @@
+{
+  "schema": 1,
+  "table_version": "2026-10-11",
+  "researched_at": "2026-10-11",
+  "tiers": {
+    "routine": {
+      "summary": "Mechanical, fully specified, low blast radius.",
+      "examples": [
+        "docs and text edits",
+        "renames",
+        "config tweaks",
+        "a one-file fix with an obvious test",
+        "archive steps",
+        "discovery triage",
+        "re-running checks"
+      ]
+    },
+    "standard": {
+      "summary": "A normal feature or bug Bead with a clear spec; use it when unsure between routine and standard.",
+      "examples": [
+        "a feature or bug Bead with a clear spec",
+        "multi-file work within one component",
+        "a revision of an existing OpenSpec change"
+      ]
+    },
+    "complex": {
+      "summary": "Ambiguous or cross-cutting work, or any relaunch after a failed or stalled attempt.",
+      "examples": [
+        "planning a new capability",
+        "architecture",
+        "concurrency or locking",
+        "security or sandbox work",
+        "failure recovery",
+        "non-reproducible failures",
+        "acceptance runs",
+        "a relaunch after a session failed or stalled on the same task"
+      ]
+    }
+  },
+  "agents": {
+    "claude": {
+      "routine": {"model": "claude-sonnet-5-5", "effort": "low"},
+      "standard": {"model": "claude-sonnet-5-5", "effort": "high"},
+      "complex": {"model": "claude-opus-5-5", "effort": "xhigh"}
+    },
+    "codex": {
+      "routine": {"model": "gpt-6-luna", "effort": "low"},
+      "standard": {"model": "gpt-6-luna", "effort": "medium"},
+      "complex": {"model": "gpt-6.1-sol", "effort": "high"}
+    },
+    "antigravity": {
+      "routine": {"model": "gemini-3.8-flash-low"},
+      "standard": {"model": "gemini-3.8-flash-medium"},
+      "complex": {"model": "gemini-3.8-flash-high"}
+    }
+  }
+}
