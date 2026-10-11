@@ -16,6 +16,7 @@ module.exports = {
   // Individual files copied verbatim.
   verbatim: [
     'scripts/nogg',
+    'scripts/nogg_usage.py',
     'scripts/session-launch',
     'scripts/openspec-sandbox',
     'scripts/session-log-writer',

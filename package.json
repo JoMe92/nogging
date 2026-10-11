@@ -30,6 +30,7 @@
     "templates/systemd/nogg-sync.service.tmpl",
     "templates/systemd/nogg-sync.timer.tmpl",
     "scripts/nogg",
+    "scripts/nogg_usage.py",
     "scripts/install-hooks",
     "scripts/test",
     "scripts/nogg.test.sh",
