@@ -209,8 +209,10 @@ model-selection table pick the model and effort:
 Tiers are `routine`, `standard` and `complex`. Per field, an explicit `--model`
 still beats the tier, and the tier beats the profile and the runtime default.
 Codex gets the tier effort as its `model_reasoning_effort`; Antigravity gets a
-model whose name carries the thinking level; Claude gets the tier model, and a
-`NOTE` says its tier effort is not applied until Claude effort forwarding lands.
+model whose name carries the thinking level; Claude gets the tier model and the
+tier effort (as its native `--effort`, source `launch`; an explicit `--effort`
+beats the tier, and a helper without `claude-effort-forwarding` refuses rather
+than drop it).
 Pi has no table, so `--tier` with `--agent pi` refuses, as do an unknown tier
 and a missing or invalid table — all before any side effect. The record stores
 `selection_tier` and `session list` shows `tier=<tier>` in the `MODEL` cell. The

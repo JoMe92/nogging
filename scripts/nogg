@@ -2815,9 +2815,6 @@ def model_selection_notes():
                 notes.append(f"model-selection: {agent} {tier} model {model} is not listed by "
                              f"{source}; it may be retired - revise the table in a planning session")
     return notes
-# Claude effort forwarding ships with change support-claude-reasoning-effort
-# (TASK-CRE-002/003); until then a Claude tier applies its model only.
-CLAUDE_TIER_EFFORT_PENDING = "support-claude-reasoning-effort"
 def resolve_launch_tier(tier, agent, resume=None):
     """Resolve `session launch --tier` for an already resolved agent, before any
     side effect. Returns `{tier, model, effort}`; refuses (with a remedy) an
@@ -3446,8 +3443,10 @@ def _session_launch(role, bead, cwd, read_only, owner,
     reasoning_effort_source = "profile" if reasoning_effort is not None else "runtime-default"
     # Codex effort: tier over profile `model_reasoning_effort` over runtime
     # default; it travels through the wrapper's existing --reasoning-effort.
-    # A Claude tier effort is reported, not applied, until Claude effort
-    # forwarding exists; Antigravity's effort is part of its model name.
+    # Claude effort: explicit `--effort` over tier over profile `effort` over
+    # runtime default; it travels as the wrapper's `--effort` under the
+    # `claude-effort-forwarding` contract check. Antigravity's effort is part
+    # of its model name.
     tier_effort = tier_selection and tier_selection["effort"]
     if agent == "codex" and tier_effort is not None:
         reasoning_effort = tier_effort
@@ -3455,7 +3454,9 @@ def _session_launch(role, bead, cwd, read_only, owner,
     elif agent == "claude":
         reasoning_effort = selected_effort
         reasoning_effort_source = effort_source
-    unapplied_tier_effort = tier_effort if agent == "claude" and reasoning_effort is None else None
+        if effort is None and tier_effort is not None:
+            reasoning_effort = tier_effort
+            reasoning_effort_source = "launch"
     if agy_spec and Path(profile_path).name == "restricted.agy.toml" and agy_spec["approval"] != "ask":
         raise RuntimeError("Antigravity restricted profile requires ask approval")
     if resume is not None and agent not in ("claude", "antigravity"):
@@ -3657,8 +3658,8 @@ def _session_launch(role, bead, cwd, read_only, owner,
         # the launch request, never a later interactive change.
         "reasoning_effort_source": (
             reasoning_effort_source if agent in ("claude", "codex") else None),
-        # The `--tier` this launch resolved (or null). A Claude tier effort that
-        # was not applied is kept so an exact resume reuses the same selection.
+        # The `--tier` this launch resolved (or null), with its table effort,
+        # kept so an exact resume reuses the same selection.
         "selection_tier": tier_selection and tier_selection["tier"],
         "selection_tier_effort": tier_effort,
         "usage_gate": usage_gate,
@@ -3724,11 +3725,7 @@ def _session_launch(role, bead, cwd, read_only, owner,
     print(f"  attach: {tmux_bin()} -L {tmux_socket()} attach -t {name}  (or: nogg session attach {name})")
     if tier_selection:
         print(f"  tier={tier_selection['tier']} model={selected_model}"
-              + (f" effort={reasoning_effort}" if agent == "codex" and reasoning_effort else ""))
-    if unapplied_tier_effort:
-        print(f"NOTE: tier {tier_selection['tier']} Claude effort '{unapplied_tier_effort}' is not "
-              f"applied: Claude effort forwarding is pending change {CLAUDE_TIER_EFFORT_PENDING}; "
-              "the tier model was applied and Claude uses its own default effort.")
+              + (f" effort={reasoning_effort}" if agent in ("codex", "claude") and reasoning_effort else ""))
     if (role_meta == "lead" or role_meta.startswith("specialist:")) and not (
             profile or prompt or full_access):
         print(f"⚠ {name} launched in restricted/manual mode — it will not act "
