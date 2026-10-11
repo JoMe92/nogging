@@ -9,7 +9,7 @@ Defines agent selection and runtime-specific launch authority while preserving s
 ### Requirement: A supervised session runs the selected agent
 
 `scripts/specforge session launch` SHALL accept an `--agent` option with the
-values `claude`, `codex`, and `pi`. When `--agent` is absent, launch SHALL use
+values `claude`, `codex`, `pi`, and `antigravity` (with `agy` accepted as an alias normalized to `antigravity`). When `--agent` is absent, launch SHALL use
 the `session_agent` value from `.specforge/config.json`, defaulting to
 `claude`. The chosen agent SHALL be recorded in the session metadata and
 SHALL be shown by `session list`. A launch with `--agent claude`, or with no
@@ -50,6 +50,11 @@ removing or reordering any existing hook entry already in that file.
   `Notification` hook entries invoking `session emit`
 - **AND** every hook entry the selected profile already specified is still
   present and in its original order
+
+#### Scenario: Antigravity is selected explicitly
+
+- **WHEN** session launch runs with --agent agy or --agent antigravity
+- **THEN** a supervised Antigravity process starts and records antigravity as its agent
 
 ### Requirement: Authority levels resolve per agent
 
