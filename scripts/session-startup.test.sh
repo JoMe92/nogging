@@ -20,7 +20,7 @@ with tempfile.TemporaryDirectory(prefix="nogg startup ") as directory:
     config["session_tmux_socket"] = sock
     config["beads_command"] = str(root / "bin/bd")
     (root / ".nogging/config.json").write_text(json.dumps(config))
-    for name in ("nogg", "session-launch", "session-log-writer", "openspec-sandbox"):
+    for name in ("nogg", "nogg_usage.py", "session-launch", "session-log-writer", "openspec-sandbox"):
         shutil.copy2(source / "scripts" / name, root / "scripts" / name)
     # Exercise real tmux/startup logging independently of host mount support.
     # Preserve helper contract checks; dedicated fence tests use the real helper.
