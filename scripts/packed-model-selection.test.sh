@@ -97,7 +97,8 @@ while True:
         'model_reasoning_effort = "turbo"\n')
 
     def snapshot():
-        files = sorted(p for base in (profiles, home) for p in base.rglob("*") if p.is_file())
+        files = sorted(p for base in (profiles, home) for p in base.rglob("*")
+                       if p.is_file() and ".cache/nogging/usage" not in p.as_posix())
         return {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in files}
 
     def records():
@@ -151,10 +152,10 @@ while True:
                "runtime-default")
         launch("codex override with profile effort", "codex",
                ["--profile", str(profiles / "model.codex.toml"), "--model", "gpt-6-luna"],
-               ["--model", "gpt-6-luna"], ["gpt-6-sol"], "launch", "gpt-6-luna effort=high")
+               ["--model", "gpt-6-luna"], ["gpt-6-sol"], "launch", "gpt-6-luna effort=high (profile)")
         launch("codex profile effort argv", "codex",
                ["--profile", str(profiles / "model.codex.toml")],
-               ["-c", 'model_reasoning_effort="high"'], [], "profile", "gpt-6-sol effort=high")
+               ["-c", 'model_reasoning_effort="high"'], [], "profile", "gpt-6-sol effort=high (profile)")
         launch("codex legacy profile", "codex", [], [], ["--model"], "runtime-default",
                "runtime-default")
         launch("pi model override", "pi", ["--model", "pi-model-x"], ["--model", "pi-model-x"],

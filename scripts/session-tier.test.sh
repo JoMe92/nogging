@@ -207,7 +207,7 @@ cat >"$root/.nogging/state/sessions/legacy.json" <<'LEG'
 LEG
 legacy_before=$(sha256sum <"$root/.nogging/state/sessions/legacy.json")
 "$nogg" session list >"$out" 2>&1
-grep -E "SPEC-tier .*gpt-6.1-sol effort=high tier=complex" "$out" >/dev/null \
+grep -E "SPEC-tier .*gpt-6.1-sol effort=high \(launch\) tier=complex" "$out" >/dev/null \
   && ok "list shows tier=complex alongside the model" || bad "list shows tier"
 grep -E "^legacy .*old-model +profile" "$out" >/dev/null && ! grep -E "^legacy .*tier=" "$out" >/dev/null \
   && ok "legacy record keeps the prior display" || bad "legacy display"

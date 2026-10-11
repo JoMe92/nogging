@@ -172,7 +172,9 @@ product decision.
   `started_at`, `working_dir`, redacted `command`, `owner`, `state` (one of
   `starting`, `running`, `idle`, `stopped`, `failed`, `retired`), `log_path`,
   the model selection (`requested_model`, `model_source`, `reasoning_effort`,
-  and `selection_tier` for a `--tier` launch resolved from the
+  `reasoning_effort_source` — `launch`, `profile` or `runtime-default`, written
+  for Claude and Codex only and describing the launch request, not later
+  interactive changes — and `selection_tier` for a `--tier` launch resolved from the
   model-selection table, see `model-selection.md`),
   and `ended_at`/`exit_reason` on a terminal state. Written before the Claude
   process is exec'd and updated on every transition. The store is local state
