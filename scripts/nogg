@@ -3321,10 +3321,16 @@ def token_usage_command(args):
         require_usage_sync_authority()   # recovery writes facts a trusted sync may later push
         meta, _ = rep.load_facts(store)
         with open(args.file) as fh:
-            project, records = rep.import_records(fh, meta)
+            project, records, registry = rep.import_records(fh, meta)
         # A recovered store adopts the export's project identity.
         store.initialize(project_id=None if meta else project)
-        added = store.append(records)
+        store.register_devices(registry["devices"])
+        added = 0
+        for start in range(0, len(records), 200):   # bounded transactions; replay is idempotent
+            chunk = records[start:start + 200]
+            owners = {v["source_id"]: registry["source_owners"][v["source_id"]] for _, v in chunk
+                      if v["source_id"] in registry["source_owners"]}
+            added += store.append(chunk, owners or None)
         print(json.dumps({"schema": "nogg.token-usage.import/v1", "facts": len(records), "added": added})
               if args.json else f"imported {len(records)} fact(s); {added} new (identical facts are no-ops)")
         return
@@ -3339,8 +3345,15 @@ def token_usage_command(args):
         doc = rep.session(facts, meta, args.id, now_dt, context)
         print(json.dumps(doc, indent=2, sort_keys=True) if args.json else render_usage_session(doc))
     elif args.usage_command == "export":
-        start, end = rep.window(args.from_, args.to, now_dt)
-        for line in rep.export_lines(facts, meta, start, end, now_dt):
+        if args.all:
+            if args.from_ or args.to:
+                raise RuntimeError("--all exports the whole store; drop --from/--to")
+            start = dt.datetime(1970, 1, 1, tzinfo=dt.timezone.utc)
+            end = dt.datetime(9999, 1, 1, tzinfo=dt.timezone.utc)
+        else:
+            start, end = rep.window(args.from_, args.to, now_dt)
+        registry = store.registry() if meta else {}
+        for line in rep.export_lines(facts, meta, start, end, now_dt, registry):
             print(line)
     elif args.usage_command == "status":
         counts = {table: len(rows) for table, rows in facts.items()}
@@ -5874,6 +5887,7 @@ def main():
     tue = tusub.add_parser("export", help="versioned JSONL facts for audit and recovery")
     tue.add_argument("--from", dest="from_"); tue.add_argument("--to")
     tue.add_argument("--format", choices=("jsonl",), default="jsonl")
+    tue.add_argument("--all", action="store_true", help="export the whole store (recovery-grade)")
     tui = tusub.add_parser("import", help="recover facts from a token-usage export (identities must match)")
     tui.add_argument("--file", required=True); tui.add_argument("--json", action="store_true")
     tusy = tusub.add_parser("sync", help="explicit fetch/merge/push with the configured usage remote "

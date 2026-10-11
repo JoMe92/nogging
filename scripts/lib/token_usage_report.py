@@ -129,13 +129,26 @@ class Model:
         self.boundaries = {}
         for f in facts['attribution_events']:
             self.boundaries.setdefault(f['segment_id'], []).append(f)
+        def index(event_id):
+            tail = str(event_id).rsplit(':', 1)[-1]
+            return int(tail) if tail.isdigit() else -1
         for items in self.boundaries.values():
             items.sort(key=lambda f: (ts(f['source_timestamp']) or dt.datetime.min.replace(tzinfo=dt.timezone.utc),
-                                      f['event_id']))
+                                      index(f['event_id'])))
         self.lifecycle = {}
         for f in facts['lifecycle_events']:
             self.lifecycle.setdefault(f['segment_id'], {})[f['event_id']] = f
         self.usage = facts['usage_events']
+
+    def session_key(self, segment):
+        """Grouping key: the supervised session name (all of its segments)."""
+        return (self.segments.get(segment) or {}).get('supervised_id') or segment
+
+    def segments_of(self, ident):
+        if ident in self.segments:
+            return [ident]
+        return sorted((s for s, f in self.segments.items() if f.get('supervised_id') == ident),
+                      key=lambda s: ts(self.segments[s].get('source_timestamp')) or dt.datetime.min.replace(tzinfo=dt.timezone.utc))
 
     def attribution(self, segment, stamp):
         """Latest boundary at or before stamp; None when unprovable."""
@@ -242,25 +255,31 @@ def report(facts, meta, start, end, group_by, filters, now, context=None):
 
     def row_for(key, segment=None):
         if key not in rows:
-            rows[key] = dict(empty_metrics(), wall_runtime_ms=0, runtime_quality=set(), by_model={})
+            rows[key] = dict(empty_metrics(), wall_runtime_ms=0, runtime_quality=set(), by_model={},
+                             coarse_events=0)
             if group_by == 'session':
-                seg = model.segments.get(segment) or {}
-                rows[key].update(segment_id=segment, session=seg.get('supervised_id'),
-                                 runtime=seg.get('runtime'), device=seg.get('device_id'),
+                segs = model.segments_of(key) if key in {model.session_key(s) for s in model.segments} else [segment]
+                first = model.segments.get(segs[0]) or {} if segs else {}
+                rows[key].update(session=first.get('supervised_id'), segments=segs,
+                                 runtime=first.get('runtime'), device=first.get('device_id'),
                                  attribution=[{k: b.get(k) for k in ('task_id', 'bead_id', 'change_id', 'role',
                                                'complexity', 'complexity_source', 'requested_model')}
-                                              | {'at': b.get('source_timestamp')}
-                                              for b in model.boundaries.get(segment, [])])
+                                              | {'at': b.get('source_timestamp'), 'segment_id': s}
+                                              for s in segs for b in model.boundaries.get(s, [])])
             else:
                 rows[key].update(bucket=iso(key), bucket_end=iso(key + bucket_span(group_by)))
         return rows[key]
 
-    matches = lambda usage, boundary: project_match and all(
-        dimension(model, usage, boundary, k) == v for k, v in filters.items() if k != 'project')
+    def matches(usage, boundary, keys=None):
+        return project_match and all(
+            (lambda d: d if d is not None else 'unknown')(dimension(model, usage, boundary, k)) == v
+            for k, v in filters.items() if k != 'project' and (keys is None or k in keys))
     for usage in (model.usage if project_match else []):
         stamp = ts(usage.get('source_timestamp'))
         if stamp is None:
-            coverage['untimed_events'] += 1
+            # No window can place it; count it when its own dimensions match.
+            if matches(usage, None, keys=('device', 'runtime', 'provider', 'model', 'effort')):
+                coverage['untimed_events'] += 1
             continue
         if not (start <= stamp < end):
             continue
@@ -283,9 +302,10 @@ def report(facts, meta, start, end, group_by, filters, now, context=None):
             add_usage(entry, usage)
             coarse.append(entry)
             continue
-        key = usage.get('segment_id') if group_by == 'session' else bucket_start(stamp, group_by)
+        key = model.session_key(usage.get('segment_id')) if group_by == 'session' else bucket_start(stamp, group_by)
         row = row_for(key, usage.get('segment_id'))
         add_usage(row, usage)
+        row['coarse_events'] += observed_from is not None   # disclosed, never split
         by_model = row['by_model'].setdefault(usage.get('model') or 'unknown', empty_metrics())
         add_usage(by_model, usage)
 
@@ -302,7 +322,7 @@ def report(facts, meta, start, end, group_by, filters, now, context=None):
                 if group_by == 'session':
                     piece = overlap(lo, hi, start, end)
                     if piece:
-                        row = row_for(segment, segment)
+                        row = row_for(model.session_key(segment), segment)
                         row['wall_runtime_ms'] += int(piece.total_seconds() * 1000)
                         row['runtime_quality'].add(quality)
                     continue
@@ -337,46 +357,63 @@ def report(facts, meta, start, end, group_by, filters, now, context=None):
 def session(facts, meta, ident, now, context=None):
     """Lifetime facts for one supervised session (name or segment ID)."""
     model = Model(facts)
-    segment = ident if ident in model.segments else next(
-        (s for s, f in model.segments.items() if f.get('supervised_id') == ident), None)
-    if segment is None:
+    segments = model.segments_of(ident)
+    if not segments:
         raise ReportError(f'no usage facts for session {ident!r}; run `nogg token-usage collect --session {ident}`')
     totals, by_model, untimed = empty_metrics(), {}, 0
     for usage in model.usage:
-        if usage.get('segment_id') != segment:
+        if usage.get('segment_id') not in segments:
             continue
         add_usage(totals, usage)
         add_usage(by_model.setdefault(usage.get('model') or 'unknown', empty_metrics()), usage)
         untimed += ts(usage.get('source_timestamp')) is None
-    span = model.interval(segment)
-    seg = model.segments[segment]
-    events = model.lifecycle.get(segment, {})
+    parts, runtime, qualities = [], 0, set()
+    for segment in segments:
+        span = model.interval(segment)
+        if span:
+            runtime += int((span[1] - span[0]).total_seconds() * 1000)
+            qualities.add(span[2])
+        parts.append({'segment_id': segment, 'started_at': span and iso(span[0]), 'ended_at': span and iso(span[1]),
+                      'runtime_quality': span[2] if span else 'unknown',
+                      'lifecycle': {k: {'kind': v.get('kind'), 'at': v.get('source_timestamp')}
+                                    for k, v in sorted(model.lifecycle.get(segment, {}).items())}})
+    seg = model.segments[segments[0]]
     return {'schema': SESSION_SCHEMA, 'as_of': iso(now), 'project_id': (meta or {}).get('project_id'),
-            'segment_id': segment, 'session': seg.get('supervised_id'), 'runtime': seg.get('runtime'),
-            'device': seg.get('device_id'),
-            'lifecycle': {k: {'kind': v.get('kind'), 'at': v.get('source_timestamp')} for k, v in sorted(events.items())},
-            'wall_runtime_ms': int((span[1] - span[0]).total_seconds() * 1000) if span else None,
-            'runtime_quality': span[2] if span else 'unknown',
+            'segment_id': segments[-1], 'segments': parts, 'session': seg.get('supervised_id'),
+            'runtime': seg.get('runtime'), 'device': seg.get('device_id'),
+            # Sum of observed segments: restart downtime between them is excluded.
+            'wall_runtime_ms': runtime if qualities else None,
+            'runtime_quality': ('partial' if 'partial' in qualities else 'provisional' if 'provisional' in qualities
+                                else 'complete' if qualities else 'unknown'),
             'attribution': [{k: b.get(k) for k in ('task_id', 'bead_id', 'change_id', 'planning_id', 'role',
                              'complexity', 'complexity_source', 'vocabulary_version', 'requested_model',
                              'model_source', 'configured_effort', 'selection_version', 'selection_hash')}
-                            | {'at': b.get('source_timestamp')} for b in model.boundaries.get(segment, [])],
+                            | {'at': b.get('source_timestamp'), 'segment_id': s}
+                            for s in segments for b in model.boundaries.get(s, [])],
             'totals': totals, 'by_model': by_model, 'untimed_events': untimed,
             'sources': (context or {}).get('sources', {}).get(seg.get('supervised_id'), {}),
             'notes': list(NOTES)}
 
 
-def export_lines(facts, meta, start, end, now):
+def export_lines(facts, meta, start, end, now, registry=None):
     """Versioned JSONL: header, then facts with stable identities. Usage facts
-    are selected by completion time; their segments' session facts follow."""
-    usage = [f for f in facts['usage_events'] if (ts(f.get('source_timestamp')) or end) >= start
-             and ts(f.get('source_timestamp')) is not None and ts(f['source_timestamp']) < end]
+    are selected by completion time, and untimed usage facts are always
+    included (no window can place them). Sessions whose events or observed
+    runtime overlap the window follow with all their session facts, then the
+    device and source-ownership registry rows those facts need."""
+    model = Model(facts)
+    usage = [f for f in facts['usage_events'] if ts(f.get('source_timestamp')) is None
+             or start <= ts(f['source_timestamp']) < end]
     segments = {f.get('segment_id') for f in usage}
     for table in ('lifecycle_events', 'attribution_events'):
         for f in facts[table]:
             stamp = ts(f.get('source_timestamp'))
             if stamp is not None and start <= stamp < end:
                 segments.add(f.get('segment_id'))
+    for segment in model.segments:
+        span = model.interval(segment)
+        if span and span[0] < end and max(span[1], span[0]) >= start:
+            segments.add(segment)
     segments.discard(None)
     yield json.dumps({'schema': EXPORT_SCHEMA, 'project_id': (meta or {}).get('project_id'),
                       'from': iso(start), 'to': iso(end), 'exported_at': iso(now)}, sort_keys=True)
@@ -389,12 +426,24 @@ def export_lines(facts, meta, start, end, now):
         values = {k: f[k] for k in FIELDS[table]}
         yield json.dumps({'table': table, 'fact_id': f['fact_id'], 'content_hash': f['content_hash'],
                           'fact': values}, sort_keys=True)
+    registry = registry or {}
+    sources = {f['source_id'] for _, f in selected}
+    devices = {f.get('device_id') for t, f in selected if t == 'session_segments'}
+    owners = [r for r in registry.get('source_owners', []) if r.get('source_id') in sources]
+    devices |= {r.get('device_id') for r in owners}
+    for row in registry.get('devices', []):
+        if row.get('device_id') in devices:
+            yield json.dumps({'registry': 'devices', 'row': {'device_id': row['device_id'],
+                              'hostname': row.get('hostname')}}, sort_keys=True)
+    for row in owners:
+        yield json.dumps({'registry': 'source_owners', 'row': {'source_id': row['source_id'],
+                          'device_id': row['device_id']}}, sort_keys=True)
 
 
 def import_records(lines, meta):
     """Validate an export for recovery: identities must reproduce exactly.
-    Returns (project_id, records)."""
-    records, header = [], None
+    Returns (project_id, records, registry)."""
+    records, header, registry = [], None, {'devices': [], 'source_owners': {}}
     for number, line in enumerate(lines, 1):
         if not line.strip():
             continue
@@ -409,6 +458,18 @@ def import_records(lines, meta):
                 raise ReportError('export belongs to a different usage project; refusing to merge identities')
             header = item
             continue
+        if 'registry' in item:
+            row = item.get('row') or {}
+            if item['registry'] == 'devices' and isinstance(row.get('device_id'), str):
+                registry['devices'].append(row)
+            elif item['registry'] == 'source_owners' and isinstance(row.get('source_id'), str) \
+                    and isinstance(row.get('device_id'), str):
+                if registry['source_owners'].get(row['source_id'], row['device_id']) != row['device_id']:
+                    raise ReportError(f'export line {number} lists competing owners for one source')
+                registry['source_owners'][row['source_id']] = row['device_id']
+            else:
+                raise ReportError(f'export line {number} is an unsupported registry row')
+            continue
         try:
             identity, content, _ = fact(item['table'], item['fact'])
         except (KeyError, TypeError, StoreError) as exc:
@@ -418,4 +479,4 @@ def import_records(lines, meta):
         records.append((item['table'], item['fact']))
     if header is None:
         raise ReportError('empty export')
-    return header.get('project_id'), records
+    return header.get('project_id'), records, registry

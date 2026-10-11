@@ -137,6 +137,9 @@ expect "day totals and coverage" "$(j 'd["rows"][0]["events"], d["rows"][0]["tok
 # --- export -> recovery ----------------------------------------------------------
 "$nogg" token-usage export --from "$day" --to "$next" >"$work/export.jsonl" 2>"$out" && ok "export" || bad "export"
 ! grep -q '"content"\|"text"' "$work/export.jsonl" && ok "export carries no transcript content" || bad "export content"
+"$nogg" token-usage export --all >"$work/all.jsonl" 2>"$out" && grep -q '"registry": "devices"' "$work/all.jsonl" \
+  && ok "whole-store export includes the device registry" || bad "export --all"
+refuse "export --all with a window" "drop --from/--to" export --all --from "$day" --to "$next"
 other="$work/other"; make_root "$other"
 NOGGING_ROOT="$other" "$nogg" token-usage import --file "$work/export.jsonl" --json >"$out" 2>&1 \
   && ok "import into a fresh store" || bad "import"
