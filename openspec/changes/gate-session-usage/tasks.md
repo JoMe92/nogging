@@ -2,7 +2,7 @@
 
 - [x] TASK-GSU-001 Verify installed Codex rollout/Claude statusline usage schema and implement read-only normalized adapters plus nogg usage text/JSON; test both windows, missing/stale/malformed records, timezone/reset rollover and absence of credential/transcript output.
 
-- [ ] TASK-GSU-002 Implement validated usage_gate config and cap/estimate/size-label calculation with explicit unknown policy and --ignore-usage-gate; verify supported defaults, bad configuration rejection and denied admission exit 75 before any worktree/trust/tmux/record side effect.
+- [x] TASK-GSU-002 Implement validated usage_gate config and cap/estimate/size-label calculation with explicit unknown policy and --ignore-usage-gate; verify supported defaults, bad configuration rejection and denied admission exit 75 before any worktree/trust/tmux/record side effect.
 
 - [ ] TASK-GSU-003 Add same-host atomic per-account/bucket admission reservations with lifecycle cleanup and stale-owner recovery; verify two simultaneous launches cannot both spend the final slot, failed launch releases reservation and unrelated accounts/groups are independent.
 

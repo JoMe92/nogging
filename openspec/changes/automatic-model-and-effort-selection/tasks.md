@@ -6,11 +6,11 @@
 
 - [x] TASK-MES-002 Add session launch --tier: resolve after agent resolution with --model over tier over profile over default; forward Codex effort via the wrapper's --reasoning-effort and the Antigravity model; Claude gets the model plus a NOTE about the unapplied effort; refuse Pi/unknown/invalid before side effects; record selection_tier and list tier=. Verify stub argv per agent and tier, plus legacy records. Depends on TASK-MES-001; see design decisions 4–6.
 
-- [ ] TASK-MES-003 Add doctor NOTEs for Codex catalog drift, bounded agy models drift and an installed table older than the packaged one; report unavailable sources honestly and never change the exit status. Verify fixtures for present, absent and unavailable sources. Depends on TASK-MES-002; see design decision 8 and the drift requirement.
+- [x] TASK-MES-003 Add doctor NOTEs for Codex catalog drift, bounded agy models drift and an installed table older than the packaged one; report unavailable sources honestly and never change the exit status. Verify fixtures for present, absent and unavailable sources. Depends on TASK-MES-002; see design decision 8 and the drift requirement.
 
 ## 3. Orchestrator procedure and documentation
 
-- [ ] TASK-MES-004 Require tier classification before every launch in the orchestrator launch prompt, the /orchestrate command and operating-model Orchestration (reason note, escalation, no quota downgrade); write docs/model-selection.md with the table, research and sources; update the architecture/session docs. Verify that the docs match the JSON and the CLI help. Depends on TASK-MES-003; see design decisions 2, 7 and 9.
+- [x] TASK-MES-004 Require tier classification before every launch in the orchestrator launch prompt, the /orchestrate command and operating-model Orchestration (reason note, escalation, no quota downgrade); write docs/model-selection.md with the table, research and sources; update the architecture/session docs. Verify that the docs match the JSON and the CLI help. Depends on TASK-MES-003; see design decisions 2, 7 and 9.
 
 ## 4. Claude effort and verification
 
