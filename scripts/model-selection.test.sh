@@ -193,7 +193,7 @@ doc = (root / "docs/model-selection.md").read_text()
 for snippet in ["scripts/nogg models check", "--agent agy", "--json", "session launch",
                 "--tier standard", "explicit `--model` > tier > profile `model` > runtime default",
                 "tier > profile `model_reasoning_effort` > runtime default", "selection_tier",
-                "tier=<tier>", "--agent pi", "support-claude-reasoning-effort",
+                "tier=<tier>", "--agent pi", "claude-effort-forwarding",
                 "quota never lowers a tier", "## Drift"]:
     assert snippet in doc, f"docs/model-selection.md lacks {snippet!r}"
 for rel in [".nogging/launch-prompts/orchestrator.md", ".claude/commands/orchestrate.md",
