@@ -559,7 +559,11 @@ stores no raw account identity or credentials. A launch admitted with unknown
 usage still reserves its estimate against subsequent fresh observations.
 Running sessions may already be part of `used`; their full outstanding
 estimates remain reserved conservatively, and no extra running-session count
-is added. The gate reduces risk but cannot guarantee a task fits.
+is added. The gate reduces risk but cannot guarantee a task fits. Cross-host
+coordination is unsupported in v1 even with `multi_machine: true`: the
+reservation ledger is strictly host-local, and other machines or external
+tools consuming the account's quota are only observed once local usage snapshots
+update.
 
 Configure it with the optional `usage_gate` object in `.nogging/config.json`;
 these are the defaults:
