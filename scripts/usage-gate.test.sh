@@ -39,7 +39,16 @@ cmd="${1:-}"; shift || true
 d="${TMUX_STUB_DIR:?}"; mkdir -p "$d"
 printf '%s %s\n' "$cmd" "$*" >>"$d/calls.log"
 case "$cmd" in
-  has-session) exit 1 ;;
+  has-session)
+    [[ "${1:-}" == -t ]] && shift
+    [[ "${TMUX_STUB_LIVE:-0}" == 1 && -f "$d/live-${1:-}" ]] ;;
+  new-session)
+    [[ "${TMUX_STUB_FAIL:-0}" == 1 ]] && exit 1
+    if [[ "${TMUX_STUB_LIVE:-0}" == 1 ]]; then
+      while [[ $# -gt 0 && "$1" != -s ]]; do shift; done
+      [[ "${1:-}" == -s ]] && touch "$d/live-${2:?}"
+    fi
+    exit 0 ;;
   *) : ;;
 esac
 STUB
@@ -275,5 +284,56 @@ gate = json.load(open(sys.argv[1]))['gate']
 assert gate['estimate_percent'] == 5 and gate['cap_percent'] == 92 and gate['fits'] is True
 assert [w['projected_percent'] for w in gate['windows']] == [92, 15]
 PY
+
+# TASK-GSU-003: race real launch commands, retaining a live tmux fixture.
+new_root; codex_usage "$CODEX_HOME" 87 40
+export TMUX_STUB_LIVE=1
+set +e
+"$nogg" session launch --agent codex --role lead --bead SPEC-race-a --cwd "$root" >"$work/race-a.log" 2>&1 &
+launch_a=$!
+"$nogg" session launch --agent codex --role lead --bead SPEC-race-b --cwd "$root" >"$work/race-b.log" 2>&1 &
+launch_b=$!
+wait "$launch_a"; rc_a=$?
+wait "$launch_b"; rc_b=$?
+set -e
+[[ "$rc_a:$rc_b" == 0:75 || "$rc_a:$rc_b" == 75:0 ]] \
+  && ok "concurrent launch commands admit exactly one final slot" || bad "concurrent launches ($rc_a:$rc_b)"
+"$nogg" usage --agent codex --json >"$out"
+python3 - "$out" <<'PYTEST' && ok "live reservation appears in usage projections" || bad "usage reservation projection"
+import json, sys
+report = json.load(open(sys.argv[1]))
+assert report['gate']['reserved_percent'] == 5
+assert report['gate']['decision'] == 'denied'
+assert [w['reserved_percent'] for w in report['gate']['windows']] == [5, 5]
+PYTEST
+# Terminal state releases headroom even if the tmux server still has a pane.
+python3 - "$root/.nogging/state/sessions" <<'PYTEST'
+import json, sys
+from pathlib import Path
+for path in Path(sys.argv[1]).glob('*.json'):
+    rec = json.loads(path.read_text())
+    if 'state' in rec:
+        rec['state'] = 'failed'
+        path.write_text(json.dumps(rec))
+PYTEST
+run_launch --agent codex
+[[ $rc -eq 0 ]] && ok "terminal owner releases the previous reservation" || bad "terminal reservation release"
+unset TMUX_STUB_LIVE
+
+# A tmux startup failure must release before this launcher exits; retry fits.
+new_root; codex_usage "$CODEX_HOME" 87 40
+TMUX_STUB_FAIL=1 run_launch --agent codex
+[[ $rc -eq 1 ]] && ok "failed launch reports failure" || bad "expected startup failure"
+run_launch --agent codex
+[[ $rc -eq 0 ]] && ok "failed launch returns its headroom for retry" || bad "failed launch leaked reservation"
+
+# Failure before session metadata exists returns the pending reservation too.
+new_root; codex_usage "$CODEX_HOME" 87 40
+mv "$root/scripts/session-log-writer" "$root/scripts/session-log-writer.saved"
+run_launch --agent codex
+[[ $rc -eq 1 ]] && ok "helper negotiation fails before launch" || bad "expected helper failure"
+mv "$root/scripts/session-log-writer.saved" "$root/scripts/session-log-writer"
+run_launch --agent codex
+[[ $rc -eq 0 ]] && ok "pre-record failure returns pending headroom" || bad "helper failure leaked reservation"
 
 exit $fail
