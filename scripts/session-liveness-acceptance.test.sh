@@ -32,6 +32,14 @@ fi
 python3 - "$root" <<'PY'
 import hashlib, json, os, pathlib, subprocess, sys, tarfile, tempfile, time, uuid
 
+# The installed launcher uses the Linux mount boundary openspec-sandbox;
+# mirror packed-session-launch on hosts that prohibit user namespaces.
+probe = subprocess.run(['unshare', '--user', '--map-root-user', '--mount', 'true'],
+                       capture_output=True)
+if probe.returncode:
+    print('SKIP: session liveness acceptance (host denies Linux user/mount namespaces)')
+    sys.exit(0)
+
 source = pathlib.Path(sys.argv[1])
 with tempfile.TemporaryDirectory(prefix="nogg liveness acc ") as directory:
     scratch = pathlib.Path(directory)
@@ -256,11 +264,8 @@ sys.exit(1)
             if sib_name in r_sweep.stdout:
                 break
             time.sleep(0.1)
-        if sib_name not in r_sweep.stdout:
-            curr_rec = json.loads((consumer / f".nogging/state/sessions/{sib_name}.json").read_text())
-            log_txt = (consumer / f".nogging/state/sessions/{sib_name}.log").read_text()
-            tmux_out = subprocess.run(["tmux", "-L", sock, "list-sessions"], capture_output=True, text=True).stdout
-            raise AssertionError(f"sib_name {sib_name} not in sweep stdout: {r_sweep.stdout}; rec={curr_rec}; tmux={tmux_out}; log={log_txt}")
+        assert r_sweep is not None and r_sweep.returncode == 0, f"sweep failed: code={getattr(r_sweep, 'returncode', None)}, out={getattr(r_sweep, 'stdout', None)}, err={getattr(r_sweep, 'stderr', None)}"
+        assert sib_name in r_sweep.stdout, f"sib_name {sib_name} not in sweep stdout: {r_sweep.stdout}"
         assert "active" in r_sweep.stdout, f"'active' not in sweep stdout: {r_sweep.stdout}"
         assert "bead-blocked" not in r_sweep.stdout, f"'bead-blocked' unexpectedly in sweep stdout: {r_sweep.stdout}"
 
