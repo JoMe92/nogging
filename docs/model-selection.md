@@ -83,7 +83,7 @@ Precedence, per field (highest first):
 | Field | Order |
 | --- | --- |
 | Model | explicit `--model` > tier > profile `model` > runtime default |
-| Claude effort | tier > profile > runtime default (an explicit `--effort` will sit above the tier once Claude effort forwarding lands) |
+| Claude effort | explicit `--effort` > tier > profile `effort` > runtime default |
 | Codex effort | tier > profile `model_reasoning_effort` > runtime default |
 
 An explicit `--model` over a tier is the orchestrator's documented exception,
@@ -94,10 +94,12 @@ used only on Product Owner instruction, not routine use.
   There is no public Codex `--effort` flag.
 - **Antigravity** receives the tier model, whose name carries the thinking
   level, through the existing model forwarding.
-- **Claude** receives the tier model today. Claude effort forwarding ships with
-  the `support-claude-reasoning-effort` change; until it is integrated, a
-  Claude `--tier` launch prints a `NOTE` naming the effort it did not apply and
-  that pending change, and still records the tier.
+- **Claude** receives the tier model through `--model` and the tier effort
+  through the wrapper's `--effort`, which becomes Claude's native `--effort`.
+  The effort is recorded with `reasoning_effort_source` `launch`. A helper
+  lacking the `claude-effort-forwarding` capability refuses the launch with an
+  update remedy instead of silently dropping the effort. An exact `--resume`
+  reuses the recorded tier effort.
 - **Refusals.** An unknown tier, a missing or invalid table, `--agent pi`, or an
   agent with no table entry refuses with a remedy before any worktree, trust,
   settings, record or tmux side effect.
