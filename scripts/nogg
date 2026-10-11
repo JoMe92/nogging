@@ -2198,6 +2198,51 @@ def write_session(path, rec):
             os.replace(temporary, path)
         finally:
             temporary.unlink(missing_ok=True)
+def record_session_usage(rec):
+    """If this session had usage admission and completed cleanly, record its
+    attributable usage interval in UsageHistory. Overlapping sessions, resets,
+    and outliers are rejected."""
+    if not isinstance(rec, dict) or rec.get("state") != "stopped":
+        return
+    gate = rec.get("usage_gate")
+    if not isinstance(gate, dict):
+        return
+    start_obs = gate.get("start_observation")
+    if not start_obs:
+        return
+    agent = rec.get("agent")
+    if not agent:
+        return
+    model = gate.get("model") or rec.get("requested_model")
+    sdir = ROOT / scfg("session_state_dir", ".nogging/state/sessions")
+    start_time = rec.get("started_at")
+    end_time = rec.get("ended_at")
+    overlapping = False
+    if sdir.is_dir() and start_time and end_time:
+        this_name = rec.get("name")
+        for p in sdir.glob("*.json"):
+            if p.name.endswith(".settings.json") or p.stem == this_name:
+                continue
+            try:
+                other = json.loads(p.read_text())
+                if not isinstance(other, dict) or other.get("agent") != agent:
+                    continue
+                o_start = other.get("started_at")
+                o_end = other.get("ended_at")
+                if o_start and o_start < end_time and (o_end is None or o_end > start_time):
+                    overlapping = True
+                    break
+            except (OSError, ValueError):
+                continue
+    try:
+        usage = usage_module()
+        config = usage.gate_config(CFG.get("usage_gate"))
+        end_obs = usage.observe(agent, config)
+        history = usage.UsageHistory()
+        history.record_interval(agent, model, start_obs, end_obs,
+                                overlapping=overlapping, complete=True)
+    except Exception:
+        pass
 def transition(path, rec, state, **extra):
     """Record a lifecycle-state transition durably. `starting`/`running`/`idle`
     are active states; `stopped`/`failed`/`retired` are terminal and carry
@@ -2227,6 +2272,8 @@ def transition(path, rec, state, **extra):
         token = (rec.get("usage_gate") or {}).get("reservation_id")
         if token:
             usage_module().Reservations().release(token)
+        if state == "stopped":
+            record_session_usage(rec)
         release_planning_lock(session_record=rec)
     return rec
 def bead_records(bead_id):
@@ -3238,7 +3285,7 @@ def refresh_session_usage(recs):
         except OSError:
             pass   # only rate limiting is lost; collection itself is idempotent
     return report
-def usage_gate_admission(role_meta, agent, records, ignore):
+def usage_gate_admission(role_meta, agent, records, ignore, model=None):
     """Admit or refuse a launch against the `usage_gate` config.
 
     Returns the decision recorded on the session. The config is validated for
@@ -3262,22 +3309,24 @@ def usage_gate_admission(role_meta, agent, records, ignore):
         return {"decision": "excluded"}
     labels = [label for record in records for label in record.get("labels", []) or []]
     try:
-        estimate = launch_estimate(agent, labels, config)
+        estimate = launch_estimate(agent, labels, config, model=model)
     except ValueError as exc:
         raise RuntimeError(f"usage gate: {exc}; launch refused") from exc
     if ignore:
         print("warning: --ignore-usage-gate: launching without usage admission; "
               "this is recorded on the session", file=sys.stderr)
         return {"decision": "ignored", **estimate}
+    obs = observe(agent, config)
     ledger = usage.Reservations()
-    gate = ledger.admit(observe(agent, config), config, estimate["estimate_percent"])
+    gate = ledger.admit(obs, config, estimate["estimate_percent"])
     token = gate.get("reservation_id")
     if token:
         # Any failure between admission and a live session returns headroom,
         # including helper negotiation, worktree/trust setup and record writes.
         _USAGE_PENDING[token] = ledger
     gate.update(size=estimate["size"], multiplier=estimate["multiplier"],
-                base_estimate_percent=estimate["base_percent"])
+                base_estimate_percent=estimate["base_percent"],
+                model=model, start_observation=obs)
     if gate["decision"] in ("denied", "unknown-denied"):
         raise UsageGateDenied(f"usage gate denied {agent} launch: {describe_denial(gate)}")
     if gate["decision"] == "unknown-admitted":
@@ -3432,7 +3481,7 @@ def _session_launch(role, bead, cwd, read_only, owner,
                 f"Bead {bead} has an unmet dependency on {', '.join(blocking)}; launch refused")
     # Usage admission is the last refusal before helper negotiation, worktree,
     # trust, tmux or record side effects.
-    usage_gate = usage_gate_admission(role_meta, agent, records, ignore_usage_gate)
+    usage_gate = usage_gate_admission(role_meta, agent, records, ignore_usage_gate, model=selected_model)
     # The orchestrator is a singleton: a fixed, nonce-free `nogg-orchestrator-<slug>`
     # name (a stale terminal record of the same name is reused in place). Every
     # other role gets the deterministic `sf-<role>-<bead>-<nonce>` shape.
@@ -5568,6 +5617,7 @@ def main():
     rs.add_argument("--cwd", default=str(ROOT))
     usage = sub.add_parser("usage", help="inspect read-only local quota observations")
     usage.add_argument("--agent", choices=("codex", "claude"), default="codex")
+    usage.add_argument("--model", default=None, help="inspect estimate and fit for a specific model")
     usage.add_argument("--json", action="store_true")
     sub.add_parser("validate")
     dp = sub.add_parser("doctor")
@@ -5692,7 +5742,7 @@ def main():
         credential_helper(args.slug, args.operation)
     elif args.command == "usage":
         try:
-            usage_module().usage_command(args.agent, args.json, CFG.get("usage_gate"))
+            usage_module().usage_command(args.agent, args.json, CFG.get("usage_gate"), model=args.model)
         except ValueError as exc:
             raise RuntimeError(f"invalid usage_gate in .nogging/config.json: {exc}") from exc
     elif args.command == "repo-state":

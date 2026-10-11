@@ -219,9 +219,246 @@ def size_multiplier(labels, config):
     return sizes[0], config['size_multipliers'][sizes[0]]
 
 
-def launch_estimate(agent, labels, config):
+class RecordResult(dict):
+    """Result of recording a usage interval/sample. Truthy if accepted, falsy if rejected."""
+    def __bool__(self):
+        return bool(self.get('accepted'))
+
+    @property
+    def accepted(self):
+        return bool(self.get('accepted'))
+
+    @property
+    def reason(self):
+        return self.get('reason')
+
+
+def history_key(agent, model=None):
+    if not agent or not isinstance(agent, str):
+        raise ValueError('agent must be a non-empty string')
+    if model:
+        return f"{agent}:{model}"
+    return str(agent)
+
+
+class UsageHistory:
+    """Bounded per-agent/model usage history and conservative learned medians.
+
+    Learns estimates only from complete, non-reset, attributable isolated
+    intervals per agent/model. Overlapping intervals, quota resets, and
+    outlier samples are rejected. If sample count is below `min_samples`,
+    data is insufficient and callers fall back conservatively to configured
+    estimates.
+    Never stores or exposes credentials, tokens, or raw account identifiers.
+    """
+    def __init__(self, root=None, *, min_samples=3, max_samples=20):
+        raw_root = Path(root) if root else Path(os.environ.get(
+            'XDG_CACHE_HOME', str(Path.home() / '.cache'))) / 'nogging/usage/history'
+        if raw_root.suffix == '.json':
+            self.root = raw_root.parent
+            self.file_path = raw_root
+            self.lock_path = raw_root.with_suffix('.lock')
+        else:
+            self.root = raw_root
+            self.file_path = raw_root / 'history.json'
+            self.lock_path = raw_root / 'history.lock'
+        self.min_samples = int(min_samples)
+        self.max_samples = int(max_samples)
+
+    def _transaction(self, action, *, readonly=False):
+        import fcntl
+        import tempfile
+        if readonly and not self.file_path.exists():
+            return action({})
+        if not readonly:
+            self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
+            self.root.chmod(0o700)
+        lock_fd = os.open(self.lock_path, os.O_RDONLY if readonly else os.O_CREAT | os.O_RDWR, 0o600)
+        with os.fdopen(lock_fd, 'r' if readonly else 'a+') as lock:
+            if not readonly:
+                os.fchmod(lock.fileno(), 0o600)
+            fcntl.flock(lock, fcntl.LOCK_SH if readonly else fcntl.LOCK_EX)
+            try:
+                entries = json.loads(self.file_path.read_text())
+                if not isinstance(entries, dict):
+                    raise ValueError('invalid history')
+            except FileNotFoundError:
+                entries = {'schema_version': 1, 'samples': {}}
+            except ValueError as exc:
+                raise RuntimeError('usage history store is malformed') from exc
+            result = action(entries)
+            if readonly:
+                return result
+            temporary = None
+            try:
+                with tempfile.NamedTemporaryFile(mode='w', dir=self.root, delete=False) as stream:
+                    temporary = Path(stream.name)
+                    json.dump(entries, stream, allow_nan=False, indent=2)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.chmod(temporary, 0o600)
+                os.replace(temporary, self.file_path)
+            finally:
+                if temporary:
+                    temporary.unlink(missing_ok=True)
+            return result
+
+    def get_samples(self, agent, model=None):
+        key = history_key(agent, model)
+        def action(entries):
+            samples_map = entries.get('samples', {})
+            return list(samples_map.get(key, []))
+        return self._transaction(action, readonly=True)
+
+    def has_sufficient_data(self, agent, model=None):
+        return len(self.get_samples(agent, model)) >= self.min_samples
+
+    def is_outlier(self, agent, model, delta):
+        if delta < 0 or delta > 100:
+            return True
+        samples = self.get_samples(agent, model)
+        if len(samples) < self.min_samples:
+            return False
+        import statistics
+        values = sorted(s['delta_percent'] for s in samples)
+        n = len(values)
+        med = statistics.median(values)
+        q1 = values[n // 4]
+        q3 = values[(3 * n) // 4]
+        iqr = q3 - q1
+        upper_fence = q3 + max(1.5 * iqr, med * 1.5, 5.0)
+        if delta > upper_fence:
+            return True
+        lower_fence = q1 - max(1.5 * iqr, med * 1.5, 5.0)
+        if lower_fence > 0 and delta < lower_fence:
+            return True
+        return False
+
+    def get_median(self, agent, model=None):
+        samples = self.get_samples(agent, model)
+        if len(samples) >= self.min_samples:
+            import statistics
+            values = sorted(s['delta_percent'] for s in samples)
+            return round(float(statistics.median_high(values)), 4)
+        if model:
+            agent_samples = self.get_samples(agent, None)
+            if len(agent_samples) >= self.min_samples:
+                import statistics
+                values = sorted(s['delta_percent'] for s in agent_samples)
+                return round(float(statistics.median_high(values)), 4)
+        return None
+
+    def get_estimate(self, agent, model=None, fallback=5.0):
+        med = self.get_median(agent, model)
+        return med if med is not None else fallback
+
+    def record_sample(self, agent, model, delta_percent, *,
+                      overlapping=False, reset=False, outlier=False,
+                      complete=True, recorded_at=None):
+        if not complete:
+            return RecordResult(accepted=False, reason='incomplete interval', decision='rejected')
+        if overlapping:
+            return RecordResult(accepted=False, reason='overlapping interval: concurrent sessions span interval', decision='rejected')
+        if reset:
+            return RecordResult(accepted=False, reason='reset interval: quota window reset during interval', decision='rejected')
+        if outlier is True:
+            return RecordResult(accepted=False, reason='outlier sample: explicit outlier', decision='rejected')
+
+        if isinstance(delta_percent, bool) or not isinstance(delta_percent, (int, float)):
+            raise ValueError('delta_percent must be a number')
+        if not math.isfinite(delta_percent):
+            raise ValueError('delta_percent must be finite')
+
+        if delta_percent < 0:
+            return RecordResult(accepted=False, reason='reset interval: negative delta indicates reset', decision='rejected')
+        if delta_percent > 100:
+            return RecordResult(accepted=False, reason='outlier sample: delta exceeds 100%', decision='rejected')
+
+        if self.is_outlier(agent, model, delta_percent):
+            return RecordResult(accepted=False, reason='outlier sample: deviates significantly from historical distribution', decision='rejected')
+
+        key = history_key(agent, model)
+        now_dt = dt.datetime.now(UTC)
+        now_iso = iso(now_dt) if recorded_at is None else (
+            iso(recorded_at) if isinstance(recorded_at, dt.datetime) else str(recorded_at))
+
+        sample = {
+            'delta_percent': round(float(delta_percent), 4),
+            'recorded_at': now_iso
+        }
+
+        def action(entries):
+            samples_map = entries.setdefault('samples', {})
+            items = samples_map.setdefault(key, [])
+            items.append(sample)
+            if len(items) > self.max_samples:
+                del items[:-self.max_samples]
+            return RecordResult(accepted=True, reason=None, decision='accepted', sample=sample)
+
+        return self._transaction(action)
+
+    def record_interval(self, agent, model, start_report, end_report, *,
+                        overlapping=False, concurrent_sessions=0, complete=True,
+                        now=None, outlier=None, bucket='short'):
+        if not complete:
+            return RecordResult(accepted=False, reason='incomplete interval', decision='rejected')
+        if overlapping or concurrent_sessions > 0:
+            return RecordResult(accepted=False, reason='overlapping interval: concurrent sessions span interval', decision='rejected')
+        if outlier is True:
+            return RecordResult(accepted=False, reason='outlier sample: explicit outlier', decision='rejected')
+        if start_report is None or end_report is None:
+            return RecordResult(accepted=False, reason='missing usage observation', decision='rejected')
+        if start_report.get('status') != 'known' or end_report.get('status') != 'known':
+            return RecordResult(accepted=False, reason='unknown usage observation', decision='rejected')
+
+        start_w = next((w for w in start_report.get('windows', []) if w.get('bucket') == bucket), None)
+        end_w = next((w for w in end_report.get('windows', []) if w.get('bucket') == bucket), None)
+        if not start_w or not end_w:
+            return RecordResult(accepted=False, reason=f'missing {bucket} usage window', decision='rejected')
+        if start_w.get('status') != 'known' or end_w.get('status') != 'known':
+            return RecordResult(accepted=False, reason=f'unknown {bucket} usage window', decision='rejected')
+
+        start_reset = start_w.get('resets_at')
+        end_reset = end_w.get('resets_at')
+        start_used = start_w.get('used_percent')
+        end_used = end_w.get('used_percent')
+
+        if start_reset is None or end_reset is None or start_used is None or end_used is None:
+            return RecordResult(accepted=False, reason='incomplete window data', decision='rejected')
+
+        if start_reset != end_reset:
+            return RecordResult(accepted=False, reason='reset interval: reset boundary crossed', decision='rejected')
+
+        if end_used < start_used:
+            return RecordResult(accepted=False, reason='reset interval: counter decreased', decision='rejected')
+
+        now_check = now or dt.datetime.now(UTC)
+        try:
+            reset_dt = timestamp(start_reset)
+            if now_check >= reset_dt:
+                return RecordResult(accepted=False, reason='reset interval: reset time elapsed', decision='rejected')
+        except (ValueError, TypeError):
+            pass
+
+        delta = round(end_used - start_used, 4)
+        return self.record_sample(agent, model, delta,
+                                  outlier=(outlier if outlier is not None else False),
+                                  recorded_at=end_w.get('observed_at') or now_check)
+
+    def clear(self):
+        def action(entries):
+            entries.clear()
+            entries['schema_version'] = 1
+            entries['samples'] = {}
+        self._transaction(action)
+
+
+def launch_estimate(agent, labels, config, model=None, *, history=None):
     size, multiplier = size_multiplier(labels, config)
-    base = config['estimate_percent'].get(agent, config['estimate_percent']['default'])
+    fallback = config['estimate_percent'].get(agent, config['estimate_percent']['default'])
+    hist = history if history is not None else UsageHistory()
+    learned = hist.get_median(agent, model)
+    base = learned if learned is not None else fallback
     return {'base_percent': base, 'size': size, 'multiplier': multiplier,
             'estimate_percent': base * multiplier}
 
@@ -282,17 +519,20 @@ def describe_denial(gate):
     return 'usage would exceed the cap: ' + '; '.join(parts) + f"; retry after {gate['retry_after']}"
 
 
-def usage_command(agent, json_output=False, config=None):
+def usage_command(agent, json_output=False, config=None, model=None):
     config = gate_config(config)
     report = observe(agent, config)
-    estimate = launch_estimate(agent, (), config)
+    if model:
+        report['model'] = model
+    estimate = launch_estimate(agent, (), config, model=model)
     report['gate'] = evaluate_gate(report, config, estimate['estimate_percent'], Reservations().totals(report))
     report['gate']['enabled'] = config['enabled']
     if json_output:
         print(json.dumps(report, sort_keys=True, allow_nan=False))
         return
     gate = report['gate']
-    print(f"{agent} usage (account and model-group identity unknown)")
+    target_desc = f"{agent} (model {model})" if model else agent
+    print(f"{target_desc} usage (account and model-group identity unknown)")
     for window, projection in zip(report['windows'], gate['windows']):
         if window['status'] == 'known':
             print(f"  {window['bucket']}: {window['used_percent']:g}% used; reset {window['resets_at']}; observed {window['observed_at']}; "
@@ -303,6 +543,7 @@ def usage_command(agent, json_output=False, config=None):
     print(f"  estimate {gate['estimate_percent']:g}% per launch; reserved {gate['reserved_percent']:g}%; "
           f"fits: {'unknown' if gate['fits'] is None else ('yes' if gate['fits'] else 'no')}"
           + ('' if config['enabled'] else ' (usage_gate disabled)'))
+
 
 
 def reservation_scope(report):
