@@ -182,7 +182,7 @@ class ExportTests(unittest.TestCase):
         lines = list(tr.export_lines(f.tables, META, *tr.window(at(0), at(12), NOW), NOW))
         header = json.loads(lines[0])
         self.assertEqual((header['schema'], header['project_id']), (tr.EXPORT_SCHEMA, META['project_id']))
-        project, records = tr.import_records(lines, META)
+        project, records, registry = tr.import_records(lines, META)
         self.assertEqual(project, META['project_id'])
         self.assertEqual(sorted({t for t, _ in records}),
                          ['attribution_events', 'lifecycle_events', 'session_segments', 'usage_events'])
@@ -192,6 +192,48 @@ class ExportTests(unittest.TestCase):
             tr.import_records(tampered, META)
         with self.assertRaises(ReportError):
             tr.import_records(lines, {'project_id': '22222222-2222-4222-8222-222222222222'})
+
+
+class ReviewFixTests(unittest.TestCase):
+    def test_restarted_session_aggregates_all_segments(self):
+        f = Facts()
+        f.segment('run1', 'orchestrator', start=at(1), end=at(2)).boundary('run1', 0, at(1))
+        f.segment('run2', 'orchestrator', start=at(4), end=at(4, 30)).boundary('run2', 0, at(4))
+        f.usage('run1', 'a', at(1, 30)).usage('run2', 'b', at(4, 10), model='opus')
+        doc = tr.session(f.tables, META, 'orchestrator', NOW)
+        self.assertEqual((doc['wall_runtime_ms'], [p['segment_id'] for p in doc['segments']], doc['totals']['events']),
+                         (90 * 60000, ['run1', 'run2'], 2))   # 60 + 30 minutes, downtime excluded
+        rows = report(f, at(0), at(12), 'session')['rows']
+        self.assertEqual([(r['session'], r['segments'], r['events'], r['wall_runtime_ms']) for r in rows],
+                         [('orchestrator', ['run1', 'run2'], 2, 90 * 60000)])
+
+    def test_unknown_filter_values_and_tie_order(self):
+        f = Facts().segment('s', 'sess', start=at(0), end=at(3))
+        f.boundary('s', 2, at(1), task='TASK-early').boundary('s', 10, at(1), task='TASK-late')
+        f.usage('s', 'known', at(2)).usage('s', 'anon', at(2, 30), model=None)
+        self.assertEqual([r['events'] for r in report(f, at(0), at(12), model='unknown')['rows']], [1])
+        self.assertEqual(report(f, at(0), at(12), task='TASK-late')['rows'][0]['events'], 2)  # boundary:10 after :2
+
+    def test_coarse_disclosed_in_session_rows_and_untimed_coverage_filtered(self):
+        f = Facts().segment('s', 'sess').boundary('s', 0, at(0))
+        f.usage('s', 'wide', at(3), semantics=[f'coarse_from:{at(1)}'])
+        f.usage('s', 'untimed-luna', None).usage('s', 'untimed-opus', None, model='opus')
+        doc = report(f, at(0), at(12), 'session', model='luna')
+        self.assertEqual((doc['rows'][0]['coarse_events'], doc['coverage']['untimed_events']), (1, 1))
+
+    def test_export_includes_untimed_facts_and_spanning_sessions(self):
+        f = Facts()
+        f.segment('long', 'long', start=at(0, day=10), end=at(0, day=13)).boundary('long', 0, at(0, day=10))
+        f.segment('s', 'sess', end=at(2)).boundary('s', 0, at(0)).usage('s', 'untimed', None)
+        registry = {'devices': [{'device_id': 'dev-1', 'hostname': 'pi'}, {'device_id': 'dev-x', 'hostname': 'x'}],
+                    'source_owners': [{'source_id': 'claude:conv-s', 'device_id': 'dev-1'}]}
+        lines = list(tr.export_lines(f.tables, META, *tr.window(at(0, day=12), at(0, day=13), NOW), NOW, registry))
+        facts = [json.loads(l) for l in lines[1:]]
+        self.assertIn('untimed', [x['fact']['event_id'] for x in facts if x.get('table') == 'usage_events'])
+        self.assertIn('nogg-session:long', [x['fact']['source_id'] for x in facts if x.get('table') == 'session_segments'])
+        self.assertEqual([x['row']['device_id'] for x in facts if x.get('registry') == 'devices'], ['dev-1'])
+        _, _, recovered = tr.import_records(lines, META)
+        self.assertEqual(recovered['source_owners'], {'claude:conv-s': 'dev-1'})
 
 
 @unittest.skipUnless(shutil.which('dolt'), 'dolt not installed')
@@ -208,7 +250,7 @@ class DoltRecoveryTests(unittest.TestCase):
         meta, facts = tr.load_facts(original)
         lines = list(tr.export_lines(facts, meta, *tr.window(at(0), at(12), NOW), NOW))
         recovered = Store(tmp, lambda _: {'state_dir': str(tmp / 'b')})
-        project, records = tr.import_records(lines, None)
+        project, records, registry = tr.import_records(lines, None)
         recovered.initialize(project_id=project)
         self.assertEqual(recovered.check_schema()['project_id'], meta['project_id'])
         recovered.append(records)
@@ -218,6 +260,24 @@ class DoltRecoveryTests(unittest.TestCase):
         totals = lambda m, fs: tr.report(fs, m, lo, hi, 'day', {}, NOW)['rows'][0]['tokens']
         self.assertEqual(totals(meta2, facts2), totals(meta, facts))
         self.assertEqual(len(facts2['usage_events']), 1)
+
+    def test_large_import_and_registry_roundtrip(self):
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        device = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+        store = Store(tmp, lambda _: {'state_dir': str(tmp / 'a')})
+        store.initialize()
+        store.register_devices([{'device_id': device, 'hostname': 'pi'}])
+        many = [('usage_events', {'source_id': 'claude:big', 'event_id': f'e{i}', 'revision': 'v1',
+                                  'source_ordinal': 0, 'source_timestamp': at(1), 'input_tokens': 1})
+                for i in range(2500)]
+        self.assertEqual(store.append(many, owners={'claude:big': device}), 2501)   # past the old ARG_MAX failure
+        self.assertEqual(store.append(many, owners={'claude:big': device}), 0)
+        meta, facts = tr.load_facts(store)
+        lines = list(tr.export_lines(facts, meta, *tr.window(at(0), at(12), NOW), NOW, store.registry()))
+        project, records, registry = tr.import_records(lines, None)
+        self.assertEqual((len(records), registry['source_owners']), (2500, {'claude:big': device}))
+        self.assertEqual([r['device_id'] for r in registry['devices']], [device])
 
 
 if __name__ == '__main__':
