@@ -1,11 +1,12 @@
 # Using Nogging with Antigravity
 
 The optional `agy` integration uses the same Beads, Git and OpenSpec workflow
-as other Nogging agents. The investigated Linux runtime is **agy 1.3.2**.
-Unsigned core live evidence is recorded in the
-[core acceptance report](https://github.com/JoMe92/nogging/blob/develop/docs/acceptance/2026-10-10-antigravity-core.md); quota support and full
-issue #54 completion remain pending TASK-AGR-005. This guide does not declare
-those checks complete. See the [contract investigation](https://github.com/JoMe92/nogging/blob/develop/docs/acceptance/antigravity-contract-investigation.md)
+as other Nogging agents. The investigated Linux runtimes are **agy 1.3.2**
+(core) and **agy 1.3.3** (quota). Unsigned core and quota live evidence is
+recorded in the
+[core acceptance report](https://github.com/JoMe92/nogging/blob/develop/docs/acceptance/2026-10-10-antigravity-core.md);
+human acceptance is separate and not declared here. See the
+[contract investigation](https://github.com/JoMe92/nogging/blob/develop/docs/acceptance/antigravity-contract-investigation.md)
 for sanitized live evidence and unsupported contracts.
 
 ## Launch and prerequisites
@@ -107,10 +108,7 @@ Headless exit zero and `status: SUCCESS` do not prove execution: observed hook
 denials and timeouts can still produce those values without `denied_actions`.
 Check expected effects, captured hook events and timeout stderr. Exact resume
 has supervised core acceptance evidence, including exact-ID memory recall.
-`/usage` observations include weekly and five-hour group buckets,
-but quota gating, exhausted-credit classification and complete model mapping
-are pending AGR-005. Do not advertise them as available or close issue #54
-from core runtime evidence alone. Human acceptance signatures stay blank.
+Human acceptance signatures stay blank.
 
 Runtime state grants are configured with `agent_state_roots` in
 `.nogging/config.json`. Declaration does not grant access: a Bead label
@@ -119,3 +117,29 @@ Antigravity state for a related session. Codex receives those existing
 HOME-contained directories as sandbox writable roots. Records and listings
 show the source and paths. Treat granting credential-bearing state as write
 access to those credentials. See [Codex runtime state grants](using-with-codex.md).
+
+## Quota and the launch gate
+
+Launch admission uses the runtime's read-only `/usage` result for the model
+group that contains the selected model: the weekly and five-hour buckets are
+evaluated separately against `usage_gate`, and a denial exits 75 **before** the
+guard check, trust preparation, worktree or tmux work, naming the latest
+limiting reset. Groups are independent pools. Set a model with `--model`, a
+profile `model` or `--tier`: with no model, or one outside the known families
+(Gemini Flash/Pro, Claude Opus/Sonnet, GPT-OSS), usage is **unknown** and the
+launch warns (or is denied under `usage_gate.on_unknown: "deny"`), never
+admitted on another group's headroom. A failed, timed-out, denied or
+non-`SUCCESS` probe is unknown as well; exit status zero is not trusted.
+
+```bash
+scripts/nogg usage --agent agy --model gemini-3.8-flash-medium --json
+```
+
+The probe runs `agy --print /usage` from a private directory with runtime
+auto-update disabled and caches only sanitized buckets (owner-only) under
+`$XDG_CACHE_HOME/nogging/usage/`. `AGY_NOGG_USAGE_PROBE=0` disables the
+probe. `session resume-when-ready` waits for the latest reset among all
+exhausted buckets, so a still-exhausted weekly bucket outlasts the 5h reset.
+The pane adapter reports `idle`, `working`, `needs_input` and `limit` to
+`session list`/`watch`; the limit wording is imported, not observed live.
+Quota percentages are provider estimates for this account, not cost.

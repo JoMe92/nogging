@@ -8,6 +8,9 @@ import datetime as dt
 import json
 import math
 import os
+import re
+import shutil
+import subprocess
 from pathlib import Path
 
 UTC = dt.timezone.utc
@@ -90,7 +93,286 @@ def claude_observation(path):
         return None, None, 'malformed or unreadable source'
 
 
-def inspect_usage(agent, *, source=None, now=None, stale_after=600):
+AGY_PROBE_TIMEOUT = 45
+# Runtime window names -> gate bucket names. Any other window the runtime
+# reports is evaluated under its own sanitized name rather than dropped.
+AGY_WINDOWS = {'5h': 'short', 'weekly': 'weekly'}
+# Model id prefix -> the family name a group lists in its own description
+# ("Models within this group: Gemini Flash, Gemini Pro"). A group is chosen
+# only when exactly one group lists the selected model's family.
+AGY_MODEL_FAMILIES = (
+    (re.compile(r'^gemini-[0-9.]+-flash(?:-|$)'), 'gemini flash'),
+    (re.compile(r'^gemini-[0-9.]+-pro(?:-|$)'), 'gemini pro'),
+    (re.compile(r'^claude-opus(?:-|$)'), 'claude opus'),
+    (re.compile(r'^claude-sonnet(?:-|$)'), 'claude sonnet'),
+    (re.compile(r'^gpt-oss(?:-|$)'), 'gpt-oss'),
+)
+
+
+def _cache_root():
+    return Path(os.environ.get('XDG_CACHE_HOME', str(Path.home() / '.cache'))) / 'nogging/usage'
+
+
+def agy_cache_path():
+    return _cache_root() / 'antigravity.json'
+
+
+def agy_clean_groups(command):
+    """Validate the runtime `/usage` command object and keep only allowlisted
+    fields. Raises ValueError with a short reason when the shape is not the
+    verified contract: an unrecognized result is never read as zero usage."""
+    if not isinstance(command, dict) or command.get('name') != 'usage':
+        raise ValueError('usage probe returned an unexpected command result')
+    data = command.get('data')
+    groups = data.get('groups') if isinstance(data, dict) else None
+    if not isinstance(groups, list) or not groups:
+        raise ValueError('usage probe returned no model groups')
+    cleaned = []
+    for group in groups:
+        if not isinstance(group, dict) or not isinstance(group.get('name'), str) or not group['name'].strip():
+            raise ValueError('usage probe returned a malformed model group')
+        buckets = group.get('buckets')
+        if not isinstance(buckets, list):
+            raise ValueError('usage probe returned a malformed model group')
+        kept = []
+        for bucket in buckets:
+            if not isinstance(bucket, dict):
+                raise ValueError('usage probe returned a malformed bucket')
+            fraction, reset = bucket.get('remaining_fraction'), bucket.get('reset_time')
+            kept.append({'id': bucket.get('id') if isinstance(bucket.get('id'), str) else None,
+                         'window': bucket.get('window') if isinstance(bucket.get('window'), str) else None,
+                         'remaining_fraction': fraction if isinstance(fraction, (int, float))
+                         and not isinstance(fraction, bool) and math.isfinite(fraction) else None,
+                         'reset_time': reset if isinstance(reset, str) else None})
+        description = group.get('description')
+        cleaned.append({'name': group['name'].strip(),
+                        'description': description[:500] if isinstance(description, str) else '',
+                        'buckets': kept})
+    return cleaned
+
+
+def agy_parse_probe(stdout):
+    """Parse one headless `/usage` result. Exit status zero is not enough:
+    the runtime reports hook denials and timeouts as SUCCESS with exit 0, so
+    the status, denied actions, errors and the command shape are all checked."""
+    try:
+        doc = json.loads(stdout)
+    except (ValueError, TypeError):
+        raise ValueError('usage probe returned unparseable output') from None
+    if not isinstance(doc, dict):
+        raise ValueError('usage probe returned unparseable output')
+    status = doc.get('status')
+    if status != 'SUCCESS':
+        shown = status[:40] if isinstance(status, str) else type(status).__name__
+        raise ValueError(f'usage probe status was {shown!r}, not SUCCESS')
+    if doc.get('denied_actions'):
+        raise ValueError('usage probe reported denied actions')
+    if doc.get('error') or doc.get('errors'):
+        raise ValueError('usage probe reported an error')
+    return agy_clean_groups(doc.get('command'))
+
+
+def agy_probe(*, run=None, which=None, timeout=AGY_PROBE_TIMEOUT):
+    """Run the runtime's read-only `/usage` command. Returns (groups, reason).
+
+    The probe runs from a private neutral directory, never a worktree, with
+    runtime auto-update disabled. It reads no credential and passes none.
+    `AGY_NOGG_USAGE_PROBE=0` makes observation cache-only (the repository
+    test runner sets it so no test reaches a developer's real runtime)."""
+    if os.environ.get('AGY_NOGG_USAGE_PROBE', '1').strip().lower() in ('0', 'false', 'no', 'off'):
+        return None, 'usage probe disabled by AGY_NOGG_USAGE_PROBE'
+    exe = (which or shutil.which)('agy')
+    if not exe:
+        return None, 'agy is not installed'
+    workdir = _cache_root() / 'antigravity-probe'
+    try:
+        workdir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    except OSError:
+        return None, 'usage probe directory unavailable'
+    env = dict(os.environ, AGY_CLI_DISABLE_AUTO_UPDATE='true')
+    try:
+        result = (run or subprocess.run)(
+            [exe, '--print', '/usage', '--output-format', 'json', '--print-timeout', '30s'],
+            cwd=workdir, env=env, capture_output=True, text=True, timeout=timeout,
+            stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        return None, 'usage probe timed out'
+    except OSError:
+        return None, 'usage probe could not run'
+    if result.returncode != 0:
+        return None, f'usage probe exited {result.returncode}'
+    try:
+        return agy_parse_probe(result.stdout), None
+    except ValueError as exc:
+        return None, str(exc)
+
+
+def agy_cache_observation(path):
+    try:
+        row = json.loads(path.read_text())
+        if not isinstance(row, dict) or type(row.get('schema_version')) is not int or row.get('schema_version') != 1:
+            return None, None, 'unsupported cache schema'
+        groups = row.get('groups')
+        if not isinstance(groups, list):
+            return None, None, 'malformed or unreadable source'
+        return timestamp(row.get('observed_at')), groups, None
+    except FileNotFoundError:
+        return None, None, 'missing usage source'
+    except (ValueError, TypeError, OSError, OverflowError):
+        return None, None, 'malformed or unreadable source'
+
+
+def agy_write_cache(path, groups, observed):
+    import tempfile
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile('w', dir=path.parent, prefix='.antigravity-usage-', delete=False) as stream:
+            temporary = Path(stream.name)
+            json.dump({'schema_version': 1, 'observed_at': iso(observed), 'groups': groups},
+                      stream, sort_keys=True, allow_nan=False)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, path)
+    finally:
+        if temporary:
+            temporary.unlink(missing_ok=True)
+
+
+def agy_observation(*, cache=None, probe=True, now=None, stale_after=600, run=None, which=None):
+    """(observed_at, groups, reason): a fresh cached observation, else one
+    bounded `/usage` probe. A failed probe never falls back to stale data."""
+    now = now or dt.datetime.now(UTC)
+    path = Path(cache) if cache else agy_cache_path()
+    observed, groups, reason = agy_cache_observation(path)
+    if reason is None and 0 <= (now - observed).total_seconds() <= stale_after:
+        return observed, groups, None
+    if not probe:
+        return observed, groups, reason
+    fresh, why = agy_probe(run=run, which=which)
+    if fresh is None:
+        return observed, groups, why
+    try:
+        agy_write_cache(path, fresh, now)
+    except (OSError, ValueError):
+        pass   # only reuse is lost; this observation is still valid
+    return now, fresh, None
+
+
+def agy_model_family(model):
+    text = str(model or '').strip().lower()
+    for pattern, family in AGY_MODEL_FAMILIES:
+        if pattern.match(text):
+            return family
+    return None
+
+
+def agy_select_group(groups, model):
+    """(group, reason): the one group that lists the selected model's family.
+    An unset model, an unrecognized family, or zero/several matches is an
+    unknown mapping, never a guess and never another group's headroom."""
+    family = agy_model_family(model)
+    if family is None:
+        return None, 'unknown model mapping'
+    matches = []
+    for group in groups:
+        listed = str(group.get('description') or '').split(':', 1)
+        if len(listed) == 2 and family in {item.strip().lower() for item in listed[1].split(',')}:
+            matches.append(group)
+    if len(matches) != 1:
+        return None, 'unknown model mapping' if not matches else 'ambiguous model mapping'
+    return matches[0], None
+
+
+def agy_report(model, observed, groups, reason, now):
+    group, group_reason = (None, reason)
+    if reason is None:
+        group, group_reason = agy_select_group(groups, model)
+    base_reason = group_reason
+    if observed is not None and base_reason is None:
+        age = (now - observed).total_seconds()
+        if age < 0:
+            base_reason = 'observation is in the future'
+    buckets = {}
+    if group is not None:
+        for entry in group['buckets']:
+            window = entry.get('window')
+            if not isinstance(window, str) or not window:
+                continue
+            name = AGY_WINDOWS.get(window) or re.sub(r'[^a-z0-9]+', '_', window.lower()).strip('_') or 'unknown'
+            buckets[name] = None if name in buckets else entry
+    windows = []
+    for name in list(dict.fromkeys(['short', 'weekly', *buckets])):
+        item = {'bucket': name, 'status': 'unknown', 'reason': base_reason, 'used_percent': None,
+                'resets_at': None, 'observed_at': iso(observed) if observed else None}
+        if base_reason is None:
+            entry = buckets.get(name)
+            if name not in buckets:
+                item['reason'] = 'missing bucket'
+            elif entry is None:
+                item['reason'] = 'ambiguous bucket'
+            else:
+                try:
+                    fraction = entry['remaining_fraction']
+                    if (isinstance(fraction, bool) or not isinstance(fraction, (int, float))
+                            or not math.isfinite(fraction) or not 0 <= fraction <= 1):
+                        raise ValueError('invalid remaining fraction')
+                    reset = timestamp(entry['reset_time'])
+                    if reset <= now:
+                        item['reason'] = 'reset elapsed; fresh observation required'
+                    elif reset <= observed:
+                        item['reason'] = 'reset precedes observation'
+                    else:
+                        item.update(status='known', reason=None, resets_at=iso(reset),
+                                    used_percent=round((1 - fraction) * 100, 4))
+                except (KeyError, ValueError, TypeError, OverflowError, OSError):
+                    item['reason'] = 'missing or malformed window'
+        windows.append(item)
+    return {'schema_version': 1, 'provider': 'antigravity', 'account': None,
+            'model_group': group['name'] if group else None,
+            'status': 'known' if all(w['status'] == 'known' for w in windows) else 'unknown',
+            'windows': windows}
+
+
+def antigravity_usage(model=None, *, source=None, now=None, stale_after=600,
+                      probe=None, run=None, which=None):
+    """Quota report for the group the selected model belongs to. `source`
+    names a cache file and, like the Claude cache, is read without probing;
+    otherwise a stale or missing cache triggers one bounded `/usage` probe."""
+    now = now or dt.datetime.now(UTC)
+    observed, groups, reason = agy_observation(
+        cache=source, probe=(source is None) if probe is None else probe,
+        now=now, stale_after=stale_after, run=run, which=which)
+    if observed is not None and reason is None and (now - observed).total_seconds() > stale_after:
+        reason = 'stale observation'
+    return agy_report(model, observed, groups, reason, now)
+
+
+def antigravity_resume(model=None, **kwargs):
+    """Resume guidance from every exhausted applicable bucket.
+
+    `wait` carries the latest reset among exhausted buckets, so a weekly
+    bucket that is still exhausted after the 5h window reset keeps the
+    session waiting. `ready` requires every applicable bucket to be known and
+    non-exhausted; anything else is `unknown`, never ready."""
+    report = antigravity_usage(model, **kwargs)
+    exhausted = [w for w in report['windows'] if w['status'] == 'known' and w['used_percent'] >= 100]
+    unknown = [w for w in report['windows'] if w['status'] != 'known']
+    if exhausted:
+        status, resume_at = 'wait', max(w['resets_at'] for w in exhausted)
+    elif unknown:
+        status, resume_at = 'unknown', None
+    else:
+        status, resume_at = 'ready', None
+    return {'status': status, 'resume_at': resume_at, 'model_group': report['model_group'],
+            'exhausted': [w['bucket'] for w in exhausted],
+            'reasons': {w['bucket']: w['reason'] for w in unknown}}
+
+
+def inspect_usage(agent, *, source=None, now=None, stale_after=600, model=None):
+    if agent == 'antigravity':
+        return antigravity_usage(model, source=source, now=now, stale_after=stale_after)
     if agent not in ('codex', 'claude'):
         raise ValueError('unsupported usage provider')
     if agent == 'codex':
@@ -529,9 +811,9 @@ def orchestrator_retry_guidance(gate):
     }
 
 
-def observe(agent, config, *, now=None):
+def observe(agent, config, *, now=None, model=None):
     try:
-        return inspect_usage(agent, now=now, stale_after=config['stale_seconds'])
+        return inspect_usage(agent, now=now, stale_after=config['stale_seconds'], model=model)
     except ValueError:
         reason = 'unsupported usage provider'
         return {'schema_version': 1, 'provider': agent, 'account': None, 'model_group': None,
@@ -554,7 +836,7 @@ def describe_denial(gate):
 
 def usage_command(agent, json_output=False, config=None, model=None):
     config = gate_config(config)
-    report = observe(agent, config)
+    report = observe(agent, config, model=model)
     if model:
         report['model'] = model
     estimate = launch_estimate(agent, (), config, model=model)
@@ -565,7 +847,9 @@ def usage_command(agent, json_output=False, config=None, model=None):
         return
     gate = report['gate']
     target_desc = f"{agent} (model {model})" if model else agent
-    print(f"{target_desc} usage (account and model-group identity unknown)")
+    identity = ('account identity unknown; model group ' + report['model_group']
+                if report.get('model_group') else 'account and model-group identity unknown')
+    print(f"{target_desc} usage ({identity})")
     for window, projection in zip(report['windows'], gate['windows']):
         if window['status'] == 'known':
             print(f"  {window['bucket']}: {window['used_percent']:g}% used; reset {window['resets_at']}; observed {window['observed_at']}; "
@@ -964,6 +1248,24 @@ def quota_freshness_notes(config=None, now=None):
                     notes.append(f"quota observation (claude): cache unavailable ({reasons})")
         except Exception as exc:
             notes.append(f"quota observation (claude): unreadable cache ({exc})")
+
+    # Antigravity observation check: cache only; doctor never spawns the runtime.
+    if shutil.which('agy'):
+        try:
+            observed, groups, reason = agy_cache_observation(agy_cache_path())
+            now_dt = now or dt.datetime.now(UTC)
+            if reason == 'missing usage source':
+                notes.append("quota observation (antigravity): no cached /usage observation — "
+                             "the next launch or `nogg usage --agent antigravity --model <model>` refreshes it")
+            elif reason is not None:
+                notes.append(f"quota observation (antigravity): cache unavailable ({reason})")
+            elif (now_dt - observed).total_seconds() > stale_sec:
+                notes.append(f"quota observation (antigravity): observation is stale (> {stale_sec}s old) — "
+                             "refreshed by the next launch or `nogg usage --agent antigravity`")
+            else:
+                notes.append("quota observation (antigravity): fresh /usage observation cache")
+        except Exception as exc:
+            notes.append(f"quota observation (antigravity): unreadable cache ({exc})")
 
     # Codex observation check
     codex_sessions = Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex'))) / 'sessions'
