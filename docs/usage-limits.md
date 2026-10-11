@@ -151,8 +151,46 @@ agy --print /usage --output-format json
 ]
 ```
 
-- **Groups**: `Gemini Models` and `Claude and GPT models`.
+- **Groups**: `Gemini Models` and `Claude and GPT models`. Each carries a
+  description that lists its model families ("Models within this group: Gemini
+  Flash, Gemini Pro"); the model-to-group mapping is read from it.
 - **Buckets**: `window` (`"5h"` / `"weekly"`), `remaining_fraction` (`0.0`..`1.0`), `reset_time` (ISO-8601 UTC).
+
+### How Nogging uses it (launch gate and resume)
+
+The launch gate reads this result through a bounded `agy --print /usage`
+probe, run from a private neutral directory under
+`$XDG_CACHE_HOME/nogging/usage/` with `AGY_CLI_DISABLE_AUTO_UPDATE=true`. The
+sanitized buckets are cached there (`antigravity.json`, owner-only) and reused
+for `usage_gate.stale_seconds`; a missing, stale or failed observation is
+unknown usage, never zero. Set `AGY_NOGG_USAGE_PROBE=0` to make observation
+cache-only (the repository test runner does).
+
+- **Group selection**: the selected model's family (`gemini-*-flash`,
+  `gemini-*-pro`, `claude-opus*`, `claude-sonnet*`, `gpt-oss*`) must be listed by
+  exactly one group. An unset model, an unknown family or an ambiguous match is
+  **unknown usage** (`unknown model mapping`), warned or denied per
+  `usage_gate.on_unknown`. Other groups' headroom never admits a launch.
+- **Independent pools**: reservations are scoped per group, so a running Gemini
+  session does not consume a Claude/GPT launch's headroom, and two models in the
+  same group share one pool.
+- **Buckets**: the weekly and 5h buckets map to the gate's `weekly` and `short`
+  windows and are evaluated separately; a recognized-but-unmapped window name is
+  evaluated under its own name, and a missing or duplicated bucket is unknown.
+  A denial retries after the latest reset among the buckets that do not fit.
+- **Resume**: `session resume-when-ready` and the `limit` watch event take the
+  reset from every exhausted bucket of the session's group (the pane carries no
+  clock). A weekly bucket still exhausted after the 5h reset keeps the session
+  waiting for the weekly reset; an unknown observation keeps polling.
+- **Headless results are judged by content**: a result is accepted only when it
+  has `status: SUCCESS`, no `denied_actions`, no error and a `usage` command
+  object with groups. Exit status zero alone never counts.
+- **Pane states**: the `antigravity` adapter classifies `idle` (`? for
+  shortcuts`), `working` (spinner then `Generating...`), `needs_input` (`Run
+  this command?`, `Requesting permission for`, the trust dialog) and `limit`.
+  The idle, working and permission panes are recorded from agy 1.3.3; the trust
+  dialog and the exhausted-credit/limit wording are imported runtime text that
+  has not been observed live, because no quota was exhausted.
 
 ---
 
@@ -172,5 +210,5 @@ agy --print /usage --output-format json
 
 1. **Estimates, not guarantees**: Rate limit percentages and remaining fractions are provider estimates. Maintain an operational safety buffer.
 2. **Same-host statistics**: Local session counts and rollouts reflect this delivery host, while quotas are enforced account-wide across all active clients.
-3. **`agy` exit code 0 / status `SUCCESS`**: Exit code 0 and `"status": "SUCCESS"` indicate process termination without crash; they do not prove quota availability or action execution. Inspect `command.data` directly.
+3. **`agy` exit code 0 / status `SUCCESS`**: Exit code 0 and `"status": "SUCCESS"` indicate process termination without crash; they do not prove quota availability or action execution. Inspect `command.data` directly. Nogging additionally rejects a result with `denied_actions`, an error or an unexpected command object, and treats an exhausted-credit message without a `usage` command object as unknown rather than quota.
 4. **Credential safety**: No API keys, tokens, or credentials are required or output by these commands.

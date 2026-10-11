@@ -1,0 +1,14 @@
+Reason: Nogging guard passed; restricted calls require review
+Requesting permission for:
+   sleep 3; echo AGY_PANE_PROBE
+
+Run this command?
+> 1. Yes, run command
+  2. Yes, and always allow in this conversation for commands that start with
+'sleep 3; echo AGY_PANE_PROBE'
+  3. Yes, and always allow for commands that start with 'sleep 3; echo
+AGY_PANE_PROBE' (Persist to settings.json)
+  4. No, cancel
+
+  ↑/↓ Navigate · tab Amend · ctrl+g edit/expand command
+esc to cancel                              accept-edits · Gemini 3.8 Flash · low
