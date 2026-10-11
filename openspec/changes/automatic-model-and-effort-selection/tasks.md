@@ -1,6 +1,6 @@
 ## 1. Rule table
 
-- [ ] TASK-MES-001 Ship templates/model-selection.json with the design decision 3 table, scaffold it to .nogging/model-selection.json only when absent, and add loader/validator plus nogg models [--agent --tier --json] and models check. Verify the shipped table is valid, invalid tables are refused, the agy alias works, consumer edits survive update, and doc/JSON agree. See design decisions 1–3 and the table requirements.
+- [x] TASK-MES-001 Ship templates/model-selection.json with the design decision 3 table, scaffold it to .nogging/model-selection.json only when absent, and add loader/validator plus nogg models [--agent --tier --json] and models check. Verify the shipped table is valid, invalid tables are refused, the agy alias works, consumer edits survive update, and doc/JSON agree. See design decisions 1–3 and the table requirements.
 
 ## 2. Tier-resolved launch
 
