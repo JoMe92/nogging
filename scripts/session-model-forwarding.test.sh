@@ -102,6 +102,20 @@ for argv in (["w", "--model", "m"], ["w", "--reasoning-effort", "high"]):
     raise AssertionError(f"stale wrapper accepted {argv}")
 PY
 
+python3 - "$nogg" <<'CHECK' && ok "stale Claude effort capability refused; doctor checks it" || bad "effort capability"
+import runpy, sys
+m = runpy.run_path(sys.argv[1])
+stale = {"features": ["startup-stderr", "model-forwarding"], "agents": ["claude"],
+         "options": {"--effort": 1}}
+try:
+    m["validate_launch_contract"](stale, ["w", "--effort", "high"], "claude")
+except RuntimeError as exc:
+    assert "Claude effort forwarding" in str(exc) and "update" in str(exc)
+else:
+    raise AssertionError("stale capability accepted")
+assert all(success for _, success in m["session_helper_diagnostics"]())
+CHECK
+
 # --- end to end: launch -> wrapper argv -> runtime argv ---------------------
 # A model value full of shell metacharacters but no whitespace: if anything
 # along the way interpolated it, the runtime would not see it verbatim (and
@@ -134,7 +148,7 @@ import json, sys
 argv = json.load(open(sys.argv[1]))["argv"]
 flag, value = sys.argv[2], sys.argv[3]
 assert sum(1 for i, a in enumerate(argv) if a == flag and argv[i + 1:i + 2] == [value]) == 1, argv
-if flag == "--model":
+if flag in ("--model", "--effort"):
     assert argv.count(flag) == 1, argv
 PY
 }
@@ -148,6 +162,23 @@ PY
 
 e2e claude --full-access --model "$evil" && expect_pair "claude: --model reaches the runtime verbatim" --model "$evil"
 e2e claude --full-access && expect_absent "claude legacy: no --model invented" --model
+
+for level in low medium high xhigh max; do
+  PROFILE="$work/effort.json"
+  printf '{"permissions":{},"effort":"%s"}\n' "$level" >"$PROFILE"
+  cp "$PROFILE" "$work/profile-before"
+  if e2e claude --profile "$PROFILE"; then
+    expect_pair "claude profile effort $level reaches native argv" --effort "$level"
+    cmp "$PROFILE" "$work/profile-before" || bad "source profile changed"
+    python3 - "$root" <<'CHECK' && ok "effort stripped from effective settings" || bad "settings effort leak"
+import json, pathlib, sys
+settings = list(pathlib.Path(sys.argv[1]).glob('.nogging/state/sessions/*.settings.json'))
+assert len(settings) == 1 and 'effort' not in json.loads(settings[0].read_text())
+CHECK
+  fi
+done
+e2e claude --profile "$PROFILE" --effort low && expect_pair "CLI effort overrides profile" --effort low
+e2e claude --full-access && expect_absent "Claude omission emits no effort" --effort
 
 PROFILE="$work/m.codex.toml"
 printf '%s\n' 'sandbox = "workspace-write"' 'ask_for_approval = "on-request"' 'network_access = false' \
@@ -165,6 +196,26 @@ PY
 }
 e2e pi --model "$evil" && expect_pair "pi: --model reaches the runtime verbatim" --model "$evil"
 [[ ! -e "$work/pwned" ]] && ok "no model value was ever shell-interpolated" || bad "model value was interpolated"
+
+# Refuse an installed helper that accepts the option but cannot guarantee transport.
+stale_root="$work/stale"; make_root "$stale_root"
+python3 - "$stale_root/scripts/session-launch" <<'CHECK'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); p.write_text(p.read_text().replace(',"claude-effort-forwarding"', ''))
+CHECK
+rm -f "$TMUX_ARGV"
+if NOGGING_ROOT="$stale_root" "$stale_root/scripts/nogg" session launch --role lead --bead SPEC-mdl \
+  --cwd "$stale_root" --effort high >"$work/stale-out" 2>&1; then
+  bad "stale helper launch accepted"
+else
+  python3 - "$stale_root" "$TMUX_ARGV" "$work/stale-out" <<'CHECK' && ok "stale helper refused before session side effects" || bad "stale helper side effects"
+import pathlib, sys
+root, tmux, out = map(pathlib.Path, sys.argv[1:])
+assert not tmux.exists()
+assert not list(root.glob('.nogging/state/sessions/*.json'))
+assert 'run Nogging update' in out.read_text()
+CHECK
+fi
 
 # --- no authority change: only the model elements differ --------------------
 # Direct wrapper calls with fixed arguments, with and without the model.
@@ -200,6 +251,11 @@ same_but "codex: model+effort add only their own elements" '[["--model","gpt-x"]
 same_but "pi: model adds only --model <name>" '[["--model","pi-x"]]' \
   --agent pi --provider anthropic "${common[@]}" -- --model pi-x
 
+for conversation in --session-id --resume; do
+  same_but "Claude $conversation keeps authority and conversation with effort" '[["--effort","xhigh"]]' \
+    "${common[@]}" --settings "$wroot/s.json" --read-only "$conversation" 00000000-0000-4000-8000-000000000000 -- --effort xhigh
+done
+
 # --- direct wrapper calls fail closed ---------------------------------------
 refuse() {
   local label="$1"; shift; rm -f "$RUNTIME_ARGV"
@@ -215,6 +271,28 @@ refuse "an unsupported reasoning effort" --agent codex --reasoning-effort turbo
 refuse "an injected reasoning effort" --agent codex --reasoning-effort 'high" -c x="y'
 refuse "reasoning effort for Claude" --reasoning-effort high
 refuse "reasoning effort for Pi" --agent pi --reasoning-effort high
+
+for invalid in '' ' high' HIGH turbo; do
+  refuse "invalid Claude effort '$invalid'" --effort "$invalid"
+done
+refuse "missing Claude effort" --effort
+for agent in codex pi antigravity; do
+  refuse "Claude effort for $agent" --agent "$agent" --effort high
+done
+# Native rejection propagates once through the existing scrubbed startup sink.
+cat >"$work/bin/claude" <<'STUB'
+#!/usr/bin/env bash
+printf 'called\n' >>"$RUNTIME_ARGV"
+echo 'native effort/model rejection' >&2
+exit 23
+STUB
+rm -f "$RUNTIME_ARGV"
+set +e
+NOGG_STARTUP_LOG="$work/startup.log" "$wroot/scripts/session-launch" --cwd "$wroot" --effort max >"$work/rejected" 2>&1
+code=$?
+set -e
+[[ $code == 23 && $(wc -l <"$RUNTIME_ARGV") == 1 ]] && ok "native rejection propagates without retry" || bad "native rejection"
+[[ $(cat "$work/startup.log") == *'native effort/model rejection'* ]] && ok "native rejection retained in startup log" || bad "startup log"
 
 if [[ $fail -ne 0 ]]; then echo "session model forwarding checks failed" >&2; exit 1; fi
 echo "all session model forwarding checks passed"
