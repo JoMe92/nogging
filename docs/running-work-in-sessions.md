@@ -486,3 +486,45 @@ statusline `rate_limits` object. Its `five_hour` and `seven_day` windows contain
 cache; do not copy the full statusline payload. Inspection does not modify
 Claude settings or install a statusline. The source schemas were verified with
 Codex 0.162.1 and Claude Code 2.1.296; other schemas report unknown.
+
+## Launch usage gate
+
+`./scripts/nogg session launch` admits an execution session (lead or
+specialist) only when every known usage window of the launching agent still
+fits: `used + reserved + estimate <= cap` per window. A refusal exits **75**
+and names each limiting window with its reset time and the latest reset to
+retry after; it happens before any helper negotiation, worktree, trust change,
+tmux session or session record. Planning and orchestrator launches are not
+gated by default. `./scripts/nogg usage` prints the same estimate, projection
+and fit (`gate` in `--json`). Same-host reservations for running launches are
+not counted yet (`reserved` is 0); running sessions may already be part of
+`used`, so the gate reduces risk but cannot guarantee a task fits.
+
+Configure it with the optional `usage_gate` object in `.nogging/config.json`;
+these are the defaults:
+
+```json
+"usage_gate": {
+  "enabled": true,
+  "cap_percent": 92,
+  "estimate_percent": 5,
+  "stale_seconds": 600,
+  "on_unknown": "warn",
+  "size_multipliers": {"small": 0.5, "medium": 1, "large": 2},
+  "exclude_roles": ["planning", "orchestrator"]
+}
+```
+
+`estimate_percent` may instead be an object per agent (`claude`, `codex`,
+`pi`, `antigravity`) with an optional `default`. A Bead labelled
+`size:<name>` scales only its reservation estimate by the matching multiplier;
+conflicting or unconfigured size labels refuse the launch. `exclude_roles`
+takes `lead`, `specialist`, `planning` and `orchestrator`. Unknown keys and
+out-of-range or mistyped values refuse every launch until fixed.
+
+Missing, stale, malformed or unsupported usage (Pi and Antigravity have no
+source yet) is unknown, never zero: the launch warns and continues, or exits 75
+with `"on_unknown": "deny"`. A known window over the cap denies even when the
+other window is unknown. `--ignore-usage-gate` launches without admission; it
+warns and is recorded as `usage_gate.decision: "ignored"` on the session
+record, alongside `admitted`, `unknown-admitted`, `disabled` or `excluded`.

@@ -11,6 +11,12 @@ set -euo pipefail
 # those subprocesses; each fixture explicitly supplies the context it needs.
 unset NOGGING_ROOT NOGG_SESSION_NAME NOGG_SESSION_ROOT NOGG_SESSION_ROLE
 unset NOGG_SESSION_AGENT NOGG_TASK_DONE_SOCKET NOGG_OPENSPEC_FENCED NOGG_OPENSPEC_FENCE
+# The launch usage gate must not read the operator's live quota: every fixture
+# sees no usage source (unknown, warn) unless it supplies its own.
+usage_home=$(mktemp -d)
+trap 'rm -rf "$usage_home"' EXIT
+mkdir -p "$usage_home/codex" "$usage_home/cache"
+export CODEX_HOME="$usage_home/codex" XDG_CACHE_HOME="$usage_home/cache"
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
