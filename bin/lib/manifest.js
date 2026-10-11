@@ -7,7 +7,8 @@
 // File classes:
 //   verbatim  - copied and overwritten on every `init` and `update`
 //   docs      - reference docs, copied verbatim into docs/nogging/
-//   scaffold  - written only when absent, never overwritten
+//   scaffold  - written only when absent, never overwritten (by `update` too
+//               when the item sets onUpdate)
 //   merge     - foreign files edited idempotently (see lib/merge.js)
 //   rendered  - generated from templates/ with target-specific values
 
@@ -75,6 +76,7 @@ module.exports = {
     { from: 'docs/using-with-antigravity.md', to: 'docs/nogging/using-with-antigravity.md' },
     { from: 'docs/security-model.md', to: 'docs/nogging/security-model.md' },
     { from: 'docs/worktree-workflow.md', to: 'docs/nogging/worktree-workflow.md' },
+    { from: 'docs/model-selection.md', to: 'docs/nogging/model-selection.md' },
   ],
 
   // Written only when the destination does not already exist.
@@ -85,6 +87,12 @@ module.exports = {
       from: 'templates/nogging-config.json',
       to: '.nogging/config.json',
       transform: 'noggingConfig',
+    },
+    // onUpdate: also scaffolded by `update`, so upgraded installs gain it.
+    {
+      from: 'templates/model-selection.json',
+      to: '.nogging/model-selection.json',
+      onUpdate: true,
     },
   ],
 

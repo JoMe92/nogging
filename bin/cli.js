@@ -102,6 +102,7 @@ function cmdUpdate(args) {
   }
   install.copyVerbatim(ctx);
   install.copyDocs(ctx);
+  install.writeScaffold(ctx, { updating: true });
   applyMerges(ctx);
   renderSystemd(ctx);
   install.recordVersion(ctx);
