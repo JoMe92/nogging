@@ -249,15 +249,15 @@ sys.exit(1)
         run_nogg("session", "kickoff", sib_name)
 
         r_sweep = run_nogg("session", "sweep")
-        assert r_sweep.returncode == 0
-        assert sib_name in r_sweep.stdout
-        assert "active" in r_sweep.stdout
-        assert "bead-blocked" not in r_sweep.stdout
+        assert r_sweep.returncode == 0, f"sweep failed: code={r_sweep.returncode}, out={r_sweep.stdout}, err={r_sweep.stderr}"
+        assert sib_name in r_sweep.stdout, f"sib_name {sib_name} not in sweep stdout: {r_sweep.stdout}"
+        assert "active" in r_sweep.stdout, f"'active' not in sweep stdout: {r_sweep.stdout}"
+        assert "bead-blocked" not in r_sweep.stdout, f"'bead-blocked' unexpectedly in sweep stdout: {r_sweep.stdout}"
 
         # Whole-change scope surfaces bead-blocked if change sibling is blocked
         run_nogg("session", "kickoff", sib_name, "--change", "test-change")
         r_sweep_ch = run_nogg("session", "sweep")
-        assert "bead-blocked (SPEC-blocked-sib)" in r_sweep_ch.stdout
+        assert "bead-blocked (SPEC-blocked-sib)" in r_sweep_ch.stdout, f"bead-blocked (SPEC-blocked-sib) not in sweep_ch stdout: {r_sweep_ch.stdout}"
 
         # Unblock / close the auxiliary tasks and their external blockers
         subprocess.run([str(binaries / "bd"), "close", "SPEC-blocked-sib"], check=True)
