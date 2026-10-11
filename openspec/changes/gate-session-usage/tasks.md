@@ -4,7 +4,7 @@
 
 - [x] TASK-GSU-002 Implement validated usage_gate config and cap/estimate/size-label calculation with explicit unknown policy and --ignore-usage-gate; verify supported defaults, bad configuration rejection and denied admission exit 75 before any worktree/trust/tmux/record side effect.
 
-- [ ] TASK-GSU-003 Add same-host atomic per-account/bucket admission reservations with lifecycle cleanup and stale-owner recovery; verify two simultaneous launches cannot both spend the final slot, failed launch releases reservation and unrelated accounts/groups are independent.
+- [x] TASK-GSU-003 Add same-host atomic per-account/bucket admission reservations with lifecycle cleanup and stale-owner recovery; verify two simultaneous launches cannot both spend the final slot, failed launch releases reservation and unrelated accounts/groups are independent.
 
 - [ ] TASK-GSU-004 Record bounded per-agent/model usage history and conservative learned medians only for attributable complete non-reset intervals; verify overlap/reset/outlier samples are rejected, insufficient data uses fallback and no credential/account identifier is exposed.
 
