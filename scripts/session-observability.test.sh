@@ -952,8 +952,12 @@ m.multi_machine_enabled = lambda: False
 buf = io.StringIO()
 with contextlib.redirect_stdout(buf):
     m.doctor()
+checks_notes = [line for line in buf.getvalue().splitlines() if line.startswith('NOTE  session ') and ': checks ' in line]
+# TASK-CSL-003: without a cached sweep --checks observation every running
+# session's CI evidence is visibly unknown; liveness notes are unchanged.
+assert len(checks_notes) == 4 and all('checks unknown' in line for line in checks_notes), checks_notes
 for line in buf.getvalue().splitlines():
-    if line.startswith('NOTE  session '):
+    if line.startswith('NOTE  session ') and ': checks ' not in line:
         print(line)
 ")
 want_doctor=$(printf 'NOTE  session sess-complete: change-complete\nNOTE  session sess-blocked: bead-blocked (B5)\nNOTE  session sess-manual: awaiting_manual_approval (idle in manual mode; needs a human to approve each step)')
