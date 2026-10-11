@@ -154,6 +154,27 @@ them in `MODEL` and `MODEL_SOURCE` columns. Without a model setting both show
 `runtime-default`: Nogging records that the runtime chose, not a guess at which
 model it chose. A record written before this was recorded shows `-`.
 
+### Choosing by tier
+
+Instead of naming a model, name the task's complexity tier and let the shipped
+model-selection table pick the model and effort:
+
+```bash
+./scripts/nogg models --agent codex --tier standard   # see the entry
+./scripts/nogg session launch --role lead --bead SPEC-xxx --agent codex --tier standard
+```
+
+Tiers are `routine`, `standard` and `complex`. Per field, an explicit `--model`
+still beats the tier, and the tier beats the profile and the runtime default.
+Codex gets the tier effort as its `model_reasoning_effort`; Antigravity gets a
+model whose name carries the thinking level; Claude gets the tier model, and a
+`NOTE` says its tier effort is not applied until Claude effort forwarding lands.
+Pi has no table, so `--tier` with `--agent pi` refuses, as do an unknown tier
+and a missing or invalid table — all before any side effect. The record stores
+`selection_tier` and `session list` shows `tier=<tier>` in the `MODEL` cell. The
+Orchestration Agent launches every sub-session this way. See
+`model-selection.md` for the table, the precedence rules and the research.
+
 ## Watch without touching
 
 ```bash

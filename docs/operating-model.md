@@ -117,6 +117,21 @@ planning session to run `/plan`'s archive step for that change — starting one
 if none is running, or naming the change to one already running — and never
 runs `openspec archive` itself.
 
+**A tier on every launch.** Before every `session launch` of any role
+(planning, lead, specialist) the Orchestration Agent classifies the task into a
+model-selection tier — `routine`, `standard` or `complex` — and writes a
+one-line reason to the Bead note or the operator update; runs `scripts/nogg
+models --agent <agent> --tier <tier>` if it needs to see the entry; and
+launches with `--tier <tier>`. Model and effort come from the shipped table
+(`docs/model-selection.md`), never from live research. When unsure it picks the
+higher tier; a relaunch after a failed or stalled attempt escalates one tier;
+quota never lowers a tier — a usage-limit denial is handled by waiting for the
+limiting reset or by launching the same tier on another agent. An explicit
+`--model` is used only on Product Owner instruction. Nothing mechanical checks
+the classification; the safeguard is visibility — `tier=` in `session list` and
+the reason in the notes. A Lead Agent launching an out-of-process specialist
+may pass `--tier` too, but is not required to.
+
 **Explicit takeover.** Only on an explicit in-session operator instruction of
 the form `/orchestrate takeover {plan|code} <description>` does it perform one
 task directly — a planning task run as a full `plan-begin` … `plan-end`
@@ -361,7 +376,7 @@ From any plain SSH shell (no `TERM`, no tmux client needed):
 
 | Command | What it does |
 | --- | --- |
-| `session list` | every managed session with Bead, role, age, working dir, owner, state, the launch profile it runs under (`restricted` renders as `-`, a floor-lifted orchestrator as `FULL-ACCESS`), and the requested model with its source (`launch`, `profile`, or `runtime-default` when none was set); reconciles each record against live tmux and reports a vanished `running` session as `failed`. Read-only, never attaches. |
+| `session list` | every managed session with Bead, role, age, working dir, owner, state, the launch profile it runs under (`restricted` renders as `-`, a floor-lifted orchestrator as `FULL-ACCESS`), and the requested model with its source (`launch`, `profile`, or `runtime-default` when none was set) plus `tier=<tier>` for a `--tier` launch; reconciles each record against live tmux and reports a vanished `running` session as `failed`. Read-only, never attaches. |
 | `session attach <name> [--read-only]` | attach the terminal to a session (`-r` blocks input). The only command that attaches. |
 | `session log <name> [--follow]` | print or tail the append-only log without attaching. |
 | `session stop <name> [--reason <text>]` | interrupt Claude, terminate the pane after the grace period, record `stopped` with `ended_at`/`exit_reason`. Idempotent. |

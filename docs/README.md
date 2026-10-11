@@ -27,6 +27,7 @@ Installing it, running it day to day, and its guarantees.
 | [Agent identities](agent-identities.md) | Per-persona GitHub App registration, key storage, and optional Tier-2 setup |
 | [Worktree workflow](worktree-workflow.md) | Why every planning and implementation run gets its own Git worktree |
 | [Running work in sessions](running-work-in-sessions.md) | `scripts/nogg session` — starting, watching, and steering a supervised agent session |
+| [Model selection](model-selection.md) | The tier → model/effort table, `nogg models`, `session launch --tier`, and the research behind it |
 | [Security and threat model](security-model.md) | What Nogging does and doesn't protect against; authority levels |
 | [Failure recovery](failure-recovery.md) | `doctor`, `audit`, and recovering from an interrupted run |
 | [Using Nogging with Codex](using-with-codex.md) | What's specific to running the loop from OpenAI Codex |

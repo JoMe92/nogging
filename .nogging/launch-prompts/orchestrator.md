@@ -54,6 +54,38 @@ When a change is ready to execute, you **launch a Lead session**
 `--full-access` for an autonomous run) and steer it through its log and
 `attach`. You do not do the Lead session's Bead work yourself.
 
+## Choose a tier before every launch
+
+Before **every** `session launch` you start — planning, lead or specialist,
+for any agent — you choose the model through the model-selection table, never
+through live research:
+
+1. **Classify** the task into one tier: `routine` (mechanical, fully
+   specified, low blast radius), `standard` (a normal Bead with a clear spec,
+   multi-file work in one component, a revision of an existing change) or
+   `complex` (ambiguous or cross-cutting work, planning a new capability,
+   architecture, concurrency, security, failure recovery, acceptance runs).
+   Write a one-line reason to the Bead note
+   (`bd update <id> --append-notes "tier <tier>: <reason>"`) or to your
+   operator update.
+2. **Look up** the entry if you need to see it:
+   `scripts/nogg models --agent <agent> --tier <tier>`.
+3. **Launch** with `--tier <tier>`; `session list` then shows `tier=<tier>`.
+
+Escalation rules:
+
+- When unsure, choose the higher tier.
+- A relaunch after a failed or stalled attempt on the same task escalates one
+  tier.
+- **Quota never lowers a tier.** On a usage-limit denial, wait for the limiting
+  reset or launch the same tier on another agent's entry; never switch a
+  resumed session's model to dodge a limit.
+
+Pass an explicit `--model` only on Product Owner instruction. Never edit the
+table (`.nogging/model-selection.json`) yourself; a stale or drifted entry
+(see `doctor`'s `model-selection` NOTEs) goes to a planning session. Pi has no
+table: launch Pi without `--tier`. See `docs/model-selection.md`.
+
 ## Explicit takeover: one task, then back
 
 Only on an explicit in-session instruction from the operator of the form

@@ -68,6 +68,96 @@ Pi has no table: its model namespace depends on the configured provider.
 - Unknown keys and duplicate keys are rejected. `models check` names every
   offending entry.
 
+## Launching with a tier
+
+```bash
+scripts/nogg session launch --role lead --bead SPEC-xxx --agent codex --tier standard
+```
+
+`session launch --tier <tier>` resolves the agent first (the usual `--agent` /
+config resolution, `agy` normalized to `antigravity`) and then looks the entry
+up in the installed table. Without `--tier`, launch behaves exactly as before.
+
+Precedence, per field (highest first):
+
+| Field | Order |
+| --- | --- |
+| Model | explicit `--model` > tier > profile `model` > runtime default |
+| Claude effort | tier > profile > runtime default (an explicit `--effort` will sit above the tier once Claude effort forwarding lands) |
+| Codex effort | tier > profile `model_reasoning_effort` > runtime default |
+
+An explicit `--model` over a tier is the orchestrator's documented exception,
+used only on Product Owner instruction, not routine use.
+
+- **Codex** receives the tier effort through the wrapper's existing
+  `--reasoning-effort` transport, which becomes its `model_reasoning_effort`.
+  There is no public Codex `--effort` flag.
+- **Antigravity** receives the tier model, whose name carries the thinking
+  level, through the existing model forwarding.
+- **Claude** receives the tier model today. Claude effort forwarding ships with
+  the `support-claude-reasoning-effort` change; until it is integrated, a
+  Claude `--tier` launch prints a `NOTE` naming the effort it did not apply and
+  that pending change, and still records the tier.
+- **Refusals.** An unknown tier, a missing or invalid table, `--agent pi`, or an
+  agent with no table entry refuses with a remedy before any worktree, trust,
+  settings, record or tmux side effect.
+- **No fallback.** A runtime that rejects a table model follows the normal
+  failed-start path; Nogging never silently substitutes another model or
+  effort.
+- **Resume.** An exact-conversation `--resume` keeps the selection recorded for
+  that conversation and never re-resolves against a changed table; a `--tier`
+  that differs from the recorded one refuses.
+
+**Provenance.** A new session record stores `selection_tier` (the tier, or
+null). A tier-derived model or effort has source `launch`, because it is a
+launch-time selection; `selection_tier` says why. `session list` appends
+`tier=<tier>` to the `MODEL` cell, for example
+`gpt-6-luna effort=medium tier=standard`. Legacy records and records without a
+tier show nothing extra and are never rewritten.
+
+## The orchestrator procedure
+
+Before **every** `session launch` of any role (planning, lead, specialist), the
+Orchestration Agent:
+
+1. classifies the task into `routine`, `standard` or `complex` and writes a
+   one-line reason to the Bead note or the operator update;
+2. runs `scripts/nogg models --agent <agent> --tier <tier>` if it needs to see
+   the entry;
+3. launches with `--tier <tier>`.
+
+It takes model and effort from the table, never from live research, and applies
+the escalation rules: when unsure, the higher tier; a relaunch after a failed or
+stalled attempt escalates one tier; quota never lowers a tier. The procedure is
+stated in `.nogging/launch-prompts/orchestrator.md`, the `/orchestrate` command
+and `docs/operating-model.md` *Orchestration*, so a fresh orchestrator applies
+it without memory of earlier conversations. A Lead Agent that launches an
+out-of-process specialist may pass `--tier` too, but is not required to.
+
+Nothing mechanical can verify a classification, so the safeguard is
+visibility: `tier=` in `session list` and the reason in the notes.
+
+## Quota and tiers
+
+Complexity decides the tier. Quota decides **when** a session runs and, among
+agents whose same-tier entry fits, **which** agent runs it. The orchestrator
+never lowers a tier to dodge a limit: on a usage-limit denial it waits for the
+limiting reset, or launches the same tier on another agent. A resumed session
+keeps its recorded agent, model and tier; switching model is not a limit
+workaround. See `docs/usage-limits.md`.
+
+## Drift
+
+`scripts/nogg doctor` prints `NOTE model-selection: …` lines, never failures,
+when a Codex table model is absent from the local Codex model catalog
+(`models_cache.json`), when an Antigravity table model is absent from a bounded
+`agy models` probe, or when the installed `table_version` is older than the
+packaged one (`update` never overwrites `.nogging/model-selection.json`;
+merge the new entries by hand). An unavailable source is reported as
+unavailable, not as drift. Claude has no list command, so Claude entries are
+only format-checked. Launch never probes live: a drifted entry is revised in a
+planning session.
+
 ## Rationale
 
 The research was done once, in the planning session of 2026-10-11. Most
