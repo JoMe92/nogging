@@ -16,7 +16,8 @@ nogg="$here/nogg"
 repo_root="$(cd "$here/.." && pwd)"
 work=$(mktemp -d)
 out=$(mktemp)
-trap 'rm -f "$out"; rm -rf "$work"' EXIT
+err=$(mktemp)   # JSON assertions read stdout only; stderr is kept for failures
+trap 'rm -f "$out" "$err"; rm -rf "$work"' EXIT
 
 mkdir -p "$work/bin"
 cat >"$work/bin/bd" <<'STUB'
@@ -42,7 +43,7 @@ mkdir -p "$HOME"
 
 fail=0
 ok() { echo "ok   - $1"; }
-bad() { echo "FAIL - $1"; cat "$out"; fail=1; }
+bad() { echo "FAIL - $1"; cat "$out" "$err"; fail=1; }
 expect() { [[ "$2" == "$3" ]] && ok "$1" || { echo "  got: $2 want: $3" >"$out"; bad "$1"; }; }
 
 make_root() {
@@ -68,11 +69,11 @@ root="$work/repo"; make_root "$root"; export NOGGING_ROOT="$root"
 usage="$root/.nogging/state/token-usage"
 
 # --- absent store ------------------------------------------------------------
-"$nogg" token-usage report --json >"$out" 2>&1 && ok "report on an absent store" || bad "absent report"
+"$nogg" token-usage report --json >"$out" 2>"$err" && ok "report on an absent store" || bad "absent report"
 expect "absent store is reported" "$(j 'd["store"], d["rows"], d["sync"]["local_only"], d["schema"]')" \
   "('absent', [], True, 'nogg.token-usage.report/v1')"
 [[ ! -e "$usage/database" ]] && ok "report did not create the store" || bad "report created a store"
-"$nogg" token-usage status --json >"$out" 2>&1 && expect "status on an absent store" "$(j 'd["store"]')" "absent" || bad "absent status"
+"$nogg" token-usage status --json >"$out" 2>"$err" && expect "status on an absent store" "$(j 'd["store"]')" "absent" || bad "absent status"
 
 # --- refusals ------------------------------------------------------------------
 refuse() {
@@ -106,31 +107,39 @@ with open(sys.argv[1], "w") as fh:
                                          "usage": {"input_tokens": 5, "cache_read_input_tokens": 100,
                                                    "cache_creation_input_tokens": 7, "output_tokens": 11}}}) + "\n")
 PY
-"$nogg" token-usage collect --session "$name" --json >"$out" 2>&1 && ok "collect --session" || bad "collect"
-expect "collect imported without error" "$(j 'd["schema"], d["error"], d["spooled_batches"]')" \
-  "('nogg.token-usage.collect/v1', None, 0)"
+"$nogg" token-usage collect --session "$name" --json >"$out" 2>"$err" && ok "collect --session" || bad "collect"
+[[ ! -s "$err" ]] && ok "collect --json emits only the JSON document" || bad "collect --json wrote to stderr"
+if command -v dolt >/dev/null 2>&1; then
+  expect "collect imported without error" "$(j 'd["schema"], d["error"], d["spooled_batches"]')" \
+    "('nogg.token-usage.collect/v1', None, 0)"
+else
+  # Without Dolt the facts stay durably spooled and the document says so.
+  expect "collect reports pending facts honestly without Dolt" \
+    "$(j 'd["schema"], "unavailable" in (d["error"] or ""), d["spooled_batches"] >= 1')" \
+    "('nogg.token-usage.collect/v1', True, True)"
+fi
 
 if ! command -v dolt >/dev/null 2>&1; then ok "dolt not installed; store-backed CLI checks skipped"; exit "$fail"; fi
 day=$(python3 -c 'import sys; print(sys.argv[1][:10])' "$started")
 next=$(python3 -c 'import datetime as d,sys; print(d.date.fromisoformat(sys.argv[1]) + d.timedelta(days=1))' "$day")
-"$nogg" token-usage report --from "$day" --to "$next" --json >"$out" 2>&1 && ok "day report" || bad "day report"
+"$nogg" token-usage report --from "$day" --to "$next" --json >"$out" 2>"$err" && ok "day report" || bad "day report"
 expect "day totals and coverage" "$(j 'd["rows"][0]["events"], d["rows"][0]["tokens"]["input_tokens"], d["coverage"]["unknown_model"], d["pending"]["spooled_batches"], "as_of" in d')" \
   "(2, 224, 0, 0, True)"
-"$nogg" token-usage report --from "$day" --to "$next" --group-by session --complexity standard --task TASK-DEMO-001 --json >"$out" 2>&1 \
+"$nogg" token-usage report --from "$day" --to "$next" --group-by session --complexity standard --task TASK-DEMO-001 --json >"$out" 2>"$err" \
   && expect "session rows keep models, task and complexity" \
        "$(j 'd["rows"][0]["session"], sorted(d["rows"][0]["by_model"]), d["rows"][0]["attribution"][0]["task_id"], d["rows"][0]["attribution"][0]["complexity"]')" \
        "('$name', ['claude-a', 'claude-b'], 'TASK-DEMO-001', 'standard')" || bad "session report"
-"$nogg" token-usage report --from "$day" --to "$next" --model claude-b --json >"$out" 2>&1 \
+"$nogg" token-usage report --from "$day" --to "$next" --model claude-b --json >"$out" 2>"$err" \
   && expect "model filter" "$(j 'd["rows"][0]["events"], d["rows"][0]["wall_runtime_ms"]')" "(1, None)" || bad "model filter"
-"$nogg" token-usage report --from "$day" --to "$next" --complexity routine --json >"$out" 2>&1 \
+"$nogg" token-usage report --from "$day" --to "$next" --complexity routine --json >"$out" 2>"$err" \
   && expect "non-matching complexity" "$(j 'd["rows"]')" "[]" || bad "complexity filter"
 "$nogg" token-usage report --from "$day" --to "$next" >"$out" 2>&1 && grep -qF "not billed cost" "$out" \
   && ok "text report renders with notes" || bad "text report"
-"$nogg" token-usage session "$name" --json >"$out" 2>&1 \
+"$nogg" token-usage session "$name" --json >"$out" 2>"$err" \
   && expect "session inspection" "$(j 'd["schema"], d["totals"]["events"], d["attribution"][0]["complexity_source"]')" \
        "('nogg.token-usage.session/v1', 2, 'launch')" || bad "session inspect"
 "$nogg" token-usage session "$name" >"$out" 2>&1 && grep -qF "model claude-b" "$out" && ok "text session renders" || bad "text session"
-"$nogg" token-usage status --json >"$out" 2>&1 \
+"$nogg" token-usage status --json >"$out" 2>"$err" \
   && expect "status" "$(j 'd["store"], d["current_facts"]["usage_events"], d["sync"]["state"]')" "('present', 2, 'not_configured')" \
   || bad "status"
 
@@ -141,18 +150,18 @@ expect "day totals and coverage" "$(j 'd["rows"][0]["events"], d["rows"][0]["tok
   && ok "whole-store export includes the device registry" || bad "export --all"
 refuse "export --all with a window" "drop --from/--to" export --all --from "$day" --to "$next"
 other="$work/other"; make_root "$other"
-NOGGING_ROOT="$other" "$nogg" token-usage import --file "$work/export.jsonl" --json >"$out" 2>&1 \
+NOGGING_ROOT="$other" "$nogg" token-usage import --file "$work/export.jsonl" --json >"$out" 2>"$err" \
   && ok "import into a fresh store" || bad "import"
-NOGGING_ROOT="$other" "$nogg" token-usage import --file "$work/export.jsonl" --json >"$out" 2>&1 \
+NOGGING_ROOT="$other" "$nogg" token-usage import --file "$work/export.jsonl" --json >"$out" 2>"$err" \
   && expect "re-import adds nothing" "$(j 'd["added"]')" "0" || bad "re-import"
-NOGGING_ROOT="$other" "$nogg" token-usage report --from "$day" --to "$next" --json >"$out" 2>&1 \
+NOGGING_ROOT="$other" "$nogg" token-usage report --from "$day" --to "$next" --json >"$out" 2>"$err" \
   && expect "recovered totals match" "$(j 'd["rows"][0]["events"], d["rows"][0]["tokens"]["input_tokens"]')" "(2, 224)" \
   || bad "recovered report"
 sed 's/"input_tokens": 112/"input_tokens": 999/' "$work/export.jsonl" >"$work/tampered.jsonl"
 NOGGING_ROOT="$other" "$nogg" token-usage import --file "$work/tampered.jsonl" >"$out" 2>&1 \
   && bad "tampered import should refuse" || { grep -qF "does not reproduce" "$out" && ok "tampered import refused" || bad "tamper text"; }
-"$nogg" token-usage collect --session "$name" --json >"$out" 2>&1
-"$nogg" token-usage report --from "$day" --to "$next" --json >"$out" 2>&1 \
+"$nogg" token-usage collect --session "$name" --json >"$out" 2>"$err"
+"$nogg" token-usage report --from "$day" --to "$next" --json >"$out" 2>"$err" \
   && expect "re-collection does not double charge" "$(j 'd["rows"][0]["tokens"]["input_tokens"]')" "224" || bad "recollect"
 
 exit "$fail"
