@@ -86,8 +86,9 @@ function renderScaffoldConfig(ctx, raw) {
   return JSON.stringify(data, null, 2) + '\n';
 }
 
-function writeScaffold(ctx) {
+function writeScaffold(ctx, { updating = false } = {}) {
   for (const item of manifest.scaffold) {
+    if (updating && !item.onUpdate) continue;
     let content = fs.readFileSync(src(ctx, item.from), 'utf8');
     if (item.transform === 'noggingConfig') {
       content = renderScaffoldConfig(ctx, content);
