@@ -119,7 +119,12 @@ with tempfile.TemporaryDirectory() as tmp:
             refused(lambda: m.session_launch('lead','SPEC-test',str(linked),False,None,agent='agy'),'guard')
             assert calls == [] and not (tmp/'sessions').exists()
             hooks.write_text((root/'templates/antigravity/hooks.json').read_text())
-            with patch.object(m.os,'replace',side_effect=PermissionError('unwritable trust')):
+            real_replace = os.replace
+            def refuse_trust_replace(source, destination):
+                if Path(destination) == settings:
+                    raise PermissionError('unwritable trust')
+                return real_replace(source, destination)
+            with patch.object(m.os,'replace',side_effect=refuse_trust_replace):
                 refused(lambda: m.session_launch('lead','SPEC-test',str(linked),False,None,agent='agy'),'unwritable trust')
             assert calls == [] and not (tmp/'sessions').exists()
             restricted = tmp/'restricted.agy.toml'

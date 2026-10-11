@@ -1,4 +1,4 @@
-"""Read-only quota observations. Never return raw runtime records or paths.
+"""Quota observations and same-host admission. Never return raw runtime records or paths.
 
 Claude cache v1: {schema_version: 1, observed_at: RFC3339,
                  rate_limits: <statusline rate_limits object>}.
@@ -233,11 +233,13 @@ def evaluate_gate(report, config, estimate, reserved_percent=0):
     never treated as zero."""
     windows, limiting, unknown = [], [], []
     for window in report['windows']:
-        item = {'bucket': window['bucket'], 'status': window['status'],
+        reserved = (reserved_percent.get(window['bucket'], 0)
+                    if isinstance(reserved_percent, dict) else reserved_percent)
+        item = {'bucket': window['bucket'], 'reserved_percent': reserved, 'status': window['status'],
                 'reason': window['reason'], 'used_percent': window['used_percent'],
                 'resets_at': window['resets_at'], 'projected_percent': None, 'fits': None}
         if window['status'] == 'known':
-            projected = window['used_percent'] + reserved_percent + estimate
+            projected = window['used_percent'] + reserved + estimate
             item.update(projected_percent=round(projected, 4), fits=projected <= config['cap_percent'])
             if not item['fits']:
                 limiting.append(item)
@@ -251,7 +253,7 @@ def evaluate_gate(report, config, estimate, reserved_percent=0):
     else:
         decision = 'admitted'
     return {'decision': decision, 'cap_percent': config['cap_percent'],
-            'estimate_percent': estimate, 'reserved_percent': reserved_percent,
+            'estimate_percent': estimate, 'reserved_percent': max(reserved_percent.values(), default=0) if isinstance(reserved_percent, dict) else reserved_percent,
             'fits': False if limiting else (None if unknown else True),
             'retry_after': max((w['resets_at'] for w in limiting), default=None),
             'windows': windows}
@@ -273,7 +275,7 @@ def describe_denial(gate):
     if gate['decision'] == 'unknown-denied':
         reasons = '; '.join(f"{w['bucket']}: {w['reason']}" for w in gate['windows'] if w['status'] != 'known')
         return f'usage unknown and usage_gate.on_unknown is deny ({reasons})'
-    parts = [f"{w['bucket']} {w['used_percent']:g}% used + {gate['reserved_percent']:g}% reserved + "
+    parts = [f"{w['bucket']} {w['used_percent']:g}% used + {w.get('reserved_percent', gate['reserved_percent']):g}% reserved + "
              f"{gate['estimate_percent']:g}% estimate = {w['projected_percent']:g}% > cap "
              f"{gate['cap_percent']:g}% (resets {w['resets_at']})"
              for w in gate['windows'] if w['fits'] is False]
@@ -284,7 +286,7 @@ def usage_command(agent, json_output=False, config=None):
     config = gate_config(config)
     report = observe(agent, config)
     estimate = launch_estimate(agent, (), config)
-    report['gate'] = evaluate_gate(report, config, estimate['estimate_percent'])
+    report['gate'] = evaluate_gate(report, config, estimate['estimate_percent'], Reservations().totals(report))
     report['gate']['enabled'] = config['enabled']
     if json_output:
         print(json.dumps(report, sort_keys=True, allow_nan=False))
@@ -294,10 +296,174 @@ def usage_command(agent, json_output=False, config=None):
     for window, projection in zip(report['windows'], gate['windows']):
         if window['status'] == 'known':
             print(f"  {window['bucket']}: {window['used_percent']:g}% used; reset {window['resets_at']}; observed {window['observed_at']}; "
-                  f"projected {projection['projected_percent']:g}% of cap {gate['cap_percent']:g}% "
+                  f"reserved {projection['reserved_percent']:g}%; projected {projection['projected_percent']:g}% of cap {gate['cap_percent']:g}% "
                   f"({'fits' if projection['fits'] else 'does not fit'})")
         else:
             print(f"  {window['bucket']}: unknown ({window['reason']})")
     print(f"  estimate {gate['estimate_percent']:g}% per launch; reserved {gate['reserved_percent']:g}%; "
           f"fits: {'unknown' if gate['fits'] is None else ('yes' if gate['fits'] else 'no')}"
           + ('' if config['enabled'] else ' (usage_gate disabled)'))
+
+
+def reservation_scope(report):
+    """Opaque scope only; never infer an account from authentication files.
+
+    Until an adapter supplies account/group identity, conservatively share all
+    launches of that provider for this OS user, even across source directories.
+    The public report continues to describe identity as unknown.
+    """
+    import hashlib
+    provider = report['provider']
+    identity = report.get('account') or {'unknown': True}
+    return hashlib.sha256(json.dumps([provider, identity, report.get('model_group')],
+                                    sort_keys=True).encode()).hexdigest()
+
+
+class Reservations:
+    """Same-user, same-host admission ledger, shared across repositories.
+
+    Lock files are stable inodes; the ledger is replaced atomically under the
+    lock. Pending owners hold kernel file locks, which work across PID
+    namespaces and are released on process death. Bound owners use durable
+    session state and tmux liveness, so a launcher
+    exit does not release a still-running worker's estimate.
+    """
+    def __init__(self, root=None):
+        self.root = Path(root) if root else Path(os.environ.get(
+            'XDG_CACHE_HOME', str(Path.home() / '.cache'))) / 'nogging/usage/reservations'
+        self.pending = {}
+
+    def _alive(self, entry):
+        import subprocess
+        owner = entry.get('session')
+        if owner:
+            try:
+                record = json.loads(Path(owner['path']).read_text())
+            except (OSError, ValueError):
+                record = None
+            if record and record.get('state') in ('stopped', 'failed', 'retired'):
+                return False
+            try:
+                result = subprocess.run([owner['tmux'], '-L', owner['socket'],
+                                         'has-session', '-t', owner['name']],
+                                        capture_output=True, timeout=5)
+                if result.returncode == 0:
+                    return True
+            except (OSError, subprocess.TimeoutExpired):
+                # Tool failure is not proof that a worker is dead.
+                return True
+        return self._pending_alive(entry['owner'])
+
+    def _pending_alive(self, owner):
+        import fcntl
+        try:
+            descriptor = os.open(self.root / owner, os.O_RDONLY)
+        except FileNotFoundError:
+            return False
+        try:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return False
+            except BlockingIOError:
+                return True
+        finally:
+            os.close(descriptor)
+
+    def finish(self, token):
+        """Drop the launcher's pending-owner lock after binding a live child."""
+        descriptor = self.pending.pop(token, None)
+        if descriptor is not None:
+            os.close(descriptor)
+
+    def _transaction(self, action, *, readonly=False):
+        import fcntl
+        import tempfile
+        if readonly and not (self.root / 'ledger.json').exists():
+            return action({})
+        if not readonly:
+            self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
+            self.root.chmod(0o700)
+        lock_fd = os.open(self.root / 'ledger.lock', os.O_RDONLY if readonly else os.O_CREAT | os.O_RDWR, 0o600)
+        with os.fdopen(lock_fd, 'r' if readonly else 'a+') as lock:
+            if not readonly:
+                os.fchmod(lock.fileno(), 0o600)
+            fcntl.flock(lock, fcntl.LOCK_SH if readonly else fcntl.LOCK_EX)
+            path = self.root / 'ledger.json'
+            try:
+                entries = json.loads(path.read_text())
+                if not isinstance(entries, dict):
+                    raise ValueError('invalid ledger')
+            except FileNotFoundError:
+                entries = {}
+            except ValueError as exc:
+                raise RuntimeError('usage reservation ledger is malformed; admission refused') from exc
+            original = dict(entries)
+            entries = {key: value for key, value in entries.items() if self._alive(value)}
+            result = action(entries)
+            if readonly:
+                return result
+            temporary = None
+            try:
+                with tempfile.NamedTemporaryFile(mode='w', dir=self.root, delete=False) as stream:
+                    temporary = Path(stream.name)
+                    json.dump(entries, stream, allow_nan=False)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(temporary, path)
+                for key in original.keys() - entries.keys():
+                    (self.root / original[key]['owner']).unlink(missing_ok=True)
+            finally:
+                if temporary:
+                    temporary.unlink(missing_ok=True)
+            return result
+
+    @staticmethod
+    def _totals(entries, scope, report):
+        # A fresh reset window no longer owes reservations from its predecessor.
+        return {window['bucket']: sum(entry['estimate'] for entry in entries.values()
+                    if entry['scope'] == scope and
+                    entry['windows'].get(window['bucket']) in (None, window['resets_at']))
+                for window in report['windows']}
+
+    def totals(self, report):
+        return self._transaction(lambda entries: self._totals(entries, reservation_scope(report), report), readonly=True)
+
+    def admit(self, report, config, estimate):
+        import uuid
+        scope = reservation_scope(report)
+        def action(entries):
+            gate = evaluate_gate(report, config, estimate, self._totals(entries, scope, report))
+            if gate['decision'] not in ('denied', 'unknown-denied'):
+                token = uuid.uuid4().hex
+                import fcntl
+                owner = token + '.owner'
+                descriptor = os.open(self.root / owner, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                self.pending[token] = descriptor
+                entries[token] = {'scope': scope, 'estimate': estimate,
+                                  'windows': {w['bucket']: w['resets_at'] for w in report['windows']},
+                                  'owner': owner}
+                gate['reservation_id'] = token
+            return gate
+        try:
+            return self._transaction(action)
+        except BaseException:
+            # An atomic ledger write can fail after the owner lock was taken.
+            for token in list(self.pending):
+                self.finish(token)
+                (self.root / (token + '.owner')).unlink(missing_ok=True)
+            raise
+
+    def bind(self, token, path, name, tmux, socket):
+        def action(entries):
+            if token not in entries:
+                raise RuntimeError('usage admission reservation disappeared before launch completed')
+            entries[token]['session'] = {'path': str(Path(path).resolve()), 'name': name,
+                                          'tmux': tmux, 'socket': socket}
+        self._transaction(action)
+
+    def release(self, token):
+        try:
+            self._transaction(lambda entries: entries.pop(token, None))
+        finally:
+            self.finish(token)
