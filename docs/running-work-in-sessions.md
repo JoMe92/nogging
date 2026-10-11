@@ -607,3 +607,38 @@ With sufficient samples, Nogging uses the conservative learned median
 scales the learned estimate by the configured multiplier. The history store
 records only deltas and timestamps; no credentials, tokens, or account
 identifiers are stored or exposed.
+
+### Statusline usage capture and doctor freshness
+
+Claude Code quota observation requires opt-in capture from Claude's statusline:
+
+```bash
+./scripts/nogg usage install-statusline
+```
+
+`usage install-statusline` installs a composable wrapper script to
+`$XDG_DATA_HOME/nogging/claude-statusline` (default `~/.local/share/nogging`)
+and configures `"statusLine"` in `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR`).
+If the user already has a custom statusline command configured, Nogging
+composes with it: Claude's stdin JSON is forwarded to the existing command and
+its stdout is rendered normally, while `rate_limits` are captured atomically to
+`$XDG_CACHE_HOME/nogging/usage/claude.json`. All unrelated settings in
+`settings.json` are preserved. If the existing configuration cannot be composed
+safely, the command refuses with manual configuration instructions.
+
+`./scripts/nogg doctor` reports advisory notes on quota cache freshness:
+- Missing observation sources (advising `nogg usage install-statusline` when
+  Claude statusline cache is absent).
+- Stale observations exceeding `stale_seconds` (default 600s).
+- Fresh observation caches.
+
+### Orchestrator retry guidance and scheduling
+
+When launch admission is denied (exit code 75):
+- The denial reports every limiting window and names the latest reset time
+  across all limiting windows (`retry after <timestamp>`).
+- The Orchestrator's scheduling guidance requires bounded retry at that latest
+  limiting reset time.
+- Model switching is explicitly prohibited as a limit workaround; the
+  orchestrator must wait for the limiting window to reset rather than switching
+  models to bypass account or bucket quotas.
