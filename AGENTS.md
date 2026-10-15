@@ -98,7 +98,8 @@ session or inline work under the same constraints.
 ## Supervised sessions
 
 Lead Agent and specialist sessions that Nogging starts run inside a named
-tmux session on the delivery host, tracked by a durable record under
+session on the delivery host (hosted on tmux by default, or herdr; see
+`docs/using-with-herdr.md`), tracked by a durable record under
 `.nogging/state/sessions/` and an append-only log. Operators use
 `scripts/nogg session list | attach | log | stop | cleanup` from a plain
 SSH shell; see `docs/operating-model.md`. `session launch --agent
@@ -128,7 +129,7 @@ with the **single exception** of the Orchestration Agent (below).
 The **Orchestration Agent** is a fourth persona, above the Planning Agent and
 the Main Worker: **Product Owner → Orchestration Agent → {Planning, Lead} →
 Specialists**. It runs always-on as the single supervised
-`nogg-orchestrator-<slug>` session (a systemd user service keeps it alive across
+`nogg-orchestrator-<slug>` session (pinned to tmux; a systemd user service keeps it alive across
 crash and reboot; it is reachable from a phone via Remote Control). It is
 **Claude Code only** in this version.
 
