@@ -1,0 +1,1160 @@
+#!/usr/bin/env python3
+"""Stateful fake herdr CLI for Nogging test suites ($HERDR_STUB_DIR).
+
+Reproduces spike-verified CLI forms and JSON for:
+- pane create / list / get / process_info / send / read / close / rename
+- workspace create / list / close
+- agent get / list / explain
+- version and reachability (status running/not running, ping)
+- simulated server restart
+- injectable failures
+- call log ($HERDR_STUB_DIR/calls.log)
+"""
+
+import json
+import os
+import sys
+
+SPIKE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "spike"))
+
+
+def get_stub_dir():
+    d = os.environ.get("HERDR_STUB_DIR")
+    if not d:
+        d = f"/tmp/herdr-stub-{os.getuid()}"
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def log_call(stub_dir, argv):
+    call_log = os.path.join(stub_dir, "calls.log")
+    try:
+        with open(call_log, "a", encoding="utf-8") as f:
+            f.write(" ".join(argv) + "\n")
+    except OSError:
+        pass
+
+
+def check_injected_failures(stub_dir, cmd_key=""):
+    # 1. fail_once
+    fail_once = os.path.join(stub_dir, "fail_once")
+    if os.path.exists(fail_once):
+        try:
+            with open(fail_once, "r", encoding="utf-8") as f:
+                content = f.read().strip()
+            os.remove(fail_once)
+        except OSError:
+            content = ""
+        emit_failure_and_exit(content)
+
+    # 2. General fail
+    fail_file = os.path.join(stub_dir, "fail")
+    if os.path.exists(fail_file):
+        try:
+            with open(fail_file, "r", encoding="utf-8") as f:
+                content = f.read().strip()
+        except OSError:
+            content = ""
+        emit_failure_and_exit(content)
+
+    # 3. Subcommand fail
+    if cmd_key:
+        cmd_fail_file = os.path.join(stub_dir, f"fail_{cmd_key}")
+        if os.path.exists(cmd_fail_file):
+            try:
+                with open(cmd_fail_file, "r", encoding="utf-8") as f:
+                    content = f.read().strip()
+            except OSError:
+                content = ""
+            emit_failure_and_exit(content)
+
+
+def emit_failure_and_exit(content):
+    code = 1
+    msg = None
+    if content:
+        lines = content.splitlines()
+        first_line = lines[0].strip()
+        if first_line.isdigit():
+            code = int(first_line)
+            msg = "\n".join(lines[1:]) if len(lines) > 1 else None
+        elif first_line.startswith("{") and first_line.endswith("}"):
+            msg = content
+        else:
+            msg = content
+    if not msg:
+        msg = json.dumps({"id": "cli", "error": {"code": "injected_failure", "message": "injected failure"}})
+    sys.stderr.write(msg + "\n")
+    sys.exit(code)
+
+
+def load_state(stub_dir):
+    state_file = os.path.join(stub_dir, "state.json")
+    should_seed = (
+        os.environ.get("HERDR_STUB_SEED") == "spike"
+        or os.path.exists(os.path.join(stub_dir, "seed_spike"))
+    )
+
+    if os.path.exists(state_file):
+        try:
+            with open(state_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    # Fresh state
+    if should_seed:
+        return get_spike_seed_state()
+    return get_default_empty_state()
+
+
+def get_default_empty_state():
+    return {
+        "server": {
+            "status": "running",
+            "version": "0.9.5",
+            "restarts": 0
+        },
+        "sessions": {
+            "default": {
+                "default": True,
+                "name": "default",
+                "running": False,
+                "session_dir": "/home/user/.config/herdr",
+                "socket_path": "/home/user/.config/herdr/herdr.sock"
+            },
+            "nogging": {
+                "default": False,
+                "name": "nogging",
+                "running": True,
+                "session_dir": "/home/user/.config/herdr/sessions/nogging",
+                "socket_path": "/home/user/.config/herdr/sessions/nogging/herdr.sock"
+            }
+        },
+        "workspaces": {},
+        "panes": {},
+        "next_pane_idx": 1
+    }
+
+
+def get_spike_seed_state():
+    return {
+        "server": {
+            "status": "running",
+            "version": "0.9.5",
+            "restarts": 0
+        },
+        "sessions": {
+            "default": {
+                "default": True,
+                "name": "default",
+                "running": False,
+                "session_dir": "/home/user/.config/herdr",
+                "socket_path": "/home/user/.config/herdr/herdr.sock"
+            },
+            "nogg-spike": {
+                "default": False,
+                "name": "nogg-spike",
+                "running": True,
+                "session_dir": "/home/user/.config/herdr/sessions/nogg-spike",
+                "socket_path": "/home/user/.config/herdr/sessions/nogg-spike/herdr.sock"
+            }
+        },
+        "workspaces": {
+            "w1": {
+                "active_tab_id": "w1:t1",
+                "agent_status": "done",
+                "focused": True,
+                "label": "nogging",
+                "number": 1,
+                "pane_count": 2,
+                "tab_count": 2,
+                "workspace_id": "w1"
+            },
+            "w2": {
+                "active_tab_id": "w2:t1",
+                "agent_status": "unknown",
+                "focused": False,
+                "label": "nogging-fixture",
+                "number": 2,
+                "pane_count": 2,
+                "tab_count": 2,
+                "workspace_id": "w2"
+            }
+        },
+        "panes": {
+            "w2:p1": {
+                "agent_status": "unknown",
+                "cwd": "/tmp",
+                "focused": False,
+                "foreground_cwd": "/tmp",
+                "pane_id": "w2:p1",
+                "revision": 1,
+                "scroll": {"max_offset_from_bottom": 0, "offset_from_bottom": 0, "viewport_rows": 40},
+                "tab_id": "w2:t1",
+                "terminal_id": "term_65de3f171d1a25",
+                "terminal_title": "user@host: /tmp",
+                "terminal_title_stripped": "user@host: /tmp",
+                "workspace_id": "w2",
+                "shell_pid": 17260,
+                "foreground_process_group_id": 17260,
+                "foreground_processes": [{"argv": ["/bin/bash"], "cmdline": "/bin/bash", "cwd": "/tmp", "name": "bash", "pid": 17260}]
+            },
+            "w2:p2": {
+                "agent_status": "unknown",
+                "cwd": "/tmp",
+                "focused": False,
+                "foreground_cwd": "/tmp",
+                "label": "sf-fixture-1",
+                "pane_id": "w2:p2",
+                "revision": 0,
+                "scroll": {"max_offset_from_bottom": 0, "offset_from_bottom": 0, "viewport_rows": 40},
+                "tab_id": "w2:t2",
+                "terminal_id": "term_65de3f1736e456",
+                "workspace_id": "w2",
+                "shell_pid": 17261,
+                "foreground_process_group_id": 17261,
+                "foreground_processes": [{"argv": ["sleep", "300"], "cmdline": "sleep 300", "cwd": "/tmp", "name": "sleep", "pid": 17261}]
+            },
+            "w1:pJ": {
+                "agent": "claude",
+                "agent_status": "done",
+                "completion_seq": 3,
+                "cwd": "/home/user/src/nogging",
+                "focused": False,
+                "foreground_cwd": "/home/user/src/nogging",
+                "label": "sf-spike-claude-5",
+                "pane_id": "w1:pJ",
+                "revision": 2,
+                "scroll": {"max_offset_from_bottom": 0, "offset_from_bottom": 0, "viewport_rows": 40},
+                "state_change_seq": 3,
+                "tab_id": "w1:tJ",
+                "terminal_id": "term_65de3ec1935764",
+                "terminal_title": "\u2733 Two-line message reply",
+                "terminal_title_stripped": "Two-line message reply",
+                "workspace_id": "w1",
+                "shell_pid": 16837,
+                "foreground_process_group_id": 16837,
+                "foreground_processes": [{
+                    "argv": ["/usr/bin/python3", "/tmp/nogg-spike/proto-recorder.py", "/tmp/nogg-spike/logs/sf-spike-claude-5.log", "1048576", "3", "--", "/home/user/src/nogging-wt/scripts/session-launch", "--settings", "/home/user/src/nogging/.nogging/launch-profiles/restricted.json", "--prompt", "/tmp/nogg-spike/spike-prompt.md", "--cwd", "/home/user/src/nogging", "--model", "haiku", "--session-id", "00000000-0000-4000-8000-000000000001"],
+                    "cmdline": "/usr/bin/python3 /tmp/nogg-spike/proto-recorder.py /tmp/nogg-spike/logs/sf-spike-claude-5.log 1048576 3 -- /home/user/src/nogging-wt/scripts/session-launch --settings /home/user/src/nogging/.nogging/launch-profiles/restricted.json --prompt /tmp/nogg-spike/spike-prompt.md --cwd /home/user/src/nogging --model haiku --session-id 00000000-0000-4000-8000-000000000001",
+                    "cwd": "/home/user/src/nogging",
+                    "name": "python3",
+                    "pid": 16837
+                }]
+            }
+        },
+        "next_pane_idx": 3
+    }
+
+
+def save_state(stub_dir, state):
+    state_file = os.path.join(stub_dir, "state.json")
+    tmp = state_file + f".tmp.{os.getpid()}"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(state, f, indent=2)
+    os.replace(tmp, state_file)
+
+
+def simulate_restart(state):
+    state["server"]["restarts"] = state["server"].get("restarts", 0) + 1
+    restarts = state["server"]["restarts"]
+    for pid_key, pane in state.get("panes", {}).items():
+        old_pid = pane.get("shell_pid", 10000)
+        new_pid = 20000 + restarts * 1000 + (old_pid % 1000)
+        pane["shell_pid"] = new_pid
+        pane["foreground_process_group_id"] = new_pid
+        pane["foreground_processes"] = [{
+            "argv": ["/bin/bash"],
+            "cmdline": "/bin/bash",
+            "cwd": pane.get("cwd", "/tmp"),
+            "name": "bash",
+            "pid": new_pid
+        }]
+        pane["terminal_id"] = f"term_restarted_{new_pid}"
+        pane["agent_status"] = "unknown"
+        pane.pop("agent", None)
+
+
+def find_pane(state, target):
+    panes = state.get("panes", {})
+    if target in panes:
+        return panes[target]
+    for p in panes.values():
+        if p.get("label") == target:
+            return p
+    return None
+
+
+def main():
+    stub_dir = get_stub_dir()
+    argv = sys.argv[1:]
+    log_call(stub_dir, argv)
+
+    # Check for simulate_restart flag file
+    restart_trigger = os.path.join(stub_dir, "simulate_restart")
+    restart_triggered = False
+    if os.path.exists(restart_trigger):
+        try:
+            os.remove(restart_trigger)
+            restart_triggered = True
+        except OSError:
+            pass
+
+    state = load_state(stub_dir)
+    if restart_triggered:
+        simulate_restart(state)
+        save_state(stub_dir, state)
+
+    # Parse global flags
+    idx = 0
+    session_name = "nogging"
+    json_mode = False
+
+    while idx < len(argv):
+        arg = argv[idx]
+        if arg == "--version" or arg == "-V":
+            sys.stdout.write("herdr 0.9.5\n")
+            sys.exit(0)
+        elif arg == "--session":
+            if idx + 1 < len(argv):
+                session_name = argv[idx + 1]
+                idx += 2
+                continue
+            else:
+                sys.stderr.write("error: --session requires an argument\n")
+                sys.exit(2)
+        elif arg.startswith("--session="):
+            session_name = arg.split("=", 1)[1]
+            idx += 1
+            continue
+        elif arg == "--json":
+            json_mode = True
+            idx += 1
+            continue
+        elif arg == "--seed-spike":
+            state = get_spike_seed_state()
+            save_state(stub_dir, state)
+            sys.exit(0)
+        elif arg == "--simulate-restart":
+            simulate_restart(state)
+            save_state(stub_dir, state)
+            sys.exit(0)
+        elif arg == "--help" or arg == "-h":
+            help_file = os.path.join(SPIKE_DIR, "help", "herdr.txt")
+            if os.path.exists(help_file):
+                with open(help_file, "r", encoding="utf-8") as f:
+                    sys.stdout.write(f.read())
+            else:
+                sys.stdout.write("herdr — terminal workspace manager for AI coding agents\n")
+            sys.exit(0)
+        else:
+            break
+
+    remaining = argv[idx:]
+    if not remaining:
+        sys.stdout.write("herdr 0.9.5\n")
+        sys.exit(0)
+
+    cmd = remaining[0]
+    subcmd = remaining[1] if len(remaining) > 1 else ""
+
+    # Form a key for failure injection
+    cmd_key = f"{cmd}_{subcmd}".strip("_").replace("-", "_")
+    check_injected_failures(stub_dir, cmd_key)
+
+    # Check if server is marked down or stopped
+    server_down = (
+        os.path.exists(os.path.join(stub_dir, "server_down"))
+        or os.path.exists(os.path.join(stub_dir, "server_stopped"))
+        or state.get("server", {}).get("status") == "not_running"
+    )
+
+    # Status check (reachability)
+    if cmd == "status":
+        socket_path = f"/home/user/.config/herdr/sessions/{session_name}/herdr.sock"
+        if server_down:
+            status_txt = f"""client:
+  version: 0.9.5
+  channel: stable
+  protocol: 22
+  endpoint_protocol_generation: 1
+
+server:
+  status: not running
+  socket: {socket_path}
+
+update:
+  restart_needed: no
+  server_binary_stale: no
+"""
+        else:
+            status_txt = f"""client:
+  version: 0.9.5
+  channel: stable
+  protocol: 22
+  endpoint_protocol_generation: 1
+
+server:
+  status: running
+  version: 0.9.5
+  endpoint_compatible: yes
+  private_protocol: 22
+  private_protocol_compatible: yes
+  socket: {socket_path}
+
+update:
+  restart_needed: no
+  server_binary_stale: no
+"""
+        sys.stdout.write(status_txt)
+        sys.exit(0)
+
+    # Version subcommand
+    if cmd == "version":
+        sys.stdout.write("herdr 0.9.5\n")
+        sys.exit(0)
+
+    # Ping command
+    if cmd == "ping" or (cmd == "api" and subcmd == "ping"):
+        if server_down:
+            err = {"id": "cli:ping", "error": {"code": "server_not_running", "message": f"no herdr server is running at /home/user/.config/herdr/sessions/{session_name}/herdr.sock"}}
+            sys.stderr.write(json.dumps(err) + "\n")
+            sys.exit(1)
+        res = {
+            "id": "cli:ping",
+            "result": {
+                "type": "pong",
+                "version": "0.9.5",
+                "protocol": 22,
+                "capabilities": {
+                    "live_handoff": True,
+                    "detached_server_daemon": True,
+                    "endpoint_protocol_generation": 1,
+                    "surface_interest": True,
+                    "health_check": True,
+                    "ssh_agent_registration": True
+                }
+            }
+        }
+        sys.stdout.write(json.dumps(res) + "\n")
+        sys.exit(0)
+
+    # Server control commands
+    if cmd == "server":
+        if subcmd == "stop":
+            state["server"]["status"] = "not_running"
+            save_state(stub_dir, state)
+            sys.exit(0)
+        elif subcmd == "start" or subcmd == "run" or subcmd == "":
+            state["server"]["status"] = "running"
+            save_state(stub_dir, state)
+            sys.exit(0)
+        elif subcmd == "restart":
+            simulate_restart(state)
+            state["server"]["status"] = "running"
+            save_state(stub_dir, state)
+            sys.exit(0)
+
+    # Session commands
+    if cmd == "session":
+        if subcmd == "list":
+            sess_list = []
+            for sname, sdata in state.get("sessions", {}).items():
+                sess_list.append({
+                    "default": sdata.get("default", False),
+                    "name": sname,
+                    "running": False if server_down else sdata.get("running", True),
+                    "session_dir": sdata.get("session_dir", f"/home/user/.config/herdr/sessions/{sname}"),
+                    "socket_path": sdata.get("socket_path", f"/home/user/.config/herdr/sessions/{sname}/herdr.sock")
+                })
+            out = {"sessions": sess_list}
+            sys.stdout.write(json.dumps(out) + "\n")
+            sys.exit(0)
+        elif subcmd == "stop":
+            target_name = remaining[2] if len(remaining) > 2 else session_name
+            if target_name in state.get("sessions", {}):
+                state["sessions"][target_name]["running"] = False
+                save_state(stub_dir, state)
+            if json_mode or "--json" in remaining:
+                sys.stdout.write(json.dumps({"result": {"type": "ok"}}) + "\n")
+            sys.exit(0)
+        elif subcmd == "delete":
+            target_name = remaining[2] if len(remaining) > 2 else session_name
+            if target_name in state.get("sessions", {}):
+                del state["sessions"][target_name]
+                save_state(stub_dir, state)
+            if json_mode or "--json" in remaining:
+                sys.stdout.write(json.dumps({"result": {"type": "ok"}}) + "\n")
+            sys.exit(0)
+
+    # If server is down, all subsequent commands fail with server_not_running
+    if server_down:
+        err = {
+            "id": f"cli:{cmd}:{subcmd}".rstrip(":"),
+            "error": {
+                "code": "server_not_running",
+                "message": f"no herdr server is running at /home/user/.config/herdr/sessions/{session_name}/herdr.sock; run `herdr session attach {session_name}` to start or attach it"
+            }
+        }
+        sys.stderr.write(json.dumps(err) + "\n")
+        sys.exit(1)
+
+    # Workspace commands
+    if cmd == "workspace":
+        if subcmd == "list":
+            workspaces = list(state.get("workspaces", {}).values())
+            res = {
+                "id": "cli:workspace:list",
+                "result": {
+                    "type": "workspace_list",
+                    "workspaces": workspaces
+                }
+            }
+            sys.stdout.write(json.dumps(res) + "\n")
+            sys.exit(0)
+        elif subcmd == "create":
+            label = "nogging-fixture"
+            cwd = "/tmp"
+            i = 2
+            while i < len(remaining):
+                if remaining[i] == "--label" and i + 1 < len(remaining):
+                    label = remaining[i + 1]
+                    i += 2
+                elif remaining[i] == "--cwd" and i + 1 < len(remaining):
+                    cwd = remaining[i + 1]
+                    i += 2
+                else:
+                    i += 1
+            num = len(state.get("workspaces", {})) + 1
+            w_id = f"w{num}"
+            p_id = f"{w_id}:p1"
+            t_id = f"{w_id}:t1"
+            term_id = f"term_65de3f17{num}d1a25"
+            root_pane = {
+                "agent_status": "unknown",
+                "cwd": cwd,
+                "focused": False,
+                "foreground_cwd": cwd,
+                "pane_id": p_id,
+                "revision": 0,
+                "scroll": {"max_offset_from_bottom": 0, "offset_from_bottom": 0, "viewport_rows": 40},
+                "tab_id": t_id,
+                "terminal_id": term_id,
+                "workspace_id": w_id,
+                "shell_pid": 17260 + num,
+                "foreground_process_group_id": 17260 + num,
+                "foreground_processes": [{"argv": ["/bin/bash"], "cmdline": "/bin/bash", "cwd": cwd, "name": "bash", "pid": 17260 + num}]
+            }
+            tab = {
+                "agent_status": "unknown",
+                "focused": False,
+                "label": "1",
+                "number": 1,
+                "pane_count": 1,
+                "tab_id": t_id,
+                "workspace_id": w_id
+            }
+            workspace = {
+                "active_tab_id": t_id,
+                "agent_status": "unknown",
+                "focused": False,
+                "label": label,
+                "number": num,
+                "pane_count": 1,
+                "tab_count": 1,
+                "workspace_id": w_id
+            }
+            state.setdefault("workspaces", {})[w_id] = workspace
+            state.setdefault("panes", {})[p_id] = root_pane
+            save_state(stub_dir, state)
+            res = {
+                "id": "cli:workspace:create",
+                "result": {
+                    "root_pane": root_pane,
+                    "tab": tab,
+                    "type": "workspace_created",
+                    "workspace": workspace
+                }
+            }
+            sys.stdout.write(json.dumps(res) + "\n")
+            sys.exit(0)
+        elif subcmd == "close":
+            w_id = remaining[2] if len(remaining) > 2 else ""
+            if w_id in state.get("workspaces", {}):
+                del state["workspaces"][w_id]
+                save_state(stub_dir, state)
+            sys.stdout.write(json.dumps({"id": "cli:workspace:close", "result": {"type": "ok"}}) + "\n")
+            sys.exit(0)
+
+    # Layout apply
+    if cmd == "layout" and subcmd == "apply":
+        data = None
+        if len(remaining) > 2:
+            raw = remaining[2]
+            if os.path.exists(raw):
+                with open(raw, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            else:
+                data = json.loads(raw)
+        else:
+            data = json.load(sys.stdin)
+
+        w_id = data.get("workspace_id", "w2")
+        tab_label = data.get("tab_label", "2")
+        root = data.get("root", {})
+        label = root.get("label", "pane")
+        cwd = root.get("cwd", "/tmp")
+        command = root.get("command", ["/bin/bash"])
+        env_vars = root.get("env", {})
+
+        idx = state.get("next_pane_idx", 1) + 1
+        state["next_pane_idx"] = idx
+        p_id = f"{w_id}:p{idx}"
+        t_id = f"{w_id}:t{idx}"
+        pid = 17260 + idx
+        term_id = f"term_65de3f17{idx}6e456"
+
+        agent_val = env_vars.get("HERDR_AGENT")
+
+        pane_obj = {
+            "agent_status": "unknown",
+            "cwd": cwd,
+            "focused": False,
+            "foreground_cwd": cwd,
+            "label": label,
+            "pane_id": p_id,
+            "revision": 0,
+            "scroll": {"max_offset_from_bottom": 0, "offset_from_bottom": 0, "viewport_rows": 40},
+            "tab_id": t_id,
+            "terminal_id": term_id,
+            "workspace_id": w_id,
+            "shell_pid": pid,
+            "foreground_process_group_id": pid,
+            "foreground_processes": [{"argv": command, "cmdline": " ".join(command), "cwd": cwd, "name": os.path.basename(command[0]) if command else "bash", "pid": pid}]
+        }
+        if agent_val:
+            pane_obj["agent"] = agent_val
+
+        state.setdefault("panes", {})[p_id] = pane_obj
+        save_state(stub_dir, state)
+
+        res = {
+            "id": "spike",
+            "result": {
+                "type": "layout_apply",
+                "layout": {
+                    "workspace_id": w_id,
+                    "tab_id": t_id,
+                    "zoomed": False,
+                    "focused_pane_id": p_id,
+                    "root": {
+                        "type": "pane",
+                        "pane_id": p_id,
+                        "label": label,
+                        "cwd": cwd,
+                        "command": command
+                    }
+                }
+            }
+        }
+        sys.stdout.write(json.dumps(res) + "\n")
+        sys.exit(0)
+
+    # Pane commands
+    if cmd == "pane":
+        if subcmd == "create" or subcmd == "split":
+            label = "pane"
+            cwd = "/tmp"
+            w_id = "w1"
+            command = ["/bin/bash"]
+            env_vars = {}
+            i = 2
+            while i < len(remaining):
+                arg = remaining[i]
+                if arg == "--label" and i + 1 < len(remaining):
+                    label = remaining[i + 1]
+                    i += 2
+                elif arg == "--cwd" and i + 1 < len(remaining):
+                    cwd = remaining[i + 1]
+                    i += 2
+                elif arg == "--workspace" and i + 1 < len(remaining):
+                    w_id = remaining[i + 1]
+                    i += 2
+                elif arg == "--env" and i + 1 < len(remaining):
+                    parts = remaining[i + 1].split("=", 1)
+                    if len(parts) == 2:
+                        env_vars[parts[0]] = parts[1]
+                    i += 2
+                elif arg == "--command" and i + 1 < len(remaining):
+                    command = remaining[i + 1:]
+                    break
+                else:
+                    i += 1
+
+            idx = state.get("next_pane_idx", 1) + 1
+            state["next_pane_idx"] = idx
+            p_id = f"{w_id}:p{idx}"
+            t_id = f"{w_id}:t{idx}"
+            pid = 17260 + idx
+            term_id = f"term_65de3f17{idx}6e456"
+
+            agent_val = env_vars.get("HERDR_AGENT")
+
+            pane_obj = {
+                "agent_status": "unknown",
+                "cwd": cwd,
+                "focused": False,
+                "foreground_cwd": cwd,
+                "label": label,
+                "pane_id": p_id,
+                "revision": 0,
+                "scroll": {"max_offset_from_bottom": 0, "offset_from_bottom": 0, "viewport_rows": 40},
+                "tab_id": t_id,
+                "terminal_id": term_id,
+                "workspace_id": w_id,
+                "shell_pid": pid,
+                "foreground_process_group_id": pid,
+                "foreground_processes": [{"argv": command, "cmdline": " ".join(command), "cwd": cwd, "name": os.path.basename(command[0]) if command else "bash", "pid": pid}]
+            }
+            if agent_val:
+                pane_obj["agent"] = agent_val
+
+            state.setdefault("panes", {})[p_id] = pane_obj
+            save_state(stub_dir, state)
+
+            res = {
+                "id": "cli:pane:create",
+                "result": {
+                    "pane": pane_obj,
+                    "type": "pane_info"
+                }
+            }
+            sys.stdout.write(json.dumps(res) + "\n")
+            sys.exit(0)
+
+        elif subcmd == "list":
+            w_filter = None
+            for i, a in enumerate(remaining):
+                if a == "--workspace" and i + 1 < len(remaining):
+                    w_filter = remaining[i + 1]
+
+            panes = list(state.get("panes", {}).values())
+            if w_filter:
+                panes = [p for p in panes if p.get("workspace_id") == w_filter]
+
+            res_panes = []
+            for p in panes:
+                cp = dict(p)
+                cp.pop("foreground_processes", None)
+                cp.pop("foreground_process_group_id", None)
+                cp.pop("shell_pid", None)
+                res_panes.append(cp)
+
+            res = {
+                "id": "cli:pane:list",
+                "result": {
+                    "panes": res_panes,
+                    "type": "pane_list"
+                }
+            }
+            sys.stdout.write(json.dumps(res) + "\n")
+            sys.exit(0)
+
+        elif subcmd == "get":
+            target = remaining[2] if len(remaining) > 2 else ""
+            pane = find_pane(state, target)
+            if not pane:
+                err = {
+                    "error": {
+                        "code": "pane_not_found",
+                        "message": f"pane {target} not found"
+                    },
+                    "id": "cli:pane:get"
+                }
+                sys.stderr.write(json.dumps(err) + "\n")
+                sys.exit(1)
+
+            cp = dict(pane)
+            cp.pop("foreground_processes", None)
+            cp.pop("foreground_process_group_id", None)
+            cp.pop("shell_pid", None)
+
+            res = {
+                "id": "cli:pane:get",
+                "result": {
+                    "pane": cp,
+                    "type": "pane_info"
+                }
+            }
+            sys.stdout.write(json.dumps(res) + "\n")
+            sys.exit(0)
+
+        elif subcmd == "process-info" or subcmd == "process_info":
+            target = ""
+            for i, a in enumerate(remaining):
+                if a == "--pane" and i + 1 < len(remaining):
+                    target = remaining[i + 1]
+                elif i >= 2 and not a.startswith("-") and not target:
+                    target = a
+
+            pane = find_pane(state, target) if target else None
+            if not pane:
+                err = {
+                    "error": {
+                        "code": "pane_not_found",
+                        "message": f"pane {target} not found"
+                    },
+                    "id": "cli:pane:process_info"
+                }
+                sys.stderr.write(json.dumps(err) + "\n")
+                sys.exit(1)
+
+            pid = pane.get("shell_pid", 17261)
+            fg_procs = pane.get("foreground_processes", [{
+                "argv": ["sleep", "300"],
+                "cmdline": "sleep 300",
+                "cwd": pane.get("cwd", "/tmp"),
+                "name": "sleep",
+                "pid": pid
+            }])
+
+            res = {
+                "id": "cli:pane:process_info",
+                "result": {
+                    "process_info": {
+                        "foreground_process_group_id": pane.get("foreground_process_group_id", pid),
+                        "foreground_processes": fg_procs,
+                        "pane_id": pane.get("pane_id"),
+                        "shell_pid": pid
+                    },
+                    "type": "pane_process_info"
+                }
+            }
+            sys.stdout.write(json.dumps(res) + "\n")
+            sys.exit(0)
+
+        elif subcmd == "rename":
+            target = remaining[2] if len(remaining) > 2 else ""
+            new_label = remaining[3] if len(remaining) > 3 else ""
+            pane = find_pane(state, target)
+            if not pane:
+                sys.stderr.write(json.dumps({"error": {"code": "pane_not_found", "message": f"pane {target} not found"}, "id": "cli:pane:rename"}) + "\n")
+                sys.exit(1)
+            pane["label"] = new_label
+            save_state(stub_dir, state)
+
+            cp = dict(pane)
+            cp.pop("foreground_processes", None)
+            cp.pop("foreground_process_group_id", None)
+            cp.pop("shell_pid", None)
+
+            res = {
+                "id": "cli:pane:rename",
+                "result": {
+                    "pane": cp,
+                    "type": "pane_info"
+                }
+            }
+            sys.stdout.write(json.dumps(res) + "\n")
+            sys.exit(0)
+
+        elif subcmd == "send-text":
+            target = remaining[2] if len(remaining) > 2 else ""
+            text = remaining[3] if len(remaining) > 3 else ""
+            pane = find_pane(state, target)
+            if not pane:
+                sys.stderr.write(json.dumps({"error": {"code": "pane_not_found", "message": f"pane {target} not found"}, "id": "cli:pane:send_text"}) + "\n")
+                sys.exit(1)
+            pane["last_input"] = text
+            save_state(stub_dir, state)
+            if json_mode or "--json" in remaining:
+                sys.stdout.write(json.dumps({"result": {"type": "ok"}}) + "\n")
+            sys.exit(0)
+
+        elif subcmd == "send-keys":
+            target = remaining[2] if len(remaining) > 2 else ""
+            keys = remaining[3:]
+            pane = find_pane(state, target)
+            if not pane:
+                sys.stderr.write(json.dumps({"error": {"code": "pane_not_found", "message": f"pane {target} not found"}, "id": "cli:pane:send_keys"}) + "\n")
+                sys.exit(1)
+
+            p_id = pane.get("pane_id", "")
+            p_label = pane.get("label", "")
+            is_enter = any(k.lower() == "enter" for k in keys)
+
+            if is_enter:
+                for cand in [f"pane-{p_id}.after", f"pane-{p_label}.after"]:
+                    after_path = os.path.join(stub_dir, cand)
+                    if os.path.exists(after_path):
+                        target_txt = os.path.join(stub_dir, f"pane-{p_id}.txt")
+                        try:
+                            with open(after_path, "rb") as af:
+                                with open(target_txt, "wb") as tf:
+                                    tf.write(af.read())
+                        except OSError:
+                            pass
+
+                if os.path.exists(os.path.join(stub_dir, "auto_working")):
+                    pane["agent_status"] = "working"
+                    save_state(stub_dir, state)
+
+            if json_mode or "--json" in remaining:
+                sys.stdout.write(json.dumps({"result": {"type": "ok"}}) + "\n")
+            sys.exit(0)
+
+        elif subcmd == "run":
+            if json_mode or "--json" in remaining:
+                sys.stdout.write(json.dumps({"result": {"type": "ok"}}) + "\n")
+            sys.exit(0)
+
+        elif subcmd == "close":
+            target = remaining[2] if len(remaining) > 2 else ""
+            pane = find_pane(state, target)
+            if pane:
+                p_id = pane.get("pane_id")
+                if p_id in state.get("panes", {}):
+                    del state["panes"][p_id]
+                    save_state(stub_dir, state)
+            sys.stdout.write(json.dumps({"id": "cli:pane:close", "result": {"type": "ok"}}) + "\n")
+            sys.exit(0)
+
+        elif subcmd == "read":
+            if len(remaining) < 3:
+                sys.stderr.write("usage: herdr pane read <pane_id> [--source visible|recent|recent-unwrapped|detection] [--lines N] [--format text|ansi] [--ansi] [--raw]\n")
+                sys.exit(2)
+
+            target = remaining[2]
+            source = "visible"
+            fmt = "text"
+            i = 3
+            while i < len(remaining):
+                arg = remaining[i]
+                if arg == "--source" and i + 1 < len(remaining):
+                    source = remaining[i + 1]
+                    i += 2
+                elif arg == "--format" and i + 1 < len(remaining):
+                    fmt = remaining[i + 1]
+                    i += 2
+                elif arg == "--ansi":
+                    fmt = "ansi"
+                    i += 1
+                elif arg == "--json":
+                    json_mode = True
+                    i += 1
+                else:
+                    i += 1
+
+            pane = find_pane(state, target)
+            if not pane:
+                err = {
+                    "error": {
+                        "code": "pane_not_found",
+                        "message": f"pane {target} not found"
+                    },
+                    "id": "cli:pane:read"
+                }
+                sys.stderr.write(json.dumps(err) + "\n")
+                sys.exit(1)
+
+            p_id = pane.get("pane_id", target)
+            p_label = pane.get("label", "")
+            workspace_id = pane.get("workspace_id", "w2")
+            tab_id = pane.get("tab_id", "w2:t2")
+
+            text_bytes = None
+            if fmt == "ansi":
+                for cand in [f"pane-{p_id}.ansi", f"pane-{p_label}.ansi", f"pane-{p_id}.txt", f"pane-{p_label}.txt"]:
+                    cand_path = os.path.join(stub_dir, cand)
+                    if os.path.exists(cand_path):
+                        with open(cand_path, "rb") as f:
+                            text_bytes = f.read()
+                        break
+                if text_bytes is None:
+                    fx = os.path.join(SPIKE_DIR, "read", f"fixture-{source}.ansi")
+                    if not os.path.exists(fx):
+                        fx = os.path.join(SPIKE_DIR, "read", "fixture-visible.ansi")
+                    with open(fx, "rb") as f:
+                        text_bytes = f.read()
+
+                if json_mode:
+                    text_str = text_bytes.decode("utf-8", errors="replace")
+                    res = {
+                        "id": "cli:pane:read",
+                        "result": {
+                            "type": "pane_read",
+                            "read": {
+                                "format": "ansi",
+                                "pane_id": p_id,
+                                "revision": 0,
+                                "source": source,
+                                "tab_id": tab_id,
+                                "text": text_str,
+                                "truncated": False,
+                                "workspace_id": workspace_id
+                            }
+                        }
+                    }
+                    sys.stdout.write(json.dumps(res) + "\n")
+                else:
+                    sys.stdout.buffer.write(text_bytes)
+                sys.exit(0)
+            else:
+                for cand in [f"pane-{p_id}.txt", f"pane-{p_label}.txt"]:
+                    cand_path = os.path.join(stub_dir, cand)
+                    if os.path.exists(cand_path):
+                        with open(cand_path, "rb") as f:
+                            text_bytes = f.read()
+                        break
+                if text_bytes is None:
+                    fx = os.path.join(SPIKE_DIR, "read", f"fixture-{source}.txt")
+                    if not os.path.exists(fx):
+                        fx = os.path.join(SPIKE_DIR, "read", "fixture-visible.txt")
+                    with open(fx, "rb") as f:
+                        text_bytes = f.read()
+
+                if json_mode:
+                    text_str = text_bytes.decode("utf-8", errors="replace")
+                    res = {
+                        "id": "cli:pane:read",
+                        "result": {
+                            "type": "pane_read",
+                            "read": {
+                                "format": "text",
+                                "pane_id": p_id,
+                                "revision": 0,
+                                "source": source,
+                                "tab_id": tab_id,
+                                "text": text_str,
+                                "truncated": False,
+                                "workspace_id": workspace_id
+                            }
+                        }
+                    }
+                    sys.stdout.write(json.dumps(res) + "\n")
+                else:
+                    sys.stdout.buffer.write(text_bytes)
+                sys.exit(0)
+
+    # Agent commands
+    if cmd == "agent":
+        if subcmd == "get":
+            target = remaining[2] if len(remaining) > 2 else ""
+            pane = find_pane(state, target)
+            if not pane:
+                for p in state.get("panes", {}).values():
+                    if p.get("agent") == target:
+                        pane = p
+                        break
+
+            if not pane:
+                err = {"error": {"code": "agent_not_found", "message": f"agent {target} not found"}, "id": "cli:agent:get"}
+                sys.stderr.write(json.dumps(err) + "\n")
+                sys.exit(1)
+
+            agent_info = {
+                "agent": pane.get("agent", "claude"),
+                "agent_status": pane.get("agent_status", "unknown"),
+                "completion_seq": pane.get("completion_seq", 1),
+                "cwd": pane.get("cwd", "/tmp"),
+                "focused": pane.get("focused", False),
+                "foreground_cwd": pane.get("foreground_cwd", "/tmp"),
+                "pane_id": pane.get("pane_id", "w1:p1"),
+                "revision": pane.get("revision", 0),
+                "state_change_seq": pane.get("state_change_seq", 1),
+                "tab_id": pane.get("tab_id", "w1:t1"),
+                "terminal_id": pane.get("terminal_id", "term_12345"),
+                "workspace_id": pane.get("workspace_id", "w1")
+            }
+            if "terminal_title" in pane:
+                agent_info["terminal_title"] = pane["terminal_title"]
+            if "terminal_title_stripped" in pane:
+                agent_info["terminal_title_stripped"] = pane["terminal_title_stripped"]
+
+            res = {
+                "id": "cli:agent:get",
+                "result": {
+                    "agent": agent_info,
+                    "type": "agent_info"
+                }
+            }
+            sys.stdout.write(json.dumps(res) + "\n")
+            sys.exit(0)
+
+        elif subcmd == "list":
+            agents = []
+            for p in state.get("panes", {}).values():
+                if p.get("agent"):
+                    ag = {
+                        "agent": p.get("agent"),
+                        "agent_status": p.get("agent_status", "unknown"),
+                        "completion_seq": p.get("completion_seq", 1),
+                        "cwd": p.get("cwd", "/tmp"),
+                        "focused": p.get("focused", False),
+                        "foreground_cwd": p.get("foreground_cwd", "/tmp"),
+                        "pane_id": p.get("pane_id", "w1:p1"),
+                        "revision": p.get("revision", 0),
+                        "state_change_seq": p.get("state_change_seq", 1),
+                        "tab_id": p.get("tab_id", "w1:t1"),
+                        "terminal_id": p.get("terminal_id", "term_12345"),
+                        "workspace_id": p.get("workspace_id", "w1")
+                    }
+                    if "terminal_title" in p:
+                        ag["terminal_title"] = p["terminal_title"]
+                    if "terminal_title_stripped" in p:
+                        ag["terminal_title_stripped"] = p["terminal_title_stripped"]
+                    agents.append(ag)
+
+            res = {
+                "id": "cli:agent:list",
+                "result": {
+                    "agents": agents,
+                    "type": "agent_list"
+                }
+            }
+            sys.stdout.write(json.dumps(res) + "\n")
+            sys.exit(0)
+
+        elif subcmd == "explain":
+            target = remaining[2] if len(remaining) > 2 else ""
+            explain_json = "--json" in remaining or json_mode
+            if explain_json:
+                explain_fixture = os.path.join(SPIKE_DIR, "json", "agent-explain.json")
+                if os.path.exists(explain_fixture):
+                    with open(explain_fixture, "r", encoding="utf-8") as f:
+                        sys.stdout.write(f.read())
+                else:
+                    res = {
+                        "agent": "claude",
+                        "cached_remote_version": "2026.10.11.1",
+                        "evaluated_rules": [],
+                        "fallback_reason": None,
+                        "local_override_shadowing_remote": False,
+                        "manifest_source": "remote:/home/user/.local/state/herdr/agent-detection/remote/claude.toml",
+                        "manifest_version": "2026.10.11.1",
+                        "matched_rule": {"id": "live_prompt_box", "priority": 950, "region": "prompt_box_body", "state": "idle"},
+                        "remote_update_error": None,
+                        "remote_update_status": "current",
+                        "screen_detection_skipped": False,
+                        "skip_state_update": False,
+                        "skipped_update_reason": None,
+                        "state": "idle",
+                        "visible_blocker": False,
+                        "visible_idle": True,
+                        "visible_working": False,
+                        "warning": None
+                    }
+                    sys.stdout.write(json.dumps(res) + "\n")
+            else:
+                txt = "agent: claude\nstate: idle\nmanifest: remote:/home/user/.local/state/herdr/agent-detection/remote/claude.toml 2026.10.11.1\nrule: live_prompt_box (region=prompt_box_body priority=950)\nevidence: \"\u276f\\n\"\n"
+                sys.stdout.write(txt)
+            sys.exit(0)
+
+    # Unknown command / syntax error
+    sys.stderr.write(f"usage: herdr [options] <command>\nunknown command: {' '.join(remaining)}\n")
+    sys.exit(2)
+
+
+if __name__ == "__main__":
+    main()
