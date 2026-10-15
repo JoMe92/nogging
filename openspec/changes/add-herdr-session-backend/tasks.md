@@ -10,7 +10,7 @@
 
 ## 3. Parallel foundations
 
-- [ ] TASK-HDR-004 [complex] Implement the PTY recorder per design Decision 5, including terminal I/O, resize, logging, signal and exit handling, and side-effect-free contract mode. Packaging is done by TASK-HDR-006. Check: recorder tests cover TUI I/O, rotation, writer failure and pane-close flush; scripts/test.
+- [x] TASK-HDR-004 [complex] Implement the PTY recorder per design Decision 5, including terminal I/O, resize, logging, signal and exit handling, and side-effect-free contract mode. Packaging is done by TASK-HDR-006. Check: recorder tests cover TUI I/O, rotation, writer failure and pane-close flush; scripts/test.
 
 - [x] TASK-HDR-005 [standard] Add a stateful fake herdr CLI at scripts/fixtures/herdr/bin/herdr ($HERDR_STUB_DIR, like the tmux stub) reproducing the spike-verified CLI forms and JSON for pane create/list/get/process_info/send/read (attribute and plain variants)/close, agent status, version and reachability, a simulated server restart, injectable failures and a call log. Check: new scripts/herdr-stub.test.sh comparing shapes with the spike fixtures plus full scripts/test green.
 
