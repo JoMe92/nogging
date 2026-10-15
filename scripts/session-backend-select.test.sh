@@ -21,6 +21,7 @@ with tempfile.TemporaryDirectory(prefix='session-backend-select-') as temp:
     config.pop('session_backend', None)
     config['session_state_dir'] = '.nogging/state/sessions'
     config['session_tmux_command'] = '/missing/tmux'
+    config['session_herdr_command'] = '/missing/herdr'
     (repo / '.nogging/config.json').write_text(json.dumps(config))
     env = os.environ.copy()
     env['NOGGING_ROOT'] = str(repo)

@@ -104,8 +104,8 @@ class ToolError(RuntimeError):
     """A `git` / `bd` invocation exited non-zero. Treated as transient."""
 
 def now(): return dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat()
-def run(*args, check=True, env=None):
-    result = subprocess.run(args, cwd=ROOT, text=True, capture_output=True, env=env)
+def run(*args, check=True, env=None, timeout=None):
+    result = subprocess.run(args, cwd=ROOT, text=True, capture_output=True, env=env, timeout=timeout)
     if check and result.returncode:
         raise ToolError(f"{' '.join(args)}: {result.stderr.strip() or result.stdout.strip()}")
     return result
@@ -2144,7 +2144,15 @@ def session_backend(backend=None):
         raise RuntimeError(f"invalid session_backend {name!r}; choose tmux or herdr")
     config = {
         **CFG, "session_tmux_command": scfg("session_tmux_command", "tmux"),
-        "session_tmux_socket": scfg("session_tmux_socket", "nogging")}
+        "session_tmux_socket": scfg("session_tmux_socket", "nogging"),
+        "session_repository_root": str(ROOT), "session_repository_slug": repo_slug()}
+    if name == "herdr":
+        try:
+            shared = canonical_repository_state(ROOT)
+            config["session_herdr_state_dir"] = str(Path(shared["state_dir"]) / "herdr")
+            config["session_repository_slug"] = slugify(Path(shared["main_checkout"]).name)
+        except RuntimeError:
+            pass  # Scratch roots used by helper tests need no shared state.
     kwargs = {"invoke": tmux} if name == "tmux" else {}
     return session_backend_module().resolve(name, config, run, **kwargs)
 
@@ -2154,7 +2162,13 @@ def record_backend_name(rec):
 
 def record_backend_ref(rec):
     """Return the backend-owned reference, falling back to a legacy name."""
-    return rec.get("backend_ref") or rec.get("name")
+    ref = rec.get("backend_ref") or rec.get("name")
+    if record_backend_name(rec) == "herdr" and isinstance(ref, dict):
+        ref = dict(ref)
+        for key in ("session_pid", "session_pid_start", "session_pid_ns"):
+            if rec.get(key) is not None:
+                ref[key] = rec[key]
+    return ref
 
 def backend_for_record(rec):
     return session_backend(record_backend_name(rec)), record_backend_ref(rec)
@@ -3734,6 +3748,8 @@ def _session_launch(role, bead, cwd, read_only, owner,
     backend_name = choose_launch_backend(
         is_orchestrator, backend, CFG.get("session_backend", "tmux"))
     selected_backend = session_backend(backend_name)
+    if hasattr(selected_backend, "preflight"):
+        selected_backend.preflight(agent)
     allocate_planning = False
     if is_planning:
         planning_id = require_kebab(planning_id, "planning ID")
@@ -3975,12 +3991,14 @@ def _session_launch(role, bead, cwd, read_only, owner,
             json.loads(rec_path.read_text()).get("state") in SESSION_TERMINAL_STATES)
         if not prior_terminal:
             raise RuntimeError(f"session {name} already exists; refusing to reuse or overwrite it")
+    prepared_ref = (selected_backend.prepare(name, workdir)
+                    if hasattr(selected_backend, "prepare") else None)
     data_dir(sdir)
     if agent == "claude":
         effective_path.write_text(json.dumps(settings_out, indent=2) + "\n")
     record = {
         "name": name, "bead_id": bead, "role": role_meta, "host": socket.gethostname(),
-        "backend": backend_name, "backend_ref": {
+        "backend": backend_name, "backend_ref": prepared_ref or {
             "name": name, **({"socket": selected_backend.socket}
                              if backend_name == "tmux" else {})},
         "started_at": now(), "working_dir": workdir, "command": redact_argv(inner),
@@ -4035,7 +4053,7 @@ def _session_launch(role, bead, cwd, read_only, owner,
             "NOGG_STARTUP_LOG": str(log_path),
         }, inner, session_log_capture(log_path))
         write_session(rec_path, record)
-    except ToolError as exc:
+    except (ToolError, session_backend_module().BackendError) as exc:
         # stderr was attached in the wrapper before exec, so even a child that
         # vanished before pipe-pane has a durable underlying diagnostic.
         detail = log_path.read_text(errors="replace")[-4096:].strip()
@@ -4046,7 +4064,8 @@ def _session_launch(role, bead, cwd, read_only, owner,
             fh.write(f"# {reason}\n")
         transition(rec_path, record, "failed", exit_reason=reason)
         raise ToolError(reason) from exc
-    pid = selected_backend.pid(record["backend_ref"])
+    pid = (record["backend_ref"].get("session_pid")
+           if backend_name == "herdr" else selected_backend.pid(record["backend_ref"]))
     if pid is not None:
         record["session_pid"] = pid
         record["session_pid_start"] = process_start(pid)
@@ -4159,6 +4178,20 @@ def session_list():
               f"{rec.get('working_dir','')}")
         for grant in rec.get("agent_state_grants", []):
             print(f"  agent-state:{grant['agent']} {grant['path']} source={grant['source']}")
+    for substrate, ref in herdr_orphans(recs):
+        print(f"NOTE: orphan herdr pane {ref['pane_id']} labelled {ref['label']}; "
+              "run session cleanup (never adopted)")
+
+def herdr_orphans(recs):
+    """Read-only orphan discovery, restricted to the backend's owned workspace."""
+    records = [r for _, r in recs if record_backend_name(r) == "herdr"]
+    if not records:
+        return []
+    try:
+        substrate = session_backend("herdr")
+        return [(substrate, ref) for ref in substrate.orphans(records)]
+    except (RuntimeError, AttributeError, KeyError, TypeError):
+        return []
 def _profile_display(rec):
     """`session list` PROFILE cell: a session that actually ran with the command
     floor lifted shows as `FULL-ACCESS` (a distinct token, not a profile name);
@@ -4250,7 +4283,9 @@ def session_cleanup(name, reap=False):
         targets = [(p, r) for p, r in session_records()
                    if r.get("state") in ("stopped", "failed")]
         if not targets:
-            print("no terminal sessions to clean up"); return
+            print("no terminal sessions to clean up")
+            if not herdr_orphans(session_records()):
+                return
     alive, unknown = session_liveness()
     live = alive | unknown
     refused = []
@@ -4266,13 +4301,17 @@ def session_cleanup(name, reap=False):
         except RuntimeError as exc:
             refused.append(f"{nm}: cleanup refused: {exc}")
             continue
-        if nm in live:
+        if nm in live or record_backend_name(rec) == "herdr":
             session_action(nm, "kill")
         release_planning_lock(session_record=rec)
         _archive_log(rec)
         _remove_effective_settings(rec)
         transition(path, rec, "retired", retired_at=now())
         print(f"retired {nm}")
+    if not name:
+        for substrate, ref in herdr_orphans(session_records()):
+            substrate.kill(ref)
+            print(f"closed orphan herdr pane {ref['pane_id']} labelled {ref['label']}")
     if not [r for _, r in session_records() if r.get("state") != "retired"]:
         if tmux_server_sessions():
             session_backend("tmux").idle_shutdown()
