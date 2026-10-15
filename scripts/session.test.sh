@@ -165,6 +165,17 @@ grep -qF "pipe-pane " "$TMUX_STUB_DIR/calls.log" \
 [[ "$(record "$root/.nogging/state/sessions/$name.json" state)" == "running" ]] \
   && echo "ok   - launch: record ends in running state" \
   || { echo "FAIL - launch: state not running"; fail=1; }
+[[ "$(record "$root/.nogging/state/sessions/$name.json" backend)" == "tmux" ]] \
+  && echo "ok   - launch: new record records its tmux backend" \
+  || { echo "FAIL - launch: backend missing or wrong"; fail=1; }
+python3 - "$root/.nogging/state/sessions/$name.json" <<'PY' \
+  && echo "ok   - launch: backend reference records the tmux socket" \
+  || { echo "FAIL - launch: tmux backend reference missing"; fail=1; }
+import json, sys
+record = json.load(open(sys.argv[1]))
+assert record['backend_ref']['name'] == record['name']
+assert record['backend_ref']['socket'] == 'nogging'
+PY
 [[ -s "$BD_MUTATION_LOG" ]] \
   && { echo "FAIL - launch: a bd mutation was attempted"; cat "$BD_MUTATION_LOG"; fail=1; } \
   || echo "ok   - launch: no bd mutation (only the read-only bd show)"
