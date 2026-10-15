@@ -6,7 +6,7 @@
 
 - [x] TASK-HDR-002 [complex] Add scripts/lib/session_backend.py (primitives, registry, normalized keys, capabilities, live() alive/unknown) and move tmux into scripts/lib/session_backend_tmux.py; route every scripts/nogg tmux call site through the seam; nogg_usage.py reservations use a {backend, argv} probe and still read legacy entries; ship both modules. No behaviour change. Check: full scripts/test unchanged and green, plus new scripts/session-backend.test.sh with a no-direct-tmux grep guard.
 
-- [ ] TASK-HDR-003 [standard] Backend selection and per-record dispatch (design Decision 4): session_backend key (absent means tmux, template documented), launch --backend precedence, refusal before side effects, record backend and backend_ref (legacy is tmux), lifecycle ops resolved from the record, session list BACKEND column, unknown liveness never reaped, orchestrator pinned to tmux. Check: new scripts/session-backend-select.test.sh plus full scripts/test green.
+- [x] TASK-HDR-003 [standard] Backend selection and per-record dispatch (design Decision 4): session_backend key (absent means tmux, template documented), launch --backend precedence, refusal before side effects, record backend and backend_ref (legacy is tmux), lifecycle ops resolved from the record, session list BACKEND column, unknown liveness never reaped, orchestrator pinned to tmux. Check: new scripts/session-backend-select.test.sh plus full scripts/test green.
 
 ## 3. Parallel foundations
 
