@@ -29,3 +29,19 @@
     commit c01bb1cd6fdb38fe8498eba3ba21c2780c365729; evidence: all 89 scripts/test suites passed with npm_config_cache=/tmp/spec-4m26-npm-cache, captured in /tmp/spec-4m26-suite-final.log. The new scripts/session-backend.test.sh verifies the registry, normalized keys, capabilities, exact tmux argv, capture/log/attach primitives, legacy reservation reads and unknown probe retention; existing behavioral assertions are unchanged, with five fixture setups copying adjacent modules. Reviewed the included usage-statusline fixture library copy and final passing result. git diff --cached --check passed; execution commit contains no OpenSpec edits.
     Closed after commit/evidence and immediately ran task-done successfully. As recorded in the broker discovery, TASK-HDR-002 was mechanically ticked in the shared checkout by the launch-bound broker, outside this execution worktree; do not edit or commit that shared OpenSpec change from this Lead. Next publish branch refactor/session-backend-seam and wait for PR CI.
     PR opened: https://github.com/JoMe92/nogging/pull/132 targeting develop from refactor/session-backend-seam, commit c01bb1c. All 89 local script suites passed. Awaiting the persisted initial CI inspection time and required CI; do not merge.
+
+<!-- nogg:SPEC-kdgr:2026-10-15T18:28:45Z -->
+- 2026-10-15T18:35:48+00:00 — SPEC-kdgr closed for TASK-HDR-005 (Bead closed at 2026-10-15T18:28:45Z).
+  - implementation commits: b78ad38ab937, ef09f7c, c412ca6
+  - Bead note:
+    Planned 2026-10-15 in add-herdr-session-backend (planning commits ef09f7c, c412ca6). Complexity: standard. Read only the mapped tasks.md line, the design.md Decision it names and the matching session-backends requirement. Before allocating a dependent worktree, verify every prerequisite execution commit is integrated into develop.
+    tier standard: self-contained fake herdr CLI stub reproducing spike fixtures; no production code paths -> Antigravity standard.
+    Implemented TASK-HDR-005 in commit b78ad38ab937e7478ab9e66ead9f49eacaef1b7a. Added stateful fake herdr CLI stub at scripts/fixtures/herdr/bin/herdr driven by $HERDR_STUB_DIR and test suite scripts/herdr-stub.test.sh. Validated against spike fixtures (version, status running/not running, ping, session list, workspace create/list/close, pane create/list/get/process-info/rename/close, agent get/list/explain, pane read visible/recent in text, ANSI and JSON formats, simulated server restart, injectable failures, and call logging). Full scripts/test green.
+
+<!-- nogg:SPEC-ejr4:2026-10-15T18:57:46Z -->
+- 2026-10-15T19:05:16+00:00 — SPEC-ejr4 closed for TASK-HDR-004 (Bead closed at 2026-10-15T18:57:46Z).
+  - implementation commits: 798c5a68dc2b, ef09f7c, c412ca6
+  - Bead note:
+    Planned 2026-10-15 in add-herdr-session-backend (planning commits ef09f7c, c412ca6). Complexity: complex. Read only the mapped tasks.md line, the design.md Decision it names and the matching session-backends requirement. Before allocating a dependent worktree, verify every prerequisite execution commit is integrated into develop.
+    tier complex: PTY passthrough with raw mode, SIGWINCH, signal/exit passthrough and log-writer in its own session (spike facts) -> Antigravity complex.
+    Evidence: Commit 798c5a68dc2ba8e853782dc6860d407110cc9932 implements scripts/session-pty-recorder per design Decision 5 and adds scripts/session-pty-recorder.test.sh. Validated with scripts/session-pty-recorder.test.sh and full scripts/test (all tests passed).
