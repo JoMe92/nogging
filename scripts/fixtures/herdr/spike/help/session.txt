@@ -1,0 +1,6 @@
+herdr session commands:
+  herdr session list [--json]
+  herdr session attach <name>
+  herdr session stop <name> [--json]
+  herdr session delete <name> [--json]
+  use 'default' as <name> to target the default session for stop

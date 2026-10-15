@@ -1,0 +1,24 @@
+
+      ▄▀▀▄        Antigravity CLI 1.3.5
+     ▀▀▀▀▀▀       tests.account@example.invalid (Google AI Pro)
+    ▀▀▀▀▀▀▀▀      Gemini 3.8 Flash (High)
+   ▄▀▀    ▀▀▄     ~/src/nogging
+  ▄▀▀      ▀▀▄
+
+────────────────────────────────────────────────────────────
+> Startup only: read the following session instructions and acknowledge readiness. Wait for a separate operator
+  message before doing work or claiming any Bead.
+
+  You are a short-lived probe session for a terminal-multiplexer compatibility test.
+  Do not read, create or modify any repository file. Do not run bd, git or nogg.
+  Do not claim or select any Bead. Answer every message with one short line,
+  and only run a shell command when a message explicitly asks you to.
+
+▸ Thought for 5s, 251 tokens
+  Acknowledged instructions. Readiness confirmed. Awaiting further operator instruction to proceed with the termina...
+  Ready. Standing by for operator instructions.
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+> Plan mode: research & plan only (shift+tab to cycle)
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+? for shortcuts                                                                          plan · Gemini 3.8 Flash · high

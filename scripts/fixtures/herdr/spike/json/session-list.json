@@ -1,0 +1,1 @@
+{"sessions":[{"default":true,"name":"default","running":false,"session_dir":"/home/user/.config/herdr","socket_path":"/home/user/.config/herdr/herdr.sock"},{"default":false,"name":"nogg-spike","running":true,"session_dir":"/home/user/.config/herdr/sessions/nogg-spike","socket_path":"/home/user/.config/herdr/sessions/nogg-spike/herdr.sock"}]}

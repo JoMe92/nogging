@@ -1,0 +1,565 @@
+{
+ "methods": [
+  "ping",
+  "server.stop",
+  "server.live_handoff",
+  "server.reload_config",
+  "server.ssh_agent.register",
+  "server.agent_manifests",
+  "server.reload_agent_manifests",
+  "notification.show",
+  "product_announcement.dismiss",
+  "release_notes.dismiss",
+  "command.invoke",
+  "client.window_title.set",
+  "client.window_title.clear",
+  "client_shell.surface.set",
+  "session.snapshot",
+  "workspace.create",
+  "workspace.list",
+  "workspace.get",
+  "workspace.focus",
+  "workspace.rename",
+  "workspace.move",
+  "workspace.move_block",
+  "workspace.report_metadata",
+  "workspace.close",
+  "worktree.list",
+  "worktree.create",
+  "worktree.open",
+  "worktree.remove",
+  "tab.create",
+  "tab.list",
+  "tab.get",
+  "tab.focus",
+  "tab.rename",
+  "tab.move",
+  "tab.close",
+  "agent.list",
+  "agent.get",
+  "agent.read",
+  "agent.explain",
+  "agent.send_keys",
+  "agent.rename",
+  "agent.view.set",
+  "agent.view.clear",
+  "agent.focus",
+  "agent.start",
+  "agent.prompt",
+  "agent.wait",
+  "pane.split",
+  "pane.swap",
+  "pane.move",
+  "pane.zoom",
+  "pane.layout",
+  "pane.process_info",
+  "layout.export",
+  "layout.apply",
+  "layout.set_split_ratio",
+  "pane.neighbor",
+  "pane.edges",
+  "pane.focus_direction",
+  "pane.resize",
+  "pane.scroll",
+  "pane.clear",
+  "pane.edit_scrollback",
+  "pane.selection.read",
+  "pane.copy_motion",
+  "pane.copy_search",
+  "pane.list",
+  "pane.current",
+  "pane.get",
+  "pane.focus",
+  "pane.input.set",
+  "pane.link.activate",
+  "pane.link.resolve",
+  "pane.rename",
+  "pane.send_text",
+  "pane.send_keys",
+  "pane.send_input",
+  "pane.read",
+  "pane.report_agent",
+  "pane.report_agent_session",
+  "pane.report_metadata",
+  "pane.clear_agent_authority",
+  "pane.release_agent",
+  "pane.close",
+  "popup.close",
+  "events.subscribe",
+  "events.wait",
+  "pane.wait_for_output",
+  "integration.list",
+  "integration.install",
+  "integration.uninstall",
+  "plugin.link",
+  "plugin.list",
+  "plugin.unlink",
+  "plugin.enable",
+  "plugin.disable",
+  "plugin.action.list",
+  "plugin.action.invoke",
+  "plugin.log.list",
+  "plugin.pane.open",
+  "plugin.pane.focus",
+  "plugin.pane.close"
+ ],
+ "params": {
+  "AgentReadParams": {
+   "properties": {
+    "format": {
+     "$ref": "#/schemas/request/$defs/ReadFormat",
+     "default": "text"
+    },
+    "lines": {
+     "format": "uint32",
+     "minimum": 0,
+     "type": [
+      "integer",
+      "null"
+     ]
+    },
+    "source": {
+     "$ref": "#/schemas/request/$defs/ReadSource"
+    },
+    "strip_ansi": {
+     "default": true,
+     "type": "boolean"
+    },
+    "target": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "target",
+    "source"
+   ],
+   "type": "object"
+  },
+  "AgentStatus": {
+   "enum": [
+    "idle",
+    "working",
+    "blocked",
+    "done",
+    "unknown"
+   ],
+   "type": "string"
+  },
+  "AgentTarget": {
+   "properties": {
+    "target": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "target"
+   ],
+   "type": "object"
+  },
+  "LayoutApplyParams": {
+   "properties": {
+    "focus": {
+     "default": false,
+     "type": "boolean"
+    },
+    "root": {
+     "$ref": "#/schemas/request/$defs/LayoutNode"
+    },
+    "tab_id": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "tab_label": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "workspace_id": {
+     "type": [
+      "string",
+      "null"
+     ]
+    }
+   },
+   "required": [
+    "root"
+   ],
+   "type": "object"
+  },
+  "LayoutNode": {
+   "oneOf": [
+    {
+     "properties": {
+      "command": {
+       "items": {
+        "type": "string"
+       },
+       "type": [
+        "array",
+        "null"
+       ]
+      },
+      "cwd": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "env": {
+       "additionalProperties": {
+        "type": "string"
+       },
+       "type": "object"
+      },
+      "label": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "pane_id": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "type": {
+       "const": "pane",
+       "type": "string"
+      }
+     },
+     "required": [
+      "type"
+     ],
+     "type": "object"
+    },
+    {
+     "properties": {
+      "direction": {
+       "$ref": "#/schemas/request/$defs/SplitDirection"
+      },
+      "first": {
+       "$ref": "#/schemas/request/$defs/LayoutNode"
+      },
+      "ratio": {
+       "format": "float",
+       "type": "number"
+      },
+      "second": {
+       "$ref": "#/schemas/request/$defs/LayoutNode"
+      },
+      "type": {
+       "const": "split",
+       "type": "string"
+      }
+     },
+     "required": [
+      "type",
+      "direction",
+      "ratio",
+      "first",
+      "second"
+     ],
+     "type": "object"
+    }
+   ]
+  },
+  "PaneListParams": {
+   "properties": {
+    "workspace_id": {
+     "type": [
+      "string",
+      "null"
+     ]
+    }
+   },
+   "type": "object"
+  },
+  "PaneProcessInfoParams": {
+   "properties": {
+    "pane_id": {
+     "type": [
+      "string",
+      "null"
+     ]
+    }
+   },
+   "type": "object"
+  },
+  "PaneReadParams": {
+   "properties": {
+    "format": {
+     "$ref": "#/schemas/request/$defs/ReadFormat",
+     "default": "text"
+    },
+    "lines": {
+     "format": "uint32",
+     "minimum": 0,
+     "type": [
+      "integer",
+      "null"
+     ]
+    },
+    "pane_id": {
+     "type": "string"
+    },
+    "source": {
+     "$ref": "#/schemas/request/$defs/ReadSource"
+    },
+    "strip_ansi": {
+     "default": true,
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "pane_id",
+    "source"
+   ],
+   "type": "object"
+  },
+  "PaneRenameParams": {
+   "properties": {
+    "label": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "pane_id": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "pane_id"
+   ],
+   "type": "object"
+  },
+  "PaneReportAgentSessionParams": {
+   "properties": {
+    "agent": {
+     "type": "string"
+    },
+    "agent_session_id": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "agent_session_path": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "pane_id": {
+     "type": "string"
+    },
+    "resume_argv": {
+     "description": "Command that resumes this agent's session after a Herdr restart. The\nfirst element must be a plain command name.",
+     "items": {
+      "type": "string"
+     },
+     "type": [
+      "array",
+      "null"
+     ]
+    },
+    "seq": {
+     "format": "uint64",
+     "minimum": 0,
+     "type": [
+      "integer",
+      "null"
+     ]
+    },
+    "session_start_source": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "source": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "pane_id",
+    "source",
+    "agent"
+   ],
+   "type": "object"
+  },
+  "PaneSendInputParams": {
+   "properties": {
+    "keys": {
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "pane_id": {
+     "type": "string"
+    },
+    "text": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "pane_id"
+   ],
+   "type": "object"
+  },
+  "PaneSendKeysParams": {
+   "properties": {
+    "keys": {
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "pane_id": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "pane_id",
+    "keys"
+   ],
+   "type": "object"
+  },
+  "PaneSendTextParams": {
+   "properties": {
+    "pane_id": {
+     "type": "string"
+    },
+    "text": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "pane_id",
+    "text"
+   ],
+   "type": "object"
+  },
+  "PaneSplitParams": {
+   "properties": {
+    "cwd": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "direction": {
+     "$ref": "#/schemas/request/$defs/SplitDirection"
+    },
+    "env": {
+     "additionalProperties": {
+      "type": "string"
+     },
+     "type": "object"
+    },
+    "focus": {
+     "default": false,
+     "type": "boolean"
+    },
+    "ratio": {
+     "format": "float",
+     "type": [
+      "number",
+      "null"
+     ]
+    },
+    "right_click": {
+     "$ref": "#/schemas/request/$defs/PaneRightClickTarget",
+     "default": "herdr"
+    },
+    "target_pane_id": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "workspace_id": {
+     "type": [
+      "string",
+      "null"
+     ]
+    }
+   },
+   "required": [
+    "direction"
+   ],
+   "type": "object"
+  },
+  "PaneTarget": {
+   "properties": {
+    "pane_id": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "pane_id"
+   ],
+   "type": "object"
+  },
+  "PingParams": {
+   "type": "object"
+  },
+  "ReadFormat": {
+   "enum": [
+    "text",
+    "ansi"
+   ],
+   "type": "string"
+  },
+  "ReadSource": {
+   "enum": [
+    "visible",
+    "recent",
+    "recent_unwrapped",
+    "detection"
+   ],
+   "type": "string"
+  },
+  "WorkspaceCreateParams": {
+   "properties": {
+    "cwd": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "env": {
+     "additionalProperties": {
+      "type": "string"
+     },
+     "type": "object"
+    },
+    "focus": {
+     "default": false,
+     "type": "boolean"
+    },
+    "label": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "source_workspace_id": {
+     "description": "Workspace whose focused pane supplies the `follow` cwd policy.",
+     "type": [
+      "string",
+      "null"
+     ]
+    }
+   },
+   "type": "object"
+  }
+ },
+ "protocol": 22,
+ "schema_version": 1
+}
