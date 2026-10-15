@@ -313,6 +313,33 @@ with tempfile.TemporaryDirectory(prefix='hdr-') as temp:
                   if not p.name.endswith('.settings.json')]
         assert len(failed) == 1 and failed[0]['state'] == 'failed'
 
+        # Test session_list AGENT_STATUS column in mixed listing (tmux shows '-', herdr shows status).
+        live_herdr_name = actual_records[0]['name']
+        tmux_rec_file = sessions / 'sf-tmux-test.json'
+        tmux_rec_file.write_text(json.dumps({
+            'name': 'sf-tmux-test', 'role': 'lead', 'bead_id': 'SPEC-tmux',
+            'started_at': '2026-10-16T00:00:00Z', 'state': 'running',
+            'owner': 12345, 'backend': 'tmux', 'backend_ref': {'session': 'sf-tmux-test'},
+            'session_pid': 12345, 'working_dir': str(root)
+        }))
+        # Set agent_status on live herdr pane
+        current_state = state()
+        for p in current_state['panes'].values():
+            if p.get('label') == live_herdr_name:
+                p['agent_status'] = 'working'
+        save(current_state)
+
+        module.session_backend = lambda name=None: backend if name == 'herdr' else type('Empty', (), {'live': lambda self, records: (set(), set()), 'capabilities': type('Caps', (), {'agent_status': False})()})()
+        mixed_out = io.StringIO()
+        with contextlib.redirect_stdout(mixed_out):
+            module.session_list()
+        listing_lines = mixed_out.getvalue().splitlines()
+        hdr_line = listing_lines[0]
+        assert 'AGENT_STATUS' in hdr_line
+        assert any('sf-tmux-test' in l and 'tmux' in l and '-' in l for l in listing_lines)
+        assert any(live_herdr_name in l and 'herdr' in l and 'working' in l for l in listing_lines)
+        tmux_rec_file.unlink()
+
         module.session_backend = lambda name=None: backend if name == 'herdr' else type('Empty', (), {'live': lambda self, records: (set(), set())})()
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
