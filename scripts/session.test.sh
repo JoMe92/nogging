@@ -1221,6 +1221,7 @@ unset NOGGING_ROOT
 for failure in unknown-flag exec-failure; do
   root="$work/startup-$failure"; make_root "$root"
   cp "$nogg" "$root/scripts/nogg"
+  cp -r "$here/lib" "$root/scripts/lib"
   # This fixture tests fast runtime startup errors, not mount enforcement.
   # CI may prohibit user namespaces. Keep the real wrapper and substitute
   # only this fixture's boundary helper; dedicated fence tests use the real one.
