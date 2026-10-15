@@ -3,6 +3,7 @@
   "name": "Nogging",
   "sync_interval_seconds": 30,
   "beads_command": "bd",
+  "session_backend": "tmux",
   "planning_lock_ttl_seconds": 7200,
   "sync_lock_ttl_seconds": 120,
   "change_states": ["open", "done", "archived"],

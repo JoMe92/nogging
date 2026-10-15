@@ -48,7 +48,7 @@ else: raise AssertionError('unknown backend resolved')
 log = b.LogCapture('/logs/with space.log', '/writer with space', 1234, 2)
 ref = backend.start('s', '/cwd with space', {'NOGG_SESSION_NAME': 's', 'OTHER': 'x y'},
                     ['wrapper', '--flag', 'literal $text'], log)
-assert ref == {'name': 's'}
+assert ref == {'name': 's', 'socket': 'isolated'}
 assert calls[0][0] == ('/custom/tmux', '-L', 'isolated', 'new-session', '-d', '-s', 's',
                        '-c', '/cwd with space', '-e', 'NOGG_SESSION_NAME=s',
                        '-e', 'OTHER=x y', '--', 'wrapper', '--flag', 'literal $text')

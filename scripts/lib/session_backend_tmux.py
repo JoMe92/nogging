@@ -31,7 +31,7 @@ class TmuxBackend:
         for key, value in env.items():
             args.extend(["-e", f"{key}={value}"])
         self._invoke(*args, "--", *argv)
-        ref = {"name": name}
+        ref = {"name": name, "socket": self.socket}
         self.wire_log(ref, log)
         return ref
 

@@ -2137,23 +2137,96 @@ def session_backend_module():
     import session_backend
     return session_backend
 
-def session_backend():
-    # Selection and per-record dispatch are added by TASK-HDR-003. Keep the
-    # existing transport injection point for embedders during this extraction.
-    return session_backend_module().resolve("tmux", {
+def session_backend(backend=None):
+    """Resolve a configured or explicit substrate without touching it."""
+    name = backend if backend is not None else CFG.get("session_backend", "tmux")
+    if not isinstance(name, str) or name not in ("tmux", "herdr"):
+        raise RuntimeError(f"invalid session_backend {name!r}; choose tmux or herdr")
+    config = {
         **CFG, "session_tmux_command": scfg("session_tmux_command", "tmux"),
-        "session_tmux_socket": scfg("session_tmux_socket", "nogging"),
-    }, run, invoke=tmux)
+        "session_tmux_socket": scfg("session_tmux_socket", "nogging")}
+    kwargs = {"invoke": tmux} if name == "tmux" else {}
+    return session_backend_module().resolve(name, config, run, **kwargs)
+
+def record_backend_name(rec):
+    """Old records predate backend metadata and are always tmux records."""
+    return rec.get("backend") or "tmux"
+
+def record_backend_ref(rec):
+    """Return the backend-owned reference, falling back to a legacy name."""
+    return rec.get("backend_ref") or rec.get("name")
+
+def backend_for_record(rec):
+    return session_backend(record_backend_name(rec)), record_backend_ref(rec)
+
+def backend_for_name(name, fallback=None):
+    path = sessions_dir() / f"{name}.json"
+    try:
+        rec = json.loads(path.read_text())
+        if isinstance(rec, dict):
+            return backend_for_record(rec)
+    except (OSError, ValueError):
+        pass
+    return session_backend(fallback), name
+
+def choose_launch_backend(is_orchestrator, requested=None, configured=None):
+    """Resolve launch precedence, keeping the orchestrator fixed to tmux."""
+    if is_orchestrator:
+        if requested == "herdr":
+            raise RuntimeError("--role orchestrator is pinned to tmux; --backend herdr is refused")
+        return "tmux"
+    return requested if requested is not None else (configured or "tmux")
+
+def session_action(name, operation, *args, **kwargs):
+    """Dispatch one primitive through the backend recorded for `name`."""
+    substrate, ref = backend_for_name(name)
+    return getattr(substrate, operation)(ref, *args, **kwargs)
 
 def tmux(*args, check=True):
     """Legacy transport hook; command execution lives in the backend module."""
     return session_backend_module().resolve("tmux", CFG, run).command(*args, check=check)
 
 def sessions_dir(): return data_dir(ROOT / scfg("session_state_dir", ".nogging/state/sessions"))
-def tmux_has_session(name):
-    return session_backend().exists(name)
+def tmux_has_session(name, backend=None):
+    substrate, ref = backend_for_name(name, backend)
+    return substrate.exists(ref)
+
+def session_liveness(records=None):
+    """Resolve liveness by each record's immutable backend selection.
+
+    The tmux backend is also queried without managed records so unmanaged tmux
+    sessions continue to participate in collision checks and shutdown. Unknown
+    liveness is kept separate from dead sessions.
+    """
+    records = list(records if records is not None else session_records())
+    groups = {"tmux": []}
+    for item in records:
+        rec = item[1] if isinstance(item, tuple) and len(item) == 2 else item
+        if not isinstance(rec, dict):
+            continue
+        groups.setdefault(record_backend_name(rec), []).append(rec)
+    alive, unknown = set(), set()
+    for name, grouped in groups.items():
+        try:
+            found, uncertain = session_backend(name).live(grouped)
+            alive.update(found)
+            unknown.update(uncertain)
+        except Exception:
+            # Preserve the established tmux rule: a failed list query is an
+            # empty set. Other backends must not infer death from query failure.
+            if name != "tmux":
+                unknown.update(rec.get("name") for rec in grouped if rec.get("name"))
+    return alive, unknown
+
+def unknown_sessions():
+    return session_liveness()[1]
+
 def tmux_sessions():
-    return session_backend().live(())[0]
+    alive, unknown = session_liveness()
+    return alive | unknown
+
+def tmux_server_sessions():
+    return session_backend("tmux").live(())[0]
 def session_log_capture(log_path):
     return session_backend_module().LogCapture(
         str(log_path), str((ROOT / "scripts/session-log-writer").resolve()),
@@ -2360,13 +2433,13 @@ def bead_change(bead_id):
         return None
     change, _task = mapping(records[0])
     return change
-def session_name_in_use(name):
+def session_name_in_use(name, backend=None):
     """A name is in use if the metadata store already has a record or log for
     it, or a tmux session by that name exists on the dedicated server."""
     sdir = sessions_dir()
     return ((sdir / f"{name}.json").exists() or (sdir / f"{name}.log").exists()
-            or tmux_has_session(name))
-def gen_session_name(role_slug, bead_id):
+            or tmux_has_session(name, backend))
+def gen_session_name(role_slug, bead_id, backend=None):
     """Deterministic shape `sf-<role>-<bead>-<nonce>`; the nonce (UTC timestamp
     plus a short random suffix) is regenerated on any collision with an
     existing managed record, a leftover log, or a live tmux session. Never
@@ -2374,7 +2447,7 @@ def gen_session_name(role_slug, bead_id):
     for _ in range(64):
         nonce = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S") + "-" + os.urandom(2).hex()
         name = re.sub(r"[^a-z0-9_.-]", "-", f"sf-{role_slug}-{bead_id}-{nonce}".lower())
-        if not session_name_in_use(name):
+        if not session_name_in_use(name, backend):
             return name
     raise RuntimeError("could not generate a collision-free session name; "
                        "no existing session was reused or overwritten")
@@ -3627,7 +3700,7 @@ def _session_launch(role, bead, cwd, read_only, owner,
                    profile=None, prompt=None, full_access=False, agent=None,
                    resume=None, kickoff=False, planning_id=None, description=None,
                    model=None, agent_state=(), tier=None, effort=None,
-                   ignore_usage_gate=False, complexity=None):
+                   ignore_usage_gate=False, complexity=None, backend=None):
     """Start a supervised agent session for a Bead.
 
     `resume` names the exact prior conversation: Claude uses `--resume <id>`;
@@ -3658,6 +3731,9 @@ def _session_launch(role, bead, cwd, read_only, owner,
     role_meta, role_slug = normalize_role(role)
     is_orchestrator = role_meta == "orchestrator"
     is_planning = role_meta == "planning"
+    backend_name = choose_launch_backend(
+        is_orchestrator, backend, CFG.get("session_backend", "tmux"))
+    selected_backend = session_backend(backend_name)
     allocate_planning = False
     if is_planning:
         planning_id = require_kebab(planning_id, "planning ID")
@@ -3866,7 +3942,8 @@ def _session_launch(role, bead, cwd, read_only, owner,
     # Name collision checks themselves call tmux: defer them until the full
     # emitted argv and both helpers have passed interface negotiation.
     if not is_orchestrator:
-        name = gen_session_name(role_slug, planning_id if is_planning else bead)
+        name = gen_session_name(role_slug, planning_id if is_planning else bead,
+                                 backend_name)
         rec_path, log_path = sdir / f"{name}.json", sdir / f"{name}.log"
         if agent == "claude":
             effective_path = sdir / f"{name}.settings.json"
@@ -3888,7 +3965,7 @@ def _session_launch(role, bead, cwd, read_only, owner,
                 and rec.get("state") in SESSION_ACTIVE_STATES and rec.get("name") in live):
             raise RuntimeError(
                 f"a live {role_meta} session already covers {bead}: {rec['name']}")
-    if tmux_has_session(name):    # last-line race guard
+    if tmux_has_session(name, backend_name):    # last-line race guard
         raise RuntimeError(f"session {name} already exists; refusing to reuse or overwrite it")
     if rec_path.exists():
         # The singleton orchestrator reuses its fixed name once the prior record
@@ -3903,6 +3980,9 @@ def _session_launch(role, bead, cwd, read_only, owner,
         effective_path.write_text(json.dumps(settings_out, indent=2) + "\n")
     record = {
         "name": name, "bead_id": bead, "role": role_meta, "host": socket.gethostname(),
+        "backend": backend_name, "backend_ref": {
+            "name": name, **({"socket": selected_backend.socket}
+                             if backend_name == "tmux" else {})},
         "started_at": now(), "working_dir": workdir, "command": redact_argv(inner),
         "owner": owner_identity(owner), "state": "starting", "log_path": str(log_path),
         "read_only": bool(read_only), "ended_at": None, "exit_reason": None,
@@ -3942,11 +4022,11 @@ def _session_launch(role, bead, cwd, read_only, owner,
         # Bind before starting tmux: even a hard-killed launcher must not
         # orphan the reservation of a child it already started.
         usage_module().Reservations().bind(
-            token, rec_path, name, session_backend().liveness_probe(name))
+            token, rec_path, name, selected_backend.liveness_probe(record["backend_ref"]))
     with log_path.open("a") as fh:                        # append-only log before exec
         fh.write(f"# nogg session {name} for {bead or 'no bead'} ({role_meta}) started {record['started_at']}\n")
     try:
-        session_backend().start(name, workdir, {
+        record["backend_ref"] = selected_backend.start(name, workdir, {
             "NOGG_SESSION_NAME": name,
             "NOGG_SESSION_ROLE": role_meta,
             "NOGG_SESSION_AGENT": agent,
@@ -3954,6 +4034,7 @@ def _session_launch(role, bead, cwd, read_only, owner,
             "NOGG_OPENSPEC_FENCE": str(int(openspec_readonly)),
             "NOGG_STARTUP_LOG": str(log_path),
         }, inner, session_log_capture(log_path))
+        write_session(rec_path, record)
     except ToolError as exc:
         # stderr was attached in the wrapper before exec, so even a child that
         # vanished before pipe-pane has a durable underlying diagnostic.
@@ -3965,7 +4046,7 @@ def _session_launch(role, bead, cwd, read_only, owner,
             fh.write(f"# {reason}\n")
         transition(rec_path, record, "failed", exit_reason=reason)
         raise ToolError(reason) from exc
-    pid = session_backend().pid(name)
+    pid = selected_backend.pid(record["backend_ref"])
     if pid is not None:
         record["session_pid"] = pid
         record["session_pid_start"] = process_start(pid)
@@ -3978,7 +4059,7 @@ def _session_launch(role, bead, cwd, read_only, owner,
     print(f"launched {name}")
     print(f"  bead={bead or '-'} role={role_meta} cwd={workdir}")
     print(f"  log={log_path}")
-    print(f"  attach: {' '.join(session_backend().attach_argv(name))}  (or: nogg session attach {name})")
+    print(f"  attach: {' '.join(selected_backend.attach_argv(record['backend_ref']))}  (or: nogg session attach {name})")
     if tier_selection:
         print(f"  tier={tier_selection['tier']} model={selected_model}"
               + (f" effort={reasoning_effort}" if agent in ("codex", "claude") and reasoning_effort else ""))
@@ -3996,7 +4077,7 @@ def _session_launch(role, bead, cwd, read_only, owner,
               f"one yourself.")
 
 def reconciled_state(rec, live):
-    """The state to report: an active record whose tmux session has vanished is
+    """The state to report: an active record whose backend session has vanished is
     `failed` (a crash), not the stale value on disk."""
     state = rec.get("state", "unknown")
     if state in SESSION_ACTIVE_STATES and rec.get("name") not in live:
@@ -4058,18 +4139,23 @@ def session_list():
     recs = session_records()
     if not recs:
         print("no managed sessions"); return
-    live = tmux_sessions()
+    alive, unknown = session_liveness()
+    live = alive | unknown
     hdr = (f"{'NAME':<40}  {'BEAD':<10}  {'ROLE':<24}  {'STARTED':<20}  "
            f"{'STATE':<8}  {'OWNER':<16}  {'AGENT':<8}  {'PROFILE':<12}  "
-           f"{'MODEL':<24}  {'MODEL_SOURCE':<15}  WORKING_DIR")
+           f"{'MODEL':<24}  {'MODEL_SOURCE':<15}  {'BACKEND':<8}  WORKING_DIR")
     print(hdr)
     for _, rec in recs:
+        state = reconciled_state(rec, live)
+        if rec.get("name") in unknown:
+            state += " (unknown)"
         print(f"{rec.get('name',''):<40}  {(rec.get('bead_id') or '-'):<10}  "
               f"{rec.get('role',''):<24}  {rec.get('started_at',''):<20}  "
-              f"{reconciled_state(rec, live):<8}  {str(rec.get('owner','')):<16}  "
+              f"{state:<16}  {str(rec.get('owner','')):<16}  "
               f"{_agent_display(rec):<8}  "
               f"{_profile_display(rec):<12}  "
               f"{_model_display(rec):<24}  {(rec.get('model_source') or '-'):<15}  "
+              f"{record_backend_name(rec):<8}  "
               f"{rec.get('working_dir','')}")
         for grant in rec.get("agent_state_grants", []):
             print(f"  agent-state:{grant['agent']} {grant['path']} source={grant['source']}")
@@ -4126,15 +4212,17 @@ def _remove_effective_settings(rec):
         rec["effective_settings_removed_at"] = now()
 def session_reap():
     """Move every session record in an active state (`starting`/`running`/`idle`)
-    whose tmux session no longer exists to the terminal `failed` state, so a
-    following `session cleanup` can retire it. A record whose tmux session is
+    whose backend session no longer exists to the terminal `failed` state, so a
+    following `session cleanup` can retire it. A record whose backend session is
     still live is left untouched. Never starts or kills a tmux session."""
-    live = tmux_sessions()
+    alive, unknown = session_liveness()
+    live = alive | unknown
     reaped = []
     for path, rec in session_records():
-        if rec.get("state") in SESSION_ACTIVE_STATES and rec.get("name") not in live:
+        if (rec.get("state") in SESSION_ACTIVE_STATES
+                and rec.get("name") not in live and rec.get("name") not in unknown):
             transition(path, rec, "failed",
-                       exit_reason="tmux session vanished during a reap")
+                       exit_reason=f"{record_backend_name(rec)} session vanished during a reap")
             reaped.append(rec.get("name"))
     if reaped:
         collect_session_usage([r for _, r in session_records() if r.get("name") in reaped], budget=5)
@@ -4142,9 +4230,11 @@ def session_reap():
         print("run `session cleanup` to retire them")
     else:
         print("no vanished active sessions to reap")
+    if unknown:
+        print("NOTE: liveness unknown; left records untouched: " + ", ".join(sorted(unknown)))
     return reaped
 def session_cleanup(name, reap=False):
-    """Remove a lingering tmux session, archive-rotate its log, and retire the
+    """Remove a lingering backend session, archive-rotate its log, and retire the
     metadata record. Refuses any record still `starting`, `running` or `idle`
     - stop it first. With no name, acts only on already-terminal records.
     `--reap` first moves vanished active records to `failed` (see
@@ -4161,10 +4251,14 @@ def session_cleanup(name, reap=False):
                    if r.get("state") in ("stopped", "failed")]
         if not targets:
             print("no terminal sessions to clean up"); return
-    live = tmux_sessions()
+    alive, unknown = session_liveness()
+    live = alive | unknown
     refused = []
     for path, rec in targets:
         nm = rec.get("name")
+        if nm in unknown:
+            print(f"NOTE: cleanup left {nm} untouched because backend liveness is unknown")
+            continue
         try:
             # Persist (or durably spool) the attribution and source evidence
             # before the record retires; refuse rather than lose it.
@@ -4173,15 +4267,15 @@ def session_cleanup(name, reap=False):
             refused.append(f"{nm}: cleanup refused: {exc}")
             continue
         if nm in live:
-            session_backend().kill(nm)
+            session_action(nm, "kill")
         release_planning_lock(session_record=rec)
         _archive_log(rec)
         _remove_effective_settings(rec)
         transition(path, rec, "retired", retired_at=now())
         print(f"retired {nm}")
     if not [r for _, r in session_records() if r.get("state") != "retired"]:
-        if tmux_sessions():
-            session_backend().idle_shutdown()
+        if tmux_server_sessions():
+            session_backend("tmux").idle_shutdown()
             print("no active sessions remain; Nogging tmux server stopped")
     if refused:
         raise RuntimeError("\n".join(refused))
@@ -4195,14 +4289,17 @@ def session_stop(name, reason):
         print(f"{name} already {rec.get('state')} "
               f"(ended {rec.get('ended_at')}, reason: {rec.get('exit_reason')}); nothing to do")
         return
+    if (record_backend_name(rec) != "tmux"
+            and rec.get("name") in unknown_sessions()):
+        raise RuntimeError(f"{name} backend liveness is unknown; stop refused without proof the session can be reached")
     grace = float(scfg("session_stop_grace_seconds", 10))
     if tmux_has_session(name):
-        session_backend().send_keys(name, "ctrl+c", check=False)      # interrupt Claude
+        session_action(name, "send_keys", "ctrl+c", check=False)      # interrupt agent
         deadline = time.monotonic() + grace
         while time.monotonic() < deadline and tmux_has_session(name):
             time.sleep(0.2)
         if tmux_has_session(name):
-            session_backend().kill(name)      # hard terminate
+            session_action(name, "kill")      # hard terminate
     transition(path, rec, "stopped", exit_reason=(reason or "stopped by operator"),
                usage_monotonic_end_ms=monotonic_ms(), usage_end_boot_id=boot_id())
     print(f"stopped {name} (reason: {rec['exit_reason']})")
@@ -4212,8 +4309,8 @@ def session_attach(name, read_only):
     only subcommand that attaches; it is never invoked as a side effect."""
     _, rec = load_session(name)
     if not tmux_has_session(name):
-        raise RuntimeError(f"{name} has no live tmux session (state: {rec.get('state')})")
-    argv = session_backend().attach_argv(name, read_only)
+        raise RuntimeError(f"{name} has no live backend session (state: {rec.get('state')})")
+    argv = session_action(name, "attach_argv", read_only)
     os.execvp(argv[0], argv)
 def session_log(name, follow):
     """Print or follow the append-only log. Never attaches to tmux."""
@@ -4267,7 +4364,7 @@ def session_pane_text(name, escapes=False):
     """The session's current visible pane (no scrollback), or '' if its tmux
     session does not exist. `escapes` keeps SGR attributes (`capture-pane
     -e`), which is how a dim placeholder suggestion is told from input."""
-    return session_backend().capture(name, attributes=escapes)
+    return session_action(name, "capture", attributes=escapes)
 def session_events_path(name):
     return sessions_dir() / f"{name}.events.jsonl"
 def validate_antigravity_conversation_id(value):
@@ -4452,11 +4549,11 @@ def session_watch(names, interval, stall_after, fmt, once=False):
         return
 # --- session observability: send --------------------------------------
 def _submit_pane_input(name, agent):
-    session_backend().send_keys(name, "enter")
+    session_action(name, "send_keys", "enter")
     if agent == "claude":
         # Known quirk: Claude Code requires a second bare Enter to actually
         # submit a multi-line paste.
-        session_backend().send_keys(name, "enter")
+        session_action(name, "send_keys", "enter")
 _SGR_RE = re.compile(r"\x1b\[([0-9;]*)m")
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 _PROMPT_RULE_RE = re.compile(r"^\s*─{10,}\s*$")
@@ -4655,7 +4752,7 @@ def session_send(name, message, verify=False):
     if agent == "codex" and codex_queue_send(rec, message):
         print(f"sent to {name} (codex queue)")
         return
-    session_backend().send_text(name, message)
+    session_action(name, "send_text", message)
     _submit_pane_input(name, agent)
     if verify:
         _verify_submitted(name, agent)
@@ -4680,8 +4777,8 @@ def session_nudge(name, message=None):
             print(f"{name}: nothing to nudge ({reason}); nothing was submitted — "
                   f"pass --message \"<instruction>\" to send an explicit instruction")
             return
-    session_backend().send_keys(name, "ctrl+u")
-    session_backend().send_text(name, text)
+    session_action(name, "send_keys", "ctrl+u")
+    session_action(name, "send_text", text)
     _submit_pane_input(name, agent)
     _verify_submitted(name, agent)
     print(f"nudged {name}")
@@ -5091,7 +5188,7 @@ def session_resume_when_ready(name, message=None, poll_interval=60):
     if _SWITCH_MODEL_RE.search(pane):
         # Dismiss the residual "switch model?" prompt without acting on it —
         # Escape cancels the prompt and leaves the current model selected.
-        session_backend().send_keys(name, "escape")
+        session_action(name, "send_keys", "escape")
     session_send(name, message, verify=True)
     print(f"resumed {name}")
 # --- orchestrator: the always-on supervisor ------------------------------
@@ -5161,7 +5258,7 @@ def orchestrator_run(force=False):
     set_persona_identity(ROOT, "orchestrator")
     acquire_orchestrator_lock(force)
     try:
-        if tmux_has_session(name):
+        if tmux_has_session(name, "tmux"):
             print(f"orchestrator: adopting the live session {name}")
             rec_path = sessions_dir() / f"{name}.json"
             log_path = sessions_dir() / f"{name}.log"
@@ -5169,6 +5266,8 @@ def orchestrator_run(force=False):
                 rec = json.loads(rec_path.read_text())
             else:
                 rec = {"name": name, "bead_id": None, "role": "orchestrator",
+                       "backend": "tmux", "backend_ref": {
+                           "name": name, "socket": scfg("session_tmux_socket", "nogging")},
                        "host": socket.gethostname(), "started_at": now(),
                        "working_dir": workdir, "log_path": str(log_path),
                        "command": [], "profile": "orchestrator", "agent": "claude",
@@ -5186,7 +5285,7 @@ def orchestrator_run(force=False):
                     rec["usage_attribution"] = [dict(rec["usage_attribution"][-1], at=rec["usage_started_at"])]
             rec["ended_at"] = None; rec["exit_reason"] = None
             transition(rec_path, rec, "running", adopted_at=now())
-            session_backend().wire_log(name, session_log_capture(log_path), check=False)
+            session_action(name, "wire_log", session_log_capture(log_path), check=False)
         else:
             session_reap()
             if claude_project_trusted(workdir) is False:
@@ -5210,7 +5309,7 @@ def orchestrator_run(force=False):
                            profile="orchestrator", prompt="orchestrator",
                            resume=prior_session_id)
         poll = float(scfg("orchestrator_poll_seconds", 5))
-        while tmux_has_session(name):
+        while tmux_has_session(name, "tmux"):
             time.sleep(poll)
         rec_path = sessions_dir() / f"{name}.json"
         if rec_path.exists():
@@ -5249,13 +5348,13 @@ def orchestrator_stop():
     _systemctl("stop", unit)
     _systemctl("disable", unit)
     name = orchestrator_session_name()
-    if tmux_has_session(name):
-        session_backend().send_keys(name, "ctrl+c", check=False)
+    if tmux_has_session(name, "tmux"):
+        session_action(name, "send_keys", "ctrl+c", check=False)
         deadline = time.monotonic() + float(scfg("session_stop_grace_seconds", 10))
-        while time.monotonic() < deadline and tmux_has_session(name):
+        while time.monotonic() < deadline and tmux_has_session(name, "tmux"):
             time.sleep(0.2)
-        if tmux_has_session(name):
-            session_backend().kill(name)
+        if tmux_has_session(name, "tmux"):
+            session_action(name, "kill")
     rec_path = sessions_dir() / f"{name}.json"
     if rec_path.exists():
         rec = json.loads(rec_path.read_text())
@@ -6008,6 +6107,7 @@ def main():
     s = sub.add_parser("session"); ssub = s.add_subparsers(dest="session_command", required=True)
     sl = ssub.add_parser("launch")
     sl.add_argument("--role", required=True)
+    sl.add_argument("--backend", help="session substrate (tmux or herdr); defaults to session_backend config or tmux")
     sl.add_argument("--bead", help="real execution Bead; optional association for planning, absent for orchestrator")
     sl.add_argument("--agent-state", action="append", default=[], help="grant configured runtime state for this agent")
     sl.add_argument("--planning-id", help="kebab-case identifier required for --role planning")
@@ -6126,7 +6226,8 @@ def session_cmd(args):
                        args.profile, args.prompt, args.full_access, args.agent,
                        resume=args.resume, kickoff=args.kickoff, planning_id=args.planning_id, description=args.description,
                        model=args.model, agent_state=args.agent_state, tier=args.tier, effort=args.effort,
-                       ignore_usage_gate=args.ignore_usage_gate, complexity=args.complexity)
+                       ignore_usage_gate=args.ignore_usage_gate, complexity=args.complexity,
+                       backend=args.backend)
     elif args.session_command == "list":
         session_list()
     elif args.session_command == "attach":
