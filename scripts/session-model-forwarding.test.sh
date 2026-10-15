@@ -247,7 +247,7 @@ same_but "claude: model adds only --model <name>" '[["--model","claude-x"]]' \
 same_but "claude read-only: plan mode kept with a model" '[["--model","claude-x"]]' \
   "${common[@]}" --settings "$wroot/s.json" --read-only -- --model claude-x
 same_but "codex: model+effort add only their own elements" '[["--model","gpt-x"],["-c","model_reasoning_effort=\"low\""]]' \
-  --agent codex --sandbox read-only --approval untrusted --network off "${common[@]}" -- \
+  --agent codex --sandbox read-only --approval on-request --network off "${common[@]}" -- \
   --model gpt-x --reasoning-effort low
 same_but "pi: model adds only --model <name>" '[["--model","pi-x"]]' \
   --agent pi --provider anthropic "${common[@]}" -- --model pi-x
