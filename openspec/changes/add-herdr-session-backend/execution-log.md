@@ -81,3 +81,20 @@
     Planned 2026-10-15 in add-herdr-session-backend (planning commits ef09f7c, c412ca6). Complexity: standard. Read only the mapped tasks.md line, the design.md Decision it names and the matching session-backends requirement. Before allocating a dependent worktree, verify every prerequisite execution commit is integrated into develop.
     tier standard: assigned by orchestrator to antigravity; branch docs/add-herdr-session-backend.
     Planning note 2026-10-15 (planning commit 2dcf2c8): the session-backends guide requirement gained one topic. docs/using-with-herdr.md must describe the transport: the CLI for every operation except pane creation, which uses local-socket layout.apply after the socket owner/mode 0600 check (design Decision 6). The security posture is unchanged: no listener, no TCP, no remote access.
+
+<!-- nogg:SPEC-fqol:2026-10-15T20:30:38Z -->
+- 2026-10-15T20:36:51+00:00 — SPEC-fqol closed for TASK-HDR-014 (Bead closed at 2026-10-15T20:30:38Z).
+  - implementation commits: 94519b7b93f3, 2dcf2c8
+  - Bead note:
+    Planned 2026-10-15 in add-herdr-session-backend (planning commit 2dcf2c8, transport revision for discovery SPEC-ypyo). Complexity: standard. Read only the mapped tasks.md line, design.md Decision 14 and the session-backends requirements 'herdr tests exercise only verified herdr interfaces' and 'Nogging reaches herdr through its CLI plus one local-socket method'. Depends on SPEC-kdgr (TASK-HDR-005, closed); blocks SPEC-ypyo (TASK-HDR-006) and SPEC-rsw7 (TASK-HDR-011). Keep the outputs of the real CLI forms the stub already answers, so the in-flight doctor tests of TASK-HDR-009 (--version, status) need no change. Before allocating the worktree, verify every prerequisite execution commit is integrated into develop.
+    tier standard: correct the fake herdr to real 0.9.5 interfaces (socket layout.apply emulation, drop synthetic CLI forms) -> Antigravity standard; branch test/add-herdr-session-backend.
+    Implemented in commit 94519b7b93f300d4c748f86435809003dbe7e2bd. Validation: scripts/herdr-stub.test.sh passed asserting CLI parity (exit 2 on synthetic forms), real 0600 Unix-socket server for layout.apply with matching shapes, opt-in real process and termination, socket faults, and path limits; scripts/test passed completely.
+
+<!-- nogg:SPEC-36jb:2026-10-15T20:36:17Z -->
+- 2026-10-15T20:36:51+00:00 — SPEC-36jb closed for TASK-HDR-009 (Bead closed at 2026-10-15T20:36:17Z).
+  - implementation commits: ef09f7c, c412ca6, 72b660be667cf4178366f52583eafae186844958
+  - Bead note:
+    Planned 2026-10-15 in add-herdr-session-backend (planning commits ef09f7c, c412ca6). Complexity: standard. Read only the mapped tasks.md line, the design.md Decision it names and the matching session-backends requirement. Before allocating a dependent worktree, verify every prerequisite execution commit is integrated into develop.
+    tier standard: assigned by orchestrator to antigravity; branch refactor/add-herdr-session-backend.
+    commit 72b660be667cf4178366f52583eafae186844958: Added conditional read-only herdr doctor checks per design Decision 12 (binary/recorder FAIL, version WARN outside 0.9.x, reachability and records-only NOTEs, server restart NOTE). Verified via scripts/doctor-herdr.test.sh and full scripts/test.
+    Orchestrator: reopened — PR #137 fails CI script-tests: scripts/doctor-herdr.test.sh runs real doctor which reports 'FAIL dolt' on CI (no Dolt server); passes on the Pi only because Dolt runs there. Same class as SPEC-a9gq. Fix the test to be independent of Dolt/bd (stub), keep PR #137 branch. tier complex: relaunch after failed attempt escalates one tier.
