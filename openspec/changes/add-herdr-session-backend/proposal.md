@@ -63,7 +63,10 @@ or worked around before anything is built:
   each follow the record's own backend. The Orchestration Agent stays pinned
   to tmux.
 - **herdr backend** (`scripts/lib/session_backend_herdr.py`) over the local
-  `herdr` CLI, in a dedicated herdr session namespace. It includes:
+  `herdr` CLI, in a dedicated herdr session namespace. Pane creation is the one
+  exception: herdr has no CLI form that starts a pane with a given argv, so the
+  backend sends `layout.apply` to the dedicated server's local Unix socket
+  after checking the socket's owner and mode 0600. It includes:
   - an append-only, size-rotated log through a new PTY recorder
     (`scripts/session-pty-recorder`) feeding the existing
     `scripts/session-log-writer`;
@@ -76,8 +79,9 @@ or worked around before anything is built:
   reachable) run only when `session_backend=herdr` or herdr records exist, and
   print nothing otherwise. Adds a `docs/using-with-herdr.md` install and
   operations guide, including the `herdr update --handoff` warning.
-- **Tests.** Script and unit tests run against a fake `herdr` CLI stub, because
-  CI has no herdr. A real acceptance task on the Pi runs one Lead session each
+- **Tests.** Script and unit tests run against a fake `herdr` CLI stub and a
+  fake local socket server, because CI has no herdr. The fake implements only
+  verified herdr interfaces. A real acceptance task on the Pi runs one Lead session each
   with Claude, Codex and Antigravity over herdr, exercises
   send/nudge/log/stop/reap, and writes an acceptance report with a blank
   `Signed-off-by:` line for the Product Owner.

@@ -116,7 +116,7 @@ primitives:
 
 | Primitive | Contract | tmux | herdr |
 | --- | --- | --- | --- |
-| `start(name, cwd, env, argv, log)` → `ref` | Create the session that runs `argv` in `cwd` with `env`, wiring log capture. Returns the backend reference persisted in the record. | `new-session -d -s -c -e … --`, then `pipe-pane -o` | Labelled pane created with the recorder-wrapped `argv` (Decision 5). |
+| `start(name, cwd, env, argv, log)` → `ref` | Create the session that runs `argv` in `cwd` with `env`, wiring log capture. Returns the backend reference persisted in the record. | `new-session -d -s -c -e … --`, then `pipe-pane -o` | Labelled pane created with the recorder-wrapped `argv` (Decision 5) by local-socket `layout.apply`, the only socket call (Decision 6). |
 | `pid(ref)` | Root process ID of the session, or None. | `display-message #{pane_pid}` | `pane.process_info` |
 | `send_text(ref, text)` | Literal text, no submit. | `send-keys -l` | `pane.send_text` |
 | `send_keys(ref, key)` | One normalized key: `enter`, `escape`, `ctrl+c` or `ctrl+u`. | `Enter`, `Escape`, `C-c`, `C-u` | `pane.send_keys enter`, `esc`, `ctrl+c`, `ctrl+u` |
@@ -140,6 +140,10 @@ Everything else stays in `scripts/nogg` above the seam and backend-neutral:
   Enter, pane classification, the usage gate and collection, doctor and
   recover.
 
+The herdr column names methods; each one except `start` is called through its
+CLI form (`herdr pane process-info`, `pane send-text`, `pane send-keys`,
+`pane read`, `pane close`).
+
 The rule is that a backend never decides lifecycle state; it only reports
 facts.
 
@@ -150,14 +154,16 @@ facts.
   (`scripts/lib` on `sys.path`, no bytecode).
 - `scripts/lib/session_backend_tmux.py`: the moved tmux primitives. Its config
   keys are unchanged (`session_tmux_command`, `session_tmux_socket`).
-- `scripts/lib/session_backend_herdr.py`: the herdr primitives over the CLI.
-  New keys: `session_herdr_command` (default `herdr`) and
+- `scripts/lib/session_backend_herdr.py`: the herdr primitives over the CLI,
+  plus the one local-socket `layout.apply` call for pane creation
+  (Decision 6). New keys: `session_herdr_command` (default `herdr`) and
   `session_herdr_session` (default `nogging`), the latter being the dedicated
   namespace analogous to `tmux -L nogging`.
 - `scripts/session-pty-recorder`: a new executable helper (Decision 5).
 - `scripts/fixtures/herdr/`: spike fixtures, plus a stateful fake `herdr` CLI
   (`scripts/fixtures/herdr/bin/herdr`) driven by `$HERDR_STUB_DIR`, the same
-  technique as the tmux stub.
+  technique as the tmux stub. TASK-HDR-014 corrects it to real interfaces
+  only and adds a fake local socket server (Decision 14).
 
 After TASK-HDR-002, `scripts/nogg` contains no direct `tmux` invocation, and a
 test greps for that. Each task that adds a shipped file adds its own entries to
@@ -229,16 +235,75 @@ argv…>` as the pane command. The recorder:
 If gate item (e) failed for an agent, the herdr backend refuses that agent at
 launch with a message to use `--backend tmux`.
 
-### 6. herdr addressing, liveness and termination
+### 6. herdr addressing, transport, liveness and termination
 
 - Each Nogging session is one pane labelled with the session name. It lives in
-  a workspace named after the repository slug, inside the dedicated herdr
-  session `session_herdr_session`, created through the CLI form the spike
-  verified (`layout.apply`, `pane.split` or `agent.start`).
+  a workspace labelled with the repository slug, inside the dedicated herdr
+  session `session_herdr_session`. The workspace is created once with
+  `herdr --session <s> workspace create --label <slug> --cwd <root>
+  --no-focus` and found again by label with `workspace list`. Its root shell
+  pane keeps it alive, because `layout.apply` needs an existing workspace.
+- **Transport: CLI, plus one local-socket method.** This was revised on
+  2026-10-15 for blocking discovery SPEC-ypyo. The spike found no CLI form that
+  starts a pane with a given argv:
+  - `workspace create`, `tab create` and `pane split` start `$SHELL`;
+  - `agent start` runs the agent binary outside the wrapper;
+  - typing the wrapper into a shell with `pane run` would make the shell the
+    pane root, which breaks process-bound liveness and depends on shell
+    start-up files.
+
+  The Product Owner's priorities are speed and no outside reachability.
+  Process sandboxing of the launcher is not a concern. The Product Owner
+  therefore allows exactly one socket method:
+  - **Pane creation** sends `layout.apply` directly to the dedicated server's
+    Unix socket, with one pane node:
+    `{"workspace_id": W, "tab_label": <name>, "root": {"type": "pane",
+    "command": [recorder argv…], "cwd": D, "env": {…}, "label": <name>}}`.
+    It reads the pane ID from `result.layout.root.pane_id`. This takes one
+    round trip, with no shell and no polling.
+  - **Everything else stays on the CLI**: server start, `status`,
+    `session list`, `workspace create` and `list`, and `pane list`, `get`,
+    `process-info`, `send-text`, `send-keys`, `read`, `rename` and `close`.
+    Agent status and attach also use the CLI. A further socket method needs a
+    planning revision that names it and shows that it has no verified CLI form.
+  - **Locality.** The socket path comes from `herdr session list --json`
+    (`socket_path` of `session_herdr_session`). It never comes from
+    `HERDR_SOCKET_PATH` or other inherited env, because Nogging may itself run
+    inside a pane of another herdr session. Before connecting, the backend
+    `lstat`s the path and checks four things:
+    - the path is a Unix socket, not a symlink;
+    - the socket is owned by the invoking user;
+    - the mode is 0600, with no group or other bits;
+    - the path is under 108 bytes.
+
+    A failed check refuses the launch before any record or pane exists.
+  - **The client** is a stdlib `socket.AF_UNIX` stream connection. It sends
+    one request line `{"id", "method": "layout.apply", "params"}` and reads one
+    reply line, `{"id", "result"}` or `{"id", "error"}`, under a bounded
+    timeout. The backend uses no TCP and no `--remote` or `--machine`. It never
+    forwards the socket or changes its permissions. The request carries the
+    session env, so it is never logged unredacted.
+  - **Failure.** An error reply, such as `workspace_not_found`, fails the
+    launch with herdr's error code. A missing or malformed reply is resolved
+    through `pane list` by the unique label. The backend never sends a second
+    `layout.apply` for the same session, so a lost reply cannot create two
+    panes.
+  - **Launch order** is:
+    1. preflight;
+    2. ensure the server: if `status` reports it not running, start it
+       headless and poll `status` or `api snapshot` until it is ready;
+    3. ensure the workspace;
+    4. verify the socket;
+    5. write the record;
+    6. send `layout.apply`;
+    7. run `pane process-info` to get `shell_pid` (the recorder) and its start
+       time;
+    8. update the record with `backend_ref` and `session_pid`.
 - Env: the existing `NOGG_SESSION_*`, `NOGG_OPENSPEC_FENCE` and
   `NOGG_STARTUP_LOG`, plus `HERDR_AGENT=<agent>` so that herdr's detection
-  manifest sees through the wrapper. Env is passed through the pane env
-  parameter, or as an `env` argv prefix where the CLI lacks one.
+  manifest sees through the wrapper. The env travels in the `env` map of the
+  `layout.apply` pane node, which the spike verified reaches the command. No
+  `env` argv prefix is used.
 - Nogging starts and owns a dedicated headless herdr server for the configured
   `session_herdr_session`. It supplies a dedicated config file via
   `HERDR_CONFIG_PATH`, setting `[session] resume_agents_on_restore = false`
@@ -371,11 +436,72 @@ be built in parallel with the backend module against the fake stub.
   non-privileged user. Nogging never enables herdr remote access or plugins,
   and never installs herdr integrations; the guide documents what each would
   modify (from the spike).
+- Nogging is a client of that socket for one method only, `layout.apply`.
+  It first checks the socket's owner, mode 0600, type and path length, and it
+  never connects over TCP (Decision 6). Only the owning user on the delivery
+  host can reach the socket.
 - Pane screen history stays off. The guide warns that it would persist terminal
   output, which can contain secrets.
 - The launch wrapper, effective settings, command floor, OpenSpec boundary
   helper and redaction are identical on both backends. The recorded
   `command` is the redacted inner argv.
+
+### 14. The fake herdr reproduces only real interfaces (TASK-HDR-014)
+
+The TASK-HDR-005 stub answers several command forms that herdr 0.9.5 does not
+have:
+
+- `layout apply`;
+- `pane create`;
+- `pane split --command`;
+- `ping` and `api ping`;
+- `server start`, `server run` and `server restart`.
+
+A backend coded against them would pass every test and then fail on the host
+(discovery SPEC-ypyo). TASK-HDR-014 corrects the stub before the backend is
+built. The `spike/` fixture files stay unchanged as evidence.
+
+- **CLI parity.** The fake accepts only command forms in the committed
+  `spike/help/` usage and `spike/json/` fixtures. Every other form fails like
+  herdr's CLI syntax error: plain usage on stderr, exit 2
+  (`json/error-cli-syntax.txt`). If `pane split` is kept, it follows the real
+  usage and starts a shell, never a given command. The real forms the stub
+  already answers keep their outputs, so suites built on them need no change.
+  TASK-HDR-009's doctor tests use `--version` and `status`.
+- **A real local socket.** `herdr [--session <s>] server` runs a foreground
+  fake server bound to `<session_dir>/herdr.sock` with mode 0600. Nogging
+  detaches it exactly as it detaches real herdr. `server stop` and
+  `session stop` end it. `session list --json` and `status` report that path.
+  The fake server:
+  - speaks the line-delimited protocol;
+  - answers `layout.apply` with the shape of `json/layout-apply.json`;
+  - keeps the state that the CLI forms read, so `pane list`, `pane get` and
+    `pane process-info` see the new pane;
+  - returns an error reply for any other method.
+
+  Where a test opts in, the server runs the pane argv as a real child in its
+  own session, with the requested cwd and env. It reports that PID as
+  `shell_pid`, and `pane close` terminates it. Otherwise it records the argv
+  and env without running them.
+- **Short paths.** Tests put the fake's session directory under a short
+  temporary root. A path of 108 bytes or more fails to bind, exactly as
+  `sun_path` does on the host.
+- **Faults.** These socket faults can be injected:
+  - no server, so the connection is refused;
+  - the reply is dropped after the request;
+  - a `workspace_not_found` error reply;
+  - a socket with group or other permission bits;
+  - a symlink or a non-socket at the socket path.
+
+  The call log records each socket request next to the CLI calls, with the
+  method and params but not the env values.
+- **Test-only controls** live outside herdr's command surface, in control
+  files under `$HERDR_STUB_DIR` or a separate helper, so production code cannot
+  reach them. They cover seeding the spike state, a simulated restart and fault
+  injection.
+- `scripts/herdr-stub.test.sh` asserts help parity: each synthetic form exits
+  2. It also checks the socket reply shapes against the spike fixtures, next to
+  the existing shape checks.
 
 ## Dependencies and parallel lanes
 
@@ -389,21 +515,25 @@ inferred from task order.
 | HDR-003 selection + dispatch | standard | 002 | `scripts/nogg` (launch args, records, list `BACKEND`, orchestrator pin), `scripts/lib/session_backend.py`, `templates/nogging-config.json` |
 | HDR-004 PTY recorder | complex | 001 | `scripts/session-pty-recorder` + its test |
 | HDR-005 fake herdr CLI stub | standard | 001 | `scripts/fixtures/herdr/bin/herdr` + its self-test |
-| HDR-006 herdr backend core | complex | 003, 004, 005 | `scripts/lib/session_backend_herdr.py`, registry line, packaging (script region) |
+| HDR-014 fake herdr correction + socket server | standard | 005 | `scripts/fixtures/herdr/bin/` (stub, optional control helper), `scripts/herdr-stub.test.sh` |
+| HDR-006 herdr backend core | complex | 003, 004, 005, 014 | `scripts/lib/session_backend_herdr.py`, registry line, packaging (script region) |
 | HDR-007 nudge/send on herdr | standard | 006 | `scripts/nogg` (pane_input / verify region) |
 | HDR-008 agent_status column | routine | 006 | `scripts/nogg` (session_list region) |
 | HDR-009 doctor herdr checks | standard | 003, 004, 005 | `scripts/nogg` (doctor region) |
 | HDR-010 docs + guide | standard | 003 | `docs/**`, `README.md`, `AGENTS.md`, `.nogging/launch-prompts/*`, packaging (docs region) |
-| HDR-011 herdr lifecycle suite | standard | 006, 007, 008 | `scripts/session-herdr.test.sh` |
+| HDR-011 herdr lifecycle suite | standard | 006, 007, 008, 014 | `scripts/session-herdr.test.sh` |
 | HDR-012 Pi acceptance | complex | 009, 010, 011 | `docs/acceptance/<date>-herdr-backend.md` |
 
 These lanes can run in parallel:
 
 1. After 001: {002, 004, 005}.
 2. After 003: {009 (also needs 004 and 005), 010}.
-3. After 006: {007, 008}.
+3. After 005: 014, alongside 009 and 010; it touches only the fake herdr and
+   its self-test.
+4. After 006: {007, 008}.
 
-Sequential spine: 001 → 002 → 003 → 006 → {007, 008} → 011 → 012.
+Sequential spine: 001 → 002 → 003 → 006 → {007, 008} → 011 → 012, with
+005 → 014 → 006 joining it.
 
 The seam (002 → 003) is deliberately sequential and alone in the big regions of
 `scripts/nogg`. The later `scripts/nogg` tasks (007, 008, 009) edit disjoint
