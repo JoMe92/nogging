@@ -7,6 +7,10 @@ from typing import Protocol
 KEYS = frozenset({"enter", "escape", "ctrl+c", "ctrl+u"})
 
 
+class BackendError(RuntimeError):
+    """A substrate operation failed without exposing its private request."""
+
+
 @dataclass(frozen=True)
 class Capabilities:
     capture_attributes: bool = False
@@ -67,3 +71,11 @@ def _tmux(config, run, **kwargs):
 
 
 register("tmux", _tmux)
+
+
+def _herdr(config, run, **kwargs):
+    from session_backend_herdr import HerdrBackend
+    return HerdrBackend(config, run, **kwargs)
+
+
+register("herdr", _herdr)

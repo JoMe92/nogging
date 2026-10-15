@@ -348,9 +348,13 @@ def save_state(stub_dir, state):
 def simulate_restart(state):
     state.setdefault("server", {})["restarts"] = state.get("server", {}).get("restarts", 0) + 1
     restarts = state["server"]["restarts"]
-    for pid_key, pane in state.get("panes", {}).items():
-        old_pid = pane.get("shell_pid", 10000)
-        new_pid = 20000 + restarts * 1000 + (old_pid % 1000)
+    panes = state.get("panes", {})
+    # Real PIDs can overlap the synthetic range. Allocate above every old
+    # PID so a restart always changes identity, with no collisions between
+    # panes whose old PIDs share the same last three digits.
+    new_pid = max(20000 + restarts * 1000,
+                  max((pane.get("shell_pid", 10000) for pane in panes.values()), default=10000) + 1)
+    for pane in panes.values():
         pane["shell_pid"] = new_pid
         pane["foreground_process_group_id"] = new_pid
         pane["foreground_processes"] = [{
@@ -363,6 +367,7 @@ def simulate_restart(state):
         pane["terminal_id"] = f"term_restarted_{new_pid}"
         pane["agent_status"] = "unknown"
         pane.pop("agent", None)
+        new_pid += 1
 
 
 def find_pane(state, target):
