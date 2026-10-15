@@ -1,0 +1,3 @@
+herdr api commands:
+  herdr api snapshot
+  herdr api schema [--json | --output PATH]
