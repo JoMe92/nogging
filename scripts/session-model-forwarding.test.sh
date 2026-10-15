@@ -65,6 +65,7 @@ make_root() {
   mkdir -p "$r/.nogging/state" "$r/scripts" "$r/openspec" "$r/.pi/extensions" "$r/.codex/rules"
   cp "$repo_root/scripts/nogg" "$repo_root/scripts/nogg_usage.py" "$repo_root/scripts/session-launch" "$repo_root/scripts/session-log-writer" \
      "$repo_root/scripts/openspec-sandbox" "$r/scripts/"
+  cp -r "$repo_root/scripts/lib" "$r/scripts/lib"
   cp "$repo_root/.pi/extensions/nogging-guard.ts" "$r/.pi/extensions/"
   : >"$r/.codex/rules/nogging.rules"
   git init -q "$r"

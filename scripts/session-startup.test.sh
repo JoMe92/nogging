@@ -22,6 +22,7 @@ with tempfile.TemporaryDirectory(prefix="nogg startup ") as directory:
     (root / ".nogging/config.json").write_text(json.dumps(config))
     for name in ("nogg", "nogg_usage.py", "session-launch", "session-log-writer", "openspec-sandbox"):
         shutil.copy2(source / "scripts" / name, root / "scripts" / name)
+    shutil.copytree(source / "scripts/lib", root / "scripts/lib")
     # Exercise real tmux/startup logging independently of host mount support.
     # Preserve helper contract checks; dedicated fence tests use the real helper.
     boundary = root / "scripts/openspec-sandbox"

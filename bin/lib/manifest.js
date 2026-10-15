@@ -17,6 +17,8 @@ module.exports = {
   verbatim: [
     'scripts/nogg',
     'scripts/nogg_usage.py',
+    'scripts/lib/session_backend.py',
+    'scripts/lib/session_backend_tmux.py',
     'scripts/lib/token_usage_adapters.py',
     'scripts/lib/token_usage_antigravity.py',
     'scripts/lib/token_usage_collect.py',
