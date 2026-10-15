@@ -95,7 +95,8 @@ sandbox).
 
 The **Orchestration Agent** is a third session persona, above the Planning Agent
 and the Main Worker. It runs always-on as a supervised
-`nogg-orchestrator-<slug>` tmux session that a rendered systemd **user service**
+`nogg-orchestrator-<slug>` tmux session (the Orchestration Agent is pinned to
+tmux and always runs on tmux, even if herdr is configured as the default backend) that a rendered systemd **user service**
 keeps alive across a crash or a host reboot, resuming its own conversation with
 `claude --continue`. The launched session registers with Remote Control, so the
 Product Owner can read and drive it from a phone with no SSH. Exactly one runs
@@ -266,20 +267,24 @@ and the audit stays clean.
 ## Session supervision
 
 Every agent session Nogging starts for Lead Agent or specialist work runs
-inside a **named tmux session on the Pi**, under a dedicated tmux server socket
-(`tmux -L nogg`) that is isolated from the operator's own tmux. The session
+inside a **named supervised session on the host**, using the switchable session
+backend (`tmux` by default, or `herdr`; see `using-with-herdr.md`). For tmux, a
+dedicated tmux server socket (`tmux -L nogg`) is isolated from the operator's
+own tmux; for herdr, a dedicated local herdr session namespace
+(`session_herdr_session`, default `nogging`) is used. The session
 is started with `scripts/nogg session launch --role <lead |
 specialist:<type>> --bead <id> [--cwd <path>] [--read-only]
-[--agent <claude|codex|pi|antigravity|agy>] [--profile <name-or-path>] [--prompt <name-or-path>]
+[--agent <claude|codex|pi|antigravity|agy>] [--backend <tmux|herdr>] [--profile <name-or-path>] [--prompt <name-or-path>]
 [--full-access]`, which:
 
 - generates a collision-free name `sf-<role>-<bead>-<nonce>`;
 - writes a durable JSON record to `.nogging/state/sessions/<name>.json`
   (Bead ID, role, host, start time, working directory, redacted launch
-  command, owner, lifecycle state, log path) **before** the Claude process
+  command, owner, lifecycle state, log path, backend) **before** the agent process
   starts, so the association survives an SSH drop or a restart of the launcher;
 - streams all console output to an append-only `<name>.log` beside the record
-  (`tmux pipe-pane` → `scripts/session-log-writer`, size-rotated);
+  (`tmux pipe-pane` or herdr `scripts/session-pty-recorder` →
+  `scripts/session-log-writer`, size-rotated);
 - starts the selected agent through `scripts/session-launch` under a
   **selectable authority level**, defaulting to `restricted` (no `git push`, no
   remote Dolt sync, no destructive shell, scoped to the working directory)
@@ -376,13 +381,13 @@ From any plain SSH shell (no `TERM`, no tmux client needed):
 
 | Command | What it does |
 | --- | --- |
-| `session list` | every managed session with Bead, role, age, working dir, owner, state, the launch profile it runs under (`restricted` renders as `-`, a floor-lifted orchestrator as `FULL-ACCESS`), and the requested model with its source (`launch`, `profile`, or `runtime-default` when none was set) plus `tier=<tier>` for a `--tier` launch; reconciles each record against live tmux and reports a vanished `running` session as `failed`. Read-only, never attaches. |
-| `session attach <name> [--read-only]` | attach the terminal to a session (`-r` blocks input). The only command that attaches. |
+| `session list` | every managed session with Bead, role, age, working dir, owner, state, backend (`BACKEND` column), agent status (`AGENT_STATUS` column for herdr), the launch profile it runs under (`restricted` renders as `-`, a floor-lifted orchestrator as `FULL-ACCESS`), and the requested model with its source (`launch`, `profile`, or `runtime-default` when none was set) plus `tier=<tier>` for a `--tier` launch; reconciles each record against live backend sessions (tmux or herdr) and reports a vanished `running` session as `failed` (or with unknown liveness if the backend tool fails). Read-only, never attaches. |
+| `session attach <name> [--read-only]` | attach the terminal to a session (`-r` blocks input; on herdr, read-only attach is refused with a pointer to `session log --follow`). The only command that attaches. |
 | `session log <name> [--follow]` | print or tail the append-only log without attaching. |
-| `session stop <name> [--reason <text>]` | interrupt Claude, terminate the pane after the grace period, record `stopped` with `ended_at`/`exit_reason`. Idempotent. |
-| `session reap` | move every active-state record whose tmux session is gone to `failed` (a live one is untouched), so `cleanup` can retire it. |
-| `session cleanup [<name>] [--reap]` | remove a lingering tmux session, archive-rotate the log, retire the record. **Refuses** a `starting`/`running`/`idle` record — stop or `--reap` it first. |
-| `orchestrator run` | the idempotent supervisor the systemd unit runs: acquire the orchestrator lock, adopt or start the `nogg-orchestrator-<slug>` session (`claude --continue` when a prior conversation exists), block until it exits, release the lock, exit non-zero. Takes `--force` to reclaim a stale lock. |
+| `session stop <name> [--reason <text>]` | interrupt the agent, terminate the backend session after the grace period, record `stopped` with `ended_at`/`exit_reason`. Idempotent. |
+| `session reap` | move every active-state record whose backend session is gone to `failed` (a live one is untouched), so `cleanup` can retire it. |
+| `session cleanup [<name>] [--reap]` | remove a lingering backend session, archive-rotate the log, retire the record. **Refuses** a `starting`/`running`/`idle` record — stop or `--reap` it first. |
+| `orchestrator run` | the idempotent supervisor the systemd unit runs: acquire the orchestrator lock, adopt or start the `nogg-orchestrator-<slug>` session (pinned to tmux; `claude --continue` when a prior conversation exists), block until it exits, release the lock, exit non-zero. Takes `--force` to reclaim a stale lock. |
 | `orchestrator status` | the unit's enabled/active state, whether user lingering is on, the lock holder, and the live `FULL-ACCESS` session with its last log lines. Read-only. |
 | `orchestrator stop` \| `restart` | stop-and-disable the unit (ending the session and releasing the lock; idempotent), or restart it. |
 
@@ -392,11 +397,11 @@ The specialist roster (`specialist-agents-and-skills`) defines the six
 specialists as **Task-tool subagents of the Lead Agent's session**. That is
 still the default: when the Lead Agent delegates an isolated implementation or
 review pass, it does so **in process** with the Task tool. Those calls do not
-get their own tmux session or metadata record — they run inside the Lead
+get their own backend session or metadata record — they run inside the Lead
 Agent's supervised session, share its launch profile, and are visible in
 that session's own log.
 
-A specialist run gets **its own observable tmux session** when it must run as a
+A specialist run gets **its own observable session** when it must run as a
 separate, long-lived process — a large self-contained chunk of work the operator
 wants to watch, attach to, or stop independently. The operator (or the Lead
 Agent on operator direction) then runs `session launch --role specialist:<type>

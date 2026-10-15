@@ -18,6 +18,7 @@ major release but remain unverified until CI or acceptance records them.
 | Beads (`bd`) | 1.2.x; validated with 1.2.2 | real-backend acceptance; mechanically stubbed unit tests |
 | Dolt | 2.3.x; validated with 2.3.1 | real-backend acceptance; mechanically stubbed unit tests |
 | tmux | 3.2 or newer, optional | supervised-session tests plus acceptance host |
+| herdr | 0.9.x (validated with 0.9.5), optional | experimental session backend; spike facts and fake-stub tests, see [using-with-herdr](using-with-herdr.md) |
 | systemd user manager | systemd 252 or newer, optional | generated-unit tests plus Linux acceptance host |
 
 Node 18 is sufficient for the installer. The optional Pi CLI has its own higher
@@ -73,3 +74,4 @@ Current evidence entry points:
 - [Codex integration evidence and limitations](using-with-codex.md)
 - [Pi integration evidence and limitations](using-with-pi.md)
 - [Antigravity integration evidence and limitations](using-with-antigravity.md)
+- [herdr experimental session backend](using-with-herdr.md)
