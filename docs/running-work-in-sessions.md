@@ -10,9 +10,12 @@ see `failure-recovery.md`.
 ## What a supervised session is
 
 `scripts/nogg session launch` starts a **separate agent process inside a
-tmux session** on the host — Claude Code by default, or Codex with `--agent
-codex` (see *Choosing the agent*) — on a dedicated tmux server socket (`tmux -L
-nogg`). Compared with running the agent in your terminal:
+supervised session** on the host — Claude Code by default, or Codex with `--agent
+codex` (see *Choosing the agent*) — using a switchable session backend (`tmux` by
+default, or `herdr` with `--backend herdr` or `session_backend`; see
+`using-with-herdr.md`). On tmux, a dedicated tmux server socket (`tmux -L
+nogg`) isolates sessions from the operator's personal tmux. Compared with running
+the agent in your terminal:
 
 - **It keeps running when you leave.** Close the SSH connection, shut the
   laptop — the session keeps working on the host.
@@ -51,7 +54,7 @@ runs under — see *Running with broader authority*.
 `launch` prints the session name, the log path and the attach command. It does
 not attach you — the session comes up idle at a prompt, waiting for direction.
 
-Before contacting tmux, launch verifies that its installed runtime helpers are
+Before contacting the backend (tmux or herdr), launch verifies that its installed runtime helpers are
 executable and support every requested option. A refusal naming a helper
 contract calls for a pinned Nogging `update`; see `failure-recovery.md`.
 If the agent itself exits during startup, the failed record and redacted log
@@ -168,7 +171,7 @@ profile, then Claude's own default (no flag is passed). Allowed values are
 exactly `low`, `medium`, `high`, `xhigh` and `max`; anything else (including
 `auto`, `none`, case variants and an invalid profile value that a valid
 `--effort` would override) refuses before any worktree, settings, record or
-tmux side effect. The shipped profiles omit `effort`, so defaults are
+backend side effect. The shipped profiles omit `effort`, so defaults are
 unchanged. To opt in, add it to a complete custom profile JSON:
 
 ```json
@@ -226,9 +229,10 @@ Orchestration Agent launches every sub-session this way. See
 ./scripts/nogg session log  <name> --follow        # tail its output
 ```
 
-`session list` reconciles every record against live tmux; a session whose tmux
-is gone shows as `failed`. `session log` never attaches — `Ctrl-C` stops the
-tail, not the session.
+`session list` reconciles every record against live backend sessions (tmux or
+herdr); a session whose backend session is gone shows as `failed`. It shows
+`BACKEND` and `AGENT_STATUS` columns. `session log` never attaches — `Ctrl-C`
+stops the tail, not the session.
 
 ## Attach and steer
 
@@ -240,13 +244,15 @@ You are now **inside** the session — the same view Claude has. You can type
 instructions, ask a side question with `/btw`, change the permission mode with
 `Shift-Tab`, or press `Esc` to interrupt what Claude is doing.
 
-**Detach without killing it:** press `Ctrl-b`, release, then `d`. This is the
-tmux detach chord. The session keeps running; you are back in your own shell.
-Closing the terminal while attached also just detaches. The session ends only
-if Claude itself exits (`/exit`) or you `session stop` it.
+**Detach without killing it:** on tmux, press `Ctrl-b`, release, then `d` (the
+tmux detach chord); on herdr, detach the herdr client. The session keeps running;
+you are back in your own shell. Closing the terminal while attached also just
+detaches. The session ends only if the agent itself exits (`/exit`) or you
+`session stop` it.
 
 `session attach <name> --read-only` attaches so you can watch keystroke-by-
-keystroke but cannot send input.
+keystroke but cannot send input (supported on tmux; on herdr, where no read-only
+client exists, this is refused with a pointer to `session log --follow`).
 
 ### Autonomous vs. step-by-step
 
@@ -308,14 +314,15 @@ Control sessions.
 ./scripts/nogg session cleanup <name>
 ```
 
-`stop` sends Claude an interrupt, waits the grace period
-(`session_stop_grace_seconds`, default 10), then terminates the tmux session
+`stop` sends the agent an interrupt, waits the grace period
+(`session_stop_grace_seconds`, default 10), then terminates the backend session
 and records `stopped` with the time and reason. It is idempotent.
 
-`cleanup` removes a lingering tmux session, archive-rotates the log and retires
+`cleanup` removes a lingering backend session, archive-rotates the log and retires
 the record. It **refuses** a record still in `starting`, `running` or `idle` —
 `stop` it first. `session cleanup` with no name cleans up every already-terminal
-record and kills the tmux server if nothing is left running.
+record and kills the tmux server if nothing is left running (for herdr, the
+dedicated herdr server is never killed by cleanup).
 
 ## Several at once
 
@@ -359,7 +366,9 @@ subcommand group:
 `orchestrator run` acquires `.nogging/locks/orchestrator.lock`, adopts a live
 `nogg-orchestrator-<slug>` tmux session or starts one (resuming its conversation
 with `claude --continue` when one exists), blocks until it exits, releases the
-lock and exits non-zero so `Restart=always` brings it back. It runs under the
+lock and exits non-zero so `Restart=always` brings it back. The Orchestration
+Agent is pinned to tmux and always runs on tmux, even if `herdr` is configured as
+the repository's default session backend. It runs under the
 `orchestrator` profile with the command floor and the `openspec/` boundary
 lifted — `session list` and `doctor` show it as `FULL-ACCESS`. It is Claude-only
 and reachable from a phone through Remote Control. See
@@ -370,10 +379,10 @@ orchestrate-only-by-default scope.
 
 | Command | Effect |
 | --- | --- |
-| `session launch --role <r> [--bead <id>] [--planning-id <id> --description <d>] [--cwd <p>] [--read-only] [--owner <o>] [--agent <claude\|codex>] [--profile <n>] [--prompt <n>] [--full-access]` | start a supervised session; no Beads change |
+| `session launch --role <r> [--backend <b::tmux|herdr>] [--bead <id>] [--planning-id <id> --description <d>] [--cwd <p>] [--read-only] [--owner <o>] [--agent <claude\|codex>] [--profile <n>] [--prompt <n>] [--full-access]` | start a supervised session; no Beads change |
 | `session list` | list every session with live-reconciled state and its launch profile |
 | `session log <name> [--follow]` | print / tail the log; never attaches |
-| `session attach <name> [--read-only]` | attach the terminal; `Ctrl-b d` to detach |
+| `session attach <name> [--read-only]` | attach the terminal; `Ctrl-b d` (tmux) or client detach (herdr) |
 | `session stop <name> [--reason <text>]` | interrupt, terminate, record a terminal state; idempotent |
 | `session reap` | move vanished active-state records to `failed`; a live one is untouched |
 | `session cleanup [<name>] [--reap]` | retire terminal records; refuses a live one (`--reap` fails the dead ones first) |
@@ -382,7 +391,9 @@ orchestrate-only-by-default scope.
 | `orchestrator stop` \| `orchestrator restart` | stop-and-disable the unit (idempotent), or restart it |
 
 Config keys (`.nogging/config.json`): `session_agent` (`claude` |  `codex`,
-default `claude`), `session_tmux_socket`, `session_state_dir`,
+default `claude`), `session_backend` (`tmux` | `herdr`, default `tmux`),
+`session_tmux_socket`, `session_herdr_command` (default `herdr`),
+`session_herdr_session` (default `nogging`), `session_state_dir`,
 `session_log_max_bytes`, `session_log_rotation_depth`,
 `session_stop_grace_seconds`, `orchestrator_lock_ttl_seconds` (default 86400),
 `orchestrator_poll_seconds` (default 5). The launch profile / prompt directories default
@@ -499,11 +510,11 @@ uses the same check.
 
 Without `--message`, nudge resends only single-line input that it can
 positively identify: non-dim text in Claude's framed input box, captured with
-attributes (`tmux capture-pane -e`). A placeholder-only, empty, multi-line or
+attributes (`tmux capture-pane -e` or herdr `pane.read --format ansi`). A placeholder-only, empty, multi-line or
 unidentifiable prompt sends no keys at all, and the command tells you to pass
 `--message`. Codex and other runtimes cannot expose the buffered text, so they
 always need `--message`. Nudge still refuses any session that is not running,
-before touching tmux. `session sweep` reports `has-unsent-input` as `yes`, `no`
+before touching the backend. `session sweep` reports `has-unsent-input` as `yes`, `no`
 (a placeholder or empty prompt) or `unknown`.
 
 ## Read-only quota inspection
@@ -538,7 +549,7 @@ specialist) only when every known usage window of the launching agent still
 fits: `used + reserved + estimate <= cap` per window. A refusal exits **75**
 and names each limiting window with its reset time and the latest reset to
 retry after; it happens before any helper negotiation, worktree, trust change,
-tmux session or session record. Planning and orchestrator launches are not
+backend session or session record. Planning and orchestrator launches are not
 gated by default. `./scripts/nogg usage` prints the same estimate, projection
 and fit (`gate` in `--json`). Admission checks and reserves headroom under a
 same-host lock in the owner-only user cache
@@ -547,7 +558,7 @@ is shared across repositories. Each window counts its outstanding estimates;
 a reset releases only reservations from that window's previous period.
 Failed launches release immediately. Pending launchers hold kernel file locks,
 so process death releases ownership across PID namespaces. Terminal sessions
-and dead pending launchers are reconciled on the next admission or usage inspection; live tmux
+and dead pending launchers are reconciled on the next admission or usage inspection; live backend
 sessions retain their reservation after the launcher exits.
 
 Current adapters do not identify accounts or model groups, so identity remains
