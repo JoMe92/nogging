@@ -885,7 +885,7 @@ class Reservations:
     Lock files are stable inodes; the ledger is replaced atomically under the
     lock. Pending owners hold kernel file locks, which work across PID
     namespaces and are released on process death. Bound owners use durable
-    session state and tmux liveness, so a launcher
+    session state and a backend liveness probe, so a launcher
     exit does not release a still-running worker's estimate.
     """
     def __init__(self, root=None):
@@ -904,10 +904,17 @@ class Reservations:
             if record and record.get('state') in ('stopped', 'failed', 'retired'):
                 return False
             try:
-                result = subprocess.run([owner['tmux'], '-L', owner['socket'],
-                                         'has-session', '-t', owner['name']],
-                                        capture_output=True, timeout=5)
-                if result.returncode == 0:
+                probe = owner.get('probe')
+                if probe is None:
+                    # Reservations written before the backend seam.
+                    argv = [owner['tmux'], '-L', owner['socket'],
+                            'has-session', '-t', owner['name']]
+                else:
+                    argv = probe['argv']
+                result = subprocess.run(argv, capture_output=True, timeout=5)
+                if result.returncode != 1:
+                    # 0 is alive; unexpected failures are unknown. Only the
+                    # probe's explicit absent result (1) can release a worker.
                     return True
             except (OSError, subprocess.TimeoutExpired):
                 # Tool failure is not proof that a worker is dead.
@@ -1014,12 +1021,24 @@ class Reservations:
                 (self.root / (token + '.owner')).unlink(missing_ok=True)
             raise
 
-    def bind(self, token, path, name, tmux, socket):
+    def bind(self, token, path, name, probe, socket=None):
+        """Bind before starting the child; accept the old tmux/socket API too.
+
+        New entries store only a backend-neutral {backend, argv} probe. Probe
+        exit codes are 0 alive, 1 absent, anything else unknown.
+        """
+        if socket is not None:
+            probe = {'backend': 'tmux', 'argv': [probe, '-L', socket,
+                                               'has-session', '-t', name]}
+        if (not isinstance(probe, dict) or not isinstance(probe.get('backend'), str)
+                or not probe['backend'] or not isinstance(probe.get('argv'), list)
+                or not probe['argv'] or not all(isinstance(a, str) for a in probe['argv'])):
+            raise ValueError('invalid session liveness probe')
         def action(entries):
             if token not in entries:
                 raise RuntimeError('usage admission reservation disappeared before launch completed')
             entries[token]['session'] = {'path': str(Path(path).resolve()), 'name': name,
-                                          'tmux': tmux, 'socket': socket}
+                                        'probe': probe}
         self._transaction(action)
 
     def release(self, token):
