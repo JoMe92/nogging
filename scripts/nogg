@@ -4646,12 +4646,38 @@ def pane_input(name, agent):
     framed, non-dim input box; Codex via its `undelivered_input` signal
     (text not extractable). Every other runtime is `unknown`."""
     if agent == "claude":
-        return _claude_prompt_input(session_pane_text(name, escapes=True))
+        substrate, _ref = backend_for_name(name)
+        attributes = substrate.capabilities.capture_attributes
+        pane = session_pane_text(name, escapes=attributes)
+        return (_claude_prompt_input(pane) if attributes
+                else _claude_prompt_input_without_attributes(pane))
     if agent == "codex":
         if classify(session_pane_text(name), CODEX_ADAPTER) == "needs_input":
             return "input", ""
         return "unknown", ""
     return "unknown", ""
+
+def _claude_prompt_input_without_attributes(pane):
+    """Without SGR, only an empty framed Claude box is distinguishable."""
+    text = _claude_prompt_box_text(pane)
+    if text is None:
+        return "unknown", ""
+    return ("unknown", "") if text else ("empty", "")
+
+def _claude_prompt_box_text(pane):
+    """Return framed Claude box contents, or None when the box is unclear."""
+    lines = pane.splitlines()
+    plain = [_ANSI_RE.sub("", ln) for ln in lines]
+    rules = [i for i, ln in enumerate(plain) if _PROMPT_RULE_RE.match(ln)]
+    if len(rules) < 2:
+        return None
+    top, bottom = rules[-2], rules[-1]
+    body = list(range(top + 1, bottom))
+    if not body or not _CLAUDE_PROMPT_RE.match(plain[body[0]]):
+        return None
+    content = [plain[body[0]][plain[body[0]].index("❯") + 1:]]
+    content.extend(plain[i] for i in body[1:])
+    return "\n".join(content).replace("\u00a0", " ").rstrip()
 def pending_input_text(name, agent):
     """The positively identified text sitting unsubmitted at a session's
     prompt, or '' when there is none, it is only a placeholder suggestion,
@@ -4670,11 +4696,28 @@ def _pane_input_pending(name, agent):
         return pane_input(name, agent)[0] == "input"
     lines = [ln for ln in session_pane_text(name).splitlines() if ln.strip()]
     return bool(lines and lines[-1].strip())
-def _verify_submitted(name, agent):
+def _verify_submitted(name, agent, submitted_text=None):
     """Bounded verification: one retry of the submit step, then fail.
     A Claude pane whose input box cannot be identified is unverified, not
     submitted."""
+    substrate, _ref = backend_for_name(name)
+    replacement_check = (agent == "claude"
+                         and not substrate.capabilities.capture_attributes)
+
+    def replacement_verified():
+        status = session_action(name, "agent_status")
+        box = _claude_prompt_box_text(session_pane_text(name, escapes=False))
+        return status == "working" or (box is not None and box.strip() != (submitted_text or "").strip())
+
     time.sleep(float(scfg("session_submit_verify_delay_seconds", 0.5)))
+    if replacement_check:
+        if replacement_verified():
+            return
+        _submit_pane_input(name, agent)
+        time.sleep(float(scfg("session_submit_verify_delay_seconds", 0.5)))
+        if not replacement_verified():
+            raise RuntimeError(f"{name}: message still unverified after a retry")
+        return
     if _pane_input_pending(name, agent):
         _submit_pane_input(name, agent)             # retry the submit step once
         time.sleep(float(scfg("session_submit_verify_delay_seconds", 0.5)))
@@ -4794,7 +4837,7 @@ def session_send(name, message, verify=False):
     session_action(name, "send_text", message)
     _submit_pane_input(name, agent)
     if verify:
-        _verify_submitted(name, agent)
+        _verify_submitted(name, agent, message)
     print(f"sent to {name}")
 def session_nudge(name, message=None):
     """Submit a running session's prompt deliberately (#42). With `message`,
@@ -4819,7 +4862,7 @@ def session_nudge(name, message=None):
     session_action(name, "send_keys", "ctrl+u")
     session_action(name, "send_text", text)
     _submit_pane_input(name, agent)
-    _verify_submitted(name, agent)
+    _verify_submitted(name, agent, text)
     print(f"nudged {name}")
 def _compose_kickoff_message(bead_id, change):
     return (f"Claim Bead {bead_id} and implement its mapped task in change {change}. "
