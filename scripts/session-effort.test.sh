@@ -270,7 +270,7 @@ run_launch --effort low >"$out" 2>&1 && bad "config-agent-agy: launch should ref
 
 # --- Cross-agent refusal: profiles with wrong effort keys ---
 codex_effort_bad='sandbox = "read-only"
-ask_for_approval = "untrusted"
+ask_for_approval = "on-request"
 network_access = false
 effort = "high"'
 PROFILE_NAME=bad.codex.toml PROFILE_BODY="$codex_effort_bad" \
@@ -304,7 +304,7 @@ PROFILE_NAME=bad-mre.agy.toml PROFILE_BODY="$agy_mre_bad" \
 # --- Preserve Codex: all 8 model_reasoning_effort levels still launch ok ---
 for e in none minimal low medium high xhigh max ultra; do
   codex_body="sandbox = \"read-only\"
-ask_for_approval = \"untrusted\"
+ask_for_approval = \"on-request\"
 network_access = false
 model_reasoning_effort = \"$e\""
   PROFILE_NAME="codex-$e.codex.toml" PROFILE_BODY="$codex_body" \
@@ -337,7 +337,7 @@ src_check "prov-claude-default: null effort, runtime-default" "r['reasoning_effo
 list_has "prov-claude-default: list shows effort=runtime-default" "effort=runtime-default"
 
 PROFILE_NAME=pv.codex.toml PROFILE_BODY='sandbox = "read-only"
-ask_for_approval = "untrusted"
+ask_for_approval = "on-request"
 network_access = false
 model_reasoning_effort = "high"' launch_ok "prov-codex-profile" --agent codex
 src_check "prov-codex-profile: source profile" "r['reasoning_effort']=='high' and r['reasoning_effort_source']=='profile'"
