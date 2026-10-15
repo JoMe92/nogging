@@ -22,7 +22,7 @@
 
 - [x] TASK-HDR-007 [standard] Make nudge and send --verify capability-aware per design Decision 8: unchanged with capture attributes; without them, a Claude box holding text is unknown, nudge without --message submits nothing, and the replacement check (herdr reports working or the box no longer holds the text) verifies, else one retry then fail; Codex unchanged. Check: extend scripts/session-nudge-placeholder.test.sh with herdr-stub variants, tmux cases unchanged, full scripts/test green.
 
-- [ ] TASK-HDR-008 [routine] Add the session list AGENT_STATUS column per design Decision 9: herdr status for live herdr records via one bounded read-only query per listing, `-` for tmux, terminal or unsupported records, unknown on query failure without failing the listing. Check: a mixed-listing case in scripts/session-backend-herdr.test.sh, list expectations changed only for the new column, full scripts/test green.
+- [x] TASK-HDR-008 [routine] Add the session list AGENT_STATUS column per design Decision 9: herdr status for live herdr records via one bounded read-only query per listing, `-` for tmux, terminal or unsupported records, unknown on query failure without failing the listing. Check: a mixed-listing case in scripts/session-backend-herdr.test.sh, list expectations changed only for the new column, full scripts/test green.
 
 ## 5. Setup and diagnostics
 
