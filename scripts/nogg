@@ -5764,6 +5764,112 @@ def codex_sandbox_diagnosis(workdir, with_sandbox=False, sandbox_extra=()):
     return notes
 
 
+def herdr_doctor_diagnostics():
+    checks = []
+    warnings = []
+    notes = []
+
+    configured = (CFG.get("session_backend") == "herdr")
+    herdr_records = [r for _, r in session_records()
+                     if record_backend_name(r) == "herdr" and r.get("state") != "retired"]
+    if not configured and not herdr_records:
+        return checks, warnings, notes
+
+    notes.append(
+        "herdr: a server restart ends every Nogging herdr session (reaped as failed); "
+        "plain herdr update in v0.9.5 keeps endpoint-generation-1 server sessions running"
+    )
+
+    if not configured and herdr_records:
+        notes.append(
+            f"herdr records exist ({len(herdr_records)} non-retired); "
+            f"session_backend is {CFG.get('session_backend', 'tmux')}"
+        )
+
+    herdr_cmd = scfg("session_herdr_command", "herdr")
+    herdr_session = scfg("session_herdr_session", "nogging")
+    bin_ok = tool_on_path(herdr_cmd)
+
+    if configured:
+        checks.append((f"herdr binary ({herdr_cmd})", bin_ok))
+    else:
+        if not bin_ok:
+            warnings.append(
+                f"herdr binary ({herdr_cmd}) not found on PATH "
+                f"({len(herdr_records)} non-retired herdr record(s) exist)"
+            )
+
+    recorder_path = ROOT / "scripts/session-pty-recorder"
+    recorder_ok = False
+    recorder_err = None
+    try:
+        contract = helper_contract(recorder_path)
+        if (type(contract.get("version")) is not int or contract["version"] != 1
+                or contract.get("positional") != 3
+                or "pty-recorder" not in contract.get("features", [])):
+            raise RuntimeError(f"session helper {recorder_path} has an incompatible contract; run Nogging update from the same pinned distribution")
+        recorder_ok = True
+    except RuntimeError as exc:
+        recorder_err = str(exc)
+
+    if configured:
+        if recorder_ok:
+            checks.append(("session-pty-recorder helper contract", True))
+        else:
+            checks.append((recorder_err or "session-pty-recorder contract mismatch", False))
+    else:
+        if not recorder_ok:
+            warnings.append(recorder_err or "session-pty-recorder contract mismatch")
+
+    if not bin_ok:
+        return checks, warnings, notes
+
+    try:
+        ver_res = subprocess.run([herdr_cmd, "--version"],
+                                 cwd=ROOT, text=True, capture_output=True, timeout=5)
+        if ver_res.returncode == 0:
+            m = re.search(r"(\d+\.\d+(?:\.\S+)?)", ver_res.stdout)
+            if m:
+                version = m.group(1)
+                if not (version.startswith("0.9.") or version == "0.9"):
+                    warnings.append(
+                        f"herdr version {version} is outside verified 0.9.x range"
+                    )
+            else:
+                warnings.append(f"could not parse herdr version from: {ver_res.stdout.strip()[:100]}")
+        else:
+            warnings.append(f"herdr --version failed (exit {ver_res.returncode})")
+    except Exception as exc:
+        warnings.append(f"herdr --version check failed: {exc}")
+
+    reachable = False
+    try:
+        stat_res = subprocess.run([herdr_cmd, "--session", herdr_session, "status"],
+                                  cwd=ROOT, text=True, capture_output=True, timeout=5)
+        if stat_res.returncode == 0:
+            in_server = False
+            for line in stat_res.stdout.splitlines():
+                stripped = line.strip()
+                if stripped == "server:":
+                    in_server = True
+                elif in_server and stripped.startswith("status:"):
+                    val = stripped.split(":", 1)[1].strip()
+                    if val == "running":
+                        reachable = True
+                    break
+                elif in_server and stripped and not line.startswith(" "):
+                    in_server = False
+    except Exception:
+        pass
+
+    if reachable:
+        notes.append(f"herdr server ({herdr_session}): reachable (running)")
+    else:
+        notes.append(f"herdr server ({herdr_session}): not running (starts on demand)")
+
+    return checks, warnings, notes
+
+
 def doctor(audit=False, with_recover=False, with_sandbox=False):
     # A fresh install starts with the OpenSpec write boundary closed. Bootstrap
     # the sentinel once, only when nothing has toggled the boundary yet (no
@@ -5794,6 +5900,9 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
     declared = CFG.get("agent_state_roots", {})
     try: resolve_agent_state_roots([(a, "doctor") for a in declared] if isinstance(declared, dict) else ())
     except RuntimeError as exc: warnings.append(str(exc))
+    herdr_checks, herdr_warnings, herdr_notes = herdr_doctor_diagnostics()
+    checks.extend(herdr_checks)
+    warnings.extend(herdr_warnings)
     for name, ok in checks: print(f"{'OK' if ok else 'FAIL'}  {name}")
     # Warnings are advisory (a committed-but-open Bead and the like): shown
     # distinctly from FAIL, and they never change doctor's exit code.
@@ -5857,6 +5966,7 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
     pi_present = tool_on_path("pi")
     notes.append("pi available" if pi_present
                  else "pi not installed; only needed for the Pi agent path")
+    notes.extend(herdr_notes)
     try:
         repository = canonical_repository_state(ROOT)
         notes.append(f"canonical planning boundary: {repository['locks_dir']}")
@@ -5920,10 +6030,13 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
             summary, attention = _checks_summary(_load_checks_cache(sess_name))
             if attention:
                 notes.append(f"session {sess_name}: {summary}")
-        cstate, _pane = classify_session(rec, live_sessions)
-        if cstate == "awaiting_manual_approval":
-            notes.append(f"session {sess_name}: awaiting_manual_approval "
-                         f"(idle in manual mode; needs a human to approve each step)")
+        try:
+            cstate, _pane = classify_session(rec, live_sessions)
+            if cstate == "awaiting_manual_approval":
+                notes.append(f"session {sess_name}: awaiting_manual_approval "
+                             f"(idle in manual mode; needs a human to approve each step)")
+        except Exception:
+            pass
     # The interrupted-run checks: doctor always prints a one-line summary
     # (`recover` folds the full report). Read-only, like the rest of doctor.
     try:
