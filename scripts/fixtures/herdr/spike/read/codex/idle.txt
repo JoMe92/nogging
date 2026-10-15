@@ -1,0 +1,40 @@
+
+  >_ OpenAI Codex (v0.162.1)
+     ~/src/nogging
+
+
+› You are a short-lived probe session for a terminal-multiplexer compatibility test.
+  Do not read, create or modify any repository file. Do not run bd, git or nogg.
+  Do not claim or select any Bead. Answer every message with one short line,
+  and only run a shell command when a message explicitly asks you to.
+
+
+• Ready for the compatibility test.
+
+  Worked for 3s • 6:43 PM
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+› Ask Codex to do anything
+
+  GPT-6.1-Sol low · ~/src/nogging · Follow probe session constraints
+  ? for shortcuts                                                                            ⚠ 2 warnings · f2 to view
