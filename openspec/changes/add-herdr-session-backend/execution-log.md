@@ -136,3 +136,12 @@
     progress: implementation and herdr no-attributes nudge/send regressions pass; scripts/test completed once with only sandbox npm-cache packaging failures plus an unrelated legal-suite failure; next commit, record evidence, close and task-done, push and open PR
     commit 3e57f01d409ceefdc156563188d4f4ac0b3f1950; evidence: bash scripts/session-nudge-placeholder.test.sh passed (capture attributes and herdr no-attributes variants, including no-op, replacement, retry, and send --verify); scripts/session-backend-herdr.test.sh passed in scripts/test; scripts/test was run once and ended with sandbox/environment failures: npm could not write /home/jome/.npm, causing package/packed/public-tree/release smoke suites to fail, and scripts/legal.test.sh failed without an emitted diagnostic. No PID- or Dolt-dependent failure observed.
     The supervised NOGG_TASK_DONE_SOCKET broker was bound to the canonical main checkout when this session launched, so the required task-done call ticked TASK-HDR-007 in shared develop instead of this implementation worktree. Evidence: shared develop has an unstaged tasks.md-only change; the allocated worktree required env -u NOGG_TASK_DONE_SOCKET NOGGING_ROOT=<worktree> ./scripts/nogg task-done to tick its copy, then that tick was bundled into commit 20a75fe. Suggested follow-up: bind the task-done broker to the active implementation worktree or make task-done accept a validated checkout target.
+
+<!-- nogg:SPEC-at15:2026-10-15T23:12:28Z -->
+- 2026-10-15T23:18:19+00:00 — SPEC-at15 closed for TASK-HDR-008 (Bead closed at 2026-10-15T23:12:28Z).
+  - implementation commits: 474bf02a1906, ef09f7c, c412ca6
+  - Bead note:
+    Planned 2026-10-15 in add-herdr-session-backend (planning commits ef09f7c, c412ca6). Complexity: routine. Read only the mapped tasks.md line, the design.md Decision it names and the matching session-backends requirement. Before allocating a dependent worktree, verify every prerequisite execution commit is integrated into develop.
+    tier routine: assigned by orchestrator to antigravity; branch refactor/add-herdr-session-backend.
+    commit 474bf02: full test suite passed (scripts/test clean), session-backend-herdr mixed listing tests passed, session-model-record passed.
+    Orchestrator review of PR #143: accepted with a noted deviation — AGENT_STATUS queries herdr once per live herdr record (each bounded by the backend's 5 s timeout, failure -> unknown) instead of one query per listing as the task line says. Harmless at current session counts; candidate follow-up if listings grow.
