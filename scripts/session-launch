@@ -212,6 +212,10 @@ case "$agent" in
     [ "$read_only" -eq 1 ] && sandbox="read-only"
     : "${sandbox:=workspace-write}"
     : "${approval:=on-request}"
+    case "$approval" in
+      on-request|never) ;;
+      *) echo "session-launch: unsupported Codex --approval value: $approval (expected on-request or never)" >&2; exit 2 ;;
+    esac
     [ -z "${NOGG_CODEX_EXTRA_WRITABLE_ROOTS:-}" ] || {
       echo 'session-launch: use agent_state_roots and agent-state:<agent>; retired environment variable refused' >&2; exit 2;
     }
@@ -227,7 +231,11 @@ POLICY
       # TOML accepts the JSON array representation, including quoted paths.
       git_roots=$(python3 -c 'import json,sys; print(json.dumps(json.loads(sys.argv[1])["writable_roots"]))' "$policy")
     fi
-    set -- --cd "$(pwd)" --add-dir "$repo_root" --sandbox "$sandbox" --ask-for-approval "$approval"
+    set -- --cd "$(pwd)"
+    # Codex CLI 0.162.1 rejects --add-dir when the selected sandbox is
+    # read-only because additional writable roots are not allowed.
+    [ "$sandbox" = "read-only" ] || set -- "$@" --add-dir "$repo_root"
+    set -- "$@" --sandbox "$sandbox" --ask-for-approval "$approval"
     set -- "$@" -c "sandbox_workspace_write.writable_roots=$git_roots"
     # Emit the network_access override explicitly in both directions rather than
     # omitting it for `on` and leaning on the codex default: the trusted profile

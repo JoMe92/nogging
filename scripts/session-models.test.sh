@@ -80,8 +80,8 @@ launch() {
   else
     if [[ "$expect" == refuse ]]; then
       ok "$label: refused"
-      grep -qE -- "model|--model" "$out" \
-        && ok "$label: refusal names the model setting" || bad "$label: refused for another reason"
+      grep -qE -- "model|--model|ask_for_approval|approval" "$out" \
+        && ok "$label: refusal names the unsupported setting" || bad "$label: refused for another reason"
       [[ -z "$(ls -A "$root/.nogging/state/sessions" 2>/dev/null)" ]] \
         && ok "$label: no session record created" || bad "$label: session state left behind"
       ! grep -qF "new-session" "$TMUX_STUB_DIR/calls.log" 2>/dev/null \
@@ -137,7 +137,7 @@ model_reasoning_effort = "high"'
 PROFILE_NAME=m.codex.toml PROFILE_BODY="$codex_ok" launch ok "codex-model+effort" --agent codex
 for e in none minimal low medium high xhigh max ultra; do
   PROFILE_NAME=m.codex.toml PROFILE_BODY="sandbox = \"read-only\"
-ask_for_approval = \"untrusted\"
+ask_for_approval = \"on-request\"
 network_access = false
 model_reasoning_effort = \"$e\"" launch ok "codex-effort-$e" --agent codex
 done
@@ -157,10 +157,13 @@ PROFILE_NAME=m.json PROFILE_BODY='{"permissions":{},"model":7}' launch refuse "c
 PROFILE_NAME=m.json PROFILE_BODY='{"permissions":{},"model":""}' launch refuse "claude-model-empty"
 PROFILE_NAME=m.json PROFILE_BODY='{"permissions":{},"model_reasoning_effort":"high"}' launch refuse "claude-effort-codex-only"
 codex_base='sandbox = "read-only"
-ask_for_approval = "untrusted"
+ask_for_approval = "on-request"
 network_access = false'
 PROFILE_NAME=m.codex.toml PROFILE_BODY="$codex_base
 model_reasoning_effort = \"turbo\"" launch refuse "codex-effort-unsupported" --agent codex
+PROFILE_NAME=m.codex.toml PROFILE_BODY="sandbox = \"read-only\"
+ask_for_approval = \"untrusted\"
+network_access = false" launch refuse "codex-approval-unsupported" --agent codex
 PROFILE_NAME=m.codex.toml PROFILE_BODY="$codex_base
 model_reasoning_effort = true" launch refuse "codex-effort-wrong-type" --agent codex
 PROFILE_NAME=m.codex.toml PROFILE_BODY="$codex_base

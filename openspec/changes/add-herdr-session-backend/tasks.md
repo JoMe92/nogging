@@ -36,7 +36,7 @@
 
 ## Independent Codex compatibility fix
 
-- [ ] TASK-HDR-013 [standard] Fix Codex CLI launch compatibility: omit `--add-dir` for read-only launches and reject unsupported `ask_for_approval` values during preflight. Applies to tmux and herdr; independent of herdr tasks. Check: launcher tests cover read-only and supported/unsupported values; scripts/test.
+- [x] TASK-HDR-013 [standard] Fix Codex CLI launch compatibility: omit `--add-dir` for read-only launches and reject unsupported `ask_for_approval` values during preflight. Applies to tmux and herdr; independent of herdr tasks. Check: launcher tests cover read-only and supported/unsupported values; scripts/test.
 
 ## Dependency contract
 
