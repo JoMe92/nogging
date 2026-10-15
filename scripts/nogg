@@ -2960,7 +2960,7 @@ def resolve_launch_tier(tier, agent, resume=None):
     entry = model_selection_entry(table, agent, tier)
     return {"tier": tier, "model": entry["model"], "effort": entry["effort"]}
 CODEX_SANDBOX_MODES = ("read-only", "workspace-write", "danger-full-access")
-CODEX_APPROVAL_POLICIES = ("untrusted", "on-request", "never")
+CODEX_APPROVAL_POLICIES = ("on-request", "never")
 def load_codex_spec(path):
     """Read a `.codex.toml` launch fragment: the three required flat keys
     `sandbox`, `ask_for_approval`, `network_access`, plus the optional `model`

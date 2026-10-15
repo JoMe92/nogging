@@ -771,12 +771,27 @@ export CODEX_ARGV_LOG="$work/codex-argv.log"; : >"$CODEX_ARGV_LOG"
   || { echo "FAIL - codex-wrap: wrapper errored"; cat "$out"; fail=1; }
 cp "$CODEX_ARGV_LOG" "$out"
 check "codex-wrap: passes --cd"                         "<--cd>"
+refute "codex-wrap: read-only omits --add-dir"           "<--add-dir>"
 check "codex-wrap: passes the sandbox mode to --sandbox" "<--sandbox> <read-only>"
 check "codex-wrap: maps approval to --ask-for-approval" "<--ask-for-approval> <on-request>"
 check "codex-wrap: --network on enables network via -c override" "sandbox_workspace_write.network_access=true"
 refute "codex-wrap: --network on does not also emit the =false override" "network_access=false"
 refute "codex-wrap: never passes --ignore-rules"       "ignore-rules"
 refute "codex-wrap: never bypasses approvals/sandbox"  "dangerously-bypass"
+
+# Codex CLI 0.162.1 accepts only on-request and never. Refuse unsupported
+# approval values before invoking Codex.
+: >"$CODEX_ARGV_LOG"
+if "$here/session-launch" --agent codex --sandbox workspace-write --approval untrusted \
+  --network off --cwd "$work/codex-full" --bead SPEC-cdx >"$out" 2>&1; then
+  echo "FAIL - codex-approval: unsupported value should be refused"; fail=1
+else
+  echo "ok   - codex-approval: unsupported value refused during preflight"
+fi
+check "codex-approval: refusal names supported values" "expected on-request or never"
+[[ ! -s "$CODEX_ARGV_LOG" ]] \
+  && echo "ok   - codex-approval: Codex was not invoked" \
+  || { echo "FAIL - codex-approval: Codex was invoked before refusal"; fail=1; }
 
 # ... and --network off emits the =false override (restricted path)
 : >"$CODEX_ARGV_LOG"
