@@ -16,7 +16,7 @@
 
 ## 4. herdr backend
 
-- [ ] TASK-HDR-014 [standard] Correct the fake herdr per design Decision 14: synthetic CLI forms herdr 0.9.5 lacks (layout apply, pane create, pane split --command, ping, server start/run/restart) fail with usage, exit 2; add a fake 0600 Unix-socket server at the session list socket_path serving layout.apply on shared state, opt-in real pane process, socket faults, test controls off the CLI. Check: scripts/herdr-stub.test.sh asserts help parity and socket shapes; scripts/test.
+- [x] TASK-HDR-014 [standard] Correct the fake herdr per design Decision 14: synthetic CLI forms herdr 0.9.5 lacks (layout apply, pane create, pane split --command, ping, server start/run/restart) fail with usage, exit 2; add a fake 0600 Unix-socket server at the session list socket_path serving layout.apply on shared state, opt-in real pane process, socket faults, test controls off the CLI. Check: scripts/herdr-stub.test.sh asserts help parity and socket shapes; scripts/test.
 
 - [ ] TASK-HDR-006 [complex] Implement the herdr backend per design Decisions 6, 7 and 10: dedicated server/config, scrubbed env, labelled panes created only via local-socket layout.apply after the socket check (all else CLI), recorder, process-bound liveness, lifecycle fallback, read-only refusal, agent status; refuse agents failing gate (e). Ship backend and recorder. Check: HDR-014 fake covers config/env, socket refusal, lost reply, restart, unknown liveness; scripts/test.
 
@@ -26,7 +26,7 @@
 
 ## 5. Setup and diagnostics
 
-- [ ] TASK-HDR-009 [standard] Add the conditional, read-only herdr doctor checks per design Decision 12, including binary/recorder failures, version warnings, reachability and records-only notes, and accurate restart guidance. Check: doctor-herdr tests cover unused, FAIL, WARN and restart NOTE cases; scripts/test.
+- [x] TASK-HDR-009 [standard] Add the conditional, read-only herdr doctor checks per design Decision 12, including binary/recorder failures, version warnings, reachability and records-only notes, and accurate restart guidance. Check: doctor-herdr tests cover unused, FAIL, WARN and restart NOTE cases; scripts/test.
 
 - [x] TASK-HDR-010 [standard] Write docs/using-with-herdr.md (experimental; every topic in the session-backends guide requirement) and update running-work-in-sessions, operating-model, architecture, security-model, failure-recovery, compatibility (herdr 0.9.x optional row), README, AGENTS.md and the three launch prompts to backend-neutral wording; ship the guide. Check: scripts/test green (docs, installation, security, package-manifest suites), links resolve, orchestrator-on-tmux stated.
 
