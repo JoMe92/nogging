@@ -1,0 +1,1 @@
+{"id":"cli:pane:get","result":{"pane":{"agent_status":"unknown","cwd":"/tmp","focused":false,"foreground_cwd":"/tmp","label":"sf-fixture-1","pane_id":"w2:p2","revision":0,"scroll":{"max_offset_from_bottom":0,"offset_from_bottom":0,"viewport_rows":40},"tab_id":"w2:t2","terminal_id":"term_65de3f1736e456","workspace_id":"w2"},"type":"pane_info"}}

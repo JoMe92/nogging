@@ -1,0 +1,1 @@
+{"id":"spike","result":{"type":"pane_read","read":{"pane_id":"w2:p2","workspace_id":"w2","tab_id":"w2:t2","source":"visible","format":"ansi","text":"line one\r\n\u001b[0m\u001b[2mdim placeholder\u001b[0m plain input","revision":0,"truncated":false}}}
