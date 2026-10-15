@@ -4162,7 +4162,8 @@ def session_list():
     live = alive | unknown
     hdr = (f"{'NAME':<40}  {'BEAD':<10}  {'ROLE':<24}  {'STARTED':<20}  "
            f"{'STATE':<8}  {'OWNER':<16}  {'AGENT':<8}  {'PROFILE':<12}  "
-           f"{'MODEL':<24}  {'MODEL_SOURCE':<15}  {'BACKEND':<8}  WORKING_DIR")
+           f"{'MODEL':<24}  {'MODEL_SOURCE':<15}  {'BACKEND':<8}  "
+           f"{'AGENT_STATUS':<12}  WORKING_DIR")
     print(hdr)
     for _, rec in recs:
         state = reconciled_state(rec, live)
@@ -4175,6 +4176,7 @@ def session_list():
               f"{_profile_display(rec):<12}  "
               f"{_model_display(rec):<24}  {(rec.get('model_source') or '-'):<15}  "
               f"{record_backend_name(rec):<8}  "
+              f"{_agent_status_display(rec, live):<12}  "
               f"{rec.get('working_dir','')}")
         for grant in rec.get("agent_state_grants", []):
             print(f"  agent-state:{grant['agent']} {grant['path']} source={grant['source']}")
@@ -4228,6 +4230,27 @@ def _agent_display(rec):
     """`session list` AGENT cell: a record written before this column existed
     has no `agent` key and shows `claude`, the historical default."""
     return rec.get("agent") or "claude"
+def _agent_status_display(rec, live):
+    """`session list` AGENT_STATUS cell: herdr status for a live herdr record,
+    `-` for tmux, terminal or unsupported records, `unknown` on query failure."""
+    if rec.get("state") in SESSION_TERMINAL_STATES:
+        return "-"
+    if reconciled_state(rec, live) in SESSION_TERMINAL_STATES:
+        return "-"
+    backend_name = record_backend_name(rec)
+    try:
+        substrate = session_backend(backend_name)
+    except Exception:
+        return "-"
+    caps = getattr(substrate, "capabilities", None)
+    if not getattr(caps, "agent_status", False):
+        return "-"
+    try:
+        ref = record_backend_ref(rec)
+        status = substrate.agent_status(ref)
+        return status if status in {"idle", "working", "blocked", "done", "unknown"} else "unknown"
+    except Exception:
+        return "unknown"
 def _archive_log(rec):
     lp = Path(rec.get("log_path") or "")
     if lp and lp.exists():
