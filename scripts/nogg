@@ -2128,18 +2128,37 @@ def resolve_launch_file(value, dir_key, default_dir, suffix):
     raise RuntimeError(
         f"launch file {value!r} did not resolve: neither {named} nor "
         f"{candidate} exists")
-def tmux_bin(): return scfg("session_tmux_command", "tmux")
-def tmux_socket(): return scfg("session_tmux_socket", "nogging")
-def sessions_dir(): return data_dir(ROOT / scfg("session_state_dir", ".nogging/state/sessions"))
+def session_backend_module():
+    """Load substrate modules beside this script, including installed copies."""
+    lib = str(Path(__file__).resolve().parent / "lib")
+    if lib not in sys.path:
+        sys.path.insert(0, lib)
+    sys.dont_write_bytecode = True
+    import session_backend
+    return session_backend
+
+def session_backend():
+    # Selection and per-record dispatch are added by TASK-HDR-003. Keep the
+    # existing transport injection point for embedders during this extraction.
+    return session_backend_module().resolve("tmux", {
+        **CFG, "session_tmux_command": scfg("session_tmux_command", "tmux"),
+        "session_tmux_socket": scfg("session_tmux_socket", "nogging"),
+    }, run, invoke=tmux)
+
 def tmux(*args, check=True):
-    """Invoke the dedicated Nogging tmux server (never the operator's own)."""
-    return run(tmux_bin(), "-L", tmux_socket(), *args, check=check)
+    """Legacy transport hook; command execution lives in the backend module."""
+    return session_backend_module().resolve("tmux", CFG, run).command(*args, check=check)
+
+def sessions_dir(): return data_dir(ROOT / scfg("session_state_dir", ".nogging/state/sessions"))
 def tmux_has_session(name):
-    return tmux("has-session", "-t", name, check=False).returncode == 0
+    return session_backend().exists(name)
 def tmux_sessions():
-    res = tmux("list-sessions", "-F", "#{session_name}", check=False)
-    if res.returncode != 0: return set()
-    return {ln.strip() for ln in res.stdout.splitlines() if ln.strip()}
+    return session_backend().live(())[0]
+def session_log_capture(log_path):
+    return session_backend_module().LogCapture(
+        str(log_path), str((ROOT / "scripts/session-log-writer").resolve()),
+        int(scfg("session_log_max_bytes", 1048576)),
+        int(scfg("session_log_rotation_depth", 3)))
 def secret_values():
     return [v for k, v in os.environ.items()
             if v and len(v) >= 4 and SECRET_NAME_RE.search(k)]
@@ -3922,27 +3941,19 @@ def _session_launch(role, bead, cwd, read_only, owner,
     if token:
         # Bind before starting tmux: even a hard-killed launcher must not
         # orphan the reservation of a child it already started.
-        usage_module().Reservations().bind(token, rec_path, name, tmux_bin(), tmux_socket())
+        usage_module().Reservations().bind(
+            token, rec_path, name, session_backend().liveness_probe(name))
     with log_path.open("a") as fh:                        # append-only log before exec
         fh.write(f"# nogg session {name} for {bead or 'no bead'} ({role_meta}) started {record['started_at']}\n")
     try:
-        # -e NOGG_SESSION_NAME=<name> is agent-neutral session environment
-        # (every process tmux starts in this session inherits it), the only
-        # way a `session emit` hook invocation — a bare, argument-less
-        # command line (design.md Decision 4) — can know its own session name.
-        tmux("new-session", "-d", "-s", name, "-c", workdir,
-             "-e", f"NOGG_SESSION_NAME={name}",
-             "-e", f"NOGG_SESSION_ROLE={role_meta}",
-             "-e", f"NOGG_SESSION_AGENT={agent}",
-             "-e", f"NOGG_SESSION_ROOT={ROOT}",
-             "-e", f"NOGG_OPENSPEC_FENCE={int(openspec_readonly)}",
-             "-e", f"NOGG_STARTUP_LOG={log_path}", "--", *inner)
-        writer = str((ROOT / "scripts/session-log-writer").resolve())
-        max_bytes = int(scfg("session_log_max_bytes", 1048576))
-        depth = int(scfg("session_log_rotation_depth", 3))
-        sink = "exec " + " ".join(shlex.quote(a) for a in
-                                  (writer, str(log_path), str(max_bytes), str(depth)))
-        tmux("pipe-pane", "-o", "-t", name, sink)
+        session_backend().start(name, workdir, {
+            "NOGG_SESSION_NAME": name,
+            "NOGG_SESSION_ROLE": role_meta,
+            "NOGG_SESSION_AGENT": agent,
+            "NOGG_SESSION_ROOT": str(ROOT),
+            "NOGG_OPENSPEC_FENCE": str(int(openspec_readonly)),
+            "NOGG_STARTUP_LOG": str(log_path),
+        }, inner, session_log_capture(log_path))
     except ToolError as exc:
         # stderr was attached in the wrapper before exec, so even a child that
         # vanished before pipe-pane has a durable underlying diagnostic.
@@ -3954,12 +3965,11 @@ def _session_launch(role, bead, cwd, read_only, owner,
             fh.write(f"# {reason}\n")
         transition(rec_path, record, "failed", exit_reason=reason)
         raise ToolError(reason) from exc
-    process = tmux("display-message", "-p", "-t", name, "#{pane_pid}", check=False)
-    raw_pid = getattr(process, "stdout", "").strip()
-    if raw_pid.isdigit() and int(raw_pid) > 0:
-        record["session_pid"] = int(raw_pid)
-        record["session_pid_start"] = process_start(int(raw_pid))
-        record["session_pid_ns"] = pid_namespace(int(raw_pid))
+    pid = session_backend().pid(name)
+    if pid is not None:
+        record["session_pid"] = pid
+        record["session_pid_start"] = process_start(pid)
+        record["session_pid_ns"] = pid_namespace(pid)
     transition(rec_path, record, "running")
     if record.get("state") == "failed":
         raise ToolError(record.get("exit_reason") or "agent startup failed")
@@ -3968,7 +3978,7 @@ def _session_launch(role, bead, cwd, read_only, owner,
     print(f"launched {name}")
     print(f"  bead={bead or '-'} role={role_meta} cwd={workdir}")
     print(f"  log={log_path}")
-    print(f"  attach: {tmux_bin()} -L {tmux_socket()} attach -t {name}  (or: nogg session attach {name})")
+    print(f"  attach: {' '.join(session_backend().attach_argv(name))}  (or: nogg session attach {name})")
     if tier_selection:
         print(f"  tier={tier_selection['tier']} model={selected_model}"
               + (f" effort={reasoning_effort}" if agent in ("codex", "claude") and reasoning_effort else ""))
@@ -4163,7 +4173,7 @@ def session_cleanup(name, reap=False):
             refused.append(f"{nm}: cleanup refused: {exc}")
             continue
         if nm in live:
-            tmux("kill-session", "-t", nm, check=False)
+            session_backend().kill(nm)
         release_planning_lock(session_record=rec)
         _archive_log(rec)
         _remove_effective_settings(rec)
@@ -4171,7 +4181,7 @@ def session_cleanup(name, reap=False):
         print(f"retired {nm}")
     if not [r for _, r in session_records() if r.get("state") != "retired"]:
         if tmux_sessions():
-            tmux("kill-server", check=False)
+            session_backend().idle_shutdown()
             print("no active sessions remain; Nogging tmux server stopped")
     if refused:
         raise RuntimeError("\n".join(refused))
@@ -4187,12 +4197,12 @@ def session_stop(name, reason):
         return
     grace = float(scfg("session_stop_grace_seconds", 10))
     if tmux_has_session(name):
-        tmux("send-keys", "-t", name, "C-c", check=False)      # interrupt Claude
+        session_backend().send_keys(name, "ctrl+c", check=False)      # interrupt Claude
         deadline = time.monotonic() + grace
         while time.monotonic() < deadline and tmux_has_session(name):
             time.sleep(0.2)
         if tmux_has_session(name):
-            tmux("kill-session", "-t", name, check=False)      # hard terminate
+            session_backend().kill(name)      # hard terminate
     transition(path, rec, "stopped", exit_reason=(reason or "stopped by operator"),
                usage_monotonic_end_ms=monotonic_ms(), usage_end_boot_id=boot_id())
     print(f"stopped {name} (reason: {rec['exit_reason']})")
@@ -4203,8 +4213,8 @@ def session_attach(name, read_only):
     _, rec = load_session(name)
     if not tmux_has_session(name):
         raise RuntimeError(f"{name} has no live tmux session (state: {rec.get('state')})")
-    argv = [tmux_bin(), "-L", tmux_socket(), "attach", "-t", name] + (["-r"] if read_only else [])
-    os.execvp(tmux_bin(), argv)
+    argv = session_backend().attach_argv(name, read_only)
+    os.execvp(argv[0], argv)
 def session_log(name, follow):
     """Print or follow the append-only log. Never attaches to tmux."""
     _, rec = load_session(name)
@@ -4257,9 +4267,7 @@ def session_pane_text(name, escapes=False):
     """The session's current visible pane (no scrollback), or '' if its tmux
     session does not exist. `escapes` keeps SGR attributes (`capture-pane
     -e`), which is how a dim placeholder suggestion is told from input."""
-    args = ["capture-pane", "-p", "-e", "-t", name] if escapes else ["capture-pane", "-p", "-t", name]
-    res = tmux(*args, check=False)
-    return res.stdout if res.returncode == 0 else ""
+    return session_backend().capture(name, attributes=escapes)
 def session_events_path(name):
     return sessions_dir() / f"{name}.events.jsonl"
 def validate_antigravity_conversation_id(value):
@@ -4444,11 +4452,11 @@ def session_watch(names, interval, stall_after, fmt, once=False):
         return
 # --- session observability: send --------------------------------------
 def _submit_pane_input(name, agent):
-    tmux("send-keys", "-t", name, "Enter")
+    session_backend().send_keys(name, "enter")
     if agent == "claude":
         # Known quirk: Claude Code requires a second bare Enter to actually
         # submit a multi-line paste.
-        tmux("send-keys", "-t", name, "Enter")
+        session_backend().send_keys(name, "enter")
 _SGR_RE = re.compile(r"\x1b\[([0-9;]*)m")
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 _PROMPT_RULE_RE = re.compile(r"^\s*─{10,}\s*$")
@@ -4647,7 +4655,7 @@ def session_send(name, message, verify=False):
     if agent == "codex" and codex_queue_send(rec, message):
         print(f"sent to {name} (codex queue)")
         return
-    tmux("send-keys", "-t", name, "-l", message)
+    session_backend().send_text(name, message)
     _submit_pane_input(name, agent)
     if verify:
         _verify_submitted(name, agent)
@@ -4672,8 +4680,8 @@ def session_nudge(name, message=None):
             print(f"{name}: nothing to nudge ({reason}); nothing was submitted — "
                   f"pass --message \"<instruction>\" to send an explicit instruction")
             return
-    tmux("send-keys", "-t", name, "C-u")
-    tmux("send-keys", "-t", name, "-l", text)
+    session_backend().send_keys(name, "ctrl+u")
+    session_backend().send_text(name, text)
     _submit_pane_input(name, agent)
     _verify_submitted(name, agent)
     print(f"nudged {name}")
@@ -5083,7 +5091,7 @@ def session_resume_when_ready(name, message=None, poll_interval=60):
     if _SWITCH_MODEL_RE.search(pane):
         # Dismiss the residual "switch model?" prompt without acting on it —
         # Escape cancels the prompt and leaves the current model selected.
-        tmux("send-keys", "-t", name, "Escape")
+        session_backend().send_keys(name, "escape")
     session_send(name, message, verify=True)
     print(f"resumed {name}")
 # --- orchestrator: the always-on supervisor ------------------------------
@@ -5178,11 +5186,7 @@ def orchestrator_run(force=False):
                     rec["usage_attribution"] = [dict(rec["usage_attribution"][-1], at=rec["usage_started_at"])]
             rec["ended_at"] = None; rec["exit_reason"] = None
             transition(rec_path, rec, "running", adopted_at=now())
-            writer = str((ROOT / "scripts/session-log-writer").resolve())
-            sink = "exec " + " ".join(shlex.quote(a) for a in (
-                writer, str(log_path), str(int(scfg("session_log_max_bytes", 1048576))),
-                str(int(scfg("session_log_rotation_depth", 3)))))
-            tmux("pipe-pane", "-o", "-t", name, sink, check=False)
+            session_backend().wire_log(name, session_log_capture(log_path), check=False)
         else:
             session_reap()
             if claude_project_trusted(workdir) is False:
@@ -5246,12 +5250,12 @@ def orchestrator_stop():
     _systemctl("disable", unit)
     name = orchestrator_session_name()
     if tmux_has_session(name):
-        tmux("send-keys", "-t", name, "C-c", check=False)
+        session_backend().send_keys(name, "ctrl+c", check=False)
         deadline = time.monotonic() + float(scfg("session_stop_grace_seconds", 10))
         while time.monotonic() < deadline and tmux_has_session(name):
             time.sleep(0.2)
         if tmux_has_session(name):
-            tmux("kill-session", "-t", name, check=False)
+            session_backend().kill(name)
     rec_path = sessions_dir() / f"{name}.json"
     if rec_path.exists():
         rec = json.loads(rec_path.read_text())
