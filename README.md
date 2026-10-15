@@ -35,11 +35,11 @@ existing Git repository, OpenSpec installation, or Beads tracker.
 - **Agents:** payloads and guidance are included for Claude Code, Codex, and
   Pi. Their permission and sandbox guarantees differ.
 - **Optional host features:** systemd provides background sync and tmux
-  provides supervised sessions. Use `--no-systemd` when neither is wanted.
+  or herdr provides supervised sessions. Use `--no-systemd` when neither is wanted.
 - **Other systems:** macOS, Windows, other service managers, and unlisted agent
   versions are not currently claimed as supported.
 
-![What runs on top of what: four callers — the Product Owner, an agent session, the sync timer, and Git hooks — reach the single scripts/nogg CLI, which shells out to OpenSpec, Beads, Git, Dolt, tmux, and systemd and stores state in openspec/, .beads/, .git/, and .nogging/](docs/brand/nogging-tool-map.png)
+![What runs on top of what: four callers — the Product Owner, an agent session, the sync timer, and Git hooks — reach the single scripts/nogg CLI, which shells out to OpenSpec, Beads, Git, Dolt, tmux, herdr, and systemd and stores state in openspec/, .beads/, .git/, and .nogging/](docs/brand/nogging-tool-map.png)
 
 See the [compatibility policy and matrix](docs/compatibility.md) for minimum
 versions, supported combinations, and evidence. `./scripts/nogg doctor` checks

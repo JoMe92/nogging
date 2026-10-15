@@ -154,49 +154,58 @@ in `AGENTS.md` and the diverged-history recovery path in
 
 ## Session supervision
 
-Claude Code sessions that Nogging starts for Lead Agent or specialist work
+Agent sessions that Nogging starts for Lead Agent or specialist work
 are supervised, not ephemeral foreground processes. `scripts/nogg session`
-is a mechanical layer over tmux: it starts and tracks processes and makes no
+is a mechanical layer over a pluggable, primitive-only session backend seam
+(`scripts/lib/session_backend.py`): it starts and tracks processes and makes no
 product decision.
 
-- **Substrate.** A dedicated tmux server socket (`tmux -L nogg`,
-  `session_tmux_socket`) isolates managed sessions from the operator's own
-  tmux and makes them enumerable. The server and the Claude process run as the
-  same non-privileged user; no `sudo`.
+- **Substrate.** Supervised sessions run on a switchable backend: `tmux`
+  (default and permanent fallback, `scripts/lib/session_backend_tmux.py`) or
+  `herdr` (experimental, `scripts/lib/session_backend_herdr.py`; see
+  `using-with-herdr.md`). For tmux, a dedicated tmux server socket
+  (`tmux -L nogg`, `session_tmux_socket`) isolates managed sessions from the
+  operator's personal tmux and makes them enumerable. For herdr, sessions run in
+  labelled panes inside a dedicated local herdr session namespace
+  (`session_herdr_session`, default `nogging`). The server and agent process run
+  as the same non-privileged user; no `sudo`.
 - **Naming.** `sf-<role>-<bead>-<nonce>`. Before creating a session Nogging
-  checks the metadata store, any leftover log, and `tmux has-session`; on a
-  collision it regenerates the nonce and then fails rather than reusing or
+  checks the metadata store, any leftover log, and backend session existence;
+  on a collision it regenerates the nonce and then fails rather than reusing or
   overwriting an existing session.
 - **Durable metadata.** One JSON record per session under
   `.nogging/state/sessions/<name>.json`: `name`, `bead_id`, `role`, `host`,
   `started_at`, `working_dir`, redacted `command`, `owner`, `state` (one of
   `starting`, `running`, `idle`, `stopped`, `failed`, `retired`), `log_path`,
+  `backend` (`tmux` or `herdr`), `backend_ref`,
   the model selection (`requested_model`, `model_source`, `reasoning_effort`,
   `reasoning_effort_source` — `launch`, `profile` or `runtime-default`, written
   for Claude and Codex only and describing the launch request, not later
   interactive changes — and `selection_tier` for a `--tier` launch resolved from the
   model-selection table, see `model-selection.md`),
-  and `ended_at`/`exit_reason` on a terminal state. Written before the Claude
+  and `ended_at`/`exit_reason` on a terminal state. Written before the agent
   process is exec'd and updated on every transition. The store is local state
   (gitignored, like the rest of `.nogging/state/`) and safe to delete — a
   deleted record only drops history for an already-finished session.
-- **Liveness.** `session list` cross-checks each record against `tmux
-  list-sessions`; a record still in an active state whose tmux session is gone
-  is reported as `failed`, never trusted as `running`. `list` is read-only and
-  runs in a bare SSH shell.
-- **Append-only log.** `tmux pipe-pane -o` streams pane output through
+- **Liveness.** `session list` cross-checks each record against its backend
+  (tmux session listing or herdr process-bound pane query); a record still in an
+  active state whose backend session is gone is reported as `failed`, never
+  trusted as `running` (or reported with unknown liveness if the backend tool
+  fails). `list` is read-only and runs in a bare SSH shell.
+- **Append-only log.** Console output is captured through
   `scripts/session-log-writer` to `<name>.log`, size-rotated to
-  `session_log_rotation_depth` at `session_log_max_bytes` (size-based only,
-  matching the sync failure log). Readable with `cat`/`tail`/`less` — no attach.
-- **Least authority.** Claude starts via `scripts/session-launch` with
-  `.nogging/session-launch-profile.json`: no `git push`, no remote Dolt
+  `session_log_rotation_depth` at `session_log_max_bytes` (on tmux via
+  `tmux pipe-pane -o`; on herdr via `scripts/session-pty-recorder`).
+  Readable with `cat`/`tail`/`less` — no attach.
+- **Least authority.** The agent starts via `scripts/session-launch` with
+  the resolved launch profile: no `git push`, no remote Dolt
   sync, no destructive shell, no extra directories. The wrapper sets no shell
   trace and takes no token as an argument; the recorded `command` and the log
   are run through a redactor that removes the values of secret-bearing
   environment variables.
 - **No autonomous claiming.** `session launch` issues no `bd` mutation (its
   only `bd` call is a read-only `bd show` to confirm the Bead exists). The
-  appended system prompt (`.nogging/session-launch-prompt.md`) states that
+  appended system prompt (`.nogging/launch-prompts/no-autonomous-claim.md`) states that
   claiming or starting a Bead is a deliberate operator-directed action.
 - **Deliberate lifecycle.** `attach`, `stop`, `cleanup` are explicit
   subcommands; none happens as a side effect of another. `cleanup` refuses a
@@ -206,11 +215,11 @@ product decision.
 
 The Lead Agent's own session runs supervised (`sf-lead-<bead>-<nonce>`). When
 it delegates to a specialist through the Task tool, that call runs **in
-process** inside the Lead Agent's session — no separate tmux session or record,
+process** inside the Lead Agent's session — no separate backend session or record,
 visible in the Lead session's log, under the Lead session's profile. A
-specialist is given **its own** supervised tmux session
+specialist is given **its own** supervised session
 (`sf-specialist:<type>...`) only when the work needs to run as a separate
-long-lived Claude Code process the operator wants to observe or stop
+long-lived agent process the operator wants to observe or stop
 independently; it still obeys every specialist boundary rule.
 
 ### The Orchestration Agent and the command floor
@@ -218,8 +227,11 @@ independently; it still obeys every specialist boundary rule.
 The **Orchestration Agent** is a fourth supervised session persona, above
 Planning and the Lead Agent (see `docs/operating-model.md`). Mechanically it is
 an ordinary supervised session — a durable record, an append-only log, listed by
-`session list` — with three differences:
+`session list` — with four differences:
 
+- **Pinned to tmux.** The Orchestration Agent always runs on tmux, regardless
+  of the configured `session_backend`. `orchestrator run` launches and adopts
+  only on tmux, and `--backend herdr` is refused for this role.
 - **No Bead.** `--role orchestrator` is launched without `--bead`; the record
   carries `bead_id: null` and `floor_lifted: true`. The session name is the
   fixed singleton `nogg-orchestrator-<slug>` (no nonce); `orchestrator run`
