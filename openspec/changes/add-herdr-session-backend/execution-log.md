@@ -37,3 +37,11 @@
     Planned 2026-10-15 in add-herdr-session-backend (planning commits ef09f7c, c412ca6). Complexity: standard. Read only the mapped tasks.md line, the design.md Decision it names and the matching session-backends requirement. Before allocating a dependent worktree, verify every prerequisite execution commit is integrated into develop.
     tier standard: self-contained fake herdr CLI stub reproducing spike fixtures; no production code paths -> Antigravity standard.
     Implemented TASK-HDR-005 in commit b78ad38ab937e7478ab9e66ead9f49eacaef1b7a. Added stateful fake herdr CLI stub at scripts/fixtures/herdr/bin/herdr driven by $HERDR_STUB_DIR and test suite scripts/herdr-stub.test.sh. Validated against spike fixtures (version, status running/not running, ping, session list, workspace create/list/close, pane create/list/get/process-info/rename/close, agent get/list/explain, pane read visible/recent in text, ANSI and JSON formats, simulated server restart, injectable failures, and call logging). Full scripts/test green.
+
+<!-- nogg:SPEC-ejr4:2026-10-15T18:57:46Z -->
+- 2026-10-15T19:05:16+00:00 — SPEC-ejr4 closed for TASK-HDR-004 (Bead closed at 2026-10-15T18:57:46Z).
+  - implementation commits: 798c5a68dc2b, ef09f7c, c412ca6
+  - Bead note:
+    Planned 2026-10-15 in add-herdr-session-backend (planning commits ef09f7c, c412ca6). Complexity: complex. Read only the mapped tasks.md line, the design.md Decision it names and the matching session-backends requirement. Before allocating a dependent worktree, verify every prerequisite execution commit is integrated into develop.
+    tier complex: PTY passthrough with raw mode, SIGWINCH, signal/exit passthrough and log-writer in its own session (spike facts) -> Antigravity complex.
+    Evidence: Commit 798c5a68dc2ba8e853782dc6860d407110cc9932 implements scripts/session-pty-recorder per design Decision 5 and adds scripts/session-pty-recorder.test.sh. Validated with scripts/session-pty-recorder.test.sh and full scripts/test (all tests passed).
