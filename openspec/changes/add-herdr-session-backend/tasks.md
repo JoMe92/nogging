@@ -10,13 +10,13 @@
 
 ## 3. Parallel foundations
 
-- [ ] TASK-HDR-004 [complex] Add scripts/session-pty-recorder per design Decision 5 (Python stdlib PTY passthrough, raw mode, winsize and SIGWINCH, tee to session-log-writer, exit status and signal passthrough, survives writer failure, side-effect-free --contract); packaging is done by TASK-HDR-006. Check: new scripts/session-pty-recorder.test.sh with a fake TUI (resize, alternate screen, input, exit codes, rotation, writer failure) plus full scripts/test green.
+- [ ] TASK-HDR-004 [complex] Add scripts/session-pty-recorder per design Decision 5 (Python stdlib PTY passthrough, raw mode, winsize and SIGWINCH, tee to session-log-writer running in its own session/process group so pane-close SIGHUP+SIGKILL cannot kill it before flush, exit status and signal passthrough, survives writer failure, side-effect-free --contract); packaging is done by TASK-HDR-006. Check: new scripts/session-pty-recorder.test.sh with a fake TUI (resize, alternate screen, input, exit codes, rotation, writer failure and writer survival/flush on pane close) plus full scripts/test green.
 
 - [ ] TASK-HDR-005 [standard] Add a stateful fake herdr CLI at scripts/fixtures/herdr/bin/herdr ($HERDR_STUB_DIR, like the tmux stub) reproducing the spike-verified CLI forms and JSON for pane create/list/get/process_info/send/read (attribute and plain variants)/close, agent status, version and reachability, a simulated server restart, injectable failures and a call log. Check: new scripts/herdr-stub.test.sh comparing shapes with the spike fixtures plus full scripts/test green.
 
 ## 4. herdr backend
 
-- [ ] TASK-HDR-006 [complex] Implement and register scripts/lib/session_backend_herdr.py per design Decisions 6, 7 and 10 (labelled pane in the dedicated session, HERDR_AGENT env, recorder-wrapped argv, process-bound liveness, kill fallback, read-only refusal, agent_status, server never stopped, auto-restore off, refuse agents failing gate (e)); ship it and the recorder. Check: new scripts/session-backend-herdr.test.sh on the stub (restart, CLI failure unknown), scripts/test.
+- [ ] TASK-HDR-006 [complex] Implement and register scripts/lib/session_backend_herdr.py per design Decisions 6, 7 and 10 (labelled pane in a dedicated Nogging-started herdr server, HERDR_CONFIG_PATH to its own config with resume_agents_on_restore=false and version_check/manifest_check disabled, scrubbed server environment, socket path under 108 bytes, HERDR_AGENT env, recorder-wrapped argv, process-bound liveness, kill fallback, read-only refusal, agent_status, server never stopped, auto-restore off, refuse agents failing gate (e)); ship it and the recorder. Check: new scripts/session-backend-herdr.test.sh on the stub (dedicated config/env, short socket path, restart, CLI failure unknown), scripts/test.
 
 - [ ] TASK-HDR-007 [standard] Make nudge and send --verify capability-aware per design Decision 8: unchanged with capture attributes; without them, a Claude box holding text is unknown, nudge without --message submits nothing, and the replacement check (herdr reports working or the box no longer holds the text) verifies, else one retry then fail; Codex unchanged. Check: extend scripts/session-nudge-placeholder.test.sh with herdr-stub variants, tmux cases unchanged, full scripts/test green.
 
@@ -24,7 +24,7 @@
 
 ## 5. Setup and diagnostics
 
-- [ ] TASK-HDR-009 [standard] Add doctor herdr checks per design Decision 12, shown only when session_backend=herdr or a non-retired herdr record exists: configured missing binary or recorder contract mismatch FAIL, version outside 0.9.x WARN, reachability NOTE, records-only NOTE/WARN, plus the --handoff NOTE; read-only CLI calls only. Check: new scripts/doctor-herdr.test.sh with the stub (silent when unused, FAIL, WARN, NOTE cases) plus full scripts/test green.
+- [ ] TASK-HDR-009 [standard] Add doctor herdr checks per design Decision 12, shown only when session_backend=herdr or a non-retired herdr record exists: configured missing binary or recorder contract mismatch FAIL, version outside 0.9.x WARN, reachability NOTE, records-only NOTE/WARN, plus a NOTE that a herdr server restart ends sessions (plain `herdr update` in v0.9.5 does not end endpoint-generation-1 sessions); read-only CLI calls only. Check: new scripts/doctor-herdr.test.sh with the stub (silent when unused, FAIL, WARN, accurate restart NOTE cases) plus full scripts/test green.
 
 - [ ] TASK-HDR-010 [standard] Write docs/using-with-herdr.md (experimental; every topic in the session-backends guide requirement) and update running-work-in-sessions, operating-model, architecture, security-model, failure-recovery, compatibility (herdr 0.9.x optional row), README, AGENTS.md and the three launch prompts to backend-neutral wording; ship the guide. Check: scripts/test green (docs, installation, security, package-manifest suites), links resolve, orchestrator-on-tmux stated.
 
@@ -34,9 +34,13 @@
 
 - [ ] TASK-HDR-012 [complex] Real Pi acceptance on herdr 0.9.x: one --backend herdr Lead session each for Claude, Codex and Antigravity through send, nudge (with and without --message), log, agent_status, stop, simulated server restart, reap, cleanup and exact resume, plus one parallel tmux Lead regression; write docs/acceptance/<date>-herdr-backend.md from the template, unsigned with an empty Signed-off-by line. Check: report committed unsigned, scripts/test green, doctor shows herdr.
 
+## Independent Codex compatibility fix
+
+- [ ] TASK-HDR-013 [standard] Fix scripts/session-launch for installed Codex CLI compatibility: omit `--add-dir <repo-root>` when launching with `--read-only`/read-only sandbox, and validate `ask_for_approval` against the accepted values reported by the installed Codex version so unsupported profile values fail in preflight with a clear diagnostic. This task is independent of the herdr tasks and applies to tmux and herdr launches. Check: add focused launcher coverage for read-only and supported/unsupported approval values; run the relevant launcher tests and full scripts/test.
+
 ## Dependency contract
 
-Explicit Beads edges, not task order, govern execution (`A <- B` = A depends on B): 002<-001, 003<-002, 004<-001, 005<-001, 006<-003, 006<-004, 006<-005, 007<-006, 008<-006, 009<-003, 009<-004, 009<-005, 010<-003, 011<-006, 011<-007, 011<-008, 012<-009, 012<-010, 012<-011. The parallel lanes are {002, 004, 005} after 001, {009, 010} after 003, and {007, 008} after 006. If TASK-HDR-001 records a blocking discovery, no dependent task proceeds and the change returns to planning. Each task's full contract is its design Decision plus the session-backends requirements it names.
+Explicit Beads edges, not task order, govern execution (`A <- B` = A depends on B): 002<-001, 003<-002, 004<-001, 005<-001, 006<-003, 006<-004, 006<-005, 007<-006, 008<-006, 009<-003, 009<-004, 009<-005, 010<-003, 011<-006, 011<-007, 011<-008, 012<-009, 012<-010, 012<-011. TASK-HDR-013 has no dependency on the herdr tasks. The parallel lanes are {002, 004, 005} after 001, {009, 010} after 003, and {007, 008} after 006; HDR-013 is independent. If TASK-HDR-001 records a blocking discovery, no dependent task proceeds and the change returns to planning. Each task's full contract is its design Decision plus the session-backends requirements it names.
 
 ## Execution contract
 
