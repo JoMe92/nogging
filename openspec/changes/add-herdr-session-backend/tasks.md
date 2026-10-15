@@ -1,6 +1,6 @@
 ## 1. Gate
 
-- [ ] TASK-HDR-001 [complex] Gate spike per design Decision 1: install herdr v0.9.x user-level (~/.local/bin, no sudo/curl/wget, checksum verified); on the Pi under the real wrapper, recorder and HERDR_AGENT test (a) status, (b) ANSI in pane.read, (c) pane-ID stability, (d) native resume plus auto-restore disable, (e) recorder log without TUI break; record implementation facts, commit sanitized fixtures; two or more FAIL = blocking discovery. Check: Bead evidence note, scripts/test.
+- [x] TASK-HDR-001 [complex] Gate spike per design Decision 1: install herdr v0.9.x user-level (~/.local/bin, no sudo/curl/wget, checksum verified); on the Pi under the real wrapper, recorder and HERDR_AGENT test (a) status, (b) ANSI in pane.read, (c) pane-ID stability, (d) native resume plus auto-restore disable, (e) recorder log without TUI break; record implementation facts, commit sanitized fixtures; two or more FAIL = blocking discovery. Check: Bead evidence note, scripts/test.
 
 ## 2. Seam
 
