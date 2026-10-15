@@ -127,9 +127,16 @@ session ended. `session list` SHALL show each session's backend.
 
 The herdr backend SHALL run each supervised session in its own pane, labelled
 with the session name, inside a herdr session namespace dedicated to Nogging
-(`session_herdr_session`, default `nogging`). It SHALL reach herdr only through
-the local `herdr` CLI (`session_herdr_command`, default `herdr`) over herdr's
-local Unix socket.
+(`session_herdr_session`, default `nogging`). Nogging SHALL start and own the
+dedicated headless herdr server and supply its own config using
+`HERDR_CONFIG_PATH`. That config SHALL set
+`[session] resume_agents_on_restore = false` and disable
+`[update] version_check` and `manifest_check`. The server SHALL start with a
+scrubbed environment so inherited variables such as `CLAUDECODE`, `TMUX` and
+tokens do not leak into panes. Its Unix socket path SHALL be shorter than 108
+bytes; launch SHALL fail with a clear diagnostic if it cannot fit. Nogging
+SHALL reach herdr only through the local `herdr` CLI
+(`session_herdr_command`, default `herdr`) over that socket.
 
 The pane SHALL run the unchanged Nogging launch wrapper with the same
 effective settings, prompt, command floor, OpenSpec boundary and session
@@ -156,6 +163,13 @@ Nogging SHALL NOT:
 - **WHEN** the last herdr record is retired by `session cleanup`
 - **THEN** the herdr server and any non-Nogging pane keep running
 
+#### Scenario: Dedicated server configuration prevents unwrapped restore
+
+- **WHEN** Nogging starts its dedicated herdr server
+- **THEN** it passes its own config through `HERDR_CONFIG_PATH`
+- **AND** automatic agent restore, version checks and manifest checks are disabled
+- **AND** the server starts with a scrubbed environment and a socket path under 108 bytes
+
 ### Requirement: herdr sessions keep an append-only bounded log through a PTY recorder
 
 The herdr backend SHALL capture each session's console output to the
@@ -166,6 +180,9 @@ wrapper under `scripts/session-pty-recorder`. The recorder:
 - SHALL forward input and output transparently, including the initial window
   size and every resize;
 - SHALL tee output to `scripts/session-log-writer`;
+- SHALL start the log writer in a separate session/process group so pane-close
+  SIGHUP and subsequent SIGKILL cannot terminate it with the recorder before
+  it flushes buffered output;
 - SHALL pass the child's exit status through;
 - SHALL forward termination signals;
 - SHALL keep the agent running if logging fails;
@@ -198,11 +215,12 @@ A herdr record SHALL be alive only when both of these hold:
 - that pane's root process is the recorded session process, by PID and process
   start time.
 
-A herdr server restart, or an update without live handoff, SHALL therefore
-reconcile the session to `failed`, exactly like a vanished tmux session. Killing
-a herdr session SHALL close its pane. It SHALL terminate the recorded process
-group, after re-verifying its start time, when closing the pane does not end
-it.
+A herdr server restart SHALL therefore reconcile the session to `failed`,
+exactly like a vanished tmux session. On herdr v0.9.5, plain `herdr update`
+keeps endpoint-generation-1 servers and their panes running; the one-time
+pre-generation-1 upgrade is the exception. Killing a herdr session SHALL
+close its pane. It SHALL terminate the recorded process group, after
+re-verifying its start time, when closing the pane does not end it.
 
 #### Scenario: A server restart fails the session
 
@@ -217,7 +235,12 @@ it.
 
 ### Requirement: herdr native restore never starts an agent outside the launch wrapper
 
-Nogging SHALL keep herdr's automatic agent restore disabled for Nogging panes.
+Nogging SHALL set herdr's server-level `resume_agents_on_restore = false` in
+its own config passed through `HERDR_CONFIG_PATH`; herdr provides no per-pane
+switch. A globally installed herdr integration may still report session
+references inside Nogging panes because the `HERDR_*` environment passes
+through the wrapper, so this server-level setting is required even though
+Nogging never reports references itself.
 A restored Nogging-labelled pane that no live record owns SHALL be reported
 and closed by cleanup, and SHALL never be adopted. Resuming a conversation
 SHALL go through Nogging's exact resume (`session launch --resume <id>`) on
@@ -329,8 +352,10 @@ When herdr is the configured backend:
 
 When only herdr records exist, herdr diagnostics SHALL be notes or warnings
 only. Whenever herdr diagnostics are shown, doctor SHALL note that
-`herdr update` without `--handoff`, or a herdr server restart, ends every
-Nogging herdr session.
+A herdr server restart ends every Nogging herdr session. On herdr v0.9.5, plain
+`herdr update` keeps endpoint-generation-1 servers and their panes running;
+only a server restart (apart from the one-time pre-generation-1 upgrade) ends
+those sessions.
 
 #### Scenario: Silent when unused
 
@@ -342,6 +367,34 @@ Nogging herdr session.
 - **WHEN** `session_backend` is `herdr` and no `herdr` binary is on PATH
 - **THEN** doctor reports a failure naming the missing binary
 
+#### Scenario: Update note reflects v0.9.5 behavior
+
+- **WHEN** doctor shows herdr diagnostics for herdr v0.9.5
+- **THEN** its note says a server restart ends the sessions
+- **AND** it does not claim that plain `herdr update` ends endpoint-generation-1 sessions
+
+### Requirement: Codex launch flags match the installed CLI
+
+`scripts/session-launch` SHALL omit `--add-dir <repo-root>` when launching
+Codex with read-only permissions, because the effective permissions do not
+allow adding writable roots. Before passing `--ask-for-approval`, it SHALL
+validate the configured value against the values accepted by the installed
+Codex CLI version. An unsupported value SHALL be rejected with a clear
+preflight diagnostic before the agent starts.
+
+#### Scenario: Read-only Codex launch omits additional writable roots
+
+- **WHEN** a Codex session launches with read-only permissions
+- **THEN** its command omits `--add-dir`
+
+#### Scenario: Approval setting follows installed Codex values
+
+- **WHEN** the configured `ask_for_approval` value is accepted by the
+  installed Codex CLI
+- **THEN** the launcher passes it through
+- **WHEN** that value is not accepted
+- **THEN** preflight fails clearly without starting the agent
+
 ### Requirement: Operators have a herdr setup and operations guide
 
 Nogging SHALL ship `docs/using-with-herdr.md`, marking the herdr backend as
@@ -351,7 +404,8 @@ experimental. The guide SHALL describe:
 - backend selection;
 - the dedicated herdr session, the log recorder, liveness and restart
   semantics;
-- the `herdr update --handoff` warning;
+- the effects of `herdr update` and server restart (plain update in v0.9.5
+  keeps endpoint-generation-1 sessions running);
 - disabled auto-restore and exact resume;
 - the nudge deviation and read-only attach behaviour;
 - `agent_status`;
@@ -362,7 +416,9 @@ experimental. The guide SHALL describe:
 The session-supervision documentation SHALL describe both backends and SHALL
 state that the Orchestration Agent stays on tmux.
 
-#### Scenario: The handoff warning is documented
+#### Scenario: Update and restart behavior is documented
 
 - **WHEN** an operator reads the herdr guide
-- **THEN** it states that `herdr update` without `--handoff` ends every Nogging herdr session
+- **THEN** it states that plain `herdr update` in v0.9.5 keeps
+  endpoint-generation-1 sessions running
+- **AND** it states that a server restart ends the sessions

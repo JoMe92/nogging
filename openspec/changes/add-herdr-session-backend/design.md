@@ -211,7 +211,10 @@ argv…>` as the pane command. The recorder:
 - forwards input unchanged and copies child output both to the pane and to a
   `scripts/session-log-writer` child, which keeps the same rotation and
   append-only semantics as tmux. The log therefore holds the same raw terminal
-  stream that `pipe-pane` captures;
+  stream that `pipe-pane` captures. The writer runs in its own session/process
+  group (`start_new_session=True`): closing or killing the pane sends SIGHUP to
+  its process group and SIGKILL about 0.5 seconds later, so sharing the
+  recorder's group would kill the writer before it flushes its buffered tail;
 - passes the child's exit status through. On SIGHUP or SIGTERM it forwards the
   signal to the child and waits for it;
 - never kills the agent because logging failed. A dead writer leaves a single
@@ -236,8 +239,14 @@ launch with a message to use `--backend tmux`.
   `NOGG_STARTUP_LOG`, plus `HERDR_AGENT=<agent>` so that herdr's detection
   manifest sees through the wrapper. Env is passed through the pane env
   parameter, or as an `env` argv prefix where the CLI lacks one.
-- The server is started headless on demand where the spike shows it is needed,
-  the same way tmux auto-starts its server. No service is installed.
+- Nogging starts and owns a dedicated headless herdr server for the configured
+  `session_herdr_session`. It supplies a dedicated config file via
+  `HERDR_CONFIG_PATH`, setting `[session] resume_agents_on_restore = false`
+  and disabling `[update] version_check` and `manifest_check`. The server is
+  started with a scrubbed environment so inherited variables such as
+  `CLAUDECODE`, `TMUX` and tokens cannot leak into panes. No service is
+  installed. Keep the resolved Unix socket path below 108 bytes (`sun_path`);
+  refuse startup with a clear diagnostic if it cannot fit.
 - **Liveness is bound to the launched process.** A herdr record is alive when
   both of these hold:
   - its pane resolves, by `pane_id` or else by unique label;
@@ -245,9 +254,11 @@ launch with a message to use `--backend tmux`.
     `session_pid_start`.
 
   A restored pane with the same label but a different process is not this
-  session. After a herdr server restart or `herdr update` without `--handoff`,
-  Nogging records therefore reconcile to `failed`, exactly like a vanished tmux
-  session, whether or not pane IDs are stable.
+  session. After a herdr server restart, Nogging records therefore reconcile
+  to `failed`, exactly like a vanished tmux session, whether or not pane IDs
+  are stable. Plain `herdr update` in v0.9.5 keeps endpoint-generation-1
+  server sessions and their panes running; the one-time pre-generation-1
+  upgrade is the exception.
 - `kill` closes the pane. If the spike shows that `pane.close` does not
   terminate the process, the backend signals the recorded process group, only
   after re-verifying the PID start time, using SIGTERM, then the stop grace
@@ -261,10 +272,13 @@ launch with a message to use `--backend tmux`.
 herdr's restore re-runs an agent through its native resume command. That
 process would start without Nogging's effective settings, prompt, command
 floor or OpenSpec boundary helper, which is a least-authority violation. In
-this change herdr auto-restore of agents is therefore **disabled for Nogging
-panes**. The spike verifies the narrowest control: per pane or per dedicated
-session where possible, otherwise the documented herdr setting that the guide
-asks the operator to set for the Nogging herdr session.
+this change herdr auto-restore of agents is therefore **disabled for the
+dedicated Nogging herdr server**. Nogging writes its own config with
+`[session] resume_agents_on_restore = false` and starts that server with
+`HERDR_CONFIG_PATH` pointing to the file. This is a server-level control; there
+is no per-pane switch. A globally installed herdr integration can still run
+inside the wrapper because `HERDR_*` variables pass through, so disabling
+restore is required even when Nogging itself never reports session references.
 
 A restored Nogging-labelled pane that no live record owns is reported by
 `session list` and closed by `session cleanup`; it is never adopted. Resume
@@ -342,9 +356,11 @@ non-retired herdr record exists. Otherwise doctor prints nothing about herdr.
   - server reachability is a `NOTE`, because launch starts the server on
     demand.
 - When only records exist, everything is a `NOTE` or `WARN`.
-- Always, when shown, a `NOTE` that `herdr update` without `--handoff`, or a
-  server restart, ends every Nogging herdr session, and that they then reap as
-  `failed`.
+- Always, when shown, a `NOTE` that a herdr server restart ends every Nogging
+  herdr session, and that they then reap as `failed`. Plain `herdr update` in
+  v0.9.5 does not end endpoint-generation-1 server sessions; a server restart
+  is the relevant termination event (apart from the one-time upgrade from
+  before endpoint generation 1).
 
 Doctor uses two read-only CLI calls (version, reachability) directly, so it can
 be built in parallel with the backend module against the fake stub.
@@ -405,7 +421,8 @@ Codex worker.
   partly undocumented. Mitigations: the gate spike, a pinned verified `0.9.x`
   range with a doctor WARN outside it, fixtures captured from the real binary,
   and tmux remaining the default and fallback.
-- **Persistence regression**: a herdr server restart or update kills panes.
+- **Persistence regression**: a herdr server restart kills panes (plain update
+  in v0.9.5 does not).
   Mitigation: documented, doctor NOTE, `--handoff` guidance, process-bound
   liveness so records never lie, and exact resume through the wrapper.
 - **The recorder changes the TUI's terminal path.** Mitigation: gate item
