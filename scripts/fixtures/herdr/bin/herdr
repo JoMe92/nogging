@@ -1,19 +1,29 @@
 #!/usr/bin/env python3
-"""Stateful fake herdr CLI for Nogging test suites ($HERDR_STUB_DIR).
+"""Stateful fake herdr CLI and Unix socket server for Nogging test suites ($HERDR_STUB_DIR).
 
-Reproduces spike-verified CLI forms and JSON for:
-- pane create / list / get / process_info / send / read / close / rename
-- workspace create / list / close
-- agent get / list / explain
-- version and reachability (status running/not running, ping)
-- simulated server restart
-- injectable failures
-- call log ($HERDR_STUB_DIR/calls.log)
+Complies with design Decision 14 (TASK-HDR-014):
+- Real CLI parity: accepts only real herdr 0.9.5 CLI forms. Synthetic forms
+  (layout apply, pane create, pane split --command, ping, api ping,
+  server start/run/restart, --seed-spike, --simulate-restart) fail with usage, exit 2.
+- Real 0600 Unix domain socket server running foreground on `herdr server`,
+  serving `layout.apply` with shape of json/layout-apply.json on shared state.
+- Opt-in real process for pane commands via $HERDR_STUB_DIR/real_process or HERDR_STUB_REAL_PROCESS=1.
+- Terminates real pane child on `pane close`.
+- Socket faults: no server, dropped reply, workspace_not_found, permissions, symlink, non-socket.
+- Short path enforcement: socket paths >= 108 bytes fail to bind.
+- Redacted env in socket call log.
+- Test controls off the CLI via control files or herdr-stub-control.
 """
 
+import copy
 import json
 import os
+import select
+import signal
+import socket
+import subprocess
 import sys
+import time
 
 SPIKE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "spike"))
 
@@ -26,11 +36,67 @@ def get_stub_dir():
     return d
 
 
+def get_session_dir(stub_dir, session_name):
+    custom_dir_file = os.path.join(stub_dir, "session_dir")
+    if os.path.exists(custom_dir_file):
+        try:
+            with open(custom_dir_file, "r", encoding="utf-8") as f:
+                d = f.read().strip()
+                if d:
+                    return d
+        except OSError:
+            pass
+    if "HERDR_SESSION_DIR" in os.environ:
+        return os.environ["HERDR_SESSION_DIR"]
+    return os.path.join(stub_dir, "sessions", session_name)
+
+
+def get_socket_path(stub_dir, session_name):
+    custom_sock_file = os.path.join(stub_dir, "socket_path")
+    if os.path.exists(custom_sock_file):
+        try:
+            with open(custom_sock_file, "r", encoding="utf-8") as f:
+                p = f.read().strip()
+                if p:
+                    return p
+        except OSError:
+            pass
+    if "HERDR_SOCKET_PATH_OVERRIDE" in os.environ:
+        return os.environ["HERDR_SOCKET_PATH_OVERRIDE"]
+    sdir = get_session_dir(stub_dir, session_name)
+    return os.path.join(sdir, "herdr.sock")
+
+
 def log_call(stub_dir, argv):
     call_log = os.path.join(stub_dir, "calls.log")
     try:
         with open(call_log, "a", encoding="utf-8") as f:
             f.write(" ".join(argv) + "\n")
+    except OSError:
+        pass
+
+
+def sanitize_params_for_log(obj):
+    if isinstance(obj, dict):
+        res = {}
+        for k, v in obj.items():
+            if k == "env" and isinstance(v, dict):
+                res[k] = {ek: "[redacted]" for ek in v}
+            else:
+                res[k] = sanitize_params_for_log(v)
+        return res
+    elif isinstance(obj, list):
+        return [sanitize_params_for_log(item) for item in obj]
+    else:
+        return obj
+
+
+def log_socket_call(stub_dir, method, params):
+    call_log = os.path.join(stub_dir, "calls.log")
+    try:
+        sanitized = sanitize_params_for_log(params)
+        with open(call_log, "a", encoding="utf-8") as f:
+            f.write(f"socket {method} {json.dumps(sanitized, sort_keys=True)}\n")
     except OSError:
         pass
 
@@ -90,10 +156,18 @@ def emit_failure_and_exit(content):
 
 def load_state(stub_dir):
     state_file = os.path.join(stub_dir, "state.json")
-    should_seed = (
-        os.environ.get("HERDR_STUB_SEED") == "spike"
-        or os.path.exists(os.path.join(stub_dir, "seed_spike"))
-    )
+    seed_file = os.path.join(stub_dir, "seed_spike")
+
+    if os.path.exists(seed_file):
+        try:
+            os.remove(seed_file)
+        except OSError:
+            pass
+        state = get_spike_seed_state(stub_dir)
+        save_state(stub_dir, state)
+        return state
+
+    should_seed = (os.environ.get("HERDR_STUB_SEED") == "spike")
 
     if os.path.exists(state_file):
         try:
@@ -102,13 +176,16 @@ def load_state(stub_dir):
         except (OSError, json.JSONDecodeError):
             pass
 
-    # Fresh state
     if should_seed:
-        return get_spike_seed_state()
-    return get_default_empty_state()
+        return get_spike_seed_state(stub_dir)
+    return get_default_empty_state(stub_dir)
 
 
-def get_default_empty_state():
+def get_default_empty_state(stub_dir=None):
+    if not stub_dir:
+        stub_dir = get_stub_dir()
+    default_sdir = get_session_dir(stub_dir, "default")
+    nogging_sdir = get_session_dir(stub_dir, "nogging")
     return {
         "server": {
             "status": "running",
@@ -120,15 +197,15 @@ def get_default_empty_state():
                 "default": True,
                 "name": "default",
                 "running": False,
-                "session_dir": "/home/user/.config/herdr",
-                "socket_path": "/home/user/.config/herdr/herdr.sock"
+                "session_dir": default_sdir,
+                "socket_path": os.path.join(default_sdir, "herdr.sock")
             },
             "nogging": {
                 "default": False,
                 "name": "nogging",
                 "running": True,
-                "session_dir": "/home/user/.config/herdr/sessions/nogging",
-                "socket_path": "/home/user/.config/herdr/sessions/nogging/herdr.sock"
+                "session_dir": nogging_sdir,
+                "socket_path": os.path.join(nogging_sdir, "herdr.sock")
             }
         },
         "workspaces": {},
@@ -137,7 +214,12 @@ def get_default_empty_state():
     }
 
 
-def get_spike_seed_state():
+def get_spike_seed_state(stub_dir=None):
+    if not stub_dir:
+        stub_dir = get_stub_dir()
+    default_sdir = get_session_dir(stub_dir, "default")
+    nogg_sdir = get_session_dir(stub_dir, "nogg-spike")
+    nogging_sdir = get_session_dir(stub_dir, "nogging")
     return {
         "server": {
             "status": "running",
@@ -149,15 +231,22 @@ def get_spike_seed_state():
                 "default": True,
                 "name": "default",
                 "running": False,
-                "session_dir": "/home/user/.config/herdr",
-                "socket_path": "/home/user/.config/herdr/herdr.sock"
+                "session_dir": default_sdir,
+                "socket_path": os.path.join(default_sdir, "herdr.sock")
             },
             "nogg-spike": {
                 "default": False,
                 "name": "nogg-spike",
                 "running": True,
-                "session_dir": "/home/user/.config/herdr/sessions/nogg-spike",
-                "socket_path": "/home/user/.config/herdr/sessions/nogg-spike/herdr.sock"
+                "session_dir": nogg_sdir,
+                "socket_path": os.path.join(nogg_sdir, "herdr.sock")
+            },
+            "nogging": {
+                "default": False,
+                "name": "nogging",
+                "running": True,
+                "session_dir": nogging_sdir,
+                "socket_path": os.path.join(nogging_sdir, "herdr.sock")
             }
         },
         "workspaces": {
@@ -236,7 +325,7 @@ def get_spike_seed_state():
                 "shell_pid": 16837,
                 "foreground_process_group_id": 16837,
                 "foreground_processes": [{
-                    "argv": ["/usr/bin/python3", "/tmp/nogg-spike/proto-recorder.py", "/tmp/nogg-spike/logs/sf-spike-claude-5.log", "1048576", "3", "--", "/home/user/src/nogging-wt/scripts/session-launch", "--settings", "/home/user/src/nogging/.nogging/launch-profiles/restricted.json", "--prompt", "/tmp/nogg-spike/spike-prompt.md", "--cwd", "/home/user/src/nogging", "--model", "haiku", "--session-id", "00000000-0000-4000-8000-000000000001"],
+                    "argv": ["/usr/bin/python3", "/tmp/nogg-spike/proto-recorder.py", "/tmp/nogg-spike/logs/sf-spike-claude-5.log", "1048576", "3", "--", "/home/user/src/nogging-wt/scripts/session-launch", "--settings", "/home/user/src/nogging/.nogging/launch-profiles/restricted.json", "--prompt", "/tmp/nogg-spike/spike-prompt.md", "--cwd", "/home/user/src/nogging", "--model haiku", "--session-id", "00000000-0000-4000-8000-000000000001"],
                     "cmdline": "/usr/bin/python3 /tmp/nogg-spike/proto-recorder.py /tmp/nogg-spike/logs/sf-spike-claude-5.log 1048576 3 -- /home/user/src/nogging-wt/scripts/session-launch --settings /home/user/src/nogging/.nogging/launch-profiles/restricted.json --prompt /tmp/nogg-spike/spike-prompt.md --cwd /home/user/src/nogging --model haiku --session-id 00000000-0000-4000-8000-000000000001",
                     "cwd": "/home/user/src/nogging",
                     "name": "python3",
@@ -257,7 +346,7 @@ def save_state(stub_dir, state):
 
 
 def simulate_restart(state):
-    state["server"]["restarts"] = state["server"].get("restarts", 0) + 1
+    state.setdefault("server", {})["restarts"] = state.get("server", {}).get("restarts", 0) + 1
     restarts = state["server"]["restarts"]
     for pid_key, pane in state.get("panes", {}).items():
         old_pid = pane.get("shell_pid", 10000)
@@ -284,6 +373,273 @@ def find_pane(state, target):
         if p.get("label") == target:
             return p
     return None
+
+
+def run_server(stub_dir, session_name):
+    # Auto-reap child zombies on exit
+    try:
+        signal.signal(signal.SIGCHLD, signal.SIG_IGN)
+    except Exception:
+        pass
+
+    session_dir = get_session_dir(stub_dir, session_name)
+    socket_path = get_socket_path(stub_dir, session_name)
+
+    # 1. Path length limit (sun_path: 108 bytes including NUL terminator)
+    if len(socket_path.encode("utf-8")) >= 108:
+        sys.stderr.write(f"herdr: failed to bind socket: path length ({len(socket_path.encode('utf-8'))} bytes) exceeds sun_path limit of 107 bytes: {socket_path}\n")
+        sys.exit(1)
+
+    os.makedirs(session_dir, exist_ok=True)
+    pid_file = os.path.join(session_dir, "herdr-server.pid")
+
+    # 2. Check if already running
+    if os.path.exists(socket_path) and not os.path.islink(socket_path):
+        test_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            test_sock.connect(socket_path)
+            test_sock.close()
+            sys.stderr.write("herdr server is already running\n")
+            sys.exit(1)
+        except OSError:
+            try:
+                os.remove(socket_path)
+            except OSError:
+                pass
+
+    # 3. Handle socket faults at startup
+    if os.path.exists(os.path.join(stub_dir, "fault_socket_non_socket")):
+        if os.path.exists(socket_path) or os.path.islink(socket_path):
+            try:
+                os.remove(socket_path)
+            except OSError:
+                pass
+        with open(socket_path, "w", encoding="utf-8") as f:
+            f.write("not a socket\n")
+        with open(pid_file, "w", encoding="utf-8") as pf:
+            pf.write(str(os.getpid()))
+        try:
+            while not os.path.exists(os.path.join(stub_dir, "server_stopped")):
+                time.sleep(0.2)
+        finally:
+            if os.path.exists(socket_path):
+                try: os.remove(socket_path)
+                except OSError: pass
+            if os.path.exists(pid_file):
+                try: os.remove(pid_file)
+                except OSError: pass
+        sys.exit(0)
+
+    if os.path.exists(os.path.join(stub_dir, "fault_socket_symlink")):
+        real_target = socket_path + ".real"
+        if os.path.exists(real_target):
+            try: os.remove(real_target)
+            except OSError: pass
+        actual_bind_path = real_target
+    else:
+        actual_bind_path = socket_path
+
+    if os.path.exists(actual_bind_path):
+        try: os.remove(actual_bind_path)
+        except OSError: pass
+
+    server_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    old_umask = os.umask(0o177)
+    try:
+        server_sock.bind(actual_bind_path)
+    finally:
+        os.umask(old_umask)
+
+    if os.path.exists(os.path.join(stub_dir, "fault_socket_permissions")):
+        try:
+            with open(os.path.join(stub_dir, "fault_socket_permissions"), "r") as pf:
+                mode_str = pf.read().strip()
+            mode = int(mode_str, 8) if mode_str else 0o666
+        except Exception:
+            mode = 0o666
+        os.chmod(actual_bind_path, mode)
+    else:
+        os.chmod(actual_bind_path, 0o600)
+
+    if os.path.exists(os.path.join(stub_dir, "fault_socket_symlink")):
+        if os.path.exists(socket_path) or os.path.islink(socket_path):
+            try: os.remove(socket_path)
+            except OSError: pass
+        os.symlink(actual_bind_path, socket_path)
+
+    server_sock.listen(16)
+    server_sock.setblocking(False)
+
+    with open(pid_file, "w", encoding="utf-8") as pf:
+        pf.write(str(os.getpid()))
+
+    state = load_state(stub_dir)
+    state.setdefault("server", {})["status"] = "running"
+    state.setdefault("sessions", {}).setdefault(session_name, {})["running"] = True
+    state["sessions"][session_name]["session_dir"] = session_dir
+    state["sessions"][session_name]["socket_path"] = socket_path
+    save_state(stub_dir, state)
+
+    stop_requested = False
+    def sig_handler(signum, frame):
+        nonlocal stop_requested
+        stop_requested = True
+
+    signal.signal(signal.SIGTERM, sig_handler)
+    signal.signal(signal.SIGINT, sig_handler)
+
+    try:
+        while not stop_requested:
+            if os.path.exists(os.path.join(stub_dir, "server_stopped")):
+                break
+            r, _, _ = select.select([server_sock], [], [], 0.2)
+            if not r:
+                continue
+            client_sock, _ = server_sock.accept()
+            client_sock.setblocking(True)
+            handle_socket_client(stub_dir, session_name, client_sock)
+    finally:
+        server_sock.close()
+        for p in (socket_path, actual_bind_path, pid_file):
+            if os.path.exists(p) or os.path.islink(p):
+                try: os.remove(p)
+                except OSError: pass
+        state = load_state(stub_dir)
+        if "server" in state:
+            state["server"]["status"] = "not_running"
+        if session_name in state.get("sessions", {}):
+            state["sessions"][session_name]["running"] = False
+        save_state(stub_dir, state)
+        sys.exit(0)
+
+
+def handle_socket_client(stub_dir, session_name, client_sock):
+    try:
+        f = client_sock.makefile("r", encoding="utf-8")
+        line = f.readline()
+        if not line:
+            return
+        try:
+            req = json.loads(line)
+        except Exception:
+            return
+
+        req_id = req.get("id")
+        method = req.get("method")
+        params = req.get("params", {})
+
+        log_socket_call(stub_dir, method, params)
+
+        # Fault: drop reply
+        if os.path.exists(os.path.join(stub_dir, "fault_drop_reply")):
+            return
+
+        if method == "layout.apply":
+            state = load_state(stub_dir)
+            w_id = params.get("workspace_id", "w1")
+            if os.path.exists(os.path.join(stub_dir, "fault_workspace_not_found")) or w_id not in state.get("workspaces", {}):
+                err_resp = {
+                    "id": req_id,
+                    "error": {
+                        "code": "workspace_not_found",
+                        "message": f"workspace {w_id} not found"
+                    }
+                }
+                client_sock.sendall((json.dumps(err_resp) + "\n").encode("utf-8"))
+                return
+
+            tab_label = params.get("tab_label", "2")
+            root = params.get("root", {})
+            label = root.get("label", "pane")
+            cwd = root.get("cwd", "/tmp")
+            command = root.get("command", ["/bin/bash"])
+            env_vars = root.get("env", {})
+
+            idx = state.get("next_pane_idx", 1) + 1
+            state["next_pane_idx"] = idx
+            p_id = f"{w_id}:p{idx}"
+            t_id = f"{w_id}:t{idx}"
+            term_id = f"term_65de3f17{idx}6e456"
+
+            is_real_process = (
+                os.path.exists(os.path.join(stub_dir, "real_process"))
+                or os.environ.get("HERDR_STUB_REAL_PROCESS") == "1"
+            )
+            if is_real_process:
+                proc_env = dict(os.environ)
+                proc_env.update(env_vars)
+                cmd_list = command if isinstance(command, list) else [command]
+                proc = subprocess.Popen(
+                    cmd_list,
+                    cwd=cwd,
+                    env=proc_env,
+                    start_new_session=True,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
+                pid = proc.pid
+            else:
+                pid = 17260 + idx
+
+            agent_val = env_vars.get("HERDR_AGENT")
+
+            pane_obj = {
+                "agent_status": "unknown",
+                "cwd": cwd,
+                "focused": False,
+                "foreground_cwd": cwd,
+                "label": label,
+                "pane_id": p_id,
+                "revision": 0,
+                "scroll": {"max_offset_from_bottom": 0, "offset_from_bottom": 0, "viewport_rows": 40},
+                "tab_id": t_id,
+                "terminal_id": term_id,
+                "workspace_id": w_id,
+                "shell_pid": pid,
+                "foreground_process_group_id": pid,
+                "foreground_processes": [{"argv": command if isinstance(command, list) else [command], "cmdline": " ".join(command) if isinstance(command, list) else str(command), "cwd": cwd, "name": os.path.basename(command[0]) if (isinstance(command, list) and command) else "bash", "pid": pid}]
+            }
+            if agent_val:
+                pane_obj["agent"] = agent_val
+
+            state.setdefault("panes", {})[p_id] = pane_obj
+            save_state(stub_dir, state)
+
+            reply = {
+                "id": req_id,
+                "result": {
+                    "type": "layout_apply",
+                    "layout": {
+                        "workspace_id": w_id,
+                        "tab_id": t_id,
+                        "zoomed": False,
+                        "focused_pane_id": p_id,
+                        "root": {
+                            "type": "pane",
+                            "pane_id": p_id,
+                            "label": label,
+                            "cwd": cwd,
+                            "command": command
+                        }
+                    }
+                }
+            }
+            client_sock.sendall((json.dumps(reply) + "\n").encode("utf-8"))
+        else:
+            err_resp = {
+                "id": req_id,
+                "error": {
+                    "code": "unknown_method",
+                    "message": f"unknown method {method}"
+                }
+            }
+            client_sock.sendall((json.dumps(err_resp) + "\n").encode("utf-8"))
+    finally:
+        try:
+            client_sock.close()
+        except OSError:
+            pass
 
 
 def main():
@@ -332,14 +688,6 @@ def main():
             json_mode = True
             idx += 1
             continue
-        elif arg == "--seed-spike":
-            state = get_spike_seed_state()
-            save_state(stub_dir, state)
-            sys.exit(0)
-        elif arg == "--simulate-restart":
-            simulate_restart(state)
-            save_state(stub_dir, state)
-            sys.exit(0)
         elif arg == "--help" or arg == "-h":
             help_file = os.path.join(SPIKE_DIR, "help", "herdr.txt")
             if os.path.exists(help_file):
@@ -348,6 +696,10 @@ def main():
             else:
                 sys.stdout.write("herdr — terminal workspace manager for AI coding agents\n")
             sys.exit(0)
+        elif arg.startswith("-"):
+            # Real CLI syntax error for synthetic or unknown options (--seed-spike, --simulate-restart, etc.)
+            sys.stderr.write(f"usage: herdr [options] <command>\nunknown option: {arg}\n")
+            sys.exit(2)
         else:
             break
 
@@ -359,20 +711,54 @@ def main():
     cmd = remaining[0]
     subcmd = remaining[1] if len(remaining) > 1 else ""
 
-    # Form a key for failure injection
     cmd_key = f"{cmd}_{subcmd}".strip("_").replace("-", "_")
     check_injected_failures(stub_dir, cmd_key)
 
-    # Check if server is marked down or stopped
+    # Synthetic CLI forms check per Decision 14:
+    # 1. layout apply
+    if cmd == "layout":
+        sys.stderr.write("usage: herdr [options] <command>\nunknown command: layout\n")
+        sys.exit(2)
+
+    # 2. ping and api ping
+    if cmd == "ping":
+        sys.stderr.write("usage: herdr [options] <command>\nunknown command: ping\n")
+        sys.exit(2)
+
+    if cmd == "api" and subcmd == "ping":
+        sys.stderr.write("usage: herdr api snapshot | herdr api schema\nunknown subcommand: ping\n")
+        sys.exit(2)
+
+    # 3. server start, server run, server restart
+    if cmd == "server" and subcmd in ("start", "run", "restart"):
+        sys.stderr.write(f"usage: herdr server [stop|reload-config] | herdr server\nunknown subcommand: {subcmd}\n")
+        sys.exit(2)
+
+    # 4. pane create
+    if cmd == "pane" and subcmd == "create":
+        sys.stderr.write("usage: herdr pane <subcommand>\nunknown subcommand: create\n")
+        sys.exit(2)
+
+    # 5. pane split --command
+    if cmd == "pane" and subcmd == "split" and "--command" in remaining:
+        sys.stderr.write("usage: herdr pane split [<pane_id>|--pane ID|--current] --direction right|down [--ratio FLOAT] [--cwd PATH] [--env KEY=VALUE] [--right-click herdr|pane] [--focus] [--no-focus]\nunrecognized option: --command\n")
+        sys.exit(2)
+
+    # 6. pane read missing arguments
+    if cmd == "pane" and subcmd == "read" and len(remaining) < 3:
+        sys.stderr.write("usage: herdr pane read <pane_id> [--source visible|recent|recent-unwrapped|detection] [--lines N] [--format text|ansi] [--ansi] [--raw]\n")
+        sys.exit(2)
+
     server_down = (
         os.path.exists(os.path.join(stub_dir, "server_down"))
         or os.path.exists(os.path.join(stub_dir, "server_stopped"))
         or state.get("server", {}).get("status") == "not_running"
     )
 
-    # Status check (reachability)
+    # Reachability: status
     if cmd == "status":
-        socket_path = f"/home/user/.config/herdr/sessions/{session_name}/herdr.sock"
+        session_info = state.get("sessions", {}).get(session_name, {})
+        socket_path = session_info.get("socket_path") or get_socket_path(stub_dir, session_name)
         if server_down:
             status_txt = f"""client:
   version: 0.9.5
@@ -415,64 +801,57 @@ update:
         sys.stdout.write("herdr 0.9.5\n")
         sys.exit(0)
 
-    # Ping command
-    if cmd == "ping" or (cmd == "api" and subcmd == "ping"):
-        if server_down:
-            err = {"id": "cli:ping", "error": {"code": "server_not_running", "message": f"no herdr server is running at /home/user/.config/herdr/sessions/{session_name}/herdr.sock"}}
-            sys.stderr.write(json.dumps(err) + "\n")
-            sys.exit(1)
-        res = {
-            "id": "cli:ping",
-            "result": {
-                "type": "pong",
-                "version": "0.9.5",
-                "protocol": 22,
-                "capabilities": {
-                    "live_handoff": True,
-                    "detached_server_daemon": True,
-                    "endpoint_protocol_generation": 1,
-                    "surface_interest": True,
-                    "health_check": True,
-                    "ssh_agent_registration": True
-                }
-            }
-        }
-        sys.stdout.write(json.dumps(res) + "\n")
-        sys.exit(0)
-
     # Server control commands
     if cmd == "server":
         if subcmd == "stop":
+            pid_file = os.path.join(get_session_dir(stub_dir, session_name), "herdr-server.pid")
+            if os.path.exists(pid_file):
+                try:
+                    with open(pid_file, "r") as pf:
+                        spid = int(pf.read().strip())
+                    os.kill(spid, signal.SIGTERM)
+                except Exception:
+                    pass
             state["server"]["status"] = "not_running"
+            if session_name in state.get("sessions", {}):
+                state["sessions"][session_name]["running"] = False
             save_state(stub_dir, state)
             sys.exit(0)
-        elif subcmd == "start" or subcmd == "run" or subcmd == "":
-            state["server"]["status"] = "running"
-            save_state(stub_dir, state)
+        elif subcmd == "reload-config":
             sys.exit(0)
-        elif subcmd == "restart":
-            simulate_restart(state)
-            state["server"]["status"] = "running"
-            save_state(stub_dir, state)
-            sys.exit(0)
+        elif subcmd == "":
+            run_server(stub_dir, session_name)
+        else:
+            sys.stderr.write(f"usage: herdr server [stop|reload-config] | herdr server\nunknown subcommand: {subcmd}\n")
+            sys.exit(2)
 
     # Session commands
     if cmd == "session":
         if subcmd == "list":
             sess_list = []
             for sname, sdata in state.get("sessions", {}).items():
+                sdir = sdata.get("session_dir") or get_session_dir(stub_dir, sname)
+                spath = sdata.get("socket_path") or os.path.join(sdir, "herdr.sock")
                 sess_list.append({
                     "default": sdata.get("default", False),
                     "name": sname,
                     "running": False if server_down else sdata.get("running", True),
-                    "session_dir": sdata.get("session_dir", f"/home/user/.config/herdr/sessions/{sname}"),
-                    "socket_path": sdata.get("socket_path", f"/home/user/.config/herdr/sessions/{sname}/herdr.sock")
+                    "session_dir": sdir,
+                    "socket_path": spath
                 })
             out = {"sessions": sess_list}
             sys.stdout.write(json.dumps(out) + "\n")
             sys.exit(0)
         elif subcmd == "stop":
             target_name = remaining[2] if len(remaining) > 2 else session_name
+            pid_file = os.path.join(get_session_dir(stub_dir, target_name), "herdr-server.pid")
+            if os.path.exists(pid_file):
+                try:
+                    with open(pid_file, "r") as pf:
+                        spid = int(pf.read().strip())
+                    os.kill(spid, signal.SIGTERM)
+                except Exception:
+                    pass
             if target_name in state.get("sessions", {}):
                 state["sessions"][target_name]["running"] = False
                 save_state(stub_dir, state)
@@ -499,6 +878,25 @@ update:
         }
         sys.stderr.write(json.dumps(err) + "\n")
         sys.exit(1)
+
+    # API commands
+    if cmd == "api":
+        if subcmd == "snapshot":
+            res = {
+                "id": "cli:api:snapshot",
+                "result": {
+                    "type": "snapshot",
+                    "server": {
+                        "status": "running",
+                        "version": "0.9.5"
+                    }
+                }
+            }
+            sys.stdout.write(json.dumps(res) + "\n")
+            sys.exit(0)
+        else:
+            sys.stderr.write("usage: herdr api snapshot | herdr api schema\n")
+            sys.exit(2)
 
     # Workspace commands
     if cmd == "workspace":
@@ -587,83 +985,9 @@ update:
             sys.stdout.write(json.dumps({"id": "cli:workspace:close", "result": {"type": "ok"}}) + "\n")
             sys.exit(0)
 
-    # Layout apply
-    if cmd == "layout" and subcmd == "apply":
-        data = None
-        if len(remaining) > 2:
-            raw = remaining[2]
-            if os.path.exists(raw):
-                with open(raw, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-            else:
-                data = json.loads(raw)
-        else:
-            data = json.load(sys.stdin)
-
-        w_id = data.get("workspace_id", "w2")
-        tab_label = data.get("tab_label", "2")
-        root = data.get("root", {})
-        label = root.get("label", "pane")
-        cwd = root.get("cwd", "/tmp")
-        command = root.get("command", ["/bin/bash"])
-        env_vars = root.get("env", {})
-
-        idx = state.get("next_pane_idx", 1) + 1
-        state["next_pane_idx"] = idx
-        p_id = f"{w_id}:p{idx}"
-        t_id = f"{w_id}:t{idx}"
-        pid = 17260 + idx
-        term_id = f"term_65de3f17{idx}6e456"
-
-        agent_val = env_vars.get("HERDR_AGENT")
-
-        pane_obj = {
-            "agent_status": "unknown",
-            "cwd": cwd,
-            "focused": False,
-            "foreground_cwd": cwd,
-            "label": label,
-            "pane_id": p_id,
-            "revision": 0,
-            "scroll": {"max_offset_from_bottom": 0, "offset_from_bottom": 0, "viewport_rows": 40},
-            "tab_id": t_id,
-            "terminal_id": term_id,
-            "workspace_id": w_id,
-            "shell_pid": pid,
-            "foreground_process_group_id": pid,
-            "foreground_processes": [{"argv": command, "cmdline": " ".join(command), "cwd": cwd, "name": os.path.basename(command[0]) if command else "bash", "pid": pid}]
-        }
-        if agent_val:
-            pane_obj["agent"] = agent_val
-
-        state.setdefault("panes", {})[p_id] = pane_obj
-        save_state(stub_dir, state)
-
-        res = {
-            "id": "spike",
-            "result": {
-                "type": "layout_apply",
-                "layout": {
-                    "workspace_id": w_id,
-                    "tab_id": t_id,
-                    "zoomed": False,
-                    "focused_pane_id": p_id,
-                    "root": {
-                        "type": "pane",
-                        "pane_id": p_id,
-                        "label": label,
-                        "cwd": cwd,
-                        "command": command
-                    }
-                }
-            }
-        }
-        sys.stdout.write(json.dumps(res) + "\n")
-        sys.exit(0)
-
     # Pane commands
     if cmd == "pane":
-        if subcmd == "create" or subcmd == "split":
+        if subcmd == "split":
             label = "pane"
             cwd = "/tmp"
             w_id = "w1"
@@ -686,9 +1010,6 @@ update:
                     if len(parts) == 2:
                         env_vars[parts[0]] = parts[1]
                     i += 2
-                elif arg == "--command" and i + 1 < len(remaining):
-                    command = remaining[i + 1:]
-                    break
                 else:
                     i += 1
 
@@ -724,7 +1045,7 @@ update:
             save_state(stub_dir, state)
 
             res = {
-                "id": "cli:pane:create",
+                "id": "cli:pane:split",
                 "result": {
                     "pane": pane_obj,
                     "type": "pane_info"
@@ -798,7 +1119,7 @@ update:
                 elif i >= 2 and not a.startswith("-") and not target:
                     target = a
 
-            pane = find_pane(state, target) if target else None
+            pane = find_pane(state, target)
             if not pane:
                 err = {
                     "error": {
@@ -810,23 +1131,21 @@ update:
                 sys.stderr.write(json.dumps(err) + "\n")
                 sys.exit(1)
 
-            pid = pane.get("shell_pid", 17261)
-            fg_procs = pane.get("foreground_processes", [{
-                "argv": ["sleep", "300"],
-                "cmdline": "sleep 300",
-                "cwd": pane.get("cwd", "/tmp"),
-                "name": "sleep",
-                "pid": pid
-            }])
+            p_id = pane.get("pane_id", target)
+            shell_pid = pane.get("shell_pid", 17260)
+            pgid = pane.get("foreground_process_group_id", shell_pid)
+            fg_procs = pane.get("foreground_processes", [
+                {"argv": ["/bin/bash"], "cmdline": "/bin/bash", "cwd": pane.get("cwd", "/tmp"), "name": "bash", "pid": shell_pid}
+            ])
 
             res = {
                 "id": "cli:pane:process_info",
                 "result": {
                     "process_info": {
-                        "foreground_process_group_id": pane.get("foreground_process_group_id", pid),
+                        "foreground_process_group_id": pgid,
                         "foreground_processes": fg_procs,
-                        "pane_id": pane.get("pane_id"),
-                        "shell_pid": pid
+                        "pane_id": p_id,
+                        "shell_pid": shell_pid
                     },
                     "type": "pane_process_info"
                 }
@@ -836,11 +1155,19 @@ update:
 
         elif subcmd == "rename":
             target = remaining[2] if len(remaining) > 2 else ""
-            new_label = remaining[3] if len(remaining) > 3 else ""
+            new_label = remaining[3] if len(remaining) > 3 else "renamed"
             pane = find_pane(state, target)
             if not pane:
-                sys.stderr.write(json.dumps({"error": {"code": "pane_not_found", "message": f"pane {target} not found"}, "id": "cli:pane:rename"}) + "\n")
+                err = {
+                    "error": {
+                        "code": "pane_not_found",
+                        "message": f"pane {target} not found"
+                    },
+                    "id": "cli:pane:rename"
+                }
+                sys.stderr.write(json.dumps(err) + "\n")
                 sys.exit(1)
+
             pane["label"] = new_label
             save_state(stub_dir, state)
 
@@ -913,6 +1240,23 @@ update:
             target = remaining[2] if len(remaining) > 2 else ""
             pane = find_pane(state, target)
             if pane:
+                shell_pid = pane.get("shell_pid")
+                if shell_pid:
+                    try:
+                        os.killpg(shell_pid, signal.SIGTERM)
+                    except (ProcessLookupError, PermissionError, OSError):
+                        try:
+                            os.kill(shell_pid, signal.SIGTERM)
+                        except (ProcessLookupError, PermissionError, OSError):
+                            pass
+                    time.sleep(0.05)
+                    try:
+                        os.killpg(shell_pid, signal.SIGKILL)
+                    except (ProcessLookupError, PermissionError, OSError):
+                        try:
+                            os.kill(shell_pid, signal.SIGKILL)
+                        except (ProcessLookupError, PermissionError, OSError):
+                            pass
                 p_id = pane.get("pane_id")
                 if p_id in state.get("panes", {}):
                     del state["panes"][p_id]
@@ -921,10 +1265,6 @@ update:
             sys.exit(0)
 
         elif subcmd == "read":
-            if len(remaining) < 3:
-                sys.stderr.write("usage: herdr pane read <pane_id> [--source visible|recent|recent-unwrapped|detection] [--lines N] [--format text|ansi] [--ansi] [--raw]\n")
-                sys.exit(2)
-
             target = remaining[2]
             source = "visible"
             fmt = "text"
