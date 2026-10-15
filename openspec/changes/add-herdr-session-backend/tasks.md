@@ -28,7 +28,7 @@
 
 - [ ] TASK-HDR-009 [standard] Add the conditional, read-only herdr doctor checks per design Decision 12, including binary/recorder failures, version warnings, reachability and records-only notes, and accurate restart guidance. Check: doctor-herdr tests cover unused, FAIL, WARN and restart NOTE cases; scripts/test.
 
-- [ ] TASK-HDR-010 [standard] Write docs/using-with-herdr.md (experimental; every topic in the session-backends guide requirement) and update running-work-in-sessions, operating-model, architecture, security-model, failure-recovery, compatibility (herdr 0.9.x optional row), README, AGENTS.md and the three launch prompts to backend-neutral wording; ship the guide. Check: scripts/test green (docs, installation, security, package-manifest suites), links resolve, orchestrator-on-tmux stated.
+- [x] TASK-HDR-010 [standard] Write docs/using-with-herdr.md (experimental; every topic in the session-backends guide requirement) and update running-work-in-sessions, operating-model, architecture, security-model, failure-recovery, compatibility (herdr 0.9.x optional row), README, AGENTS.md and the three launch prompts to backend-neutral wording; ship the guide. Check: scripts/test green (docs, installation, security, package-manifest suites), links resolve, orchestrator-on-tmux stated.
 
 ## 6. Verification and acceptance
 

@@ -59,3 +59,25 @@
     Orchestrator 2026-10-15: conflict resolved. TASK-HDR-003 is being implemented by session sf-lead-spec-58fz-20261015t181243-f148 (launched for SPEC-58fz, drifted to this Bead) in .nogging/state/checkouts/SPEC-z4nj-internal on branch fix/add-herdr-session-backend (valid name). That session finishes this Bead; the blocked duplicate session was stopped; the empty sibling worktree nogging-spec-z4nj (feat/) is unused. SPEC-58fz remains unstarted and gets a fresh session.
     progress: backend selection and per-record dispatch implemented; focused regression suites and all scripts/test suites pass. Next review the staged diff, commit, attach SHA/evidence, close and immediately run task-done.
     Commit 84e5746af1a5d008108cb95e3d7e4c7503aa4dfe implements backend selection and per-record dispatch. Evidence: npm_config_cache=/tmp/spec-z4nj-npm-cache ./scripts/test passed; focused session-backend-select, session-backend, session, antigravity-lifecycle, and session-model-record suites passed with XDG_CACHE_HOME and CODEX_HOME redirected to /tmp. No openspec files were edited.
+
+<!-- nogg:SPEC-58fz:2026-10-15T20:20:33Z -->
+- 2026-10-15T20:27:18+00:00 — SPEC-58fz closed for TASK-HDR-013 (Bead closed at 2026-10-15T20:20:33Z).
+  - implementation commits: d9d47e86b36ff191ece4f8a94914e7da02559967
+  - Bead note:
+    tier standard: small session-launch fix for codex-cli 0.162.1 (read-only --add-dir, ask_for_approval validation), independent of herdr -> Codex standard.
+    Orchestrator 2026-10-15: reset to open — the first session launched for this Bead drifted to SPEC-z4nj (TASK-HDR-003, PR #136) and never worked on TASK-HDR-013. Fresh session follows.
+    progress: sibling worktree is clean but outside sandbox write roots; relocating this task checkout under .nogging/state/checkouts/ before implementation.
+    progress: launcher fix and scripts/session.test.sh pass; next run full scripts/test before task completion.
+    progress: session.test.sh and session-model-forwarding.test.sh pass; first full run exposed sandbox NPM cache failures and an old untrusted test fixture; rerunning full scripts/test with NPM_CONFIG_CACHE under /tmp.
+    Codex 0.162.1 preflight finding: scripts/nogg accepted ask_for_approval=untrusted even though this installed CLI supports only on-request and never. Evidence: the read-only launch error from discovery SPEC-1o1x and session-models test now verifies unsupported profiles are refused before session/tmux creation. Follow-up: planning may review other Codex profiles/spec docs for stale approval vocabulary.
+    progress: full scripts/test passed with NPM_CONFIG_CACHE=/tmp/nogging-npm-cache; targeted session, models, effort and model-forwarding tests pass on final changes; next close, task-done tick, commit, push and open PR.
+    Worktree integration finding: ./scripts/nogg task-done was invoked from the nested implementation worktree but updated openspec/changes/add-herdr-session-backend/tasks.md in the canonical main checkout instead. Evidence: feature worktree was clean after the command while main checkout showed only that mapped tasks.md tick. Follow-up: bind task-done to the invoking worktree or document canonical-root behavior; this run transfers the exact task-done diff to the feature commit and reverts the main-checkout copy.
+    commit d9d47e86b36ff191ece4f8a94914e7da02559967; evidence: scripts/session.test.sh, scripts/session-models.test.sh, scripts/session-effort.test.sh and scripts/session-model-forwarding.test.sh pass; full scripts/test passed with NPM_CONFIG_CACHE=/tmp/nogging-npm-cache; git diff --check clean.
+
+<!-- nogg:SPEC-g8d4:2026-10-15T20:25:42Z -->
+- 2026-10-15T20:27:18+00:00 — SPEC-g8d4 closed for TASK-HDR-010 (Bead closed at 2026-10-15T20:25:42Z).
+  - implementation commits: ef09f7c, c412ca6, 2dcf2c8
+  - Bead note:
+    Planned 2026-10-15 in add-herdr-session-backend (planning commits ef09f7c, c412ca6). Complexity: standard. Read only the mapped tasks.md line, the design.md Decision it names and the matching session-backends requirement. Before allocating a dependent worktree, verify every prerequisite execution commit is integrated into develop.
+    tier standard: assigned by orchestrator to antigravity; branch docs/add-herdr-session-backend.
+    Planning note 2026-10-15 (planning commit 2dcf2c8): the session-backends guide requirement gained one topic. docs/using-with-herdr.md must describe the transport: the CLI for every operation except pane creation, which uses local-socket layout.apply after the socket owner/mode 0600 check (design Decision 6). The security posture is unchanged: no listener, no TCP, no remote access.
