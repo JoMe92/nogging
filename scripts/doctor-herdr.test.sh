@@ -37,14 +37,33 @@ with tempfile.TemporaryDirectory(prefix="doc-test-") as temp:
 
     (repo / ".nogging").mkdir(parents=True)
     base_config = {
-        "beads_command": "true",
+        "beads_command": "bd",
         "session_state_dir": ".nogging/state/sessions"
     }
     (repo / ".nogging/config.json").write_text(json.dumps(base_config))
 
+    stub_bin_dir = temp_dir / "stub-bin"
+    stub_bin_dir.mkdir()
+    (stub_bin_dir / "dolt").write_text("#!/usr/bin/env bash\nexit 0\n")
+    (stub_bin_dir / "dolt").chmod(0o755)
+    (stub_bin_dir / "bd").write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "if [[ \"$*\" == *\"--json\"* ]] || [[ \"${1:-}\" == \"list\" ]] || [[ \"${1:-}\" == \"show\" ]] || [[ \"${1:-}\" == \"dep\" ]]; then\n"
+        "  echo '[]'\n"
+        "  exit 0\n"
+        "fi\n"
+        "if [[ \"${1:-}\" == \"branch\" ]]; then\n"
+        "  echo '* main'\n"
+        "  exit 0\n"
+        "fi\n"
+        "exit 0\n"
+    )
+    (stub_bin_dir / "bd").chmod(0o755)
+
     env = os.environ.copy()
     env["NOGGING_ROOT"] = str(repo)
-    env["PATH"] = f"{source / 'scripts/fixtures/herdr/bin'}:{os.environ.get('PATH', '')}"
+    env["PATH"] = f"{stub_bin_dir}:{source / 'scripts/fixtures/herdr/bin'}:{os.environ.get('PATH', '')}"
     herdr_stub_dir = temp_dir / "herdr-stub"
     herdr_stub_dir.mkdir()
     env["HERDR_STUB_DIR"] = str(herdr_stub_dir)
