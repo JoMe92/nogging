@@ -164,7 +164,7 @@ record "legacy-codex: record has source runtime-default" \
   'r["requested_model"] is None and r["model_source"] == "runtime-default"'
 
 # --- a record from before model selection was recorded ----------------------
-listing "list has MODEL, MODEL_SOURCE and BACKEND columns" "MODEL +MODEL_SOURCE +BACKEND +WORKING_DIR"
+listing "list has MODEL, MODEL_SOURCE, BACKEND and AGENT_STATUS columns" "MODEL +MODEL_SOURCE +BACKEND +AGENT_STATUS +WORKING_DIR"
 python3 - "$root/.nogging/state/sessions" <<'PY'
 import json, pathlib, sys
 for p in pathlib.Path(sys.argv[1]).glob("*.json"):
@@ -174,7 +174,7 @@ for p in pathlib.Path(sys.argv[1]).glob("*.json"):
     p.write_text(json.dumps(r))
 PY
 NOGGING_ROOT="$root" "$nogg" session list >"$out" 2>&1
-grep "sf-\|nogg-" "$out" | grep -qE -- " codex +[^ ]+ +- +- +tmux +/" \
+grep "sf-\|nogg-" "$out" | grep -qE -- " codex +[^ ]+ +- +- +tmux +- +/" \
   && ok "pre-existing record: list shows - for model and source" || bad "pre-existing record display"
 
 exit "$fail"
