@@ -5,9 +5,10 @@ Defines the switchable substrate that supervised sessions run on. It covers:
 - backend selection, with tmux as the default and permanent fallback;
 - the primitive-only seam that keeps supervision semantics backend-neutral;
 - mixed-backend dispatch by record;
-- the herdr backend, with its log recorder, process-bound liveness,
-  wrapper-safe restore, nudge and send verification, agent status and attach
-  rules;
+- the herdr backend, with its CLI-plus-one-socket-method transport, log
+  recorder, process-bound liveness, wrapper-safe restore, nudge and send
+  verification, agent status and attach rules;
+- test doubles that reproduce only verified herdr interfaces;
 - the Orchestration Agent's tmux pin;
 - herdr diagnostics and operator guidance.
 
@@ -135,8 +136,9 @@ dedicated headless herdr server and supply its own config using
 scrubbed environment so inherited variables such as `CLAUDECODE`, `TMUX` and
 tokens do not leak into panes. Its Unix socket path SHALL be shorter than 108
 bytes; launch SHALL fail with a clear diagnostic if it cannot fit. Nogging
-SHALL reach herdr only through the local `herdr` CLI
-(`session_herdr_command`, default `herdr`) over that socket.
+SHALL reach that server only as the herdr transport requirement allows: the
+local `herdr` CLI (`session_herdr_command`, default `herdr`), plus the single
+local-socket pane-creation call.
 
 The pane SHALL run the unchanged Nogging launch wrapper with the same
 effective settings, prompt, command floor, OpenSpec boundary and session
@@ -169,6 +171,95 @@ Nogging SHALL NOT:
 - **THEN** it passes its own config through `HERDR_CONFIG_PATH`
 - **AND** automatic agent restore, version checks and manifest checks are disabled
 - **AND** the server starts with a scrubbed environment and a socket path under 108 bytes
+
+### Requirement: Nogging reaches herdr through its CLI plus one local-socket method
+
+Nogging SHALL reach herdr through the local `herdr` CLI for every operation
+that has a verified CLI form. herdr 0.9.x has no CLI form that starts a pane
+with a given argv, so pane creation is the single exception. The herdr backend
+SHALL create each session pane with the socket method `layout.apply`, sent
+directly to the Unix socket of the dedicated herdr server that Nogging
+started. It SHALL use no other socket method. Adding a method SHALL need a
+planning revision that names the method and shows it has no verified CLI
+form.
+
+Before it connects, Nogging SHALL:
+
+- take the socket path from herdr's own report for the dedicated session
+  (`herdr session list --json`, field `socket_path`), never from an inherited
+  `HERDR_SOCKET_PATH` or other environment variable;
+- check that the path is shorter than 108 bytes;
+- check that the path is a Unix socket and not a symlink;
+- check that the socket is owned by the invoking user and has mode 0600, with
+  no group or other permission bits.
+
+A failed check SHALL refuse the launch with a diagnostic that names the check.
+The refusal SHALL happen before any session record or pane is created.
+
+The connection SHALL be a local `AF_UNIX` stream connection made with the
+Python standard library. It SHALL carry one request line and read one reply
+line under a bounded timeout. Nogging SHALL NOT:
+
+- open a TCP or other network connection to herdr;
+- use herdr `--remote` or `--machine`;
+- forward or relocate the socket, or widen its permissions;
+- write the request unredacted to a session record or log.
+
+An error reply, for example `workspace_not_found`, SHALL fail the launch and
+name herdr's error code. If the reply is missing or malformed, the backend
+SHALL resolve the pane by its unique label through the CLI. It SHALL NOT send
+a second `layout.apply` for the same session.
+
+#### Scenario: Pane creation uses the local socket and everything else the CLI
+
+- **WHEN** `session launch --backend herdr` creates a session
+- **THEN** one `layout.apply` request on the dedicated server's Unix socket creates the pane with the recorder-wrapped argv, working directory, label and session environment
+- **AND** every other herdr operation of that launch and of later lifecycle commands uses the `herdr` CLI
+
+#### Scenario: An unsafe socket refuses the launch
+
+- **WHEN** the dedicated session's socket has group or other permission bits, is not owned by the invoking user, is a symlink, or has a path of 108 bytes or more
+- **THEN** the launch is refused with a diagnostic that names the failed check
+- **AND** no session record and no pane is created
+
+#### Scenario: An inherited socket variable is ignored
+
+- **WHEN** Nogging runs inside a herdr pane whose `HERDR_SOCKET_PATH` names another herdr session
+- **THEN** the launch targets the socket that `herdr session list --json` reports for `session_herdr_session`
+
+#### Scenario: A lost reply never creates a second pane
+
+- **WHEN** the `layout.apply` connection closes before a reply arrives
+- **THEN** the backend looks the pane up by its label through the CLI
+- **AND** no second `layout.apply` is sent for that session
+
+### Requirement: herdr tests exercise only verified herdr interfaces
+
+The fake herdr used by Nogging's test suites SHALL implement only:
+
+- the CLI forms in the committed spike help and fixtures for herdr 0.9.5;
+- the socket methods that the herdr transport requirement allows.
+
+Any other CLI form SHALL fail the way herdr fails on a CLI syntax error:
+plain usage on stderr and exit status 2. Any other socket method SHALL get an
+error reply.
+
+The fake SHALL serve `layout.apply` over a real local Unix socket with mode
+0600, at the path its `session list --json` reports. The reply SHALL have the
+spike fixture's shape, and a pane it creates SHALL be visible to the fake's
+CLI forms. Test-only controls, such as seeding, a simulated restart and fault
+injection, SHALL stay outside herdr's command surface.
+
+#### Scenario: A synthetic CLI form fails
+
+- **WHEN** a test calls `herdr layout apply`, `herdr pane create` or `herdr pane split --command …` on the fake
+- **THEN** the call exits with status 2 and prints usage on stderr, as the real CLI does
+
+#### Scenario: A socket-created pane is visible through the CLI
+
+- **WHEN** a test sends `layout.apply` to the fake's socket
+- **THEN** the reply matches the shape of the spike's `layout-apply.json`
+- **AND** `herdr pane list` and `herdr pane process-info` report the new pane
 
 ### Requirement: herdr sessions keep an append-only bounded log through a PTY recorder
 
@@ -409,6 +500,8 @@ experimental. The guide SHALL describe:
 - disabled auto-restore and exact resume;
 - the nudge deviation and read-only attach behaviour;
 - `agent_status`;
+- the transport: the CLI for every operation except pane creation, which uses
+  local-socket `layout.apply` after the socket ownership and mode check;
 - the security posture: no listener, no plugins, no integrations installed by
   Nogging, screen history off;
 - tmux as the fallback.
