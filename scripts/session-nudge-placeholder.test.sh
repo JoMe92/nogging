@@ -88,4 +88,51 @@ with patch.object(m, 'load_session', return_value=(None, rec)), \
     else: raise AssertionError('non-running nudge accepted')
     assert not tmux.called
 print('Placeholder-versus-input nudge/send regressions passed')
+
+# Herdr variant with no SGR capture: framed text is ambiguous, so implicit
+# nudge is a no-op; explicit sends use status or replacement verification.
+from types import SimpleNamespace
+state = {'pane': f'{R}\n❯ suggested text\n{R}\n', 'status': 'idle', 'actions': []}
+herdr = SimpleNamespace(capabilities=SimpleNamespace(capture_attributes=False))
+def herdr_action(name, operation, *args, **kwargs):
+    state['actions'].append((operation, args))
+    if operation == 'capture': return state['pane']
+    if operation == 'agent_status': return state['status']
+    if operation == 'send_keys' and args[0] == 'enter': state['pane'] = f'{R}\n❯ \n{R}\n'
+    return None
+with patch.object(m, 'backend_for_name', return_value=(herdr, {'herdr_session': 'nogging'})), \
+     patch.object(m, 'session_action', side_effect=herdr_action), \
+     patch.object(m, '_require_running', return_value=(None, dict(rec, agent='claude'))), \
+     patch.object(m.time, 'sleep'), contextlib.redirect_stdout(io.StringIO()) as output:
+    assert m.pane_input('s', 'claude') == ('unknown', '')
+    m.session_nudge('s')
+    assert not any(op in ('send_text', 'send_keys') for op, _ in state['actions']), state['actions']
+    # Replacement from a typed/suggested box to an empty box verifies.
+    m.session_nudge('s', 'explicit')
+    assert 'nudged s' in output.getvalue()
+    assert ('send_text', ('explicit',)) in state['actions']
+    state['pane'] = f'{R}\n❯ \n{R}\n'
+    state['actions'].clear()
+    with patch.object(m, 'load_session', return_value=(None, dict(rec, agent='claude'))), \
+         patch.object(m, 'tmux_has_session', return_value=True):
+        m.session_send('s', 'send verify', verify=True)
+    assert ('send_text', ('send verify',)) in state['actions']
+
+# If the sent text remains in the identifiable box and status stays idle,
+# verification retries once and reports failure.
+state.update(pane=f'{R}\n❯ \n{R}\n', status='idle', actions=[])
+def herdr_stuck_action(name, operation, *args, **kwargs):
+    state['actions'].append((operation, args))
+    if operation == 'capture': return f'{R}\n❯ explicit\n{R}\n'
+    if operation == 'agent_status': return 'idle'
+    return None
+with patch.object(m, 'backend_for_name', return_value=(herdr, {'herdr_session': 'nogging'})), \
+     patch.object(m, 'session_action', side_effect=herdr_stuck_action), \
+     patch.object(m, '_require_running', return_value=(None, dict(rec, agent='claude'))), \
+     patch.object(m.time, 'sleep'), contextlib.redirect_stdout(io.StringIO()):
+    try: m.session_nudge('s', 'explicit')
+    except RuntimeError as exc: assert 'unverified after a retry' in str(exc), exc
+    else: raise AssertionError('herdr submission without replacement was accepted')
+    assert sum(op == 'send_keys' and args == ('enter',) for op, args in state['actions']) == 4
+print('Herdr no-attributes nudge/send verification regressions passed')
 PY
