@@ -581,6 +581,36 @@ else
 fi
 
 # --- 12. Simulated server restart via control file ---
+# Real process PIDs may fall in the fake's synthetic range on CI hosts.
+# Check that every restart replaces identities regardless of the host PID.
+if python3 - "$herdr_bin" <<'PY'
+import runpy
+import sys
+
+simulate_restart = runpy.run_path(sys.argv[1])["simulate_restart"]
+state = {"panes": {
+    f"w1:p{index}": {"shell_pid": pid, "label": f"session-{index}", "agent": "codex"}
+    for index, pid in enumerate((21000, 21442, 21999, 22000, 22442, 123456))
+}}
+for _ in range(3):
+    previous = {pane["shell_pid"] for pane in state["panes"].values()}
+    labels = {key: pane["label"] for key, pane in state["panes"].items()}
+    simulate_restart(state)
+    restored = [pane["shell_pid"] for pane in state["panes"].values()]
+    assert previous.isdisjoint(restored), (previous, restored)
+    assert len(set(restored)) == len(restored), restored
+    assert {key: pane["label"] for key, pane in state["panes"].items()} == labels
+    for pane in state["panes"].values():
+        assert pane["foreground_process_group_id"] == pane["shell_pid"]
+        assert pane["foreground_processes"][0]["pid"] == pane["shell_pid"]
+        assert pane["agent_status"] == "unknown" and "agent" not in pane
+PY
+then
+  ok "restart: replacement PIDs are distinct from all old PIDs across repeated restarts"
+else
+  bad "restart: replacement process identity collides"
+fi
+
 "$herdr_bin" pane process-info "$p_id" >"$out" 2>"$err"
 pid_before=$(python3 -c "import json; print(json.load(open('$out'))['result']['process_info']['shell_pid'])")
 
