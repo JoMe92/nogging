@@ -5,7 +5,7 @@ It intentionally contains no LLM call and makes no semantic product decision.
 """
 from __future__ import annotations
 
-import argparse, base64, datetime as dt, fcntl, getpass, hashlib, importlib.util, json, math, os, re, shlex, shutil, signal, socket, subprocess, sys, tempfile, time, uuid
+import argparse, base64, datetime as dt, fcntl, getpass, hashlib, importlib.util, json, os, re, shlex, shutil, signal, socket, subprocess, sys, tempfile, time, uuid
 import urllib.parse, urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -4693,10 +4693,7 @@ def session_pane_text(name, escapes=False):
     """The session's current visible pane (no scrollback), or '' if its tmux
     session does not exist. `escapes` keeps SGR attributes (`capture-pane
     -e`), which is how a dim placeholder suggestion is told from input."""
-    try:
-        return session_action(name, "capture", attributes=escapes) or ""
-    except Exception:
-        return ""
+    return session_action(name, "capture", attributes=escapes)
 def session_events_path(name):
     return sessions_dir() / f"{name}.events.jsonl"
 def validate_antigravity_conversation_id(value):
@@ -4736,234 +4733,15 @@ def antigravity_stop_event(name, value):
                                 "event": "turn_end", "conversation_id": conversation,
                                 "fully_idle": payload["fullyIdle"]}) + "\n")
 
-SESSION_TIMING_RULES = {
-    "session_submit_delay_seconds": (0.3, 0.0, 5.0, False),
-    "session_submit_verify_delay_seconds": (0.5, 0.0, 5.0, True),
-    "session_delivery_timeout_seconds": (15.0, 1.0, 120.0, False),
-    "session_startup_timeout_seconds": (120.0, 1.0, 600.0, False),
-}
-
-def validate_session_timing_config(cfg=None):
-    """Validate all four session timing configuration keys against their contracts.
-    Refuses booleans, non-numeric values, non-finite values (inf, nan), and values
-    outside accepted ranges. Returns dict of validated float values.
-    """
-    if cfg is None:
-        cfg = CFG
-    result = {}
-    for key, (default, min_val, max_val, strict_min) in SESSION_TIMING_RULES.items():
-        if key not in cfg:
-            result[key] = float(default)
-            continue
-        val = cfg[key]
-        if type(val) is bool:
-            raise RuntimeError(f"invalid timing config for {key}: booleans are refused")
-        if not isinstance(val, (int, float)):
-            raise RuntimeError(f"invalid timing config for {key}: numeric value expected")
-        if math.isnan(val) or math.isinf(val):
-            raise RuntimeError(f"invalid timing config for {key}: value must be finite")
-        fval = float(val)
-        if strict_min:
-            if not (min_val < fval <= max_val):
-                raise RuntimeError(
-                    f"invalid timing config for {key}: {val} is out of accepted range (greater than {min_val} through {max_val})"
-                )
-        else:
-            if not (min_val <= fval <= max_val):
-                raise RuntimeError(
-                    f"invalid timing config for {key}: {val} is out of accepted range ({min_val} through {max_val})"
-                )
-        result[key] = fval
-    return result
-
-session_timing_config = validate_session_timing_config
-
-def acquire_bounded_flock(fh, deadline, poll_interval=0.05):
-    """Acquire exclusive flock bounded by monotonic deadline."""
-    while True:
-        try:
-            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            return True
-        except (BlockingIOError, OSError):
-            if time.monotonic() >= deadline:
-                raise RuntimeError("timed out waiting for session lock")
-            time.sleep(min(poll_interval, max(0.001, deadline - time.monotonic())))
-
-def _record_readiness(path, source, deadline=None):
-    with path.with_suffix(".lifecycle.lock").open("a") as lock:
-        if deadline is not None:
-            acquire_bounded_flock(lock, deadline)
-        else:
-            fcntl.flock(lock, fcntl.LOCK_EX)
-        _, current_rec = load_session(path.stem)
-        current_rec["readiness_source"] = source
-        stamp = now()
-        current_rec["readiness_at"] = stamp
-        if current_rec.get("agent") == "antigravity" and not current_rec.get("antigravity_ready_at"):
-            current_rec["antigravity_ready_at"] = stamp
-        write_session(path, current_rec)
-
-def await_session_input_ready(name, timeout=None, for_kickoff=True):
-    """Wait for bounded startup readiness across Claude, Codex, Antigravity or Pi.
-    Validates timing config before any inspection. Polls with monotonic deadline,
-    bounds subprocess calls, checks running state and exact process identity,
-    emits diagnostics at most once per 5 seconds, and refuses speculative input.
-    """
-    timing = validate_session_timing_config()
-    poll_interval = timing["session_submit_verify_delay_seconds"]
-    if timeout is None:
-        timeout = timing["session_startup_timeout_seconds"]
-    else:
-        if type(timeout) is bool or not isinstance(timeout, (int, float)) or math.isnan(timeout) or math.isinf(timeout) or timeout < 0:
-            raise RuntimeError(f"invalid timeout value: {timeout}")
-        timeout = float(timeout)
-
+def await_antigravity_first_turn(name, timeout=30):
     deadline = time.monotonic() + timeout
-    last_diagnostic = time.monotonic()
-    consecutive_samples = 0
-    last_sample_mono = None
-
     while True:
-        now_mono = time.monotonic()
-        path, rec = _require_running(name)
-        agent = rec.get("agent") or "claude"
-
-        # Check process disappearance or PID recycling
-        rec_pid = rec.get("session_pid")
-        if rec_pid is not None:
-            try:
-                current_pid = session_action(name, "pid")
-            except Exception:
-                current_pid = None
-            if current_pid is None or current_pid != rec_pid:
-                raise RuntimeError(f"{name}: process disappeared or changed (expected PID {rec_pid}, got {current_pid})")
-            if rec.get("session_pid_start"):
-                birth = process_start(current_pid)
-                if birth is not None and birth != rec["session_pid_start"]:
-                    raise RuntimeError(f"{name}: process PID was recycled (expected birth {rec['session_pid_start']}, got {birth})")
-            if record_backend_name(rec) == "herdr":
-                substrate, ref = backend_for_name(name)
-                if hasattr(substrate, "_identity"):
-                    pane = substrate._pane(ref)
-                    if pane is None or substrate._identity(ref, pane) is False:
-                        raise RuntimeError(f"{name}: herdr process has vanished or changed")
-
-        missing_evidence = "waiting for readiness"
-
-        if agent == "pi":
-            return True
-
-        elif agent == "claude":
-            kind, text = pane_input(name, "claude")
-            live_state, _ = classify_session(rec)
-            if live_state in ("needs_input", "limit"):
-                missing_evidence = f"Claude in {live_state} state"
-            elif kind in ("empty", "placeholder") and live_state == "idle":
-                _record_readiness(path, "pane", deadline=deadline)
-                return True
-            else:
-                missing_evidence = f"Claude composer is {kind}, live state is {live_state}"
-
-        elif agent == "codex":
-            kind, text = pane_input(name, "codex")
-            live_state, _ = classify_session(rec)
-            if live_state in ("needs_input", "limit"):
-                missing_evidence = f"Codex in {live_state} state"
-            elif for_kickoff:
-                if kind in ("empty", "placeholder") and live_state == "idle":
-                    _record_readiness(path, "pane", deadline=deadline)
-                    return True
-                missing_evidence = f"Codex composer is {kind}, live state is {live_state}"
-            else:
-                if kind in ("empty", "placeholder"):
-                    _record_readiness(path, "pane", deadline=deadline)
-                    return True
-                missing_evidence = f"Codex composer is {kind}"
-
-        elif agent == "antigravity":
-            kind, text = pane_input(name, "antigravity")
-            pane = session_pane_text(name, escapes=True)
-            live_state = classify(pane, ANTIGRAVITY_ADAPTER)
-            try:
-                backend_status = session_action(name, "agent_status")
-            except Exception:
-                backend_status = None
-
-            contrary = (live_state in ("needs_input", "limit", "working") or
-                        backend_status in ("working", "blocked"))
-
-            # Preferred evidence: validated fullyIdle Stop event belonging to this launch
-            started_at = rec.get("started_at")
-            ready_at = rec.get("antigravity_ready_at")
-            stop_valid = bool(ready_at and (not started_at or ready_at >= started_at))
-
-            if stop_valid:
-                if (kind in ("empty", "placeholder") or not pane.strip()) and not contrary:
-                    _record_readiness(path, "stop_event", deadline=deadline)
-                    return True
-                else:
-                    missing_evidence = (f"Stop event arrived but composer is {kind} "
-                                        f"or contrary state (pane={live_state}, backend={backend_status})")
-            else:
-                if ready_at and started_at and ready_at < started_at:
-                    missing_evidence = "stale Stop event predating this launch"
-                elif contrary:
-                    missing_evidence = f"contrary state (pane={live_state}, backend={backend_status})"
-                else:
-                    missing_evidence = f"missing Stop event (composer={kind}, backend={backend_status})"
-
-            # Fallback: two consecutive backend statuses idle/done with empty composer
-            if not stop_valid and not contrary and backend_status in ("idle", "done") and kind == "empty":
-                if last_sample_mono is not None and (now_mono - last_sample_mono) >= (poll_interval * 0.8):
-                    consecutive_samples += 1
-                else:
-                    if consecutive_samples == 0:
-                        consecutive_samples = 1
-                last_sample_mono = now_mono
-
-                if consecutive_samples >= 2:
-                    _record_readiness(path, "backend_status", deadline=deadline)
-                    return True
-            else:
-                consecutive_samples = 0
-                last_sample_mono = None
-
+        _, rec = _require_running(name)
+        if not rec.get("antigravity_initial_turn") or rec.get("antigravity_ready_at"):
+            return
         if time.monotonic() >= deadline:
-            break
-
-        if now_mono - last_diagnostic >= 5.0:
-            last_diagnostic = now_mono
-            print(f"{name}: waiting for {agent} readiness ({missing_evidence})...", file=sys.stderr)
-
-        time.sleep(min(poll_interval, max(0.001, deadline - time.monotonic())))
-
-    # Expiry handling
-    log_cmd = f"scripts/nogg session log {name}"
-    watch_cmd = f"scripts/nogg session watch {name}"
-    doctor_cmd = "scripts/nogg doctor"
-    if agent == "antigravity":
-        raise RuntimeError(
-            f"{name}: Antigravity startup readiness timed out after {timeout:.1f}s waiting for Stop event or live status "
-            f"({missing_evidence}); see session log (`{log_cmd}`), session watch (`{watch_cmd}`), and hook diagnostics (`{doctor_cmd}`)"
-        )
-    elif agent == "claude":
-        raise RuntimeError(
-            f"{name}: Claude startup readiness timed out after {timeout:.1f}s "
-            f"({missing_evidence}); see session log (`{log_cmd}`) and session watch (`{watch_cmd}`)"
-        )
-    elif agent == "codex":
-        raise RuntimeError(
-            f"{name}: Codex startup readiness timed out after {timeout:.1f}s "
-            f"({missing_evidence}); see session log (`{log_cmd}`) and session watch (`{watch_cmd}`)"
-        )
-    else:
-        raise RuntimeError(
-            f"{name}: {agent} startup readiness timed out after {timeout:.1f}s ({missing_evidence}); "
-            f"see session log (`{log_cmd}`) and session watch (`{watch_cmd}`)"
-        )
-
-def await_antigravity_first_turn(name, timeout=None):
-    return await_session_input_ready(name, timeout=timeout)
+            raise RuntimeError(f"{name}: Antigravity first turn has not finished; retry after its Stop hook")
+        time.sleep(0.2)
 
 def session_emit(event):
     """Append one structured JSON line to the calling session's own
