@@ -83,6 +83,14 @@ same tick logic the timer-driven sync uses, so the two paths never disagree
 about what "ticked" means, and ticking the same line twice (once
 synchronously, once later by the timer) SHALL be a no-op the second time.
 
+The tick SHALL land in the checkout from which the command is invoked. This
+also applies when the command runs inside the OpenSpec execution sandbox and
+is relayed through the sandbox's host-side broker. The broker SHALL accept
+the requesting checkout only when, at the time of the request, it is a
+registered worktree of the same repository. Otherwise it SHALL refuse and
+tick nothing. A refused or malformed request SHALL never fall back to another
+checkout, such as the session's launch checkout.
+
 #### Scenario: A closed Bead's task line ticks without waiting for the timer
 
 - **WHEN** a Bead mapped to a live change's task is closed
@@ -100,3 +108,14 @@ synchronously, once later by the timer) SHALL be a no-op the second time.
 - **WHEN** a Bead's task line was already ticked by the immediate-tick command
 - **AND** the timer-driven sync later processes the same closed Bead
 - **THEN** the sync makes no further change to that line
+
+#### Scenario: A sandboxed Lead ticks its implementation worktree
+
+- **WHEN** a Lead launched from the shared checkout runs the immediate-tick command inside its sandbox from an implementation worktree created after launch
+- **THEN** the task line is ticked in that implementation worktree
+- **AND** the shared checkout's `tasks.md` is unchanged
+
+#### Scenario: An unregistered checkout is refused
+
+- **WHEN** the broker receives a tick request naming a path that is not a registered worktree of the repository
+- **THEN** it refuses with a message naming the problem and ticks nothing in any checkout
