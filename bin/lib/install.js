@@ -5,6 +5,7 @@ const path = require('path');
 
 const manifest = require('./manifest');
 const fsops = require('./fsops');
+const manifestStore = require('./manifest-store');
 
 const PKG_ROOT = path.resolve(__dirname, '..', '..');
 
@@ -43,6 +44,7 @@ function makeContext(opts) {
     slug: slugify(repoName),
     version: packageVersion(),
     dryRun: !!opts.dryRun,
+    force: !!opts.force,
     noBeads: !!opts.noBeads,
     noHooks: !!opts.noHooks,
     noSystemd: !!opts.noSystemd,
@@ -58,7 +60,26 @@ function src(ctx, rel) {
 
 // --- phases -----------------------------------------------------------------
 
+function prepareInstalledManifest(ctx) {
+  if (ctx.nextInstalledManifest) return;
+  ctx.installedManifest = manifestStore.readManifest(ctx.targetRoot);
+  ctx.nextInstalledManifest = {
+    manifest_version: manifestStore.CURRENT_MANIFEST_VERSION,
+    nogging_version: ctx.version,
+    // Preserved files keep their previous baseline, never the local digest or
+    // the unaccepted .nogging-new digest. Unknown baselines remain absent.
+    files: { ...(ctx.installedManifest ? ctx.installedManifest.files : {}) },
+  };
+}
+
+function recordInstalledManifest(ctx) {
+  if (!ctx.nextInstalledManifest) return;
+  const content = manifestStore.serializeManifest(ctx.nextInstalledManifest);
+  fsops.writeFile(manifestStore.MANIFEST_REL_PATH, content, ctx);
+}
+
 function copyVerbatim(ctx) {
+  prepareInstalledManifest(ctx);
   for (const rel of manifest.verbatim) {
     const mode = manifest.executable.includes(rel) ? 0o755 : undefined;
     fsops.copyFile(src(ctx, rel), rel, ctx, { mode });
@@ -69,6 +90,7 @@ function copyVerbatim(ctx) {
 }
 
 function copyDocs(ctx) {
+  prepareInstalledManifest(ctx);
   for (const doc of manifest.docs) {
     fsops.copyFile(src(ctx, doc.from), doc.to, ctx);
   }
@@ -127,8 +149,9 @@ function migrateLegacyStateRoot(ctx) {
   ctx.log.add('migrate', '.nogging', 'from legacy .specforge/ (v1.x state root)');
 }
 
-// Bump the recorded Nogging version in an existing .nogging/config.json.
+// Record accepted managed-file baselines and bump the configured package version.
 function recordVersion(ctx) {
+  recordInstalledManifest(ctx);
   const rel = '.nogging/config.json';
   const cur = fsops.readTarget(rel, ctx);
   if (cur == null) return;

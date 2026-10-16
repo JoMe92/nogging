@@ -357,10 +357,11 @@ json.dump(c, open(p, "w"), indent=2)
 # Tamper with installed helper
 echo '# corrupted' > "$consumer/scripts/nogg_usage.py"
 
-# Update repairs helper and preserves user config
+# Update preserves the local helper, stages upstream, and preserves user config
 cli update
-cmp "$package/scripts/nogg_usage.py" "$consumer/scripts/nogg_usage.py" \
-  || fail "cli update failed to repair scripts/nogg_usage.py"
+grep -qx '# corrupted' "$consumer/scripts/nogg_usage.py" || fail "cli update overwrote the local helper"
+cmp "$package/scripts/nogg_usage.py" "$consumer/scripts/nogg_usage.py.nogging-new" \
+  || fail "cli update failed to stage the upstream helper"
 python3 -c '
 import json, sys
 c = json.load(open(sys.argv[1]))

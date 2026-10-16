@@ -296,6 +296,17 @@ mkdir -p "$upd"; git -C "$upd" init -q
 ( cd "$upd" && node "$cli" init --no-beads --no-systemd >/dev/null )
 printf 'stale agent\n' > "$upd/.claude/agents/architect.md"
 printf 'stale command\n' > "$upd/.claude/commands/plan.md"
+# Record the simulated old release baseline so update exercises clean refreshes.
+node - "$upd" "$root" <<'NODE'
+const path = require('path');
+const target = process.argv[2];
+const store = require(path.join(process.argv[3], 'bin/lib/manifest-store'));
+const installed = store.readManifest(target);
+for (const rel of ['.claude/agents/architect.md', '.claude/commands/plan.md']) {
+  installed.files[rel] = store.hashFile(path.join(target, rel));
+}
+store.writeManifest(target, installed);
+NODE
 mkdir -p "$upd/openspec/changes/my-change"
 printf '# Tasks\n\n- [ ] TASK-X-001 do a thing\n' > "$upd/openspec/changes/my-change/tasks.md"
 printf '# My project\n\nCustom purpose.\n' > "$upd/openspec/project.md"
