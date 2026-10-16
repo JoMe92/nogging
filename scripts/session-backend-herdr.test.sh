@@ -21,6 +21,9 @@ import time
 from unittest.mock import patch
 
 source = Path(sys.argv[1])
+for key in list(os.environ):
+    if key.startswith(('NOGG_', 'HERDR_')) or key in {'TMUX', 'NOGGING_ROOT'}:
+        os.environ.pop(key)
 sys.path.insert(0, str(source / 'scripts/lib'))
 from session_backend import BackendError, LogCapture, resolve
 from session_backend_herdr import HerdrBackend, process_start
@@ -28,7 +31,7 @@ from session_backend_herdr import HerdrBackend, process_start
 def run(*args, check=False, **kw):
     return subprocess.run(args, text=True, capture_output=True, **kw)
 
-with tempfile.TemporaryDirectory(prefix='hdr-') as temp:
+with tempfile.TemporaryDirectory(prefix='nogg.', dir='/tmp') as temp:
     root = Path(temp)
     stub = root / 'stub'
     stub.mkdir()
@@ -72,7 +75,7 @@ with tempfile.TemporaryDirectory(prefix='hdr-') as temp:
         value = {'name': name, 'backend': 'herdr', 'backend_ref': ref,
                  'state': 'running', 'role': 'lead', 'working_dir': str(root),
                  'log_path': str(root / (name + '.log'))}
-        for key in ('session_pid', 'session_pid_start'):
+        for key in ('session_pid', 'session_pid_start', 'session_pid_ns'):
             if key in ref:
                 value[key] = ref[key]
         (sessions / (name + '.json')).write_text(json.dumps(value))
@@ -191,7 +194,7 @@ with tempfile.TemporaryDirectory(prefix='hdr-') as temp:
         wrong = dict(first, session_pid_start='wrong-birth')
         assert backend.live([wrong]) == (set(), set())
         foreign_namespace = dict(first, session_pid_ns='pid:[unobservable]')
-        assert backend.live([foreign_namespace]) == (set(), {first['name']})
+        assert backend.live([foreign_namespace]) == ({first['name']}, set())
         # Reservation probes read the updated record and use only CLI queries.
         probe = backend.liveness_probe(first['backend_ref'])
         assert run(*probe['argv']).returncode == 0
@@ -205,6 +208,10 @@ with tempfile.TemporaryDirectory(prefix='hdr-') as temp:
         rejects(lambda: backend.prepare('sf-test-unsafe', str(root)), '0600')
         assert not (sessions / 'sf-test-unsafe.json').exists()
         sock.chmod(0o600)
+        # Restoring the deliberately changed mode also changes ctime. Restore
+        # the fixture's receipt to the new socket identity before further work.
+        receipt['socket'] = backend.verify_socket(str(sock))
+        (backend.state / 'server.json').write_text(json.dumps(receipt))
 
         # A definite socket error is surfaced by code, without logging params.
         backend.prepare('sf-test-error', str(root))
@@ -298,6 +305,8 @@ with tempfile.TemporaryDirectory(prefix='hdr-') as temp:
         rejects(lambda: module.session_launch('lead', 'SPEC-unsafe', str(root), False, None,
                     agent='claude', full_access=True, backend='herdr'), '0600')
         sock.chmod(0o600)
+        receipt['socket'] = backend.verify_socket(str(sock))
+        (backend.state / 'server.json').write_text(json.dumps(receipt))
         assert len(list(sessions.glob('sf-lead-*.json'))) == count_before
 
         fault('fault_workspace_not_found')

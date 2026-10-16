@@ -25,6 +25,20 @@ def process_start(pid):
         return None
 
 
+def pid_namespace():
+    try:
+        return os.readlink("/proc/self/ns/pid")
+    except OSError:
+        return None
+
+
+def same_namespace(namespace):
+    # Old records can only be interpreted locally by an unfenced host caller.
+    if namespace is None:
+        return os.environ.get("NOGG_OPENSPEC_FENCED") != "1"
+    return bool(namespace and namespace == pid_namespace())
+
+
 class HerdrBackend:
     name = "herdr"
     # All three gated runtimes passed recorder, status and ANSI capture on 0.9.5.
@@ -146,8 +160,42 @@ class HerdrBackend:
             raise BackendError("herdr socket must be owned by the invoking user")
         if stat.S_IMODE(info.st_mode) != 0o600:
             raise BackendError("herdr socket mode must be 0600")
+        return {"dev": info.st_dev, "ino": info.st_ino, "ctime_ns": info.st_ctime_ns}
+
+    _HOST_START = ("start it from an unsandboxed shell with "
+                   "scripts/nogg session herdr-server start, or launch from that shell")
+
+    def _owned_server(self):
+        """Verify the receipt without interpreting a foreign namespace's PID."""
+        try:
+            owned = json.loads((self.state / "server.json").read_text())
+            if (type(owned["pid"]) is not int or owned["pid"] <= 0 or not owned["start"]
+                    or (self.state / "config.toml").read_bytes() != self._CONFIG.encode()):
+                raise ValueError("receipt or config mismatch")
+            identity = self.verify_socket(self._reported_socket())
+            namespace = owned.get("pid_ns")
+            legacy = namespace is None or "socket" not in owned
+            if legacy:
+                if (os.environ.get("NOGG_OPENSPEC_FENCED") == "1"
+                        or not same_namespace(namespace)):
+                    raise ValueError("legacy receipt is unverifiable when fenced; " + self._HOST_START)
+            elif (not isinstance(namespace, str) or not namespace
+                  or owned["socket"] != identity):
+                raise ValueError("socket identity or PID namespace mismatch")
+            if (legacy or same_namespace(namespace)) and process_start(owned["pid"]) != owned["start"]:
+                raise ValueError("server process identity mismatch")
+            return owned
+        except (OSError, ValueError, KeyError, TypeError, BackendError) as exc:
+            raise BackendError(f"herdr dedicated server is not owned by Nogging: {exc}; "
+                               "choose an unused session_herdr_session") from exc
 
     def _ensure_server(self):
+        # A fenced caller must only inspect existing host state. Even mkdir or
+        # taking a new launch lock would be an unwanted side effect on refusal.
+        if os.environ.get("NOGG_OPENSPEC_FENCED") == "1":
+            if not self._running():
+                raise BackendError("herdr server is down; " + self._HOST_START)
+            return self._owned_server()
         self.state.mkdir(parents=True, exist_ok=True, mode=0o700)
         config_path = self.state / "config.toml"
         receipt = self.state / "server.json"
@@ -155,15 +203,7 @@ class HerdrBackend:
             fcntl.flock(lock, fcntl.LOCK_EX)
             if self._running():
                 # A pre-existing server must be ours, with our immutable config.
-                try:
-                    owned = json.loads(receipt.read_text())
-                    if (type(owned["pid"]) is not int or owned["pid"] <= 0
-                            or not owned["start"] or process_start(owned["pid"]) != owned["start"]
-                            or config_path.read_text() != self._CONFIG):
-                        raise ValueError()
-                except (OSError, ValueError, KeyError, TypeError) as exc:
-                    raise BackendError("herdr dedicated server is not owned by Nogging; "
-                                       "choose an unused session_herdr_session") from exc
+                return self._owned_server()
             else:
                 # Discover even a stopped session's reported path before spawn.
                 sessions = self._json("session", "list", "--json").get("sessions", [])
@@ -181,17 +221,23 @@ class HerdrBackend:
                                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 except OSError as exc:
                     raise BackendError("herdr backend could not start dedicated server") from exc
-                receipt.write_text(json.dumps({"pid": server.pid, "start": process_start(server.pid)}))
-                receipt.chmod(0o600)
                 deadline = time.monotonic() + self.timeout
                 while not self._running():
                     if server.poll() is not None or time.monotonic() >= deadline:
                         raise BackendError("herdr backend headless server did not become ready")
                     time.sleep(0.05)
+                identity = self.verify_socket(self._reported_socket())
+                owned = {"pid": server.pid, "start": process_start(server.pid),
+                         "pid_ns": pid_namespace(), "socket": identity}
+                if not owned["start"] or not owned["pid_ns"]:
+                    raise BackendError("herdr server process identity is unavailable")
+                receipt.write_text(json.dumps(owned))
+                receipt.chmod(0o600)
+                return owned
 
     def prepare(self, name, cwd):
         """Server/workspace/socket preconditions, before the caller writes a record."""
-        self._ensure_server()
+        owned = self._ensure_server()
         path = self._reported_socket()
         self.verify_socket(path)
         workspaces = self._json("workspace", "list")["workspaces"]
@@ -202,7 +248,8 @@ class HerdrBackend:
             "workspace", "create", "--label", self.slug, "--cwd", str(self.root), "--no-focus")["workspace"])
         self.verify_socket(path)
         self._prepared = {"name": name, "label": name, "herdr_session": self.session,
-                          "workspace": workspace["workspace_id"], "socket_path": path}
+                          "workspace": workspace["workspace_id"], "socket_path": path,
+                          "session_pid_ns": owned.get("pid_ns") or pid_namespace()}
         return dict(self._prepared)
 
     def _panes(self, ref=None):
@@ -217,12 +264,14 @@ class HerdrBackend:
             ref = {"label": ref}
         panes = self._panes(ref) if panes is None else panes
         label = ref.get("label", ref.get("name"))
-        matches = [p for p in panes if p.get("label") == label
-                   and (not ref.get("workspace") or p.get("workspace_id") == ref["workspace"])]
-        # Never adopt an unrelated/reused ID, nor an ambiguous label.
-        identified = [p for p in matches if p.get("pane_id") == ref.get("pane_id")]
+        scoped = [p for p in panes if not ref.get("workspace")
+                  or p.get("workspace_id") == ref["workspace"]]
+        # Resolve the ID first; terminal/PID identity below prevents adoption
+        # of a reused ID. Only a unique label can recover a changed pane ID.
+        identified = [p for p in scoped if p.get("pane_id") == ref.get("pane_id")]
         if len(identified) == 1:
             return identified[0]
+        matches = [p for p in scoped if p.get("label") == label]
         if len(matches) > 1:
             raise BackendError("herdr pane label is ambiguous")
         return matches[0] if matches else None
@@ -273,11 +322,15 @@ class HerdrBackend:
             if not pane:
                 raise BackendError("herdr layout.apply reply lost or malformed; no unique pane found")
             ref["pane_id"] = pane["pane_id"]
-        pid = self.pid(ref)
-        birth = process_start(pid) if pid else None
-        if not birth:
+        pane = self._pane(ref)
+        if not pane or not isinstance(pane.get("terminal_id"), str) or not pane["terminal_id"]:
+            raise BackendError("herdr pane terminal identity is unavailable")
+        pid = self._process_pid(ref, pane)
+        local = same_namespace(ref["session_pid_ns"])
+        birth = process_start(pid) if local else None
+        if local and not birth:
             raise BackendError("herdr pane root process identity is unavailable")
-        ref.update(session_pid=pid, session_pid_start=birth)
+        ref.update(terminal_id=pane["terminal_id"], session_pid=pid, session_pid_start=birth)
         return ref
 
     def pid(self, ref):
@@ -297,14 +350,17 @@ class HerdrBackend:
         pid = self._process_pid(ref, pane)
         expected = ref.get("session_pid")
         birth = ref.get("session_pid_start")
-        if not expected or not birth:
+        if not expected:
             return None
         if pid != expected:
             return False
-        try:
-            if ref.get("session_pid_ns") and ref["session_pid_ns"] != os.readlink('/proc/self/ns/pid'):
-                return None
-        except OSError:
+        terminal = ref.get("terminal_id")
+        if terminal and pane.get("terminal_id") != terminal:
+            return False
+        local = same_namespace(ref.get("session_pid_ns"))
+        if terminal and (not local or not birth):
+            return True
+        if not local or not birth:
             return None
         actual = process_start(pid)
         if actual is None:
