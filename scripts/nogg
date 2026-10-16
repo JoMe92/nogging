@@ -1205,6 +1205,148 @@ def lock(name, ttl, force=False):
             fcntl.flock(mutex, fcntl.LOCK_EX)
             return acquire()
     return acquire()
+def process_cmdline(pid):
+    """The argument list of `pid` read from /proc/<pid>/cmdline, or None if unreadable."""
+    try:
+        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+        return [part.decode("utf-8", errors="replace") for part in raw.split(b"\0") if part]
+    except OSError:
+        return None
+
+def is_orchestrator_run_cmdline(parts):
+    """True when `parts` represents a command line invoking `nogg ... orchestrator run`."""
+    if not parts or not isinstance(parts, list):
+        return False
+    nogg_indices = [i for i, arg in enumerate(parts)
+                    if Path(arg).name == "nogg" or arg == "nogg" or arg.endswith("/nogg")]
+    if not nogg_indices:
+        return False
+    for idx in nogg_indices:
+        sub = parts[idx + 1:]
+        try:
+            orc_idx = sub.index("orchestrator")
+            if "run" in sub[orc_idx + 1:]:
+                return True
+        except ValueError:
+            continue
+    return False
+
+class OrchestratorLockClassification:
+    def __init__(self, state, stale, display_state, liveness, info=None, age=None, ttl=None):
+        self.state = state
+        self.stale = stale
+        self.display_state = display_state
+        self.liveness = liveness
+        self.info = info or {}
+        self.age = age
+        self.ttl = ttl
+
+def classify_orchestrator_lock(info=None, path=None, ttl=None, now_dt=None):
+    """Shared classifier for orchestrator.lock state (design.md Decision 3).
+    Used by orchestrator run, orchestrator status, recover, and doctor."""
+    if path is None:
+        path = data_dir(LOCKS) / "orchestrator.lock"
+    if info is None:
+        if not path.exists():
+            return OrchestratorLockClassification(
+                state="free", stale=False, display_state="free",
+                liveness="no lock file", info={}, age=0, ttl=ttl or orchestrator_lock_ttl())
+        try:
+            info = json.loads(path.read_text())
+        except (ValueError, OSError):
+            return OrchestratorLockClassification(
+                state="unreadable", stale=True, display_state="present but unreadable",
+                liveness="unreadable lock", info={}, age=None, ttl=ttl or orchestrator_lock_ttl())
+
+    if not isinstance(info, dict):
+        return OrchestratorLockClassification(
+            state="unreadable", stale=True, display_state="present but unreadable",
+            liveness="malformed lock", info={}, age=None, ttl=ttl or orchestrator_lock_ttl())
+
+    if ttl is None:
+        ttl = orchestrator_lock_ttl()
+
+    if now_dt is None:
+        now_dt = dt.datetime.now(dt.timezone.utc)
+
+    age = None
+    if "created_at" in info:
+        try:
+            then = dt.datetime.fromisoformat(str(info["created_at"]).replace("Z", "+00:00"))
+            age = int((now_dt - then).total_seconds())
+        except (ValueError, TypeError, KeyError):
+            age = None
+
+    pid = info.get("pid")
+    host = info.get("host")
+    pid_start = info.get("pid_start")
+    pid_ns = info.get("pid_ns")
+    local_host = socket.gethostname()
+
+    # Rule: Another host
+    if host != local_host:
+        stale = (age is None or age >= ttl)
+        state = "stale" if stale else "held_unverifiable"
+        display_state = "STALE" if stale else "held (unverifiable)"
+        liveness = f"pid {pid} on {host} (not this host)"
+        return OrchestratorLockClassification(
+            state=state, stale=stale, display_state=display_state,
+            liveness=liveness, info=info, age=age, ttl=ttl)
+
+    # Same host checks
+    fenced = (os.environ.get("NOGG_OPENSPEC_FENCED") == "1")
+    caller_ns = pid_namespace("self")
+    unobservable_ns = (caller_ns is None)
+    foreign_ns = (pid_ns is not None and caller_ns is not None and caller_ns != pid_ns)
+
+    # Rule: Same host, but a different or unobservable PID namespace, or fenced caller
+    if fenced or unobservable_ns or foreign_ns:
+        if fenced:
+            live_desc = f"pid {pid} unverifiable (fenced caller)"
+        elif foreign_ns:
+            live_desc = f"pid {pid} unverifiable (foreign PID namespace)"
+        else:
+            live_desc = f"pid {pid} unverifiable (unobservable PID namespace)"
+        return OrchestratorLockClassification(
+            state="held_unverifiable", stale=False, display_state="held (unverifiable)",
+            liveness=live_desc, info=info, age=age, ttl=ttl)
+
+    # Same host, observable, same namespace
+    if not isinstance(pid, int) or pid <= 0:
+        return OrchestratorLockClassification(
+            state="dead", stale=True, display_state="STALE",
+            liveness=f"invalid pid {pid}", info=info, age=age, ttl=ttl)
+
+    alive = pid_alive(pid)
+
+    if pid_start is not None:
+        # Modern lock with recorded start time
+        if alive and process_start(pid) == pid_start:
+            return OrchestratorLockClassification(
+                state="held_verified", stale=False, display_state="held (verified)",
+                liveness=f"pid {pid} alive", info=info, age=age, ttl=ttl)
+        else:
+            desc = f"pid {pid} alive (start time mismatch)" if alive else f"pid {pid} dead"
+            return OrchestratorLockClassification(
+                state="dead", stale=True, display_state="STALE",
+                liveness=desc, info=info, age=age, ttl=ttl)
+    else:
+        # Legacy lock (no pid_start)
+        if not alive:
+            return OrchestratorLockClassification(
+                state="dead", stale=True, display_state="STALE",
+                liveness=f"pid {pid} dead", info=info, age=age, ttl=ttl)
+        # Process is alive: check its cmdline
+        cmdline = process_cmdline(pid)
+        if is_orchestrator_run_cmdline(cmdline):
+            return OrchestratorLockClassification(
+                state="held_verified", stale=False, display_state="held (verified)",
+                liveness=f"pid {pid} alive", info=info, age=age, ttl=ttl)
+        else:
+            return OrchestratorLockClassification(
+                state="dead_reused", stale=True, display_state="STALE",
+                liveness=f"pid {pid} dead (PID reused: another command)", info=info, age=age, ttl=ttl)
+
 def orchestrator_lock_ttl():
     """Staleness horizon for `.nogging/locks/orchestrator.lock`. Long by
     default — the orchestrator is always-on and its supervisor rewrites the
@@ -1212,33 +1354,34 @@ def orchestrator_lock_ttl():
     the supervisor has been gone for a full day."""
     return int(CFG.get("orchestrator_lock_ttl_seconds", 86400))
 def acquire_orchestrator_lock(force=False):
-    """Acquire the single-instance orchestrator lock. Same JSON shape as the
-    planning lock (`pid` / `host` / `created_at`) and the same TTL staleness
-    rule, plus a same-host pid-liveness check: a fresh lock whose holder process
-    is gone is reclaimable without `--force`. Raises `LockBusyError`, naming the
-    holder, when a fresh lock is held by a live process (or by any process on
-    another host, which cannot be probed). `--force` reclaims unconditionally,
-    consistent with `plan-end --force`."""
+    """Acquire the single-instance orchestrator lock. Writes `{pid, host,
+    created_at, pid_start, pid_ns}` (design.md Decision 3). Raises `LockBusyError`,
+    naming the holder, when held by a live verified holder, unverifiable holder,
+    or fresh remote holder. Stale locks are reclaimable without `--force`.
+    `--force` reclaims unconditionally."""
     path = data_dir(LOCKS) / "orchestrator.lock"
     if path.exists() and not force:
         try:
             info = json.loads(path.read_text())
         except (ValueError, OSError):
             info = {}
-        fresh = fresh_lock("orchestrator", orchestrator_lock_ttl()) is not None
-        same_host = info.get("host") == socket.gethostname()
-        alive = (same_host and isinstance(info.get("pid"), int)
-                 and pid_alive(info["pid"]))
-        if fresh and (alive or not same_host):
+        cl = classify_orchestrator_lock(info, path=path)
+        if not cl.stale and cl.state != "free":
             raise LockBusyError(
                 f"orchestrator lock held by {info.get('host', '?')} pid "
                 f"{info.get('pid', '?')}; use --force only after verifying it is stale")
-    path.write_text(json.dumps(
-        {"pid": os.getpid(), "host": socket.gethostname(), "created_at": now()},
-        indent=2) + "\n")
+    record = {
+        "pid": os.getpid(),
+        "host": socket.gethostname(),
+        "created_at": now(),
+        "pid_start": process_start(os.getpid()),
+        "pid_ns": pid_namespace("self"),
+    }
+    atomic_json_state(path, record)
     return path
 def release_orchestrator_lock():
     (LOCKS / "orchestrator.lock").unlink(missing_ok=True)
+
 LIMBO_TOKEN_RE = re.compile(r"\[([A-Z][A-Z0-9]*-[0-9a-z]+)\]")
 def branch_commit_tokens():
     """Bead ID token `[<id>]` -> newest non-merge commit SHA on HEAD's history
@@ -5434,9 +5577,17 @@ def orchestrator_status():
     print(f"  enabled: {enabled}")
     print(f"  active:  {active}")
     print(f"  linger:  {'on' if _linger_on() else 'off'}")
-    lk = fresh_lock("orchestrator", orchestrator_lock_ttl())
-    print(f"  lock:    held by {lk.get('host')} pid {lk.get('pid')} "
-          f"(created {lk.get('created_at')})" if lk else "  lock:    free")
+    path = (LOCKS / "orchestrator.lock")
+    if not path.exists():
+        print("  lock:    free")
+    else:
+        cl = classify_orchestrator_lock(path=path)
+        info = cl.info
+        if cl.stale:
+            print(f"  lock:    stale (held by {info.get('host', '?')} pid {info.get('pid', '?')})")
+        else:
+            print(f"  lock:    held by {info.get('host', '?')} pid {info.get('pid', '?')} "
+                  f"(created {info.get('created_at', '?')})")
     live = orchestrator_live_session()
     if not live:
         print("  session: no live orchestrator session"); return
@@ -5561,6 +5712,13 @@ def recover_scan():
         except (ValueError, OSError, KeyError):
             lock_lines.append(f"{name}.lock: present but unreadable")
             attention.append(f"{name}.lock unreadable")
+            continue
+        if name == "orchestrator":
+            cl = classify_orchestrator_lock(info, path=path, ttl=ttl, now_dt=now_dt)
+            age_str = f"{cl.age}s" if cl.age is not None else "unknown"
+            lock_lines.append(f"orchestrator.lock: {cl.display_state}, age {age_str} / ttl {ttl}s, {cl.liveness}")
+            if cl.stale:
+                attention.append("stale orchestrator.lock")
             continue
         age = int((now_dt - then).total_seconds())
         fresh = age < ttl
