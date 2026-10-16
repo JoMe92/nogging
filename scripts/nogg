@@ -5867,10 +5867,7 @@ def orchestrator_status():
         print("  last log lines:")
         for ln in lp.read_text().splitlines()[-15:]:
             print(f"    {ln}")
-def orchestrator_stop():
-    unit = orchestrator_unit()
-    _systemctl("stop", unit)
-    _systemctl("disable", unit)
+def terminate_orchestrator_session(exit_reason="stopped by operator"):
     name = orchestrator_session_name()
     rec_path = orchestrator_sessions_dir() / f"{name}.json"
     rec = json.loads(rec_path.read_text()) if rec_path.exists() else None
@@ -5886,8 +5883,13 @@ def orchestrator_stop():
     if rec_path.exists():
         rec = json.loads(rec_path.read_text())
         if rec.get("state") in SESSION_ACTIVE_STATES:
-            transition(rec_path, rec, "stopped", exit_reason="stopped by operator")
+            transition(rec_path, rec, "stopped", exit_reason=exit_reason)
     release_orchestrator_lock()
+def orchestrator_stop():
+    unit = orchestrator_unit()
+    _systemctl("stop", unit)
+    _systemctl("disable", unit)
+    terminate_orchestrator_session("stopped by operator")
     print(f"orchestrator: stopped and disabled ({unit})")
 def orchestrator_restart():
     unit = orchestrator_unit()
