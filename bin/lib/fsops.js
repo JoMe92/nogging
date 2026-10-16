@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const manifestStore = require('./manifest-store');
 
 // A running log of what an install run did (or would do, under --dry-run).
 class ChangeLog {
@@ -34,23 +35,40 @@ function ensureDir(absDir, ctx) {
   if (!ctx.dryRun) fs.mkdirSync(absDir, { recursive: true });
 }
 
-// Copy a single file, recording create/overwrite/unchanged.
+// Copy managed content using its last accepted upstream digest as the baseline.
 function copyFile(srcAbs, destRel, ctx, { mode } = {}) {
   const destAbs = path.join(ctx.targetRoot, destRel);
   const next = fs.readFileSync(srcAbs);
-  let action = 'create';
-  if (fs.existsSync(destAbs)) {
-    const cur = fs.readFileSync(destAbs);
-    action = cur.equals(next) ? 'unchanged' : 'overwrite';
-  }
+  const nextDigest = manifestStore.sha256(next);
+  const curDigest = fs.existsSync(destAbs)
+    ? manifestStore.sha256(fs.readFileSync(destAbs)) : null;
+  const recordedDigest = manifestStore.getRecordedDigest(ctx.installedManifest, destRel);
+  const state = manifestStore.evaluateFileState({ curDigest, nextDigest, recordedDigest });
+  const action = state === 'preserve' && ctx.force ? 'force-overwrite' : state;
+  const outputAbs = action === 'preserve' ? `${destAbs}.nogging-new` : destAbs;
   if (action !== 'unchanged' && !ctx.dryRun) {
-    ensureDir(path.dirname(destAbs), ctx);
-    fs.writeFileSync(destAbs, next);
+    ensureDir(path.dirname(outputAbs), ctx);
+    if (action === 'force-overwrite') fs.copyFileSync(destAbs, `${destAbs}.orig`);
+    fs.writeFileSync(outputAbs, next);
   }
-  if (mode != null && !ctx.dryRun && fs.existsSync(destAbs)) {
-    fs.chmodSync(destAbs, mode);
+  if (mode != null && action !== 'unchanged' && !ctx.dryRun) {
+    fs.chmodSync(outputAbs, mode);
   }
-  ctx.log.add(action, destRel);
+  if (ctx.nextInstalledManifest && action !== 'preserve') {
+    ctx.nextInstalledManifest.files[destRel] = nextDigest;
+  }
+  if (action === 'preserve') {
+    ctx.warnings.push(
+      `locally modified file preserved: ${destRel} (upstream ${ctx.dryRun ? 'would be written' : 'written'} to ${destRel}.nogging-new)`,
+    );
+  } else if (action === 'force-overwrite') {
+    ctx.warnings.push(
+      `locally modified file overwritten (--force): ${destRel} (backup ${ctx.dryRun ? 'would be saved' : 'saved'} to ${destRel}.orig)`,
+    );
+  }
+  const note = action === 'preserve' ? `upstream: ${destRel}.nogging-new`
+    : action === 'force-overwrite' ? `backup: ${destRel}.orig` : undefined;
+  ctx.log.add(action, destRel, note);
   return action;
 }
 
