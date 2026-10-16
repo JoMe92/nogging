@@ -1,6 +1,6 @@
 ## 1. Shared tmux server (branch prefix fix/, sequential)
 
-- [ ] TASK-HSS-001 [standard] Per design Decision 2: fenced callers pass tmux -N on every command; a fenced session launch whose tmux server is down is refused in the backend prepare step before any record, settings or log, pointing to an unsandboxed launch; unfenced argv unchanged. Check: new scripts/session-tmux-fenced-server.test.sh (tmux argv stub, refusal without side effects, race ends failed); scripts/test.
+- [x] TASK-HSS-001 [standard] Per design Decision 2: fenced callers pass tmux -N on every command; a fenced session launch whose tmux server is down is refused in the backend prepare step before any record, settings or log, pointing to an unsandboxed launch; unfenced argv unchanged. Check: new scripts/session-tmux-fenced-server.test.sh (tmux argv stub, refusal without side effects, race ends failed); scripts/test.
 
 - [ ] TASK-HSS-002 [standard] Per design Decision 3: classify the dedicated tmux server via SO_PEERCRED and ns/pid+ns/mnt links as host, sandboxed, outside, down or unknown; doctor WARN, session list NOTE, orchestrator status line, WARN on orchestrator run and unfenced launch; never kill or signal the server. Check: new scripts/session-tmux-server-namespace.test.sh (Python listener, short TMUX_TMPDIR, injected namespaces); scripts/test.
 
