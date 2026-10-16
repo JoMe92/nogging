@@ -8,9 +8,9 @@
 
 ## 3. Regression tests and documentation (branch prefixes test/ and docs/)
 
-- [ ] TASK-ORR-003 [standard] Per design Decision 4: add regression tests in scripts/orchestrator.test.sh verifying orchestrator restart terminates live tmux session and calls stop/start, while --supervisor-only preserves live session and calls restart; stubbed systemctl and tmux, no Dolt or bd. Check: scripts/orchestrator.test.sh; scripts/test.
+- [x] TASK-ORR-003 [standard] Per design Decision 4: add regression tests in scripts/orchestrator.test.sh verifying orchestrator restart terminates live tmux session and calls stop/start, while --supervisor-only preserves live session and calls restart; stubbed systemctl and tmux, no Dolt or bd. Check: scripts/orchestrator.test.sh; scripts/test.
 
-- [ ] TASK-ORR-004 [routine] Per design Decision 5: document in docs/operating-model.md and docs/running-work-in-sessions.md that orchestrator restart terminates the live session and relaunches Claude with current prompt and settings while resuming transcript, and document --supervisor-only. Check: scripts/test.
+- [x] TASK-ORR-004 [routine] Per design Decision 5: document in docs/operating-model.md and docs/running-work-in-sessions.md that orchestrator restart terminates the live session and relaunches Claude with current prompt and settings while resuming transcript, and document --supervisor-only. Check: scripts/test.
 
 ## Dependency contract
 
