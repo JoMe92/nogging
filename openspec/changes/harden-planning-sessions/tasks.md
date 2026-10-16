@@ -1,6 +1,6 @@
 ## 1. Independent code fixes (one prefix each, start at once)
 
-- [ ] TASK-HPS-001 [standard] Per design Decision 3 (#176): worktree cleanup refuses before any removal when the worktree, a path under it or its Git directory is in /proc/self/mountinfo, when the caller's cwd is inside it, or when another active session record works there; an unreadable mount table refuses. Check: new scripts/worktree-cleanup-in-use.test.sh (injected mount table, tree/branch/record unchanged); scripts/test. Branch fix/.
+- [x] TASK-HPS-001 [standard] Per design Decision 3 (#176): worktree cleanup refuses before any removal when the worktree, a path under it or its Git directory is in /proc/self/mountinfo, when the caller's cwd is inside it, or when another active session record works there; an unreadable mount table refuses. Check: new scripts/worktree-cleanup-in-use.test.sh (injected mount table, tree/branch/record unchanged); scripts/test. Branch fix/.
 
 - [ ] TASK-HPS-002 [standard] Per design Decision 4 (#176): session stop of the owning planner waits within its grace for the owner to exit, then releases the lock without --force; a kept lock and recover name 'session stop <name>'. Check: new scripts/planning-close-order.test.sh (plan-end from the planning worktree, live and reaped child owner, in-process tmux stubs); scripts/test. Branch refactor/.
 
