@@ -54,7 +54,7 @@ def server_namespace(config):
 class TmuxBackend:
     name = "tmux"
     capabilities = Capabilities(capture_attributes=True, read_only_attach=True)
-    _KEYS = {"enter": "Enter", "escape": "Escape", "ctrl+c": "C-c", "ctrl+u": "C-u"}
+    _KEYS = {"enter": "Enter", "escape": "Escape", "ctrl+c": "C-c", "ctrl+u": "C-u", "backspace": "BSpace"}
 
     def __init__(self, config, run, *, invoke=None):
         self.binary = config.get("session_tmux_command", "tmux")

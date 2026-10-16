@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-KEYS = frozenset({"enter", "escape", "ctrl+c", "ctrl+u"})
+KEYS = frozenset({"enter", "escape", "ctrl+c", "ctrl+u", "backspace"})
 
 
 class BackendError(RuntimeError):
