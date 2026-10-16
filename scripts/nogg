@@ -5278,7 +5278,7 @@ def _verify_submitted(name, agent, submitted_text=None, *, baseline_status=None,
             if replacement_check:
                 reason = "message still unverified after a retry"
             elif retry_sent:
-                reason = "message still unsubmitted after a retry"
+                reason = "message still unsubmitted after one retry"
             else:
                 reason = "message still unverified"
             raise RuntimeError(f"{name}: {reason}")

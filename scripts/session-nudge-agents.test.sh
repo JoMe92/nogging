@@ -62,7 +62,7 @@ with patch.object(m, '_require_running', return_value=(None, codex_rec)), \
     try:
         m.session_nudge('probe', 'continue testing')
     except RuntimeError as exc:
-        assert 'unsubmitted after a retry' in str(exc)
+        assert 'unsubmitted after one retry' in str(exc)
     else:
         raise AssertionError('pending Codex composer was accepted')
 assert not action.called or any(call.args[1:] == ('send_text', 'continue testing') for call in action.call_args_list)
