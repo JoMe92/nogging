@@ -42,6 +42,7 @@ next start — fresh, resumed, or after a tool switch — every agent runs
 | --- | --- |
 | Stale `planning.lock` | Confirm no planning session is actually running, then `./scripts/nogg plan-end --force`. A lock that names a supervised session is refused while that owner is alive; `recover` names the owner. Never release another session's lock by stopping or cleaning up your own. |
 | Fresh `planning.lock`, not yours | A planning session is active elsewhere. Do not start execution that depends on unmaterialized work — wait or coordinate. |
+| Stale `orchestrator.lock` | The lock holder's process is verified dead or start time mismatched (or expired on a remote host). Reclaim with `./scripts/nogg orchestrator run --force` or restart the supervisor. An unverifiable holder (fenced caller or foreign PID namespace) is never reported stale. |
 | `LIMBO: <id> committed … but status=<status>` | The work is **done**. `git show` the commit, run `scripts/test`, add the evidence note (`bd update <id> --append-notes "commit <sha>; <evidence>"`), `bd close <id>`. **Do not re-implement it** — that produces a duplicate commit. |
 | `in_progress` Bead, `resumable` | Same as `LIMBO`: it has a commit, so the work is done — verify, note, close. Never re-implement. |
 | `in_progress` Bead, `stale`, with a diff | Decide: finish the uncommitted diff, or `git stash` it and re-claim clean. Record the decision in the Bead note. |
@@ -185,20 +186,70 @@ the reap and the cleanup in one step.
   idempotent and records `ended_at`/`exit_reason`.
 - **`cleanup` refuses** — the record is still `starting`, `running` or `idle`.
   Run `session stop <name>` first; cleanup never acts on a live session.
-- **Lingering session servers** — on tmux, the dedicated `-L nogg` server persists
-  after its last session. `session cleanup` kills it once no non-retired
-  record remains; otherwise `tmux -L nogg kill-server` by hand is safe
-  when `session list` shows nothing active. On herdr, Nogging starts a
-  dedicated headless herdr server on demand and never kills it during cleanup.
-  Note that a herdr server restart terminates all Nogging herdr sessions (plain
-  `herdr update` in v0.9.5 keeps sessions running); after a server restart,
-  orphaned restored panes with Nogging labels are closed by `session cleanup`
-  rather than adopted.
+- **Lingering session servers** — on tmux, the dedicated `-L nogging` server persists
+  after its last session. `session cleanup` calls `idle_shutdown()` (`kill-server`)
+  **only** when its `list-sessions` query succeeds and reports no sessions on the
+  dedicated server. It never kills a server that still hosts foreign checkouts' sessions
+  or the always-on Orchestration Agent (`nogg-orchestrator-*`), even if all records of the
+  local checkout are retired. On herdr, Nogging starts a dedicated headless herdr server
+  on demand and never kills it during cleanup. Note that a herdr server restart terminates
+  all Nogging herdr sessions; restored panes matching a retired record of this checkout
+  are closed by `session cleanup` (while foreign panes matching no local record are left
+  untouched).
 - **Lost metadata** — the records under `.nogging/state/sessions/` are local
   and safe to delete; deleting one only drops history for an already-finished
   session. An orphaned live tmux session with no record can be inspected directly
-  with `tmux -L nogg attach -t <name>` and killed with `tmux -L nogg
+  with `tmux -L nogging attach -t <name>` and killed with `tmux -L nogging
   kill-session -t <name>`.
+
+## Herdr server down and recovery
+
+If the dedicated herdr server stops, crashes, or is killed:
+1. **Definite down state:** Nogging checks two independent sources:
+   - `herdr --session <ns> status` reports `server: status: not running`.
+   - `herdr session list --json` reports `running: false`.
+   When both answers agree, Nogging concludes with certainty that the server is down.
+   Its session records are classified as `vanished` (rendered as `failed` in `session list`),
+   which allows `session reap` to mark them failed and `session cleanup` to retire them.
+   A subsequent launch for the same Bead is no longer blocked by false "a live lead session
+   already covers" errors.
+2. **Restarting the server:** Run the idempotent host-side command:
+   ```bash
+   ./scripts/nogg session herdr-server start
+   ```
+   This command starts the headless server with Nogging's scrubbed environment, immutable
+   config, and ownership receipt.
+   - **Fenced callers cannot start the server:** If a sandboxed Lead (or any process
+     with `NOGG_OPENSPEC_FENCED=1`) attempts to launch while the server is down, launch
+     is refused before any side effect. The Lead must ask the operator or Orchestration
+     Agent to start the server host-side via `session herdr-server start`.
+   - **Unowned running servers:** If a running server fails ownership checks (differing
+     config or mismatched socket identity), `session herdr-server start` refuses and names
+     the failed check. Stop the unowned server manually with `herdr --session <ns> server stop`;
+     Nogging never stops or kills an unowned herdr server itself.
+
+## Orchestrator lock states and holder liveness
+
+The Orchestration Agent is protected by `.nogging/locks/orchestrator.lock`, which records
+`{pid, host, created_at, pid_start, pid_ns}`. A single shared classifier evaluates lock
+staleness for `orchestrator run`, `orchestrator status`, `recover`, and `doctor`.
+
+Rather than relying purely on a timestamp timeout, staleness is strictly bound to holder
+liveness across PID namespaces:
+
+| Holder as seen by caller | State | Stale? | Action in `recover` |
+| --- | --- | --- | --- |
+| Same host & same PID namespace; PID alive with matching `pid_start` | `held (verified)` | **No** (never stale at any age) | Valid live lock. No attention item. |
+| Same host & same namespace; PID gone or start time mismatch | `dead` | **Yes** | Attention item: stale lock. Reclaim with `orchestrator run --force` or restart service. |
+| Legacy lock (no `pid_start`); PID alive running `nogg … orchestrator run` | `held (verified)` | **No** (never stale) | Valid live legacy holder. No attention item. |
+| Legacy lock; PID alive but running another command (reused PID) | `dead` | **Yes** | Attention item: PID reused. Reclaim with `orchestrator run --force`. |
+| Same host, but foreign or unobservable PID namespace, or fenced caller (`NOGG_OPENSPEC_FENCED=1`) | `held (unverifiable)` | **No** | Displayed as held (unverifiable). **No attention item**, exits 0 (fenced callers cannot verify host PIDs). |
+| Another host | `held (unverifiable)` / `stale` | Only if age ≥ `orchestrator_lock_ttl_seconds` | Stale only when older than TTL (default 86400s). Reclaim if host is gone. |
+
+Consequently:
+- An actively running Orchestration Agent on the host is **never** considered stale, even if its lock is months old.
+- A sandboxed Lead running `recover` cannot observe host PIDs, so it treats the lock as `held (unverifiable)` rather than falsely reporting it dead.
+- `recover` raises an attention item and exits non-zero only when a lock is genuinely stale (dead holder or expired cross-host).
 
 ## A session hit its usage limit
 

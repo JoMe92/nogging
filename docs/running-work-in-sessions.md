@@ -234,6 +234,12 @@ herdr); a session whose backend session is gone shows as `failed`. It shows
 `BACKEND` and `AGENT_STATUS` columns. `session log` never attaches — `Ctrl-C`
 stops the tail, not the session.
 
+Console output is streamed by `scripts/session-log-writer` in binary chunks of
+up to 64 KiB via `O_APPEND` without waiting for line feeds (LF). This ensures
+full-screen TUIs and interactive prompts update live in `session log --follow`
+without freezing or unbounded buffer accumulation. Each log file is strictly
+bounded by `session_log_max_bytes` and rotated up to `session_log_rotation_depth`.
+
 ## Attach and steer
 
 ```bash
@@ -318,11 +324,15 @@ Control sessions.
 (`session_stop_grace_seconds`, default 10), then terminates the backend session
 and records `stopped` with the time and reason. It is idempotent.
 
-`cleanup` removes a lingering backend session, archive-rotates the log and retires
-the record. It **refuses** a record still in `starting`, `running` or `idle` —
-`stop` it first. `session cleanup` with no name cleans up every already-terminal
-record and kills the tmux server if nothing is left running (for herdr, the
-dedicated herdr server is never killed by cleanup).
+`cleanup` removes a lingering backend session, archive-rotates the log
+(archiving all rotated generations `<name>.log.1..N` together with the active
+log under a common timestamp), and retires the record. It **refuses** a record
+still in `starting`, `running` or `idle` — `stop` it first. `session cleanup` with
+no name cleans up every already-terminal record. For tmux, it stops the dedicated
+shared server (`tmux -L nogging`) **only** when its `list-sessions` query succeeds
+and reports no sessions on the dedicated server; it never kills a server that still
+hosts sessions for other checkouts or the always-on Orchestration Agent. (For herdr,
+the dedicated headless herdr server is never killed by cleanup).
 
 ## Several at once
 
@@ -385,7 +395,8 @@ orchestrate-only-by-default scope.
 | `session attach <name> [--read-only]` | attach the terminal; `Ctrl-b d` (tmux) or client detach (herdr) |
 | `session stop <name> [--reason <text>]` | interrupt, terminate, record a terminal state; idempotent |
 | `session reap` | move vanished active-state records to `failed`; a live one is untouched |
-| `session cleanup [<name>] [--reap]` | retire terminal records; refuses a live one (`--reap` fails the dead ones first) |
+| `session cleanup [<name>] [--reap]` | retire terminal records, archives all rotated logs; refuses a live one; stops shared tmux server only when completely empty |
+| `session herdr-server start` | idempotently verify or start dedicated host-namespace herdr server; host-only |
 | `orchestrator run [--force]` | the always-on supervisor the systemd unit runs; `--force` reclaims a stale lock |
 | `orchestrator status` | unit enabled/active state, linger on/off, the lock holder, the live `FULL-ACCESS` session |
 | `orchestrator stop` \| `orchestrator restart` | stop-and-disable the unit (idempotent), or restart it |
