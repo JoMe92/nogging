@@ -1,40 +1,139 @@
-#!/usr/bin/env bash
-# Append-only log sink for a supervised Claude session, used as the target of
-# `tmux pipe-pane -o`. Reads pane output on stdin, appends it to <log>, and
-# performs size-based rotation: when <log> reaches <max-bytes> it is rotated to
-# <log>.1, existing <log>.N shift to <log>.(N+1), and anything past <depth> is
-# dropped. No time-based rotation; matches the sync failure-log convention.
-#
-# Usage: session-log-writer <log-path> <max-bytes> <depth>
-set -eu
+#!/usr/bin/env python3
+"""Append-only log sink for supervised sessions.
 
-if [ "${1:-}" = "--contract" ]; then
-  [ "$#" -eq 1 ] || exit 2
-  printf '%s\n' '{"version":1,"positional":3}'
-  exit 0
-fi
+Reads pane/session output on stdin in chunks of at most 64 KiB, appends it
+directly through an O_APPEND descriptor without waiting for newlines, and
+performs size-based rotation: when appending would push the active file past
+<max-bytes>, only the remaining room is written, the file is rotated to
+<log>.1, existing <log>.N shift to <log>.(N+1), and anything past <depth> is
+dropped. Memory remains bounded by chunk size and no generation exceeds max-bytes.
 
-log=${1:?log path required}
-max=${2:?max bytes required}
-depth=${3:?rotation depth required}
+Usage: session-log-writer <log-path> <max-bytes> <depth>
+"""
+import errno
+import json
+import os
+from pathlib import Path
+import sys
 
-rotate() {
-  local i
-  rm -f "$log.$depth"
-  for (( i = depth - 1; i >= 1; i-- )); do
-    [ -f "$log.$i" ] && mv -f "$log.$i" "$log.$((i + 1))" || true
-  done
-  [ -f "$log" ] && mv -f "$log" "$log.1" || true
-  : > "$log"
-}
+CHUNK_SIZE = 64 * 1024  # At most 64 KiB
 
-mkdir -p "$(dirname "$log")"
-[ -f "$log" ] || : > "$log"
 
-while IFS= read -r line || [ -n "$line" ]; do
-  printf '%s\n' "$line" >> "$log"
-  size=$(wc -c < "$log" 2>/dev/null || echo 0)
-  if [ "$size" -ge "$max" ]; then
-    rotate
-  fi
-done
+def rotate(log_path: Path, depth: int) -> None:
+    if depth <= 0:
+        if log_path.exists():
+            try:
+                log_path.unlink()
+            except FileNotFoundError:
+                pass
+        return
+
+    depth_file = log_path.with_name(f"{log_path.name}.{depth}")
+    try:
+        depth_file.unlink()
+    except FileNotFoundError:
+        pass
+
+    for i in range(depth - 1, 0, -1):
+        src = log_path.with_name(f"{log_path.name}.{i}")
+        dst = log_path.with_name(f"{log_path.name}.{i + 1}")
+        if src.exists():
+            src.replace(dst)
+
+    if log_path.exists():
+        log_path.replace(log_path.with_name(f"{log_path.name}.1"))
+
+
+def open_log(log_path: Path) -> int:
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    return os.open(str(log_path), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+
+
+def write_all(fd: int, data: bytes) -> None:
+    total = 0
+    length = len(data)
+    while total < length:
+        try:
+            n = os.write(fd, data[total:])
+            if n == 0:
+                raise OSError("write returned 0 bytes")
+            total += n
+        except OSError as e:
+            if e.errno == errno.EINTR:
+                continue
+            raise
+
+
+def main() -> None:
+    if "--contract" in sys.argv:
+        if sys.argv[1:] == ["--contract"]:
+            contract = {
+                "version": 1,
+                "positional": 3,
+                "features": ["byte-stream"],
+            }
+            sys.stdout.write(json.dumps(contract) + "\n")
+            sys.stdout.flush()
+            sys.exit(0)
+        sys.exit(2)
+
+    if len(sys.argv) != 4:
+        sys.stderr.write("usage: session-log-writer <log-path> <max-bytes> <depth>\n")
+        sys.exit(2)
+
+    log_path = Path(sys.argv[1])
+    try:
+        max_bytes = int(sys.argv[2])
+        depth = int(sys.argv[3])
+        if max_bytes <= 0 or depth < 0:
+            raise ValueError
+    except ValueError:
+        sys.stderr.write("session-log-writer: max-bytes must be positive and depth non-negative\n")
+        sys.exit(2)
+
+    try:
+        fd = open_log(log_path)
+        current_size = os.fstat(fd).st_size
+
+        while True:
+            try:
+                chunk = os.read(0, CHUNK_SIZE)
+            except OSError as e:
+                if e.errno == errno.EINTR:
+                    continue
+                raise
+
+            if not chunk:
+                break  # EOF
+
+            remaining = chunk
+            while remaining:
+                room = max_bytes - current_size
+                if room <= 0:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+                    rotate(log_path, depth)
+                    fd = open_log(log_path)
+                    current_size = 0
+                    room = max_bytes
+
+                to_write = min(len(remaining), room)
+                write_all(fd, remaining[:to_write])
+                current_size += to_write
+                remaining = remaining[to_write:]
+
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        sys.exit(0)
+
+    except Exception as exc:
+        sys.stderr.write(f"session-log-writer: write error: {exc}\n")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
