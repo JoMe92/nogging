@@ -25,6 +25,9 @@ Commands:
 
 Options:
   --dry-run      Show what would change, write nothing
+  --force        Overwrite locally modified verbatim files on init/update
+                 (backs up each to <file>.orig; default keeps them and
+                 writes upstream to <file>.nogging-new)
   --no-beads     Skip initializing the Beads issue tracker
   --no-hooks     Skip installing the git hooks
   --no-systemd   Skip rendering the systemd sync unit
@@ -35,12 +38,13 @@ init is idempotent and safe to re-run; use update for routine refreshes.
 `;
 
 function parseArgs(argv) {
-  const args = { command: null, dryRun: false, noBeads: false, noHooks: false, noSystemd: false, help: false, version: false };
+  const args = { command: null, dryRun: false, force: false, noBeads: false, noHooks: false, noSystemd: false, help: false, version: false };
   for (const a of argv) {
     switch (a) {
       case '-h':
       case '--help': args.help = true; break;
       case '--dry-run': args.dryRun = true; break;
+      case '--force': args.force = true; break;
       case '--no-beads': args.noBeads = true; break;
       case '--no-hooks': args.noHooks = true; break;
       case '--no-systemd': args.noSystemd = true; break;
@@ -54,6 +58,9 @@ function parseArgs(argv) {
         else throw Object.assign(new Error(`unexpected argument: ${a}`), { userFacing: true });
     }
   }
+  if (args.force && args.command && args.command !== 'init' && args.command !== 'update') {
+    throw Object.assign(new Error('--force only applies to init and update'), { userFacing: true });
+  }
   return args;
 }
 
@@ -63,6 +70,19 @@ function report(ctx) {
   if (ctx.warnings.length) {
     process.stdout.write('\nWarnings:\n');
     for (const w of ctx.warnings) process.stdout.write(`  - ${w}\n`);
+  }
+  const preserved = ctx.log.entries.filter((e) => e.action === 'preserve');
+  const forced = ctx.log.entries.filter((e) => e.action === 'force-overwrite');
+  if (preserved.length) {
+    const had = ctx.dryRun ? 'would be preserved' : 'preserved';
+    process.stdout.write(`\nLocally modified files ${had} (upstream copies alongside):\n`);
+    for (const e of preserved) process.stdout.write(`  - ${e.path}  ->  ${e.path}.nogging-new\n`);
+    process.stdout.write('  Review each .nogging-new, merge what you want, then delete it.\n');
+    process.stdout.write('  Re-run with --force to overwrite them instead (keeps <file>.orig backups).\n');
+  }
+  if (forced.length) {
+    process.stdout.write(`\nLocally modified files ${ctx.dryRun ? 'would be ' : ''}overwritten (--force):\n`);
+    for (const e of forced) process.stdout.write(`  - ${e.path}  (backup: ${e.path}.orig)\n`);
   }
   if (ctx.notes.length && !ctx.dryRun) {
     process.stdout.write('\nNext steps:\n');
