@@ -4398,20 +4398,26 @@ def session_list():
               f"{rec.get('working_dir','')}")
         for grant in rec.get("agent_state_grants", []):
             print(f"  agent-state:{grant['agent']} {grant['path']} source={grant['source']}")
-    for substrate, ref in herdr_orphans(recs):
+    orphans, foreign_count = herdr_orphans(recs)
+    for substrate, ref in orphans:
         print(f"NOTE: orphan herdr pane {ref['pane_id']} labelled {ref['label']}; "
               "run session cleanup (never adopted)")
+    if foreign_count:
+        print(f"NOTE: {foreign_count} foreign herdr pane(s) left untouched")
 
 def herdr_orphans(recs):
-    """Read-only orphan discovery, restricted to the backend's owned workspace."""
+    """Read-only orphan discovery, restricted to the backend's owned workspace.
+
+    Returns ([(substrate, ref), ...], foreign_count).
+    """
     records = [r for _, r in recs if record_backend_name(r) == "herdr"]
-    if not records:
-        return []
     try:
         substrate = session_backend("herdr")
-        return [(substrate, ref) for ref in substrate.orphans(records)]
+        all_recs = [r for _, r in session_records()]
+        orphans, foreign_count = substrate.orphans(all_recs)
+        return [(substrate, ref) for ref in orphans], foreign_count
     except (RuntimeError, AttributeError, KeyError, TypeError):
-        return []
+        return [], 0
 def _profile_display(rec):
     """`session list` PROFILE cell: a session that actually ran with the command
     floor lifted shows as `FULL-ACCESS` (a distinct token, not a profile name);
@@ -4532,7 +4538,8 @@ def session_cleanup(name, reap=False):
                    if r.get("state") in ("stopped", "failed")]
         if not targets:
             print("no terminal sessions to clean up")
-            if not herdr_orphans(session_records()):
+            orphans, _ = herdr_orphans(session_records())
+            if not orphans:
                 return
     alive, unknown = session_liveness()
     live = alive | unknown
@@ -4557,7 +4564,8 @@ def session_cleanup(name, reap=False):
         transition(path, rec, "retired", retired_at=now())
         print(f"retired {nm}")
     if not name:
-        for substrate, ref in herdr_orphans(session_records()):
+        orphans, _ = herdr_orphans(session_records())
+        for substrate, ref in orphans:
             substrate.kill(ref)
             print(f"closed orphan herdr pane {ref['pane_id']} labelled {ref['label']}")
     tmux_backend = session_backend("tmux")
