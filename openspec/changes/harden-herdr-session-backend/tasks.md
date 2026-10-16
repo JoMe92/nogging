@@ -28,7 +28,7 @@
 
 - [x] TASK-HHB-011 [standard] Per design Decision 12: update using-with-herdr (host-namespace start, herdr-server start, server-down recovery, checkout-scoped orphans, root pane, terminal identity, live logs), failure-recovery (server down, orchestrator lock states), running-work-in-sessions, using-with-codex (exact resume), operating-model and architecture. Check: scripts/test green (docs, installation, security, package-manifest suites), links resolve.
 
-- [ ] TASK-HHB-012 [complex] Per design Decision 13: real Pi re-acceptance on herdr 0.9.x with Claude, Codex and Antigravity plus a parallel tmux Lead; repeat failed checks 12, 13, 15, 18, 22, 32, 34, 35, regress the passed ones, add D6, lock, D10, D8 and both D9 topologies; write docs/acceptance/<date>-herdr-hardening.md unsigned with an empty Signed-off-by line. Check: report committed unsigned, scripts/test green, doctor shows herdr.
+- [x] TASK-HHB-012 [complex] Per design Decision 13: real Pi re-acceptance on herdr 0.9.x with Claude, Codex and Antigravity plus a parallel tmux Lead; repeat failed checks 12, 13, 15, 18, 22, 32, 34, 35, regress the passed ones, add D6, lock, D10, D8 and both D9 topologies; write docs/acceptance/<date>-herdr-hardening.md unsigned with an empty Signed-off-by line. Check: report committed unsigned, scripts/test green, doctor shows herdr.
 
 ## Dependency contract
 
