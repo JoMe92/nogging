@@ -164,10 +164,14 @@ product decision.
   (default and permanent fallback, `scripts/lib/session_backend_tmux.py`) or
   `herdr` (experimental, `scripts/lib/session_backend_herdr.py`; see
   `using-with-herdr.md`). For tmux, a dedicated tmux server socket
-  (`tmux -L nogg`, `session_tmux_socket`) isolates managed sessions from the
+  (`tmux -L nogging`, `session_tmux_socket`) isolates managed sessions from the
   operator's personal tmux and makes them enumerable. For herdr, sessions run in
   labelled panes inside a dedicated local herdr session namespace
-  (`session_herdr_session`, default `nogging`). The server and agent process run
+  (`session_herdr_session`, default `nogging`). The dedicated herdr server runs in
+  the host PID namespace, verified via socket identity and a durable receipt;
+  fenced callers cannot start the server. Stray root panes created with the
+  workspace are closed after the first layout apply, and orphan panes are strictly
+  scoped to records of the calling checkout. The server and agent process run
   as the same non-privileged user; no `sudo`.
 - **Naming.** `sf-<role>-<bead>-<nonce>`. Before creating a session Nogging
   checks the metadata store, any leftover log, and backend session existence;
@@ -188,15 +192,22 @@ product decision.
   (gitignored, like the rest of `.nogging/state/`) and safe to delete — a
   deleted record only drops history for an already-finished session.
 - **Liveness.** `session list` cross-checks each record against its backend
-  (tmux session listing or herdr process-bound pane query); a record still in an
+  (tmux session listing or herdr process- and terminal-bound query); a record still in an
   active state whose backend session is gone is reported as `failed`, never
   trusted as `running` (or reported with unknown liveness if the backend tool
-  fails). `list` is read-only and runs in a bare SSH shell.
+  fails). For herdr, terminal identity (`terminal_id`) and `shell_pid` allow exact
+  liveness verification across PID namespaces without reading foreign `/proc` or
+  signaling across namespaces, and an agreed-stopped server is recognized as
+  definite down. `list` is read-only and runs in a bare SSH shell.
 - **Append-only log.** Console output is captured through
   `scripts/session-log-writer` to `<name>.log`, size-rotated to
   `session_log_rotation_depth` at `session_log_max_bytes` (on tmux via
   `tmux pipe-pane -o`; on herdr via `scripts/session-pty-recorder`).
-  Readable with `cat`/`tail`/`less` — no attach.
+  The writer is implemented in standard Python, streaming binary chunks of up to 64 KiB
+  via `O_APPEND` without waiting for line breaks (LF), preventing TUI freezing and
+  unbounded buffers while strictly bounding each generation. All rotated generations
+  (`<name>.log.1..N`) are preserved on session cleanup. Readable with
+  `cat`/`tail`/`less` — no attach.
 - **Least authority.** The agent starts via `scripts/session-launch` with
   the resolved launch profile: no `git push`, no remote Dolt
   sync, no destructive shell, no extra directories. The wrapper sets no shell
@@ -209,7 +220,10 @@ product decision.
   claiming or starting a Bead is a deliberate operator-directed action.
 - **Deliberate lifecycle.** `attach`, `stop`, `cleanup` are explicit
   subcommands; none happens as a side effect of another. `cleanup` refuses a
-  record in `starting`/`running`/`idle`.
+  record in `starting`/`running`/`idle`, archives all rotated log generations, and
+  stops the shared tmux server only when its listing succeeds and is completely empty
+  (never killing a server hosting other sessions). For herdr, the dedicated server
+  is never stopped by cleanup.
 
 ### Session supervision vs. Task-tool specialists
 
@@ -247,7 +261,9 @@ an ordinary supervised session — a durable record, an append-only log, listed 
   can already push and merge. It is a role that was never meant to be fenced,
   and the safeguards for it are **visibility** (`session list` /  `doctor` show
   it as `FULL-ACCESS`, the append-only log, the durable record) and the
-  **single-instance lock** (`.nogging/locks/orchestrator.lock`), not a
+  **single-instance lock** (`.nogging/locks/orchestrator.lock`, which records
+  `{pid, host, created_at, pid_start, pid_ns}` and binds staleness to holder
+  liveness across PID namespaces rather than age alone), not a
   boundary. The accepted residual risk is that an always-on god-mode session
   that auto-resumes its own conversation is a standing prompt-injection target;
   it is mitigated by delivery-host-only blast radius, full visibility, and the
