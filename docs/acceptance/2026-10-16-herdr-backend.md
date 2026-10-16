@@ -152,7 +152,8 @@ listed below.
 
 ## Discoveries filed during this run
 
-All are recorded on `SPEC-emer` with the `discovery` label. None blocks this
+All are recorded on `SPEC-emer` with the `discovery` label. D10 came up
+during the close protocol, after the run. None blocks this
 Bead, because the report itself is the deliverable. Several block release
 readiness of the herdr backend (see Outcome). None was fixed here; they wait
 for a planning session.
@@ -168,6 +169,7 @@ for a planning session.
 | SPEC-emer (D7) | no | **Plan gap.** The task requires Codex exact resume, but `--resume` supports only Claude and Antigravity. Codex resume therefore stays unaccepted. |
 | SPEC-emer (D8) | no | **herdr, minor.** `workspace create` leaves an unlabelled `/bin/bash` pane in the Nogging-owned server. It survives restarts and is never cleaned up. |
 | SPEC-emer (D9) | no | **herdr, live, significant.** A Lead runs inside the openspec-sandbox PID namespace. When it starts the shared server, the receipt and record PIDs are namespace-local: receipt PID 1050 was the herdr server inside the sandbox but `dolt sql-server` on the host. Liveness and ownership checks are therefore wrong across namespaces, and the server dies with the starting Lead's sandbox. |
+| SPEC-emer (D10) | no | **Close protocol, live.** The `task-done` broker ticks the Lead session's launch checkout, here the shared develop checkout, not the Bead's worktree. TASK-HDR-012 is therefore ticked only as an uncommitted change in `/home/jome/src/nogging`, and sync will not stage it. This PR carries no `tasks.md` tick. |
 
 ## Outcome
 
