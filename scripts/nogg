@@ -6588,6 +6588,55 @@ def herdr_doctor_diagnostics():
     return checks, warnings, notes
 
 
+_UPSTREAM_PENDING_PRUNE = {".git", "node_modules", ".venv", "__pycache__", ".dolt", ".beads"}
+INSTALLED_MANIFEST = ".nogging/installed-manifest.json"
+
+
+def installer_artifacts():
+    """(pending, backups) repo-relative paths of installer leftovers: `<file>.nogging-new`
+    (upstream content written beside a locally modified file) and `<file>.orig`
+    (a `--force` backup). Read-only; never follows symlinked directories."""
+    pending, backups = [], []
+    for dirpath, dirnames, filenames in os.walk(ROOT):
+        dirnames[:] = sorted(d for d in dirnames if d not in _UPSTREAM_PENDING_PRUNE)
+        for name in sorted(filenames):
+            rel = (Path(dirpath) / name).relative_to(ROOT).as_posix()
+            if name.endswith(".nogging-new"): pending.append(rel)
+            elif name.endswith(".orig"): backups.append(rel)
+    return pending, backups
+
+
+def installer_artifact_diagnostics():
+    """(warnings, notes) for the installer's local-modification artifacts.
+    Advisory only: never a FAIL, never changes doctor's exit code."""
+    warnings, notes = [], []
+    pending, backups = installer_artifacts()
+    for rel in pending:
+        base = rel[:-len(".nogging-new")]
+        warnings.append(f"locally modified file has pending upstream update: {base} "
+                        f"(review {rel} and reconcile)")
+    for rel in backups:
+        notes.append(f"--force backup of a locally modified file: {rel} (delete it once reviewed)")
+    # Locally modified installed files that have no pending upstream copy yet.
+    # Unreadable or malformed manifests are skipped silently.
+    try:
+        recorded = json.loads((ROOT / INSTALLED_MANIFEST).read_text()).get("files", {})
+    except (OSError, ValueError, AttributeError):
+        recorded = {}
+    pending_set = set(pending)
+    for rel, digest in sorted(recorded.items() if isinstance(recorded, dict) else ()):
+        target = ROOT / rel
+        if not target.is_file() or f"{rel}.nogging-new" in pending_set:
+            continue
+        try:
+            actual = hashlib.sha256(target.read_bytes()).hexdigest()
+        except OSError:
+            continue
+        if actual != digest:
+            notes.append(f"locally modified installed file: {rel} (differs from {INSTALLED_MANIFEST})")
+    return warnings, notes
+
+
 def doctor(audit=False, with_recover=False, with_sandbox=False):
     # A fresh install starts with the OpenSpec write boundary closed. Bootstrap
     # the sentinel once, only when nothing has toggled the boundary yet (no
@@ -6626,6 +6675,8 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
     herdr_checks, herdr_warnings, herdr_notes = herdr_doctor_diagnostics()
     checks.extend(herdr_checks)
     warnings.extend(herdr_warnings)
+    artifact_warnings, artifact_notes = installer_artifact_diagnostics()
+    warnings.extend(artifact_warnings)
     for name, ok in checks: print(f"{'OK' if ok else 'FAIL'}  {name}")
     # Warnings are advisory (a committed-but-open Bead and the like): shown
     # distinctly from FAIL, and they never change doctor's exit code.
@@ -6637,6 +6688,7 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
              "Git 2.30+, Bash 4.4+, OpenSpec 1.11.x, Beads 1.2.x, Dolt 2.3.x "
              "(docs/nogging/compatibility.md)"]
     notes.extend(mapping_health_lines())
+    notes.extend(artifact_notes)
     # Advisory only, like every other NOTE here: never a FAIL, never changes
     # doctor's exit code. `/plan`'s archive step (TASK-TCC-004) is what
     # actually archives a change; doctor only surfaces readiness.
