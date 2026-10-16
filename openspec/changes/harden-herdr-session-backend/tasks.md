@@ -4,7 +4,7 @@
 
 - [ ] TASK-HHB-002 [standard] Per design Decision 3: orchestrator lock records pid_start and pid_ns; one classifier for run, status, recover and doctor; a verified live holder (or legacy lock held by a live `nogg orchestrator run`) is never stale at any age; fenced or foreign-namespace callers never report it stale; TTL only for another host. Check: new scripts/orchestrator-lock.test.sh, live/reaped child PIDs, stubbed bd; scripts/test.
 
-- [ ] TASK-HHB-003 [standard] Per design Decision 4 (D10): task-done broker requests carry the caller's checkout root; the broker ticks only a worktree registered in the same repository at request time, refuses anything else without falling back, adds contract feature checkout-task-broker required by preflight. Check: new scripts/task-done-broker.test.sh via a callable handler (no unshare), linked worktree, stubbed bd; scripts/test.
+- [x] TASK-HHB-003 [standard] Per design Decision 4 (D10): task-done broker requests carry the caller's checkout root; the broker ticks only a worktree registered in the same repository at request time, refuses anything else without falling back, adds contract feature checkout-task-broker required by preflight. Check: new scripts/task-done-broker.test.sh via a callable handler (no unshare), linked worktree, stubbed bd; scripts/test.
 
 ## 2. herdr lane (branch prefix feat/, sequential)
 
