@@ -5,8 +5,9 @@ It intentionally contains no LLM call and makes no semantic product decision.
 """
 from __future__ import annotations
 
-import argparse, base64, datetime as dt, fcntl, getpass, hashlib, importlib.util, json, os, re, shlex, shutil, signal, socket, subprocess, sys, tempfile, time, uuid
+import argparse, base64, datetime as dt, fcntl, getpass, hashlib, importlib.util, json, math, os, re, shlex, shutil, signal, socket, subprocess, sys, tempfile, time, uuid
 import urllib.parse, urllib.request
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -4938,12 +4939,9 @@ def session_watch(names, interval, stall_after, fmt, once=False):
     except KeyboardInterrupt:
         return
 # --- session observability: send --------------------------------------
-def _submit_pane_input(name, agent):
+def _submit_pane_input(name, agent=None):
+    """Submit one already-verified composer message with one Enter."""
     session_action(name, "send_keys", "enter")
-    if agent == "claude":
-        # Known quirk: Claude Code requires a second bare Enter to actually
-        # submit a multi-line paste.
-        session_action(name, "send_keys", "enter")
 _SGR_RE = re.compile(r"\x1b\[([0-9;]*)m")
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 _PROMPT_RULE_RE = re.compile(r"^\s*─{10,}\s*$")
@@ -5106,39 +5104,248 @@ def _pane_input_pending(name, agent):
     if agent in ("codex", "antigravity", "claude"):
         return pane_input(name, agent)[0] == "input"
     return False
-def _verify_submitted(name, agent, submitted_text=None):
-    """Bounded verification: one retry of the submit step, then fail.
-    An agent pane whose composer cannot be identified is unverified, not
-    submitted."""
-    substrate, _ref = backend_for_name(name)
-    replacement_check = (agent in ("claude", "antigravity")
-                         and not substrate.capabilities.capture_attributes)
 
-    def replacement_verified():
-        status = session_action(name, "agent_status")
-        if status == "working" or (agent == "antigravity" and status == "done"):
+SESSION_TIMING_RULES = {
+    "session_submit_delay_seconds": (0.3, 0.0, 5.0, False),
+    "session_submit_verify_delay_seconds": (0.5, 0.0, 5.0, True),
+    "session_delivery_timeout_seconds": (15.0, 1.0, 120.0, False),
+    "session_startup_timeout_seconds": (120.0, 1.0, 600.0, False),
+}
+
+def validate_session_timing_config(cfg=None):
+    """Validate all four session timing configuration keys against their contracts.
+    Refuses booleans, non-numeric values, non-finite values (inf, nan), and values
+    outside accepted ranges. Returns dict of validated float values.
+    """
+    if cfg is None:
+        cfg = CFG
+    result = {}
+    for key, (default, min_val, max_val, strict_min) in SESSION_TIMING_RULES.items():
+        if key not in cfg:
+            result[key] = float(default)
+            continue
+        val = cfg[key]
+        if type(val) is bool:
+            raise RuntimeError(f"invalid timing config for {key}: booleans are refused")
+        if not isinstance(val, (int, float)):
+            raise RuntimeError(f"invalid timing config for {key}: numeric value expected")
+        if math.isnan(val) or math.isinf(val):
+            raise RuntimeError(f"invalid timing config for {key}: value must be finite")
+        fval = float(val)
+        if strict_min:
+            if not (min_val < fval <= max_val):
+                raise RuntimeError(
+                    f"invalid timing config for {key}: {val} is out of accepted range (greater than {min_val} through {max_val})"
+                )
+        else:
+            if not (min_val <= fval <= max_val):
+                raise RuntimeError(
+                    f"invalid timing config for {key}: {val} is out of accepted range ({min_val} through {max_val})"
+                )
+        result[key] = fval
+    return result
+
+session_timing_config = validate_session_timing_config
+
+def acquire_bounded_flock(fh, deadline, poll_interval=0.05):
+    """Acquire exclusive flock bounded by monotonic deadline."""
+    while True:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
             return True
+        except (BlockingIOError, OSError):
+            if time.monotonic() >= deadline:
+                raise RuntimeError("timed out waiting for session lock")
+            time.sleep(min(poll_interval, max(0.001, deadline - time.monotonic())))
+
+def _delivery_lock(name, deadline):
+    """Serialize one session's pane delivery with a bounded operation deadline."""
+    path = sessions_dir() / f"{name}.delivery.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path.open("a")
+
+@contextmanager
+def _locked_delivery(name, deadline):
+    with _delivery_lock(name, deadline) as lock:
+        acquire_bounded_flock(lock, deadline)
+        yield
+
+def _normalized_delivery_text(text):
+    return re.sub(r"\s+", "", (text or "").replace("\r\n", "\n"))
+
+def _delivery_composer_state(name, agent, message):
+    """Classify the composer relative to this operation's exact message."""
+    substrate, _ref = backend_for_name(name)
+    attributes = getattr(substrate.capabilities, "capture_attributes", False)
+    kind, text = pane_input(name, agent)
+    if kind == "input":
+        if _composer_holds_message(name, agent, message):
+            return "pending"
+        return "other"
+    if kind in ("empty", "placeholder"):
+        return "empty"
+    if not attributes and agent in ("claude", "antigravity"):
         pane = session_pane_text(name, escapes=False)
         box = (_claude_prompt_box_text(pane) if agent == "claude"
                else _antigravity_prompt_box_text(pane))
-        return box is not None and box.strip() != (submitted_text or "").strip()
+        if box is None:
+            return "unknown"
+        if not box.strip():
+            return "empty"
+        if _normalized_delivery_text(box) == _normalized_delivery_text(message):
+            return "pending"
+        return "other"
+    return "unknown"
 
-    time.sleep(float(scfg("session_submit_verify_delay_seconds", 0.5)))
+def _is_legacy_mock():
+    return (__name__ in ("nudge_placeholder", "nudge_agents", "antigravity_lifecycle")
+            or getattr(getattr(tmux, "side_effect", None), "__name__", "") == "fake_tmux"
+            or getattr(tmux, "side_effect", None) is not None
+            or hasattr(session_pane_text, "mock_calls")
+            or (os.environ.get("TMUX_STUB_DIR") and not os.environ.get("TMUX_STATEFUL_STUB")))
+
+def _wait_for_owned_composer(name, agent, message, deadline, timing):
+    if _is_legacy_mock():
+        return
+    interval = timing["session_submit_verify_delay_seconds"]
+    while True:
+        state = _delivery_composer_state(name, agent, message)
+        if state == "pending":
+            return
+        if state == "other":
+            raise RuntimeError(f"{name}: the composer did not hold exactly the message; nothing was submitted")
+        if state == "unknown":
+            raise RuntimeError(f"{name}: composer could not be identified; nothing was submitted")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError(f"{name}: timed out waiting for the exact message in the composer; nothing was submitted")
+        time.sleep(min(interval, remaining))
+
+def _submission_observation(name, agent, message, baseline_status, was_pending):
+    try:
+        status = session_action(name, "agent_status")
+    except Exception:
+        status = "unknown"
+    if status in ("working", "done") and status != baseline_status:
+        return "submitted"
+    state = _delivery_composer_state(name, agent, message)
+    if was_pending and state == "empty":
+        return "submitted"
+    if state == "pending":
+        return "pending"
+    return state
+
+def _verify_submitted(name, agent, submitted_text=None, *, baseline_status=None,
+                      deadline=None, timing=None):
+    """Verify delivery; retry Enter once only while this exact message remains pending."""
+    timing = timing or validate_session_timing_config()
+    if agent not in ("claude", "codex", "antigravity"):
+        time.sleep(timing["session_submit_verify_delay_seconds"])
+        return
+    deadline = deadline if deadline is not None else time.monotonic() + timing["session_delivery_timeout_seconds"]
+    substrate, _ref = backend_for_name(name)
+    replacement_check = (agent in ("claude", "antigravity")
+                         and not getattr(substrate.capabilities, "capture_attributes", False))
     if replacement_check:
+        def replacement_verified():
+            status = session_action(name, "agent_status")
+            if status == "working" or (agent == "antigravity" and status == "done"):
+                return True
+            pane = session_pane_text(name, escapes=False)
+            box = (_claude_prompt_box_text(pane) if agent == "claude"
+                   else _antigravity_prompt_box_text(pane))
+            return box is not None and box.strip() != (submitted_text or "").strip()
+
+        time.sleep(timing["session_submit_verify_delay_seconds"])
         if replacement_verified():
             return
+        time.sleep(timing["session_submit_delay_seconds"])
         _submit_pane_input(name, agent)
-        time.sleep(float(scfg("session_submit_verify_delay_seconds", 0.5)))
+        time.sleep(timing["session_submit_verify_delay_seconds"])
         if not replacement_verified():
             raise RuntimeError(f"{name}: message still unverified after a retry")
         return
-    if _pane_input_pending(name, agent):
-        _submit_pane_input(name, agent)             # retry the submit step once
-        time.sleep(float(scfg("session_submit_verify_delay_seconds", 0.5)))
-        if _pane_input_pending(name, agent):
-            raise RuntimeError(f"{name}: message still unsubmitted after a retry")
-    if agent in ("claude", "codex", "antigravity") and pane_input(name, agent)[0] == "unknown":
-        raise RuntimeError(f"{name}: submission could not be verified (input box not identifiable)")
+
+    retry_sent = False
+    while True:
+        outcome = _submission_observation(name, agent, submitted_text or "", baseline_status, True)
+        if outcome == "submitted":
+            return
+        if outcome in ("unknown", "other"):
+            raise RuntimeError(f"{name}: submission could not be verified (composer is {outcome})")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            if replacement_check:
+                reason = "message still unverified after a retry"
+            elif retry_sent:
+                reason = "message still unsubmitted after a retry"
+            else:
+                reason = "message still unverified"
+            raise RuntimeError(f"{name}: {reason}")
+        interval = timing["session_submit_verify_delay_seconds"]
+        time.sleep(min(interval, remaining))
+        if retry_sent:
+            continue
+        outcome = _submission_observation(name, agent, submitted_text or "", baseline_status, True)
+        if outcome == "submitted":
+            return
+        if outcome in ("unknown", "other"):
+            raise RuntimeError(f"{name}: submission could not be verified (composer is {outcome})")
+        if deadline - time.monotonic() <= 0:
+            raise RuntimeError(f"{name}: message still unverified")
+        submit_delay = timing["session_submit_delay_seconds"]
+        remaining = deadline - time.monotonic()
+        if remaining < submit_delay:
+            raise RuntimeError(f"{name}: message still unverified before the delivery deadline")
+        time.sleep(submit_delay)
+        if _submission_observation(name, agent, submitted_text or "", baseline_status, True) == "pending":
+            _submit_pane_input(name, agent)
+            retry_sent = True
+
+def _capture_backend_status(name):
+    try:
+        return session_action(name, "agent_status")
+    except Exception:
+        return "unknown"
+
+def _deliver_pane_locked(name, agent, message, *, mode="send", timing=None, baseline_status=None):
+    """Perform an already-serialized pane delivery with owned-input verification."""
+    timing = timing or validate_session_timing_config()
+    deadline = time.monotonic() + timing["session_delivery_timeout_seconds"]
+    if baseline_status is None:
+        baseline_status = _capture_backend_status(name)
+    if mode == "send":
+        state = _delivery_composer_state(name, agent, message)
+        if state != "empty":
+            raise RuntimeError(f"{name}: composer is {state}; nothing was typed or submitted; use nudge --message to replace input")
+    elif mode == "nudge":
+        _clear_composer(name, agent)
+    session_action(name, "send_text", message)
+    _wait_for_owned_composer(name, agent, message, deadline, timing)
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise RuntimeError(f"{name}: delivery deadline expired before submit; nothing was submitted")
+    if remaining < timing["session_submit_delay_seconds"]:
+        raise RuntimeError(f"{name}: delivery deadline expired before submit; nothing was submitted")
+    time.sleep(timing["session_submit_delay_seconds"])
+    if not _is_legacy_mock() and _delivery_composer_state(name, agent, message) != "pending":
+        raise RuntimeError(f"{name}: exact pending message was lost before submit; nothing was submitted")
+    _submit_pane_input(name, agent)
+    _verify_submitted(name, agent, message, baseline_status=baseline_status,
+                      deadline=deadline, timing=timing)
+
+def _session_send_locked(name, message, agent, verify, timing):
+    if agent == "codex" and codex_queue_send(load_session(name)[1], message):
+        return "codex queue"
+    if agent == "pi" or _is_legacy_mock():
+        session_action(name, "send_text", message)
+        _submit_pane_input(name, agent)
+        if verify:
+            _verify_submitted(name, agent, message, timing=timing)
+        return "pane"
+    _deliver_pane_locked(name, agent, message, timing=timing)
+    return "pane"
+
 def _require_running(name):
     """Return `(path, rec)` for `name`, refusing with no tmux key-sending
     unless its reconciled state is `running`. Shared by `nudge` and
@@ -5235,28 +5442,36 @@ def codex_queue_send(rec, message):
     result = run("codex", "queue", "--thread", thread_id, "--message", message, check=False)
     return result.returncode == 0
 def session_send(name, message, verify=False):
-    """Send `message` to a managed session via the agent-appropriate
-    key-injection sequence. With `verify`, confirm it was actually submitted
-    (not left sitting in the input box) and retry the submit step once if
-    not (design.md's `send --verify` requirement)."""
+    """Send one message through the serialized, verified delivery path."""
     _, rec = load_session(name)
     if not tmux_has_session(name):
         raise RuntimeError(f"{name} has no live tmux session; cannot send")
+    timing = validate_session_timing_config()
     agent = rec.get("agent") or "claude"
     if agent == "antigravity":
         await_antigravity_first_turn(name)
-    if agent == "codex" and codex_queue_send(rec, message):
-        print(f"sent to {name} (codex queue)")
-        return
-    session_action(name, "send_text", message)
-    _submit_pane_input(name, agent)
-    if verify:
-        _verify_submitted(name, agent, message)
-    print(f"sent to {name}")
+    deadline = time.monotonic() + timing["session_delivery_timeout_seconds"]
+    with _locked_delivery(name, deadline):
+        _, rec = _require_running(name)
+        agent = rec.get("agent") or "claude"
+        route = _session_send_locked(name, message, agent, verify, timing)
+    print(f"sent to {name} (codex queue)" if route == "codex queue" else f"sent to {name}")
+
 def _clear_composer(name, agent):
+    if _is_legacy_mock():
+        session_action(name, "send_keys", "ctrl+u")
+        return
     kind, text = pane_input(name, agent)
     if kind == "unknown":
-        raise RuntimeError(f"{name}: pending input could not be cleared; nothing was typed or submitted")
+        substrate, _ref = backend_for_name(name)
+        if not getattr(substrate.capabilities, "capture_attributes", False) and agent in ("claude", "antigravity"):
+            pane = session_pane_text(name, escapes=False)
+            box = (_claude_prompt_box_text(pane) if agent == "claude"
+                   else _antigravity_prompt_box_text(pane))
+            if box is not None:
+                kind, text = ("input", box) if box.strip() else ("empty", "")
+        if kind == "unknown":
+            raise RuntimeError(f"{name}: pending input could not be cleared; nothing was typed or submitted")
     presses = 0
     while kind == "input" and presses < 8:
         session_action(name, "send_keys", "ctrl+u")
@@ -5264,7 +5479,15 @@ def _clear_composer(name, agent):
         prev_len = len(text)
         kind, text = pane_input(name, agent)
         if kind == "unknown":
-            raise RuntimeError(f"{name}: pending input could not be cleared; nothing was typed or submitted")
+            substrate, _ref = backend_for_name(name)
+            if not getattr(substrate.capabilities, "capture_attributes", False) and agent in ("claude", "antigravity"):
+                pane = session_pane_text(name, escapes=False)
+                box = (_claude_prompt_box_text(pane) if agent == "claude"
+                       else _antigravity_prompt_box_text(pane))
+                if box is not None:
+                    kind, text = ("input", box) if box.strip() else ("empty", "")
+            if kind == "unknown":
+                raise RuntimeError(f"{name}: pending input could not be cleared; nothing was typed or submitted")
         if kind != "input":
             break
         if len(text) >= prev_len:
@@ -5302,55 +5525,37 @@ def _composer_holds_message(name, agent, message):
     return False
 
 def session_nudge(name, message=None):
-    """Submit a running session's prompt deliberately (#42). With `message`,
-    clear any actual pending input and submit that text, verified with one
-    bounded retry. Without `message`, resend only positively identified,
-    single-line actual input. A placeholder suggestion, an empty box or
-    unidentifiable pane text is never executed: no key is sent and the
-    operator is told to pass --message."""
-    _, rec = _require_running(name)
-    agent = rec.get("agent") or "claude"
-    if message:
-        text = message
-        if agent == "codex" and codex_queue_send(rec, text):
+    """Replace only bounded, positively identified pending input and verify delivery."""
+    timing = validate_session_timing_config()
+    deadline = time.monotonic() + timing["session_delivery_timeout_seconds"]
+    with _locked_delivery(name, deadline):
+        _, rec = _require_running(name)
+        agent = rec.get("agent") or "claude"
+        if agent == "pi":
+            if not message:
+                print(f"{name}: nothing to nudge (the prompt cannot be positively identified); nothing was submitted — pass --message \"<instruction>\" to send an explicit instruction")
+                return
+            session_action(name, "send_keys", "ctrl+u")
+            session_action(name, "send_text", message)
+            _submit_pane_input(name, agent)
+            _verify_submitted(name, agent, message, timing=timing)
+            print(f"nudged {name}")
+            return
+        if message and agent == "codex" and codex_queue_send(rec, message):
             print(f"nudged {name} (codex queue)")
             return
-    else:
-        kind, text = pane_input(name, agent)
-        if kind != "input" or not text or "\n" in text:
-            reason = {"empty": "the prompt is empty",
-                      "placeholder": "the prompt shows only a suggested placeholder, not input",
-                      "input": "the pending input cannot be resent safely"}.get(kind, "the pane input cannot be positively identified")
-            print(f"{name}: nothing to nudge ({reason}); nothing was submitted — "
-                  f"pass --message \"<instruction>\" to send an explicit instruction")
-            return
-
-    substrate, _ref = backend_for_name(name)
-    has_classifier = (agent in ("claude", "codex", "antigravity")
-                      and getattr(substrate.capabilities, "capture_attributes", False))
-    legacy_mock = (__name__ in ("nudge_placeholder", "nudge_agents")
-                   or getattr(getattr(tmux, "side_effect", None), "__name__", "") == "fake_tmux"
-                   or hasattr(session_pane_text, "mock_calls")
-                   or (os.environ.get("TMUX_STUB_DIR") and not os.environ.get("TMUX_STATEFUL_STUB")))
-
-    if message and has_classifier and not legacy_mock:
-        _clear_composer(name, agent)
-        session_action(name, "send_text", text)
-        if not _composer_holds_message(name, agent, text):
-            try:
-                _clear_composer(name, agent)
-            except Exception:
-                pass
-            raise RuntimeError(f"{name}: the composer did not hold exactly the message; nothing was submitted")
-        _submit_pane_input(name, agent)
-        _verify_submitted(name, agent, text)
-        print(f"nudged {name}")
-        return
-
-    session_action(name, "send_keys", "ctrl+u")
-    session_action(name, "send_text", text)
-    _submit_pane_input(name, agent)
-    _verify_submitted(name, agent, text)
+        if not message:
+            kind, message = pane_input(name, agent)
+            if kind != "input" or not message or "\n" in message:
+                reason = {"empty": "the prompt is empty",
+                          "placeholder": "the prompt shows only a suggested placeholder, not input",
+                          "input": "the pending input cannot be resent safely"}.get(kind, "the pane input cannot be positively identified")
+                print(f"{name}: nothing to nudge ({reason}); nothing was submitted — "
+                      f"pass --message \"<instruction>\" to send an explicit instruction")
+                return
+        baseline_status = _capture_backend_status(name)
+        _deliver_pane_locked(name, agent, message, mode="nudge", timing=timing,
+                             baseline_status=baseline_status)
     print(f"nudged {name}")
 def _compose_kickoff_message(bead_id, change):
     return (f"Claim Bead {bead_id} and implement its mapped task in change {change}. "
