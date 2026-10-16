@@ -1,6 +1,6 @@
 ## 1. Manifest store and baselines (feat/ lane)
 
-- [ ] TASK-PVE-001 [standard] Add manifest-store and historical release baselines for SHA-256 tracking of verbatim files per design Decision 1; implement serialization, digest calculation, and baseline lookups. Check: new scripts/manifest-store.test.sh, scripts/test. Branch: feat/preserve-modified-verbatim-files. No dependency.
+- [x] TASK-PVE-001 [standard] Add manifest-store and historical release baselines for SHA-256 tracking of verbatim files per design Decision 1; implement serialization, digest calculation, and baseline lookups. Check: new scripts/manifest-store.test.sh, scripts/test. Branch: feat/preserve-modified-verbatim-files. No dependency.
 
 ## 2. Local modification detection and preservation (fix/ lane)
 
