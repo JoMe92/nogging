@@ -2391,6 +2391,24 @@ def tmux_sessions():
 
 def tmux_server_sessions():
     return session_backend("tmux").live(())[0]
+
+def tmux_server_namespace():
+    """Read-only classification of the process behind the dedicated socket."""
+    lib = str(Path(__file__).resolve().parent / "lib")
+    if lib not in sys.path:
+        sys.path.insert(0, lib)
+    sys.dont_write_bytecode = True
+    import session_backend_tmux
+    config = {**CFG, "session_tmux_socket": scfg("session_tmux_socket", "nogging")}
+    return session_backend_tmux.server_namespace(config)
+
+def tmux_sandboxed_warning(result=None):
+    result = result or tmux_server_namespace()
+    if result["class"] == "sandboxed":
+        return (f"tmux server PID {result['pid']} is sandboxed; every session on "
+                "this server ends with that namespace")
+    return None
+
 def session_log_capture(log_path):
     return session_backend_module().LogCapture(
         str(log_path), str((ROOT / "scripts/session-log-writer").resolve()),
@@ -4315,6 +4333,10 @@ def _session_launch(role, bead, cwd, read_only, owner,
         print(f"  kickoff: this session will not act until you send it a first "
               f"message — run `nogg session kickoff {name}` or attach and type "
               f"one yourself.")
+    if backend_name == "tmux" and not is_orchestrator and os.environ.get("NOGG_OPENSPEC_FENCED") != "1":
+        warning = tmux_sandboxed_warning()
+        if warning:
+            print(f"WARN: {warning}")
 
 def reconciled_state(rec, live):
     """The state to report: an active record whose backend session has vanished is
@@ -4377,6 +4399,9 @@ def session_list():
     Read-only: it never attaches, never starts tmux, and never rewrites a
     record. Runs in a bare SSH shell (no TERM, no tmux client)."""
     recs = session_records()
+    warning = tmux_sandboxed_warning()
+    if warning:
+        print(f"NOTE: {warning}")
     if not recs:
         print("no managed sessions"); return
     alive, unknown = session_liveness()
@@ -5724,6 +5749,9 @@ def orchestrator_run(force=False):
             session_launch("orchestrator", None, workdir, False, None,
                            profile="orchestrator", prompt="orchestrator",
                            resume=prior_session_id)
+        warning = tmux_sandboxed_warning()
+        if warning:
+            print(f"WARN: {warning}")
         poll = float(scfg("orchestrator_poll_seconds", 5))
         while tmux_has_session(name, "tmux"):
             time.sleep(poll)
@@ -5745,6 +5773,7 @@ def orchestrator_status():
     print(f"  enabled: {enabled}")
     print(f"  active:  {active}")
     print(f"  linger:  {'on' if _linger_on() else 'off'}")
+    print(f"  tmux server: {tmux_server_namespace()['class']}")
     path = ORCHESTRATOR_LOCKS / "orchestrator.lock"
     if not path.exists():
         print("  lock:    free")
@@ -6335,8 +6364,13 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
         checks.append((cmd, tool_on_path(cmd)))
     checks.extend(session_helper_diagnostics())
     warnings = []
+    tmux_warning = tmux_sandboxed_warning()
+    if tmux_warning:
+        warnings.append(tmux_warning)
     tasks, issues = {}, []
-    try: tasks, issues, problems, warnings = validate()
+    try:
+        tasks, issues, problems, validation_warnings = validate()
+        warnings.extend(validation_warnings)
     except Exception as exc: problems = [str(exc)]
     checks.extend((p, False) for p in problems)
     if FAILURE_RECORD.exists():
