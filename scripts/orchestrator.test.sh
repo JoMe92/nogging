@@ -234,6 +234,20 @@ check "stop: reports stopped and disabled" "stopped and disabled"
 [[ "$(cat "$SYSTEMCTL_STATE_DIR/enabled")" == "disabled" ]] \
   && echo "ok   - stop: the unit stays disabled" \
   || { echo "FAIL - stop: unit not disabled"; fail=1; }
+
+# ===========================================================================
+# restart: refused when invoked from within the orchestrator session itself
+# ===========================================================================
+NOGG_SESSION_NAME="nogg-orchestrator-status" "$nogg" orchestrator restart >"$out" 2>&1 \
+  && { echo "FAIL - restart: inside-session restart should be refused"; cat "$out"; fail=1; } \
+  || echo "ok   - restart: inside-session restart is refused"
+check "restart: names refusal reason" "refusing to restart orchestrator from within its own session"
+check "restart: hints at external shell" "external shell"
+
+NOGG_SESSION_ROLE="orchestrator" "$nogg" orchestrator restart >"$out" 2>&1 \
+  && { echo "FAIL - restart: inside-session role restart should be refused"; cat "$out"; fail=1; } \
+  || echo "ok   - restart: inside-session role restart is refused"
+check "restart: role names refusal reason" "refusing to restart orchestrator from within its own session"
 unset NOGGING_ROOT
 
 if [[ $fail -ne 0 ]]; then echo "orchestrator checks failed" >&2; exit 1; fi

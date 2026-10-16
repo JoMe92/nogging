@@ -5729,6 +5729,21 @@ def claude_conversation_transcript_exists(workdir, session_id):
     d = Path.home() / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(workdir))
     return (d / f"{session_id}.jsonl").is_file()
 def orchestrator_unit(): return f"nogg-orchestrator-{orchestrator_slug()}.service"
+def is_inside_orchestrator_session():
+    name = orchestrator_session_name()
+    if os.environ.get("NOGG_SESSION_NAME") == name or os.environ.get("NOGG_SESSION_ROLE") == "orchestrator":
+        return True
+    try:
+        rec = calling_session_record()
+        if rec and (rec.get("name") == name or rec.get("role") == "orchestrator"):
+            return True
+    except Exception:
+        pass
+    if os.environ.get("TMUX"):
+        res = run("tmux", "display-message", "-p", "#{session_name}", check=False)
+        if res.returncode == 0 and res.stdout.strip() == name:
+            return True
+    return False
 def claude_project_trusted(workdir):
     """Whether `~/.claude.json` records `hasTrustDialogAccepted` for `workdir`.
     The orchestrator tmux pane is an interactive Claude session, which blocks on
@@ -5898,6 +5913,10 @@ def orchestrator_stop():
     terminate_orchestrator_session("stopped by operator")
     print(f"orchestrator: stopped and disabled ({unit})")
 def orchestrator_restart(supervisor_only=False):
+    if is_inside_orchestrator_session():
+        raise RuntimeError("refusing to restart orchestrator from within its own session "
+                           "(terminating the session would abort before restart completes); "
+                           "run 'scripts/nogg orchestrator restart' from an external shell")
     unit = orchestrator_unit()
     if supervisor_only:
         res = _systemctl("restart", unit)
