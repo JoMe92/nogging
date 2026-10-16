@@ -2,9 +2,53 @@
 from __future__ import annotations
 
 import os
+import socket
 import shlex
+import struct
 
 from session_backend import BackendError, Capabilities, KEYS
+
+
+def _namespace_links(pid):
+    """Return PID and mount namespace links for a visible process."""
+    return (os.readlink(f"/proc/{pid}/ns/pid"),
+            os.readlink(f"/proc/{pid}/ns/mnt"))
+
+
+def server_namespace(config):
+    """Classify the process listening on Nogging's dedicated tmux socket.
+
+    The PID comes from kernel peer credentials, never from tmux's namespace-
+    local display-message output. Namespace reads are isolated for testing.
+    """
+    socket_name = config.get("session_tmux_socket", "nogging")
+    socket_dir = os.environ.get("TMUX_TMPDIR", "/tmp")
+    path = os.path.join(socket_dir, f"tmux-{os.getuid()}", socket_name)
+    fenced = os.environ.get("NOGG_OPENSPEC_FENCED") == "1"
+    try:
+        client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            client.settimeout(0.5)
+            client.connect(path)
+            _, pid, _ = struct.unpack("3i", client.getsockopt(
+                socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i")))
+        finally:
+            client.close()
+    except (FileNotFoundError, ConnectionRefusedError):
+        return {"class": "down", "pid": None}
+    except OSError:
+        return {"class": "unknown", "pid": None}
+    if pid == 0:
+        return {"class": "outside" if fenced else "unknown", "pid": 0}
+    if fenced:
+        return {"class": "sandboxed", "pid": pid}
+    try:
+        server_pid_ns, server_mnt_ns = _namespace_links(pid)
+        caller_pid_ns, caller_mnt_ns = _namespace_links("self")
+    except (OSError, ValueError):
+        return {"class": "unknown", "pid": pid}
+    same = server_pid_ns == caller_pid_ns and server_mnt_ns == caller_mnt_ns
+    return {"class": "host" if same else "sandboxed", "pid": pid}
 
 
 class TmuxBackend:
@@ -19,6 +63,10 @@ class TmuxBackend:
         # Optional legacy transport hook keeps existing embedders/test doubles
         # working; all command construction still lives in this module.
         self._invoke = invoke or self.command
+        self.config = config
+
+    def server_namespace(self):
+        return server_namespace(self.config)
 
     @staticmethod
     def _fenced_prefix():
