@@ -1,9 +1,10 @@
 """tmux primitives on Nogging's dedicated socket, preserving legacy argv."""
 from __future__ import annotations
 
+import os
 import shlex
 
-from session_backend import Capabilities, KEYS
+from session_backend import BackendError, Capabilities, KEYS
 
 
 class TmuxBackend:
@@ -19,8 +20,36 @@ class TmuxBackend:
         # working; all command construction still lives in this module.
         self._invoke = invoke or self.command
 
+    @staticmethod
+    def _fenced_prefix():
+        return ("-N",) if os.environ.get("NOGG_OPENSPEC_FENCED") == "1" else ()
+
     def command(self, *args, check=True):
-        return self._run(self.binary, "-L", self.socket, *args, check=check)
+        return self._run(self.binary, "-L", self.socket, *self._fenced_prefix(),
+                         *args, check=check)
+
+    def prepare(self, name, cwd):
+        """Check fenced callers can use the host server before any record is written."""
+        if os.environ.get("NOGG_OPENSPEC_FENCED") != "1":
+            return {"name": name, "socket": self.socket}
+        try:
+            result = self.command("list-sessions", check=False)
+        except OSError as exc:
+            raise BackendError(
+                f"tmux server -L {self.socket} is not running; a sandboxed session "
+                "cannot start it, because it would end with this session; launch "
+                f"from an unsandboxed shell (the operator or the Orchestration Agent): {exc}"
+            ) from exc
+        if getattr(result, "returncode", 1) != 0:
+            stderr = (getattr(result, "stderr", "") or "").strip()
+            reason = (f": {stderr}" if stderr and "no server running" not in stderr.lower()
+                      else "")
+            raise BackendError(
+                f"tmux server -L {self.socket} is not running; a sandboxed session "
+                "cannot start it, because it would end with this session; launch "
+                f"from an unsandboxed shell (the operator or the Orchestration Agent){reason}"
+            )
+        return {"name": name, "socket": self.socket}
 
     @staticmethod
     def _name(ref):
@@ -91,8 +120,8 @@ class TmuxBackend:
         self._invoke("kill-session", "-t", self._name(ref), check=False)
 
     def attach_argv(self, ref, read_only=False):
-        return [self.binary, "-L", self.socket, "attach", "-t", self._name(ref)] + (
-            ["-r"] if read_only else [])
+        return ([self.binary, "-L", self.socket, *self._fenced_prefix(),
+                 "attach", "-t", self._name(ref)] + (["-r"] if read_only else []))
 
     def agent_status(self, ref):
         return None
@@ -102,4 +131,4 @@ class TmuxBackend:
 
     def liveness_probe(self, ref):
         return {"backend": self.name, "argv": [self.binary, "-L", self.socket,
-                "has-session", "-t", self._name(ref)]}
+                *self._fenced_prefix(), "has-session", "-t", self._name(ref)]}
