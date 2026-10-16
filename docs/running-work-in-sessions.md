@@ -61,6 +61,26 @@ If the agent itself exits during startup, the failed record and redacted log
 retain the original error even when the pane has already disappeared. Check
 `session list` and `session log <name>` after a suspected quick failure.
 
+### Host-namespace tmux server start and fenced refusal
+
+On the `tmux` backend, the shared tmux server (`tmux -L nogging`) must be
+started in the host namespace so that it survives individual sandboxed sessions.
+A sandboxed Lead or specialist (running under `openspec-sandbox` with
+`NOGG_OPENSPEC_FENCED=1`) cannot start the server: every tmux command it runs
+carries tmux's global `-N` flag ("do not start the server").
+
+If a fenced session runs `session launch` on tmux while the server is down,
+launch refuses before any session record, effective settings, or log is created:
+
+```text
+tmux server -L nogging is not running; a sandboxed session cannot start it, because it would end with this session; launch from an unsandboxed shell (the operator or the Orchestration Agent)
+```
+
+**Remedy:** Launch a session or start the Orchestration Agent from an unsandboxed
+shell on the host (the operator or `systemctl --user start nogg-orchestrator-<slug>`).
+The unsandboxed launch starts the server in the host namespace, where it persists
+across sessions. Once running, sandboxed launches connect to it normally.
+
 Then give it its task: attach (below) and tell it what to do, or point it at a
 briefing file.
 
@@ -513,11 +533,34 @@ box. That suggestion is rendered dim and is a placeholder, not typed input, so
 ./scripts/nogg session nudge <name> --message "<instruction>"
 ```
 
-With `--message`, nudge clears any actual pending input, types the message,
-submits it and verifies submission: if the input is still pending it retries
-the submit step once, then fails. A pane whose input box cannot be identified
-also fails as unverified rather than reporting success. `send --verify`
-uses the same check.
+With `--message`, nudge replaces any actual pending input and submits the supplied
+message with bounded verification. For every agent whose composer Nogging can
+classify (Claude, the Codex pane fallback, and Antigravity) across both session
+backends (tmux and herdr), nudge performs a bounded clear and exact-message
+comparison before submitting:
+
+1. **Clear pending input:**
+   - While the composer shows input, nudge sends `ctrl+u` repeatedly (up to 8 times)
+     as long as the text gets shorter, clearing wrapped buffers one visual row at a time.
+   - If input remains, nudge sends `backspace` once per remaining character plus once
+     per composer row (bounded to 4096 keys).
+   - The composer must reach `empty` or `placeholder`. If it does not, or if it reads as
+     `unknown` at any point, nudge refuses to type or submit anything, fails with
+     `<name>: pending input could not be cleared; nothing was typed or submitted`, and exits non-zero.
+2. **Type and compare:**
+   - Nudge types the message and reads back the composer. It proceeds only if the
+     composer holds *exactly* the supplied message (ignoring whitespace differences caused by
+     line re-wrapping) or the runtime's recognized collapsed-paste marker (e.g. Codex `Pasted Content`).
+   - If the composer contains merged text (leftover stale input merged with the message)
+     or unexpected content, nudge clears the composer again and fails with `<name>: the
+     composer did not hold exactly the message; nothing was submitted` without sending Enter.
+3. **Submit and verify:**
+   - Only when the composer is verified to hold exactly the message does nudge send Enter
+     and verify submission. If input remains pending afterwards, it retries the submit step
+     once, then fails.
+
+A pane whose input box cannot be identified also fails as unverified rather than reporting
+success. `send --verify` uses the same check.
 
 Without `--message`, nudge resends only single-line input that it can
 positively identify: non-dim text in Claude's framed input box, captured with

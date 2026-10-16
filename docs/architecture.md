@@ -163,9 +163,17 @@ product decision.
 - **Substrate.** Supervised sessions run on a switchable backend: `tmux`
   (default and permanent fallback, `scripts/lib/session_backend_tmux.py`) or
   `herdr` (experimental, `scripts/lib/session_backend_herdr.py`; see
-  `using-with-herdr.md`). For tmux, a dedicated tmux server socket
-  (`tmux -L nogging`, `session_tmux_socket`) isolates managed sessions from the
-  operator's personal tmux and makes them enumerable. For herdr, sessions run in
+  `using-with-herdr.md`). Both backends enforce a host-only server birth rule.
+  For tmux, a dedicated tmux server socket (`tmux -L nogging`, `session_tmux_socket`)
+  isolates managed sessions from the operator's personal tmux and makes them
+  enumerable. The shared tmux server is started only outside the OpenSpec execution
+  sandbox: fenced callers (`NOGG_OPENSPEC_FENCED=1`) pass tmux's global `-N` flag
+  on every command to prevent starting a server inside the sandbox, and `session launch`
+  refuses in `prepare` before records, settings or logs exist if the server is down.
+  A server probe connects to the socket, reads `SO_PEERCRED` and inspects `ns/pid`
+  and `ns/mnt` links to classify the server (`host`, `sandboxed`, `outside`, `down`,
+  `unknown`), reporting `sandboxed` servers via `doctor` WARN and `session list` NOTE
+  without killing or signaling the server. For herdr, sessions run in
   labelled panes inside a dedicated local herdr session namespace
   (`session_herdr_session`, default `nogging`). The dedicated herdr server runs in
   the host PID namespace, verified via socket identity and a durable receipt;
@@ -264,7 +272,16 @@ an ordinary supervised session — a durable record, an append-only log, listed 
   **single-instance lock** (`.nogging/locks/orchestrator.lock`, which records
   `{pid, host, created_at, pid_start, pid_ns}` and binds staleness to holder
   liveness across PID namespaces rather than age alone), not a
-  boundary. The accepted residual risk is that an always-on god-mode session
+  boundary. The orchestrator home is canonical: resolved from the repository's
+  main checkout (`canonical_repository_state(ROOT)`). The lock path
+  `<main>/.nogging/locks/orchestrator.lock`, the slug `<slug>` derived from the
+  main checkout's directory name, the systemd unit `nogg-orchestrator-<slug>.service`,
+  and live session lookup are all canonical across linked worktrees.
+  `orchestrator run` in a linked worktree refuses before taking any lock and names
+  the main checkout, while `status`, `stop` and `restart` act on the canonical unit
+  from any checkout. Any checkout-local `orchestrator.lock` in a linked worktree is
+  never read as the lock; `recover` and `doctor` report it as an advisory NOTE with its path.
+  The accepted residual risk is that an always-on god-mode session
   that auto-resumes its own conversation is a standing prompt-injection target;
   it is mitigated by delivery-host-only blast radius, full visibility, and the
   single instance, not eliminated.
