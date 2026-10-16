@@ -57,11 +57,16 @@ with tempfile.TemporaryDirectory() as tmp:
             with ThreadPoolExecutor(max_workers=2) as pool:
                 list(pool.map(m.session_kickoff, [name, name]))
             m.session_kickoff(name)
-            assert len([a for a in calls if '-l' in a]) == 1
+            assert len([a for a in calls if a and a[0] == 'paste-buffer']) == 1
             assert len([a for a in calls if a[-1] == 'Enter']) == 1
             assert json.loads(path.read_text())['kickoff_sent_at']
             m.session_send(name,'Follow-up')
-            assert calls[-2:] == [('send-keys','-t',name,'-l','Follow-up'),('send-keys','-t',name,'Enter')]
+            buffer = calls[-4][-2]
+            assert calls[-4:] == [
+                ('load-buffer','-b',buffer,'-'),
+                ('paste-buffer','-p','-r','-d','-b',buffer,'-t',name),
+                ('delete-buffer','-b',buffer),
+                ('send-keys','-t',name,'Enter')]
             with patch.object(m.time,'sleep'):
                 m.session_stop(name,'test complete')
             assert json.loads(path.read_text())['state'] == 'stopped'

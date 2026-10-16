@@ -105,8 +105,11 @@ class ToolError(RuntimeError):
     """A `git` / `bd` invocation exited non-zero. Treated as transient."""
 
 def now(): return dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat()
-def run(*args, check=True, env=None, timeout=None):
-    result = subprocess.run(args, cwd=ROOT, text=True, capture_output=True, env=env, timeout=timeout)
+def run(*args, check=True, env=None, timeout=None, input=None):
+    run_kwargs = dict(cwd=ROOT, text=True, capture_output=True, env=env, timeout=timeout)
+    if input is not None:
+        run_kwargs["input"] = input
+    result = subprocess.run(args, **run_kwargs)
     if check and result.returncode:
         raise ToolError(f"{' '.join(args)}: {result.stderr.strip() or result.stdout.strip()}")
     return result
@@ -2346,9 +2349,12 @@ def session_action(name, operation, *args, **kwargs):
     substrate, ref = backend_for_name(name)
     return getattr(substrate, operation)(ref, *args, **kwargs)
 
-def tmux(*args, check=True):
+def tmux(*args, check=True, stdin=None):
     """Legacy transport hook; command execution lives in the backend module."""
-    return session_backend_module().resolve("tmux", CFG, run).command(*args, check=check)
+    command = session_backend_module().resolve("tmux", CFG, run).command
+    if stdin is None:
+        return command(*args, check=check)
+    return command(*args, check=check, stdin=stdin)
 
 def sessions_dir(): return data_dir(ROOT / scfg("session_state_dir", ".nogging/state/sessions"))
 def tmux_has_session(name, backend=None):
