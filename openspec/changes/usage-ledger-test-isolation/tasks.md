@@ -2,7 +2,7 @@
 
 - [x] TASK-ULT-001 [complex] Implement tolerant ledger decoding, stable accounting validation and opaque-entry preservation per design Decisions 1-2; read both legacy shapes and version 1, count future entries without probes, fail safely on invalid accounting. Check: new scripts/usage-ledger-schema.test.sh, existing usage-reservations.test.sh and usage-gate.test.sh, scripts/test. Branch: fix/usage-ledger-test-isolation. No dependency.
 
-- [ ] TASK-ULT-002 [standard] Stamp pending/bound entries with schema_version 1, preserve extensions and refuse opaque-target bind/release per design Decisions 1-2. Check: new scripts/usage-ledger-writers.test.sh (pending/bound lifecycle, opaque targets, failure cleanup), usage-reservations.test.sh, scripts/test. Branch: fix/usage-ledger-test-isolation. Depends on TASK-ULT-001.
+- [x] TASK-ULT-002 [standard] Stamp pending/bound entries with schema_version 1, preserve extensions and refuse opaque-target bind/release per design Decisions 1-2. Check: new scripts/usage-ledger-writers.test.sh (pending/bound lifecycle, opaque targets, failure cleanup), usage-reservations.test.sh, scripts/test. Branch: fix/usage-ledger-test-isolation. Depends on TASK-ULT-001.
 
 ## 2. Test bootstrap (independent refactor/ lane)
 
