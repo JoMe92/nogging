@@ -39,3 +39,14 @@
     tier complex: assigned by orchestrator to antigravity; branch fix/usage-ledger-test-isolation.
     Orchestrator: resumed in existing worktree /home/jome/src/nogging-spec-qlac after the shared tmux server died at 13:48 (all sessions lost).
     Implemented TASK-ULT-001 in commit b428db641b7cce928abe49f2b0948064816faa44. PR opened: https://github.com/JoMe92/nogging/pull/179. Validation: scripts/usage-ledger-schema.test.sh, scripts/usage-reservations.test.sh, and scripts/usage-gate.test.sh passed.
+
+<!-- nogg:SPEC-f7se:2026-10-16T22:05:05Z -->
+- 2026-10-16T22:14:58+00:00 — SPEC-f7se closed for TASK-ULT-002 (Bead closed at 2026-10-16T22:05:05Z).
+  - implementation commits: 9f4789d2ca74, 0a52df79b5ec4008c75d456d2c3423e60457a6e2, 9f4789d04ae05d761614ae487cf38dd792a76f28
+  - Bead note:
+    Planned for GitHub issues #163 and #164 in usage-ledger-test-isolation; committed planning source 0a52df79b5ec4008c75d456d2c3423e60457a6e2. Read the mapped tasks.md line, its referenced design Decisions and matching capability scenarios; design Decision 6 applies to every test. Complexity and branch prefix are explicit in the task line and design lane table. Before allocating dependent work verify prerequisite commits are integrated into develop, not merely that their Beads are closed. Tests must be offline with no real bd/Dolt, PID-range assumptions, unshare or existing tmux server; broker sentinels use short temporary sockets. No implementation or claim occurred during planning. Publication and release are outside this planning run.
+    Planning commit 0a52df79b5ec4008c75d456d2c3423e60457a6e2 is fast-forward integrated into local develop. Evidence: openspec validate --all --strict passed 34/34; nogg validate and git diff --check passed; seven unique open/unclaimed mappings, eight explicit blocking edges and every Bead title under 500 characters verified. Ready to dispatch only when this task has no unmet prerequisites and their execution commits are integrated. No push or execution performed.
+    tier standard: assigned by orchestrator to antigravity; branch fix/usage-ledger-test-isolation.
+    Commit: 9f4789d04ae05d761614ae487cf38dd792a76f28
+    PR: https://github.com/JoMe92/nogging/pull/192
+    Evidence: scripts/usage-ledger-writers.test.sh, scripts/usage-reservations.test.sh, scripts/usage-ledger-schema.test.sh pass cleanly. Stamped pending/bound entries with schema_version 1, preserved extensions across mutations, and refused opaque target bind and release.
