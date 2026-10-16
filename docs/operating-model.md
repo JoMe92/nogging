@@ -170,6 +170,10 @@ supervisor run starts a fresh Claude session with the current launch prompt and
 settings while resuming conversation transcript history. Passing
 `--supervisor-only` restarts only the systemd supervisor service without
 terminating the tmux session, adopting the live session without relaunching.
+`orchestrator restart` (even with `--supervisor-only`) is refused when called
+from within the orchestrator session itself (for example, if an operator asks
+the orchestrator via Remote Control to restart itself) and must be run from an
+external shell.
 
 
 ## Resuming an interrupted run

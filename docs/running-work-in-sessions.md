@@ -400,7 +400,10 @@ lock and exits non-zero so `Restart=always` brings it back. `orchestrator restar
 terminates the live orchestrator tmux session and restarts the service, causing
 the new supervisor run to start a fresh Claude session with the current launch
 prompt and configuration while resuming transcript continuity; `--supervisor-only`
-restarts the supervisor unit alone without terminating the tmux session. The Orchestration
+restarts the supervisor unit alone without terminating the tmux session. Restart
+(including `--supervisor-only`) is refused from within the orchestrator session itself
+(e.g. when directed via Remote Control) to avoid terminating before completion, and
+must be run from an external shell. The Orchestration
 Agent is pinned to tmux and always runs on tmux, even if `herdr` is configured as
 the repository's default session backend. It runs under the
 `orchestrator` profile with the command floor and the `openspec/` boundary
