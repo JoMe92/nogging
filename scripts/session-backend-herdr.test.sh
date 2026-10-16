@@ -254,7 +254,8 @@ with tempfile.TemporaryDirectory(prefix='nogg.', dir='/tmp') as temp:
         # adopted. Listing reports it; cleanup closes it and keeps server alive.
         fault('simulate_restart')
         assert backend.live([first]) == (set(), set())
-        assert backend.orphans([first])
+        orphans_found, _ = backend.orphans([first])
+        assert orphans_found
         os.environ['NOGGING_ROOT'] = str(root)
         module = importlib.machinery.SourceFileLoader('nogg_herdr_test', str(source / 'scripts/nogg')).load_module()
         module.collect_session_usage = lambda *args, **kw: None

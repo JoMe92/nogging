@@ -498,29 +498,41 @@ class HerdrBackend:
         pass  # Recorder owns logging for the pane's entire lifetime.
 
     def orphans(self, records):
-        """Return only unowned Nogging-labelled panes in this repo's workspace."""
+        """Return (orphans, foreign_count) for this repo's workspace."""
         groups = {}
         for rec in records:
             namespace = (rec.get("backend_ref") or {}).get("herdr_session", self.session)
             groups.setdefault(namespace, []).append(rec)
         orphans = []
-        for namespace, group in groups.items():
+        foreign_count = 0
+        known_namespaces = set(groups.keys()) or {self.session}
+        for namespace in known_namespaces:
+            group = groups.get(namespace, [])
             active = [r for r in group if r.get("state") in {"starting", "running", "idle"}]
             alive, unknown = self.live(active)
             if unknown:
                 continue
             owned = alive | {r["name"] for r in active if r.get("state") == "starting"}
+            local_names = {r["name"] for r in group if "name" in r}
             ref = {"herdr_session": namespace}
             try:
                 workspaces = self._json("workspace", "list", ref=ref)["workspaces"]
                 ids = {w["workspace_id"] for w in workspaces if w.get("label") == self.slug}
-                orphans.extend({"name": p["label"], "label": p["label"], "pane_id": p["pane_id"],
-                                "workspace": p["workspace_id"], "herdr_session": namespace}
-                               for p in self._panes(ref) if p.get("workspace_id") in ids
-                               and str(p.get("label", "")).startswith("sf-") and p["label"] not in owned)
+                for p in self._panes(ref):
+                    if p.get("workspace_id") not in ids:
+                        continue
+                    label = str(p.get("label", ""))
+                    if not label.startswith("sf-"):
+                        continue
+                    if label in local_names:
+                        if label not in owned:
+                            orphans.append({"name": label, "label": label, "pane_id": p["pane_id"],
+                                            "workspace": p["workspace_id"], "herdr_session": namespace})
+                    else:
+                        foreign_count += 1
             except (BackendError, KeyError, TypeError):
                 continue
-        return orphans
+        return orphans, foreign_count
 
     def liveness_probe(self, ref):
         # Read the record at probe time: the initial reservation precedes exec
