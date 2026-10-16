@@ -3114,8 +3114,10 @@ def preflight_session_helpers(argv, agent):
             or not {'readonly-mounts', 'closed-task-broker', 'checkout-task-broker'}.issubset(boundary['features'])):
         raise RuntimeError("OpenSpec filesystem boundary contract is incompatible; run Nogging update")
     writer = helper_contract(ROOT / "scripts/session-log-writer")
-    if writer.get("positional") != 3:
-        raise RuntimeError("session-log-writer contract must accept three arguments; run Nogging update")
+    if (writer.get("positional") != 3
+            or not isinstance(writer.get("features"), list)
+            or "byte-stream" not in writer["features"]):
+        raise RuntimeError("session-log-writer contract must accept three arguments and support byte-stream; run Nogging update")
 
 def session_helper_diagnostics():
     checks = []
@@ -3137,8 +3139,10 @@ def session_helper_diagnostics():
         checks.append((str(exc), False))
     try:
         contract = helper_contract(ROOT / "scripts/session-log-writer")
-        if type(contract.get("positional")) is not int or contract["positional"] != 3:
-            raise RuntimeError("session-log-writer contract must accept three arguments; run Nogging update")
+        if (type(contract.get("positional")) is not int or contract["positional"] != 3
+                or not isinstance(contract.get("features"), list)
+                or "byte-stream" not in contract["features"]):
+            raise RuntimeError("session-log-writer contract must accept three arguments and support byte-stream; run Nogging update")
         checks.append(("session-log-writer helper contract", True))
     except RuntimeError as exc:
         checks.append((str(exc), False))
@@ -4265,11 +4269,18 @@ def _agent_status_display(rec, live):
         return "unknown"
 def _archive_log(rec):
     lp = Path(rec.get("log_path") or "")
-    if lp and lp.exists():
-        stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S")
+    if not lp.name:
+        return
+    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S")
+    if lp.exists():
         archived = lp.with_name(lp.name + f".archived-{stamp}")
         lp.rename(archived)
         rec["archived_log_path"] = str(archived)
+    if lp.parent.exists():
+        for rot in sorted(lp.parent.glob(f"{lp.name}.*")):
+            suffix = rot.name[len(lp.name) + 1:]
+            if suffix.isdigit():
+                rot.rename(rot.with_name(f"{rot.name}.archived-{stamp}"))
 def _remove_effective_settings(rec):
     """Delete the per-session effective-settings file when the record retires.
     The source profile is never touched — only the merged copy this launch
