@@ -22,7 +22,7 @@
 
 - [x] TASK-HHB-009 [standard] Per design Decision 10 (D4, D5): Codex nudge --message delivers via codex queue like send; pane fallback verifies with a Codex composer classifier and fails as unverified, never `nudged`; Antigravity classifier ignores the status bar, herdr working/done counts as submitted, no extra Enter after delivery. Check: new scripts/session-nudge-agents.test.sh with spike-derived fixtures; existing nudge suites unchanged; scripts/test.
 
-- [ ] TASK-HHB-010 [standard] Per design Decision 11 (D7): support Codex exact resume; validate the UUID before side effects, record codex_thread_id, run codex resume <id> inside the wrapper with the cold-launch authority flags and no re-sent prompt, refuse when the installed Codex lacks a flag, add session-launch contract feature codex-resume. Check: new scripts/codex-exact-resume.test.sh with argv-capturing codex stub and committed resume help fixture; scripts/test.
+- [x] TASK-HHB-010 [standard] Per design Decision 11 (D7): support Codex exact resume; validate the UUID before side effects, record codex_thread_id, run codex resume <id> inside the wrapper with the cold-launch authority flags and no re-sent prompt, refuse when the installed Codex lacks a flag, add session-launch contract feature codex-resume. Check: new scripts/codex-exact-resume.test.sh with argv-capturing codex stub and committed resume help fixture; scripts/test.
 
 ## 4. Documentation and acceptance
 
