@@ -250,7 +250,7 @@ current checkout's records:
   **foreign** (belonging to another checkout, worktree, or deleted state). Foreign panes
   are **never closed and never adopted**.
 - `session list` reports foreign panes in an advisory NOTE with their count:
-  `NOTE N foreign Nogging pane(s) active on herdr server (not managed by this checkout)`.
+  `NOTE: <N> foreign herdr pane(s) left untouched`.
 
 ---
 
