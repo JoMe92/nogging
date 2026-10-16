@@ -55,6 +55,19 @@ NOGG_OPENSPEC_FENCED=1 exec "$@"
     env.update(NOGGING_ROOT=str(root), PATH=str(root / "bin") + os.pathsep + env["PATH"],
                NOGG_TEST_API_TOKEN="private-startup-fixture", TMUX_TMPDIR=str(tmux_tmpdir))
     try:
+        # Reproduce a fenced caller on an empty, test-owned tmux socket. The
+        # server-start guard must refuse before creating session artifacts.
+        fenced_env = dict(env, NOGG_OPENSPEC_FENCED="1")
+        refused = subprocess.run([str(root / "scripts/nogg"), "session", "launch",
+                                  "--role", "lead", "--bead", "SPEC-live"],
+                                 env=fenced_env, text=True, capture_output=True, timeout=10)
+        assert refused.returncode != 0, (refused.stdout, refused.stderr)
+        assert "sandboxed session cannot start it" in refused.stderr, refused.stderr
+        session_dir = root / ".nogging/state/sessions"
+        assert not (list(session_dir.glob("*")) if session_dir.exists() else []), \
+            list(session_dir.glob("*")) if session_dir.exists() else []
+        assert not socket_path.exists(), "fenced launch created its tmux server socket"
+
         # This suite exercises runtime startup failure after backend prepare.
         # Seed the shared server from the host before the fenced launch.
         subprocess.run(["tmux", "-L", sock, "new-session", "-d", "-s", "host-anchor"],
