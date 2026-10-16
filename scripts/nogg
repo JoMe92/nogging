@@ -1231,7 +1231,9 @@ def release_planning_lock(force=False, session_record=None):
             # record remains until the actual owner process is confirmed gone.
             write_sentinel(by="planning-session-terminal")
             if planning_lock_live(record):
-                print(f"planning lock retained for still-live owner {record['session_name']} pid {record['pid']}")
+                print(f"planning lock retained for still-live owner {record['session_name']} pid {record['pid']}; "
+                      f"rerun 'nogg session stop {record['session_name']}' once it has exited "
+                      "(never plan-end --force while it lives)")
                 return False
         else:
             context = planning_session_context()
@@ -4683,13 +4685,29 @@ def session_stop(name, reason):
             and rec.get("name") in unknown_sessions()):
         raise RuntimeError(f"{name} backend liveness is unknown; stop refused without proof the session can be reached")
     grace = float(scfg("session_stop_grace_seconds", 10))
+    stop_started = time.monotonic()
     if tmux_has_session(name):
         session_action(name, "send_keys", "ctrl+c", check=False)      # interrupt agent
-        deadline = time.monotonic() + grace
+        deadline = stop_started + grace
         while time.monotonic() < deadline and tmux_has_session(name):
             time.sleep(0.2)
         if tmux_has_session(name):
             session_action(name, "kill")      # hard terminate
+    planning_state = canonical_repository_state(ROOT) if rec.get("role") == "planning" else None
+    lock_path = Path(planning_state["locks_dir"]) / "planning.lock" if planning_state else None
+    if lock_path and lock_path.exists():
+        try:
+            lock_owner = json.loads(lock_path.read_text())
+        except (OSError, ValueError):
+            lock_owner = {}
+        if planning_lock_owned(lock_owner, {
+                "session_name": rec.get("name"),
+                "session_root": planning_state["main_checkout"],
+                "host": rec.get("host", socket.gethostname()),
+                "pid": rec.get("session_pid"), "pid_start": rec.get("session_pid_start")}):
+            deadline = stop_started + grace
+            while planning_lock_live(lock_owner) and time.monotonic() < deadline:
+                time.sleep(min(0.2, max(0, deadline - time.monotonic())))
     transition(path, rec, "stopped", exit_reason=(reason or "stopped by operator"),
                usage_monotonic_end_ms=monotonic_ms(), usage_end_boot_id=boot_id())
     print(f"stopped {name} (reason: {rec['exit_reason']})")
@@ -6098,7 +6116,10 @@ def recover_scan():
         owner = f", owner session {info['session_name']} scope {info.get('planning_id')} worktree {info.get('working_dir')}" if info.get("session_name") else ""
         lock_lines.append(f"{name}.lock: {state}, age {age}s / ttl {ttl}s, {liveness}{owner}")
         if name == "planning" and info.get("session_name") and not planning_lock_live(info):
-            attention.append(f"interrupted planning owner {info['session_name']}; verify preserved worktree then plan-end --force from a surviving checkout")
+            owner_name = info["session_name"]
+            has_record = any(rec.get("name") == owner_name for _, rec in session_records())
+            release = f"nogg session stop {owner_name}" if has_record else "plan-end --force from a surviving checkout"
+            attention.append(f"interrupted planning owner {owner_name}; verify preserved worktree then {release}")
         if not fresh:
             attention.append(f"stale {name}.lock")
     section("Locks", lock_lines)
