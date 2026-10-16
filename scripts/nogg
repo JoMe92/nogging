@@ -281,6 +281,66 @@ def git_worktree_paths():
     if result.returncode:
         raise RuntimeError("could not inspect existing Git worktrees")
     return {line[9:] for line in result.stdout.splitlines() if line.startswith("worktree ")}
+def mount_points():
+    """Return resolved mount targets from this process's mount namespace."""
+    try:
+        lines = Path("/proc/self/mountinfo").read_text().splitlines()
+    except OSError as exc:
+        raise RuntimeError("cannot read /proc/self/mountinfo") from exc
+    points = set()
+    for line in lines:
+        fields = line.split()
+        if len(fields) < 6:
+            raise RuntimeError("cannot parse /proc/self/mountinfo")
+        # mountinfo escapes spaces, tabs, newlines and backslashes as octal.
+        raw = re.sub(r"\\([0-7]{3})", lambda match: chr(int(match.group(1), 8)), fields[4])
+        points.add(str(Path(raw).resolve()))
+    return points
+def path_is_within(path, parent):
+    try:
+        Path(path).resolve().relative_to(Path(parent).resolve())
+        return True
+    except ValueError:
+        return False
+def refuse_in_use_worktree(target):
+    """Fail closed before removal if this process or a live session uses target."""
+    try:
+        points = mount_points()
+    except (OSError, RuntimeError) as exc:
+        raise RuntimeError(f"refusing to remove {target}: cannot read the mount table: {exc}") from exc
+    gitdir_result = run("git", "-C", str(target), "rev-parse", "--absolute-git-dir", check=False)
+    if gitdir_result.returncode:
+        raise RuntimeError(f"refusing to remove {target}: cannot resolve its Git directory")
+    candidates = [target, Path(gitdir_result.stdout.strip())]
+    for point in sorted(points):
+        if any(path_is_within(point, candidate) for candidate in candidates):
+            raise RuntimeError(
+                f"refusing to remove {target}: it is mounted into this process's sandbox at {point}; "
+                "run plan-end first if you are its planner, then hand off: the operator runs "
+                "'nogg session stop <name>' and 'nogg worktree cleanup <record>' from <main checkout>"
+            )
+    cwd = Path(os.getcwd()).resolve()
+    if path_is_within(cwd, target):
+        raise RuntimeError(f"refusing to remove the current directory {target}; run worktree cleanup from <main checkout>")
+    main = Path(canonical_repository_state(ROOT)["main_checkout"])
+    directory = main / scfg("session_state_dir", ".nogging/state/sessions")
+    try:
+        records = list(directory.glob("*.json")) if directory.is_dir() else []
+        for record_path in records:
+            record = json.loads(record_path.read_text())
+            if not isinstance(record, dict):
+                raise ValueError("session record is not an object")
+            working_dir = record.get("working_dir")
+            if (record.get("state") in SESSION_ACTIVE_STATES and isinstance(working_dir, str)
+                    and path_is_within(working_dir, target)
+                    and record.get("name") != os.environ.get("NOGG_SESSION_NAME")):
+                name = record.get("name") or record_path.stem
+                raise RuntimeError(
+                    f"refusing to remove {target}: it is the working directory of active session "
+                    f"{name} ({record.get('state')}); stop it first with 'nogg session stop {name}'"
+                )
+    except (OSError, ValueError, TypeError) as exc:
+        raise RuntimeError(f"refusing to remove {target}: cannot inspect active session records: {exc}") from exc
 def branch_exists(branch):
     return run("git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch}",
                check=False).returncode == 0
@@ -432,6 +492,7 @@ def cleanup_worktree(record_name):
     develop = resolve_ref("develop") or resolve_ref("origin/develop")
     if develop is None or run("git", "merge-base", "--is-ancestor", branch, develop, check=False).returncode:
         raise RuntimeError(f"refusing to clean branch not integrated into develop: {branch}")
+    refuse_in_use_worktree(target)
     run("git", "worktree", "remove", str(target))
     # The explicit merge-base check above is authoritative. `branch -d` may
     # still reject a safely integrated branch when its upstream is the older
