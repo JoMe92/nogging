@@ -108,3 +108,11 @@
     Planned 2026-10-16 in harden-herdr-session-backend (planning commits 25afc1c archive, 22f0d0e plan; planning-id herdr-hardening). Read only the mapped tasks.md line, the design.md Decision it names, design Decision 1 (CI test discipline: no Dolt/bd, no PID-range assumptions, no user namespaces, socket paths under 108 bytes) and the matching capability requirement. Before allocating a dependent worktree, verify every prerequisite execution commit is integrated into develop. Complexity: routine. Branch: feat/harden-herdr-session-backend (lane prefix; reuse only after the previous lane branch is integrated and deleted). herdr lane (D1), after TASK-HHB-005 and TASK-HHB-001 (adjacent session_cleanup lines). Source discovery: SPEC-emer D1.
     tier routine: assigned by orchestrator to antigravity; branch feat/harden-herdr-session-backend.
     commit: 0305e33; evidence: scripts/session-herdr-ownership.test.sh, scripts/session-backend-herdr.test.sh, full scripts/test green; PR: https://github.com/JoMe92/nogging/pull/156
+
+<!-- nogg:SPEC-bf7w:2026-10-16T05:06:07Z -->
+- 2026-10-16T05:11:53+00:00 — SPEC-bf7w closed for TASK-HHB-007 (Bead closed at 2026-10-16T05:06:07Z).
+  - implementation commits: 92325a67c13c, 25afc1c, 22f0d0e
+  - Bead note:
+    Planned 2026-10-16 in harden-herdr-session-backend (planning commits 25afc1c archive, 22f0d0e plan; planning-id herdr-hardening). Read only the mapped tasks.md line, the design.md Decision it names, design Decision 1 (CI test discipline: no Dolt/bd, no PID-range assumptions, no user namespaces, socket paths under 108 bytes) and the matching capability requirement. Before allocating a dependent worktree, verify every prerequisite execution commit is integrated into develop. Complexity: routine. Branch: feat/harden-herdr-session-backend (lane prefix; reuse only after the previous lane branch is integrated and deleted). herdr lane tail (D8), after TASK-HHB-006. Source discovery: SPEC-emer D8.
+    tier routine: assigned by orchestrator to antigravity; branch feat/harden-herdr-session-backend.
+    commit 92325a67c13ce2e46c4c97e40e5c7cccb31c1fd7: close root pane on first layout.apply, recreate workspace once and retry on workspace_not_found, preserve untracked unlabelled panes, report legacy root panes in doctor. Verified by scripts/test passing completely.
