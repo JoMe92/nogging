@@ -202,6 +202,37 @@ the reap and the cleanup in one step.
   with `tmux -L nogging attach -t <name>` and killed with `tmux -L nogging
   kill-session -t <name>`.
 
+## Tmux server born in a sandbox
+
+If a shared tmux server was started inside an OpenSpec execution sandbox (for
+example, if an agent ran `tmux -L nogging new-session` directly without `-N`
+prior to the fenced server refusal), that server lives inside the sandboxed
+caller's PID and mount namespaces:
+
+- **Symptom:** Every session hosted on that tmux server terminates abruptly
+  together when the hosting sandboxed Lead exits or its container/namespace is
+  destroyed. The server also inherits the sandbox's read-only mount of
+  `openspec/`.
+- **Diagnosis:**
+  - `doctor` reports an advisory WARN naming the server PID:
+    `WARN  dedicated tmux server (-L nogging) runs inside sandbox PID <pid>; all hosted sessions terminate when that namespace exits`
+    (the WARN does not change `doctor`'s exit code).
+  - `session list` prints one `NOTE` advisory when the server is sandboxed.
+  - `orchestrator status` reports the server classification under `tmux server: sandboxed`
+    (instead of `host`, `outside`, `down`, or `unknown`).
+  - `orchestrator run` and unsandboxed `session launch` print a warning when
+    they start or adopt a session on a sandboxed server, and then continue.
+- **Operator choices:** Nogging never kills, restarts, or signals the server
+  automatically. The operator can choose:
+  1. *Let the Lead finish:* If active work on the server is progressing well,
+     let the hosting session run to completion; sessions continue until that
+     sandbox exits.
+  2. *Stop the server deliberately:* If long-term stability is needed, stop the
+     server explicitly from an unsandboxed shell with `tmux -L nogging kill-server`
+     (knowing that every session hosted on it ends), and then start a fresh
+     session or the Orchestration Agent from the host so the new server is born
+     in the host namespace.
+
 ## Herdr server down and recovery
 
 If the dedicated herdr server stops, crashes, or is killed:
@@ -250,6 +281,44 @@ Consequently:
 - An actively running Orchestration Agent on the host is **never** considered stale, even if its lock is months old.
 - A sandboxed Lead running `recover` cannot observe host PIDs, so it treats the lock as `held (unverifiable)` rather than falsely reporting it dead.
 - `recover` raises an attention item and exits non-zero only when a lock is genuinely stale (dead holder or expired cross-host).
+
+### Orchestrator lock in linked worktrees
+
+The orchestrator lock and identity are strictly canonical:
+- **Canonical resolution:** The orchestrator lock path `<main>/.nogging/locks/orchestrator.lock`,
+  the repository slug `<slug>`, the systemd user service `nogg-orchestrator-<slug>.service`,
+  and live session lookup are always resolved from the repository's **main checkout**
+  (`canonical_repository_state(ROOT)`), regardless of which linked worktree runs the command.
+- **Worktree visibility:** Running `orchestrator status`, `doctor`, or `recover` inside a linked
+  worktree inspects the main checkout's lock and live session, correctly reporting the
+  orchestrator as held or stale. It never falsely reports the lock as free.
+- **Run refusal:** `scripts/nogg orchestrator run` invoked from a linked worktree refuses
+  before taking any lock and names the main checkout, preventing duplicate orchestrators.
+  `orchestrator status`, `stop` and `restart` act on the canonical unit from any checkout.
+- **Leftover worktree locks:** Any checkout-local `orchestrator.lock` file in a linked
+  worktree is ignored and never read as the true lock. `recover` and `doctor` report it
+  as an advisory NOTE with its path.
+
+## `task-done` asking for a relaunch
+
+When running `./scripts/nogg task-done <bead-id>` inside a sandboxed session whose
+host-side broker predates checkout-aware requests:
+
+- **Symptom:** `task-done` fails and prints:
+  ```text
+  task-done: this session's sandbox broker predates checkout-aware ticks; relaunch the session and run task-done again; nothing was ticked
+  ```
+- **Cause:** To ensure checkbox ticks land in the exact implementation worktree
+  where the Bead was executed, `task-done` transmits `{"bead_id", "checkout"}` to
+  `NOGG_TASK_DONE_SOCKET`. An older broker daemon rejects requests containing the
+  checkout field with `only one closed Bead identifier`.
+- **Behavior:** The client sends exactly one request. Upon receiving the pre-update
+  refusal, it exits non-zero without retrying (a retry omitting `checkout` would
+  erroneously tick the launch checkout) and never falls back to a local tick
+  (because `openspec/` is read-only inside the execution sandbox).
+- **Recovery:** Relaunch the supervised session under the updated host-side broker,
+  then re-run `task-done <bead-id>`. Alternatively, the tick will be mirrored
+  automatically by the sync timer or an unsandboxed sync run once the Bead is closed.
 
 ## A session hit its usage limit
 

@@ -103,7 +103,14 @@ Product Owner can read and drive it from a phone with no SSH. Exactly one runs
 at a time, guarded by `.nogging/locks/orchestrator.lock` (which records
 `{pid, host, created_at, pid_start, pid_ns}`; staleness is bound to holder
 process liveness across PID namespaces rather than age alone, independent of
-the planning lock).
+the planning lock). The lock path `<main>/.nogging/locks/orchestrator.lock`, the
+repository slug `<slug>`, the singleton session name `nogg-orchestrator-<slug>`,
+the unit name `nogg-orchestrator-<slug>.service` and live session lookup are
+resolved canonically from the repository's main checkout, whichever worktree runs
+the command. `orchestrator run` in a linked worktree refuses before taking any
+lock, naming the main checkout; `status`, `stop` and `restart` act on the
+canonical unit from any checkout. A checkout-local `orchestrator.lock` in a linked
+worktree is never read as the lock and is reported as a note.
 
 **Default scope is orchestrate-only.** The Orchestration Agent reads the whole
 state (Beads, OpenSpec, session records and logs, `git`) and drives the loop by
@@ -271,9 +278,15 @@ and the audit stays clean.
 Every agent session Nogging starts for Lead Agent or specialist work runs
 inside a **named supervised session on the host**, using the switchable session
 backend (`tmux` by default, or `herdr`; see `using-with-herdr.md`). For tmux, a
-dedicated tmux server socket (`tmux -L nogg`) is isolated from the operator's
+dedicated tmux server socket (`tmux -L nogging`) is isolated from the operator's
 own tmux; for herdr, a dedicated local herdr session namespace
-(`session_herdr_session`, default `nogging`) is used. The session
+(`session_herdr_session`, default `nogging`) is used. Both backends enforce a
+host-only server birth rule: the shared server must only be started outside the
+OpenSpec execution sandbox in the host namespace. Fenced callers
+(`NOGG_OPENSPEC_FENCED=1`, such as a sandboxed Lead) run all tmux commands with
+tmux's global `-N` flag ("do not start server") and refuse `session launch`
+before side effects if the server is down, directing the operator or
+Orchestration Agent to launch from the host. The session
 is started with `scripts/nogg session launch --role <lead |
 specialist:<type>> --bead <id> [--cwd <path>] [--read-only]
 [--agent <claude|codex|pi|antigravity|agy>] [--backend <tmux|herdr>] [--profile <name-or-path>] [--prompt <name-or-path>]
