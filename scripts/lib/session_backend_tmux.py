@@ -150,7 +150,7 @@ class TmuxBackend:
     def capture(self, ref, attributes=False):
         args = ["capture-pane", "-p"] + (["-e"] if attributes else [])
         result = self._invoke(*args, "-t", self._name(ref), check=False)
-        return result.stdout if (result and result.returncode == 0) else ""
+        return result.stdout if result.returncode == 0 else ""
 
     def live(self, records):
         # Include unmanaged names: collision checks and idle shutdown have
@@ -158,7 +158,7 @@ class TmuxBackend:
         # tmux's legacy empty-set behavior; it does not create unknown names.
         result = self._invoke("list-sessions", "-F", "#{session_name}", check=False)
         alive = ({line.strip() for line in result.stdout.splitlines() if line.strip()}
-                 if (result and result.returncode == 0) else set())
+                 if result.returncode == 0 else set())
         return alive, set()
 
     def empty(self):
