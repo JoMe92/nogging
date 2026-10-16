@@ -18,3 +18,12 @@
     Orchestrator review: self-restart now refused with a clear message (good). Minor follow-up candidate: --supervisor-only is also refused from inside the orchestrator session although it would be safe there.
     Orchestrator: PR #181 CI script-tests fails: scripts/session-backend.test.sh 'tmux command construction escaped seam' (run 38949879929) — is_inside_orchestrator_session builds a tmux command directly in scripts/nogg; route it through the session backend seam (scripts/lib/session_backend*.py) or use only env/session-record data.
     commit eb0a559 PR 181 session backend seam check passed
+
+<!-- nogg:SPEC-zdvv:2026-10-16T21:46:11Z -->
+- 2026-10-16T21:51:43+00:00 — SPEC-zdvv closed for TASK-ORR-004 (Bead closed at 2026-10-16T21:46:11Z).
+  - implementation commits: f42f61b
+  - Bead note:
+    tier routine: assigned by orchestrator to antigravity; branch docs/relaunch-on-orchestrator-restart.
+    commit f42f61b docs(orchestrator): document restart termination and --supervisor-only [SPEC-zdvv]
+    PR: https://github.com/JoMe92/nogging/pull/190
+    Evidence: documented restart session termination and --supervisor-only in docs/operating-model.md and docs/running-work-in-sessions.md per Decision 5; verified clean git diff and legal test passing.
