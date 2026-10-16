@@ -27,3 +27,22 @@
     commit f42f61b docs(orchestrator): document restart termination and --supervisor-only [SPEC-zdvv]
     PR: https://github.com/JoMe92/nogging/pull/190
     Evidence: documented restart session termination and --supervisor-only in docs/operating-model.md and docs/running-work-in-sessions.md per Decision 5; verified clean git diff and legal test passing.
+
+<!-- nogg:SPEC-zdvv:2026-10-16T21:55:21Z -->
+- 2026-10-16T22:03:33+00:00 — SPEC-zdvv closed for TASK-ORR-004 (Bead closed at 2026-10-16T21:55:21Z).
+  - implementation commits: 3d063c976adf, f42f61b2694f
+  - Bead note:
+    tier routine: assigned by orchestrator to antigravity; branch docs/relaunch-on-orchestrator-restart.
+    commit f42f61b docs(orchestrator): document restart termination and --supervisor-only [SPEC-zdvv]
+    PR: https://github.com/JoMe92/nogging/pull/190
+    Evidence: documented restart session termination and --supervisor-only in docs/operating-model.md and docs/running-work-in-sessions.md per Decision 5; verified clean git diff and legal test passing.
+    Orchestrator review of PR #190: docs miss that 'orchestrator restart' (including --supervisor-only) is refused when run from inside the orchestrator's own session (added in the ORR-002 fix) and must be run from an external shell.
+    commit 3d063c9 docs(orchestrator): note restart refusal from inside orchestrator session [SPEC-zdvv]
+    Evidence: documented in docs/operating-model.md and docs/running-work-in-sessions.md that 'orchestrator restart' (including --supervisor-only) is refused from within the orchestrator session itself and must be executed from an external shell. Verified with legal.test.sh.
+
+<!-- nogg:SPEC-vru5:2026-10-16T21:54:05Z -->
+- 2026-10-16T22:03:33+00:00 — SPEC-vru5 closed for TASK-ORR-003 (Bead closed at 2026-10-16T21:54:05Z).
+  - implementation commits: c2e40a114550
+  - Bead note:
+    tier standard: assigned by orchestrator to antigravity; branch test/relaunch-on-orchestrator-restart.
+    commit: c2e40a11455063b669abb0f07f25b824e8309b7c; PR: https://github.com/JoMe92/nogging/pull/191; evidence: verified all orchestrator regression checks pass in scripts/orchestrator.test.sh, testing both standard restart (stop/start order, session termination, exit_reason transition) and --supervisor-only restart (restart call without session termination).
