@@ -388,7 +388,7 @@ subcommand group:
 
 ```bash
 ./scripts/nogg orchestrator status    # unit + linger state, the lock, the live session, last log lines
-./scripts/nogg orchestrator restart   # bounce the service
+./scripts/nogg orchestrator restart   # bounce service & relaunch Claude with updated prompt/settings (--supervisor-only skips session kill)
 ./scripts/nogg orchestrator stop      # stop + disable it, end the session, release the lock
 ./scripts/nogg orchestrator run       # the supervisor itself (what the unit calls); --force reclaims a stale lock
 ```
@@ -396,7 +396,14 @@ subcommand group:
 `orchestrator run` acquires `.nogging/locks/orchestrator.lock`, adopts a live
 `nogg-orchestrator-<slug>` tmux session or starts one (resuming its conversation
 with `claude --continue` when one exists), blocks until it exits, releases the
-lock and exits non-zero so `Restart=always` brings it back. The Orchestration
+lock and exits non-zero so `Restart=always` brings it back. `orchestrator restart`
+terminates the live orchestrator tmux session and restarts the service, causing
+the new supervisor run to start a fresh Claude session with the current launch
+prompt and configuration while resuming transcript continuity; `--supervisor-only`
+restarts the supervisor unit alone without terminating the tmux session. Restart
+(including `--supervisor-only`) is refused from within the orchestrator session itself
+(e.g. when directed via Remote Control) to avoid terminating before completion, and
+must be run from an external shell. The Orchestration
 Agent is pinned to tmux and always runs on tmux, even if `herdr` is configured as
 the repository's default session backend. It runs under the
 `orchestrator` profile with the command floor and the `openspec/` boundary
@@ -419,7 +426,7 @@ orchestrate-only-by-default scope.
 | `session herdr-server start` | idempotently verify or start dedicated host-namespace herdr server; host-only |
 | `orchestrator run [--force]` | the always-on supervisor the systemd unit runs; `--force` reclaims a stale lock |
 | `orchestrator status` | unit enabled/active state, linger on/off, the lock holder, the live `FULL-ACCESS` session |
-| `orchestrator stop` \| `orchestrator restart` | stop-and-disable the unit (idempotent), or restart it |
+| `orchestrator stop` \| `orchestrator restart [--supervisor-only]` | stop-and-disable the unit (idempotent), or restart it (terminating the live session to relaunch Claude with updated prompt/settings while resuming transcript; `--supervisor-only` retains the live session) |
 
 Config keys (`.nogging/config.json`): `session_agent` (`claude` |  `codex`,
 default `claude`), `session_backend` (`tmux` | `herdr`, default `tmux`),
