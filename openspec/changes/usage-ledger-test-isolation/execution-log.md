@@ -50,3 +50,12 @@
     Commit: 9f4789d04ae05d761614ae487cf38dd792a76f28
     PR: https://github.com/JoMe92/nogging/pull/192
     Evidence: scripts/usage-ledger-writers.test.sh, scripts/usage-reservations.test.sh, scripts/usage-ledger-schema.test.sh pass cleanly. Stamped pending/bound entries with schema_version 1, preserved extensions across mutations, and refused opaque target bind and release.
+
+<!-- nogg:SPEC-vygb:2026-10-16T23:07:56Z -->
+- 2026-10-16T23:15:54+00:00 — SPEC-vygb closed for TASK-ULT-006 (Bead closed at 2026-10-16T23:07:56Z).
+  - implementation commits: a981ab8f453c, 0a52df79b5ec4008c75d456d2c3423e60457a6e2
+  - Bead note:
+    Planned for GitHub issues #163 and #164 in usage-ledger-test-isolation; committed planning source 0a52df79b5ec4008c75d456d2c3423e60457a6e2. Read the mapped tasks.md line, its referenced design Decisions and matching capability scenarios; design Decision 6 applies to every test. Complexity and branch prefix are explicit in the task line and design lane table. Before allocating dependent work verify prerequisite commits are integrated into develop, not merely that their Beads are closed. Tests must be offline with no real bd/Dolt, PID-range assumptions, unshare or existing tmux server; broker sentinels use short temporary sockets. No implementation or claim occurred during planning. Publication and release are outside this planning run.
+    Planning commit 0a52df79b5ec4008c75d456d2c3423e60457a6e2 is fast-forward integrated into local develop. Evidence: openspec validate --all --strict passed 34/34; nogg validate and git diff --check passed; seven unique open/unclaimed mappings, eight explicit blocking edges and every Bead title under 500 characters verified. Ready to dispatch only when this task has no unmet prerequisites and their execution commits are integrated. No push or execution performed.
+    tier standard: assigned by orchestrator to antigravity; branch feat/usage-ledger-test-isolation.
+    commit a981ab8; PR https://github.com/JoMe92/nogging/pull/199; evidence: scripts/usage-ledger-compatibility.test.sh and scripts/packed-usage-gate.test.sh pass.
