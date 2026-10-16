@@ -6,10 +6,13 @@
 set -euo pipefail
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 python3 - "$root" <<'PY'
-import contextlib, io, pathlib, sys
+import contextlib, io, os, pathlib, sys
 from importlib.machinery import SourceFileLoader
 from unittest.mock import patch
 root = pathlib.Path(sys.argv[1])
+for key in list(os.environ):
+    if key.startswith(('NOGG_', 'NOGGING_', 'HERDR_', 'TMUX')):
+        os.environ.pop(key, None)
 m = SourceFileLoader('nudge_placeholder', str(root/'scripts/nogg')).load_module()
 fixtures = {f.stem: f.read_text() for f in (root/'scripts/fixtures/claude-panes').glob('*.txt')}
 assert set(fixtures) >= {'placeholder', 'empty', 'input'}
@@ -33,15 +36,18 @@ with patch.object(m, 'session_pane_text', return_value='> something'):
     assert m.pane_input('s', 'pi') == ('unknown', '')
 rec = dict(name='s', agent='claude', bead_id='B1')
 LAST_SENT = []
+LAST_TEXT = []
 def nudge(pane, after=None, message=None, agent='claude'):
     """Run session_nudge against a fixture pane; return (output, keys sent)."""
     state = {'pane': pane}
     sent = LAST_SENT; sent.clear()
-    def fake_tmux(*args, check=True):
+    texts = LAST_TEXT; texts.clear()
+    def fake_tmux(*args, check=True, stdin=None):
         if args[0] == 'capture-pane':
             from types import SimpleNamespace
             return SimpleNamespace(returncode=0, stdout=state['pane'])
         sent.append(args)
+        if stdin is not None: texts.append(stdin)
         if args[-1] == 'Enter' and after is not None: state['pane'] = after
         from types import SimpleNamespace
         return SimpleNamespace(returncode=0, stdout='')
@@ -62,14 +68,14 @@ out, sent = nudge('> pending', agent='codex')
 assert sent == [] and '--message' in out
 # Positively identified actual input is resent and verified.
 out, sent = nudge(fixtures['input'], after=fixtures['empty'])
-assert ('send-keys', '-t', 's', '-l', 'continue with the next task') in sent and 'nudged s' in out
+assert any(a[0] == 'paste-buffer' for a in sent) and LAST_TEXT == ['continue with the next task'] and 'nudged s' in out
 # Explicit --message replaces the placeholder deliberately and is verified.
 out, sent = nudge(fixtures['placeholder'], after=fixtures['placeholder'], message='Wie ist der Stand')
 assert sent[0] == ('send-keys', '-t', 's', 'C-u')
-assert ('send-keys', '-t', 's', '-l', 'Wie ist der Stand') in sent and 'nudged s' in out
+assert any(a[0] == 'paste-buffer' for a in sent) and LAST_TEXT == ['Wie ist der Stand'] and 'nudged s' in out
 # Explicit --message over unrelated actual input replaces it.
 out, sent = nudge(fixtures['input'], after=fixtures['empty'], message='explicit')
-assert [a for a in sent if '-l' in a] == [('send-keys', '-t', 's', '-l', 'explicit')]
+assert any(a[0] == 'paste-buffer' for a in sent) and LAST_TEXT == ['explicit']
 # Bounded retry: still-pending input is resubmitted once, then fails; an
 # unidentifiable pane is unverified, never reported as submitted.
 for after, reason in [(fixtures['input'], 'unsubmitted'), ('unidentifiable', 'could not be verified')]:

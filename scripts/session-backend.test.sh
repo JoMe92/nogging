@@ -17,7 +17,11 @@ import subprocess
 import sys
 import tempfile
 from unittest.mock import patch
+import os
 sys.dont_write_bytecode = True
+for key in list(os.environ):
+    if key.startswith(('NOGG_', 'NOGGING_')):
+        os.environ.pop(key, None)
 here = Path(sys.argv[1])
 sys.path[:0] = [str(here / 'lib'), str(here)]
 import session_backend as b
@@ -26,7 +30,8 @@ import nogg_usage as u
 # Also catch reintroducing raw substrate argv through run/subprocess directly.
 tree = ast.parse((here / 'nogg').read_text())
 commands = {'new-session', 'pipe-pane', 'has-session', 'list-sessions',
-            'send-keys', 'capture-pane', 'display-message', 'kill-session', 'kill-server'}
+            'send-keys', 'load-buffer', 'paste-buffer', 'delete-buffer',
+            'capture-pane', 'display-message', 'kill-session', 'kill-server'}
 assert not any(isinstance(n, ast.Constant) and isinstance(n.value, str) and n.value in commands
                for n in ast.walk(tree)), 'tmux command construction escaped seam'
 
@@ -55,8 +60,14 @@ assert calls[0][0] == ('/custom/tmux', '-L', 'isolated', 'new-session', '-d', '-
 assert calls[1][0][3:7] == ('pipe-pane', '-o', '-t', 's')
 assert shlex.split(calls[1][0][-1]) == ['exec', '/writer with space', '/logs/with space.log', '1234', '2']
 assert calls[0][1] == calls[1][1] == {'check': True}
-backend.send_text(ref, 'text; $(literal)')
-assert calls[-1][0][3:] == ('send-keys', '-t', 's', '-l', 'text; $(literal)')
+backend.send_text(ref, 'text; $(literal)\nsecond line')
+load, paste, cleanup = calls[-3:]
+buffer = load[0][-2]
+assert load[0][3:] == ('load-buffer', '-b', buffer, '-')
+assert load[1] == {'check': True, 'input': 'text; $(literal)\nsecond line'}
+assert paste[0][3:] == ('paste-buffer', '-p', '-r', '-d', '-b', buffer, '-t', 's')
+assert cleanup == (('/custom/tmux', '-L', 'isolated', 'delete-buffer', '-b', buffer),
+                   {'check': False})
 for key, raw in [('enter', 'Enter'), ('escape', 'Escape'), ('ctrl+c', 'C-c'), ('ctrl+u', 'C-u')]:
     backend.send_keys(ref, key)
     assert calls[-1][0][3:] == ('send-keys', '-t', 's', raw)
