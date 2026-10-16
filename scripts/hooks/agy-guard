@@ -30,6 +30,11 @@ def floor(command):
         (re.search(r'\bgit\s+clean\b', command) and (short('f') or '--force' in command))))
 
 
+class GuardDenied(ValueError):
+    """Raised when the guard explicitly denies a tool call."""
+    pass
+
+
 def decide(payload):
     bridge = SourceFileLoader('nogg_agy_guard', str(Path(__file__).resolve().parents[1] / 'nogg')).load_module()
     bridge.canonical_repository_state = lru_cache(maxsize=16)(bridge.canonical_repository_state)
@@ -37,41 +42,43 @@ def decide(payload):
     state = bridge.canonical_repository_state(cwd)
     authority = os.environ.get('NOGG_SESSION_AUTHORITY', 'restricted')
     if authority not in ('restricted', 'trusted'):
-        raise ValueError('unsupported authority')
+        raise GuardDenied('unsupported authority')
     call = payload['toolCall']
     name, args = call['name'], call['args']
     if not isinstance(args, dict):
-        raise ValueError('invalid arguments')
+        raise GuardDenied('invalid arguments')
 
     def check_path(value, base=cwd):
         if not isinstance(value, str) or not value or '\x00' in value:
-            raise ValueError('missing tool path')
+            raise GuardDenied('missing tool path')
         protected, allowed = bridge.openspec_tool_decision(base, value)
         # Standalone calls never acquire an implicit planning role.
         if protected:
             if os.environ.get('NOGG_SESSION_ROLE') != 'planning' or not allowed:
-                raise ValueError('OpenSpec write requires own fresh planning lock')
+                raise GuardDenied('OpenSpec write requires own fresh planning lock')
             local = Path(state['checkout_root']) / '.nogging/locks/openspec.readonly'
             if local.exists() or local.is_symlink():
-                raise ValueError('local closed sentinel')
+                raise GuardDenied('local closed sentinel')
             lock = json.loads((Path(state['locks_dir']) / 'planning.lock').read_text())
             if (type(lock.get('pid')) is not int or lock['pid'] <= 0
                     or not isinstance(lock.get('host'), str) or not lock['host'].strip()):
-                raise ValueError('malformed planning lock')
+                raise GuardDenied('malformed planning lock')
 
     if name in ('write_to_file', 'replace_file_content'):
         check_path(args['TargetFile'])
     elif name == 'run_command':
         command = args['CommandLine']
-        if not isinstance(command, str) or not command.strip() or floor(command):
-            raise ValueError('invalid command or Nogging command floor')
+        if not isinstance(command, str) or not command.strip():
+            raise GuardDenied('invalid command')
+        if floor(command):
+            raise GuardDenied('Nogging command floor')
         if not isinstance(args.get('Cwd'), str) or not Path(args['Cwd']).is_absolute():
-            raise ValueError('missing absolute shell cwd')
+            raise GuardDenied('missing absolute shell cwd')
         base = Path(args['Cwd']).resolve()
         # Resolve shell cwd too: a foreign/unresolvable checkout is not safe.
         other = bridge.canonical_repository_state(base)
         if other['main_checkout'] != state['main_checkout']:
-            raise ValueError('foreign shell repository')
+            raise GuardDenied('foreign shell repository')
         tokens = shlex.split(command, posix=True)
         # Conservative early signal for known shell writes. Reads of task slices
         # remain available. Dynamic/interpreted writes cannot be fully parsed.
@@ -94,9 +101,14 @@ def decide(payload):
                 check_path('openspec', base)
     elif name == 'read_url_content':
         if not isinstance(args.get('Url'), str) or not re.match(r'^https?://', args['Url']):
-            raise ValueError('invalid URL')
+            raise GuardDenied('invalid URL')
+    elif name == 'search_web':
+        query = args.get('query')
+        if not isinstance(query, str) or not query.strip() or '\x00' in query:
+            raise GuardDenied('invalid search query')
     elif name not in ('view_file', 'list_dir', 'find_by_name', 'grep_search'):
-        raise ValueError('unsupported tool contract')
+        tool_name = name if (isinstance(name, str) and re.fullmatch(r'[A-Za-z0-9_.-]{1,64}', name)) else '<invalid>'
+        raise GuardDenied(f'unsupported tool contract: {tool_name}')
     return {'decision': 'allow' if authority == 'trusted' else 'force_ask',
             'reason': 'Nogging guard passed; restricted calls require review'}
 
@@ -104,10 +116,13 @@ def decide(payload):
 def main():
     try:
         result = decide(json.load(sys.stdin))
+    except GuardDenied as exc:
+        result = {'decision': 'deny', 'reason': f'Nogging: {exc}'}
     except Exception:
-        result = {'decision': 'deny', 'reason': 'Nogging: malformed or unsupported tool, command floor, or unresolved/closed OpenSpec boundary'}
+        result = {'decision': 'deny', 'reason': 'Nogging: malformed tool payload'}
     print(json.dumps(result))
 
 
 if __name__ == '__main__':
     main()
+
