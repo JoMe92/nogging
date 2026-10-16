@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+source "$root/scripts/lib/test-env.sh"
 python3 - "$root" <<'PY'
 from importlib.machinery import SourceFileLoader
 from unittest.mock import patch
