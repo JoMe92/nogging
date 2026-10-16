@@ -271,7 +271,9 @@ printf '%s %s\n' "$cmd" "$*" >>"$d/calls.log"
 arg_after() { local flag="$1"; shift; while [[ $# -gt 0 ]]; do [[ "$1" == "$flag" ]] && { printf '%s' "$2"; return; }; shift; done; }
 case "$cmd" in
   new-session)
-    name="$(arg_after -s "$@")"; touch "$d/sess-$name" ;;
+    name="$(arg_after -s "$@")"; touch "$d/sess-$name"
+    printf '%s\n❯ \n%s\n' '────────────────────' '────────────────────' >"$d/pane-$name.txt"
+    printf '%s\n❯ \n%s\n' '────────────────────' '────────────────────' >"$d/pane-$name.after" ;;
   has-session)
     name="$(arg_after -t "$@")"; [[ -f "$d/sess-$name" ]] ;;
   list-sessions)
@@ -283,13 +285,22 @@ case "$cmd" in
     name="$(arg_after -t "$@")"; rm -f "$d/sess-$name" ;;
   kill-server) rm -f "$d"/sess-* ;;
   send-keys)
-    # A pane-<name>.after fixture models the pane once Enter submitted input.
+    # Stateful composer behavior for delivery regressions.
     name="$(arg_after -t "$@")"
-    if [[ " $* " == *" Enter "* && -f "$d/pane-$name.after" ]]; then mv "$d/pane-$name.after" "$d/pane-$name.txt"; fi ;;
+    if [[ " $* " == *" C-u "* ]]; then
+      marker='❯'; grep -q '^›' "$d/pane-$name.txt" 2>/dev/null && marker='›'
+      printf '%s\n%s \n%s\n' '────────────────────' "$marker" '────────────────────' >"$d/pane-$name.txt"
+    elif [[ " $* " == *" Enter "* && -f "$d/pane-$name.after" ]]; then
+      mv "$d/pane-$name.after" "$d/pane-$name.txt"
+    fi ;;
   load-buffer)
     buffer="$(arg_after -b "$@")"
     cat >"$d/buffer-$buffer.txt" ;;
-  paste-buffer|delete-buffer) : ;;
+  paste-buffer)
+    name="$(arg_after -t "$@")"; buffer="$(arg_after -b "$@")"
+    marker='❯'; grep -q '^›' "$d/pane-$name.txt" 2>/dev/null && marker='›'
+    { printf '%s\n%s ' '────────────────────' "$marker"; cat "$d/buffer-$buffer.txt"; printf '\n%s\n' '────────────────────'; } >"$d/pane-$name.txt" ;;
+  delete-buffer) : ;;
   pipe-pane|attach|display-message) : ;;
   *) : ;;
 esac
@@ -386,8 +397,8 @@ docgrep "$repo_root/docs/failure-recovery.md"
 docgrep "$repo_root/docs/using-with-codex.md"
 
 # ===========================================================================
-# TASK-SOB-005: session send — literal paste + the claude second-Enter
-# quirk, and --verify retrying the submit step once before failing loudly
+# TASK-RSI-003: session send — literal paste, one Enter, and automatic
+# verification with one retry only while this operation's exact input is pending.
 # ===========================================================================
 root="$work/send-claude"; make_obs_root "$root"
 export NOGGING_ROOT="$root"
@@ -395,6 +406,8 @@ export TMUX_STUB_DIR="$work/send-claude-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-s01"
 "$nogg" session launch --role lead --bead SPEC-s01 >/dev/null 2>&1
 name="$(sess_name "$root")"
+printf '%s\n❯ \n%s\n' '────────────────────' '────────────────────' >"$TMUX_STUB_DIR/pane-$name.txt"
+printf '%s\n❯ \n%s\n' '────────────────────' '────────────────────' >"$TMUX_STUB_DIR/pane-$name.after"
 : >"$TMUX_STUB_DIR/calls.log"
 out_s=$(mktemp)
 "$nogg" session send "$name" "continue please" >"$out_s" 2>&1 \
@@ -404,9 +417,9 @@ grep -qE -- "load-buffer -b nogg-[^ ]+ -$" "$TMUX_STUB_DIR/calls.log" \
   && ok "send: the literal message uses an isolated bracketed paste buffer" \
   || { echo "FAIL - send: literal paste not sent"; cat "$TMUX_STUB_DIR/calls.log"; fail=1; }
 enter_count=$(grep -cF -- "send-keys -t $name Enter" "$TMUX_STUB_DIR/calls.log")
-[[ "$enter_count" == "2" ]] \
-  && ok "send: claude gets the second-bare-Enter quirk (2 Enters)" \
-  || { echo "FAIL - send: expected 2 Enters for claude, got $enter_count"; fail=1; }
+[[ "$enter_count" == "1" ]] \
+  && ok "send: Claude receives one verified submit Enter" \
+  || { echo "FAIL - send: expected one Enter for Claude, got $enter_count"; fail=1; }
 unset NOGGING_ROOT
 
 root="$work/send-codex"; make_obs_root "$root"
@@ -415,18 +428,19 @@ export TMUX_STUB_DIR="$work/send-codex-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-s02"
 "$nogg" session launch --role lead --bead SPEC-s02 --agent codex --profile restricted >/dev/null 2>&1
 name="$(sess_name "$root")"
-printf '[Pasted Content]\n> Ask Codex to do anything\n' >"$TMUX_STUB_DIR/pane-$name.txt"
+printf '› \n' >"$TMUX_STUB_DIR/pane-$name.txt"
+rm -f "$TMUX_STUB_DIR/pane-$name.after"
 : >"$TMUX_STUB_DIR/calls.log"
 "$nogg" session send "$name" "continue please" --verify >"$out_s" 2>&1 \
-  && { echo "FAIL - send --verify: should have failed (message stays stuck)"; cat "$out_s"; fail=1; } \
-  || ok "send --verify: raises when the message is still unsubmitted after a retry"
-grep -qF "still unsubmitted after a retry" "$out_s" \
-  && ok "send --verify: the error names the retry" \
-  || { echo "FAIL - send --verify: unexpected error text"; cat "$out_s"; fail=1; }
+  && { echo "FAIL - send: should have failed (exact message remains pending after one retry)"; cat "$out_s"; fail=1; } \
+  || ok "send: raises when the message remains pending after one retry"
+grep -qF "still unsubmitted after one retry" "$out_s" \
+  && ok "send: the error names the bounded retry" \
+  || { echo "FAIL - send: unexpected error text"; cat "$out_s"; fail=1; }
 submit_enters=$(grep -cF -- "send-keys -t $name Enter" "$TMUX_STUB_DIR/calls.log")
 [[ "$submit_enters" == "2" ]] \
-  && ok "send --verify: the submit step was retried exactly once" \
-  || { echo "FAIL - send --verify: expected 2 submit attempts, got $submit_enters"; fail=1; }
+  && ok "send: retry occurs once for positively pending text" \
+  || { echo "FAIL - send: expected 2 submit attempts, got $submit_enters"; fail=1; }
 rm -f "$out_s"
 unset NOGGING_ROOT
 
@@ -777,6 +791,7 @@ grep -qE -- "paste-buffer -p -r -d -b nogg-[^ ]+ -t $name$" "$TMUX_STUB_DIR/call
   && ok "kickoff --message: sent verbatim" \
   || { echo "FAIL - kickoff --message: expected text not sent"; cat "$TMUX_STUB_DIR/calls.log"; fail=1; }
 
+printf '%s\n❯ \n%s\n' '────────────────────' '────────────────────' >"$TMUX_STUB_DIR/pane-$name.after"
 : >"$TMUX_STUB_DIR/calls.log"
 "$nogg" session kickoff "$name" >"$out_k" 2>&1 \
   || { echo "FAIL - kickoff: errored"; cat "$out_k"; fail=1; }
