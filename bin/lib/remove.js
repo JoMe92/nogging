@@ -5,6 +5,9 @@ const path = require('path');
 
 const manifest = require('./manifest');
 const { GUARD_MARKER } = require('./merge');
+const { MANIFEST_REL_PATH } = require('./manifest-store');
+
+const ARTIFACT_SUFFIXES = ['.nogging-new', '.orig'];
 
 function sourceFiles(root, rel, prefix = rel) {
   const full = path.join(root, rel);
@@ -28,6 +31,13 @@ function removeFile(ctx, rel) {
   }
   fs.rmSync(full, { force: true });
   ctx.log.add('remove', rel);
+}
+
+// A managed file is removed together with the `.nogging-new` / `.orig`
+// artifacts the installer may have left beside it.
+function removeManagedFile(ctx, rel) {
+  removeFile(ctx, rel);
+  for (const suffix of ARTIFACT_SUFFIXES) removeFile(ctx, rel + suffix);
 }
 
 function removeMarkerBlock(ctx, rel) {
@@ -84,11 +94,12 @@ function removeAntigravityHooks(ctx) {
 }
 
 function removeInstallation(ctx) {
-  for (const rel of manifest.verbatim) removeFile(ctx, rel);
+  for (const rel of manifest.verbatim) removeManagedFile(ctx, rel);
   for (const dir of manifest.verbatimDirs) {
-    for (const rel of sourceFiles(ctx.pkgRoot, dir.from, dir.to)) removeFile(ctx, rel);
+    for (const rel of sourceFiles(ctx.pkgRoot, dir.from, dir.to)) removeManagedFile(ctx, rel);
   }
-  for (const doc of manifest.docs) removeFile(ctx, doc.to);
+  for (const doc of manifest.docs) removeManagedFile(ctx, doc.to);
+  removeFile(ctx, MANIFEST_REL_PATH);
   for (const unit of manifest.systemd) removeFile(ctx, unit.to.replace('{slug}', ctx.slug));
   removeMarkerBlock(ctx, 'CLAUDE.md');
   removeMarkerBlock(ctx, 'AGENTS.md');
