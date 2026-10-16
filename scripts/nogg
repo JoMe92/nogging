@@ -4631,6 +4631,7 @@ _SGR_RE = re.compile(r"\x1b\[([0-9;]*)m")
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 _PROMPT_RULE_RE = re.compile(r"^\s*─{10,}\s*$")
 _CLAUDE_PROMPT_RE = re.compile(r"^❯[ \u00a0]?")
+_CODEX_PROMPT_RE = re.compile(r"^›[ \u00a0]?")
 def _dim_segments(line):
     """Split one SGR-attributed line into (text, dim) runs."""
     runs, dim, pos = [], False, 0
@@ -4673,6 +4674,64 @@ def _claude_prompt_input(pane):
     if dims == {False}:
         return "input", text
     return "unknown", ""
+def _attributed_prompt_input(pane, marker_re, rule_re=None):
+    """Classify a CLI composer from its prompt marker and SGR dim attribute."""
+    lines = pane.splitlines()
+    plain = [_ANSI_RE.sub("", ln) for ln in lines]
+    if rule_re:
+        rules = [i for i, ln in enumerate(plain) if rule_re.match(ln)]
+        if len(rules) < 2:
+            return "unknown", ""
+        start, end = rules[-2] + 1, rules[-1]
+        body = [i for i in range(start, end) if plain[i].strip()]
+        if not body or not marker_re.match(plain[body[0]]):
+            return "unknown", ""
+        candidates = body
+    else:
+        candidates = [i for i, ln in enumerate(plain) if marker_re.match(ln)]
+        if not candidates:
+            return "unknown", ""
+        candidates = candidates[-1:]
+    texts, dims = [], set()
+    for i in candidates:
+        raw = lines[i]
+        marker = plain[i].lstrip()[0]
+        raw = raw[raw.find(marker) + 1:]
+        segments = _dim_segments(raw)
+        dims.update(dim for text, dim in segments if text.replace("\u00a0", " ").strip())
+        texts.append("".join(text for text, _dim in segments).replace("\u00a0", " ").rstrip())
+    text = "\n".join(texts).strip()
+    if not text:
+        return "empty", ""
+    if dims == {True}:
+        return "placeholder", ""
+    if dims == {False}:
+        return "input", text
+    return "unknown", ""
+
+def _codex_composer_input(pane):
+    # Codex's explicit paste-buffer notice is its established undelivered
+    # message signal, even when the terminal capture cannot identify a prompt.
+    if re.search(r"Pasted Content", _ANSI_RE.sub("", pane or "")):
+        return "input", ""
+    return _attributed_prompt_input(pane, _CODEX_PROMPT_RE)
+
+def _antigravity_composer_input(pane):
+    return _attributed_prompt_input(pane, re.compile(r"^>\s?"), _PROMPT_RULE_RE)
+
+def _antigravity_prompt_box_text(pane):
+    """Return plain Antigravity composer contents without interpreting SGR."""
+    lines = pane.splitlines()
+    plain = [_ANSI_RE.sub("", ln) for ln in lines]
+    rules = [i for i, ln in enumerate(plain) if _PROMPT_RULE_RE.match(ln)]
+    if len(rules) < 2:
+        return None
+    top, bottom = rules[-2], rules[-1]
+    body = [i for i in range(top + 1, bottom) if plain[i].strip()]
+    if not body or not plain[body[0]].lstrip().startswith(">"):
+        return None
+    first = plain[body[0]].lstrip()[1:]
+    return "\n".join([first] + [plain[i] for i in body[1:]]).strip()
 def pane_input(name, agent):
     """(kind, text) for a session's unsubmitted prompt input; kind is
     `input`, `empty`, `placeholder` or `unknown`. Only an adapter that can
@@ -4685,10 +4744,13 @@ def pane_input(name, agent):
         pane = session_pane_text(name, escapes=attributes)
         return (_claude_prompt_input(pane) if attributes
                 else _claude_prompt_input_without_attributes(pane))
-    if agent == "codex":
-        if classify(session_pane_text(name), CODEX_ADAPTER) == "needs_input":
-            return "input", ""
-        return "unknown", ""
+    if agent in ("codex", "antigravity"):
+        substrate, _ref = backend_for_name(name)
+        if not substrate.capabilities.capture_attributes:
+            return "unknown", ""
+        pane = session_pane_text(name, escapes=True)
+        return (_codex_composer_input(pane) if agent == "codex"
+                else _antigravity_composer_input(pane))
     return "unknown", ""
 
 def _claude_prompt_input_without_attributes(pane):
@@ -4721,27 +4783,28 @@ def pending_input_text(name, agent):
     return text if kind == "input" else ""
 def _pane_input_pending(name, agent):
     """Whether a just-sent message is still sitting unsubmitted. For codex
-    this is exactly the adapter's `needs_input` (`undelivered_input`) signal
-    (design.md); for claude it is positively identified, non-placeholder
-    input in the framed input box. Other runtimes keep the last-line check."""
-    if agent == "codex":
-        return classify(session_pane_text(name), CODEX_ADAPTER) == "needs_input"
-    if agent == "claude":
+    and Antigravity, use their framed/marked composers; for Claude use its
+    positively identified, non-placeholder input box. Unknown input is never
+    treated as pending."""
+    if agent in ("codex", "antigravity", "claude"):
         return pane_input(name, agent)[0] == "input"
-    lines = [ln for ln in session_pane_text(name).splitlines() if ln.strip()]
-    return bool(lines and lines[-1].strip())
+    return False
 def _verify_submitted(name, agent, submitted_text=None):
     """Bounded verification: one retry of the submit step, then fail.
-    A Claude pane whose input box cannot be identified is unverified, not
+    An agent pane whose composer cannot be identified is unverified, not
     submitted."""
     substrate, _ref = backend_for_name(name)
-    replacement_check = (agent == "claude"
+    replacement_check = (agent in ("claude", "antigravity")
                          and not substrate.capabilities.capture_attributes)
 
     def replacement_verified():
         status = session_action(name, "agent_status")
-        box = _claude_prompt_box_text(session_pane_text(name, escapes=False))
-        return status == "working" or (box is not None and box.strip() != (submitted_text or "").strip())
+        if status == "working" or (agent == "antigravity" and status == "done"):
+            return True
+        pane = session_pane_text(name, escapes=False)
+        box = (_claude_prompt_box_text(pane) if agent == "claude"
+               else _antigravity_prompt_box_text(pane))
+        return box is not None and box.strip() != (submitted_text or "").strip()
 
     time.sleep(float(scfg("session_submit_verify_delay_seconds", 0.5)))
     if replacement_check:
@@ -4757,7 +4820,7 @@ def _verify_submitted(name, agent, submitted_text=None):
         time.sleep(float(scfg("session_submit_verify_delay_seconds", 0.5)))
         if _pane_input_pending(name, agent):
             raise RuntimeError(f"{name}: message still unsubmitted after a retry")
-    if agent == "claude" and pane_input(name, agent)[0] == "unknown":
+    if agent in ("claude", "codex", "antigravity") and pane_input(name, agent)[0] == "unknown":
         raise RuntimeError(f"{name}: submission could not be verified (input box not identifiable)")
 def _require_running(name):
     """Return `(path, rec)` for `name`, refusing with no tmux key-sending
@@ -4884,6 +4947,9 @@ def session_nudge(name, message=None):
     agent = rec.get("agent") or "claude"
     if message:
         text = message
+        if agent == "codex" and codex_queue_send(rec, text):
+            print(f"nudged {name} (codex queue)")
+            return
     else:
         kind, text = pane_input(name, agent)
         if kind != "input" or not text or "\n" in text:
