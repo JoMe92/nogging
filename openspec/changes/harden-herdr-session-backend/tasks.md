@@ -8,7 +8,7 @@
 
 ## 2. herdr lane (branch prefix feat/, sequential)
 
-- [ ] TASK-HHB-004 [complex] Per design Decision 5 (D9): never start the herdr server when fenced (refuse before side effects, name session herdr-server start); receipt adds pid_ns and socket identity; records store terminal_id and the server namespace; liveness via terminal_id and shell_pid from any namespace; no /proc read or signal for a foreign-namespace PID. Check: new scripts/session-herdr-namespace.test.sh on the fake herdr; scripts/test.
+- [x] TASK-HHB-004 [complex] Per design Decision 5 (D9): never start the herdr server when fenced (refuse before side effects, name session herdr-server start); receipt adds pid_ns and socket identity; records store terminal_id and the server namespace; liveness via terminal_id and shell_pid from any namespace; no /proc read or signal for a foreign-namespace PID. Check: new scripts/session-herdr-namespace.test.sh on the fake herdr; scripts/test.
 
 - [ ] TASK-HHB-005 [standard] Per design Decision 6 (D2): two agreeing herdr answers that the dedicated server is not running make its records vanished (list failed, reap, same-Bead launch and --resume proceed); doubt stays unknown; add idempotent scripts/nogg session herdr-server start (host only, ownership checks, legacy receipt upgrade, no record or pane). Check: new scripts/session-herdr-server-down.test.sh; scripts/test.
 

@@ -3367,6 +3367,11 @@ def calling_session_record():
     ancestry = set(process_ancestors())
     proven = next((rec for rec in records
                    if rec.get("state") in SESSION_ACTIVE_STATES and type(rec.get("session_pid")) is int
+                   and (record_backend_name(rec) != "herdr"
+                        or (rec.get("session_pid_ns") is not None
+                            and rec["session_pid_ns"] == pid_namespace())
+                        or (rec.get("session_pid_ns") is None
+                            and os.environ.get("NOGG_OPENSPEC_FENCED") != "1"))
                    and (rec["session_pid"], rec.get("session_pid_start")) in ancestry), None)
     if proven is not None:
         if name and name != proven.get("name"):
@@ -4068,8 +4073,14 @@ def _session_launch(role, bead, cwd, read_only, owner,
            if backend_name == "herdr" else selected_backend.pid(record["backend_ref"]))
     if pid is not None:
         record["session_pid"] = pid
-        record["session_pid_start"] = process_start(pid)
-        record["session_pid_ns"] = pid_namespace(pid)
+        if backend_name == "herdr":
+            # These identities belong to the server's namespace, which the
+            # launching agent need not share. Never inspect that PID locally.
+            record["session_pid_start"] = record["backend_ref"].get("session_pid_start")
+            record["session_pid_ns"] = record["backend_ref"]["session_pid_ns"]
+        else:
+            record["session_pid_start"] = process_start(pid)
+            record["session_pid_ns"] = pid_namespace(pid)
     transition(rec_path, record, "running")
     if record.get("state") == "failed":
         raise ToolError(record.get("exit_reason") or "agent startup failed")
