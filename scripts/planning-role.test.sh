@@ -39,7 +39,7 @@ with tempfile.TemporaryDirectory(prefix='nogg planning role ') as td:
             record_path=m.worktree_record_path('plan',pid,description)
             m.write_worktree_record(record_path,dict(kind='planning',planning_id=pid,description=description,branch=f'plan/{pid}/{description}',path=str(workdir),state='allocated'))
             with contextlib.redirect_stdout(io.StringIO()) as output:
-                m.session_launch('planning',None,str(workdir),False,None,agent=agent,planning_id=pid,description=description)
+                m.session_launch('planning',None,str(workdir),False,None,agent=agent,planning_id=pid,description=description,profile='trusted' if agent=='codex' else None)
             records=[r for _,r in m.session_records() if r.get('planning_id')==pid]
             assert len(records)==1
             record=records[0]
@@ -50,7 +50,7 @@ with tempfile.TemporaryDirectory(prefix='nogg planning role ') as td:
         for agent in ['claude','codex','pi']:
             pid='auto-'+agent
             with contextlib.redirect_stdout(io.StringIO()):
-                m.session_launch('planning',None,None,False,None,agent=agent,planning_id=pid,description='fresh-scope')
+                m.session_launch('planning',None,None,False,None,agent=agent,planning_id=pid,description='fresh-scope',profile='trusted' if agent=='codex' else None)
             record=next(r for _,r in m.session_records() if r.get('planning_id')==pid)
             assert record['bead_id'] is None and record['role']=='planning'
             assert Path(record['working_dir'])!=root and Path(record['working_dir']).is_dir()
@@ -88,7 +88,7 @@ with tempfile.TemporaryDirectory(prefix='nogg planning role ') as td:
     # CLI parser accepts the canonical scope flags for every runtime. Validation
     # fails on the intentionally malformed identifier before any launch.
     for agent in ['claude','codex','pi']:
-        cli=subprocess.run([str(source/'scripts/nogg'),'session','launch','--role','planning','--planning-id','bad id','--description','scope-test','--agent',agent],text=True,capture_output=True)
+        cli=subprocess.run([str(source/'scripts/nogg'),'session','launch','--role','planning','--planning-id','bad id','--description','scope-test','--agent',agent] + (['--profile','trusted'] if agent=='codex' else []),text=True,capture_output=True)
         assert cli.returncode==1 and 'planning ID must' in cli.stderr
 print('Planning role: Claude/Codex/Pi scopes, honest optional Bead metadata, bare launch idle, parser and unsafe-scope rejection passed')
 PY
