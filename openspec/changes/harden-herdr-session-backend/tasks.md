@@ -18,7 +18,7 @@
 
 ## 3. Both backends
 
-- [ ] TASK-HHB-008 [standard] Per design Decision 9 (D3): rewrite scripts/session-log-writer in stdlib Python, same path and positional CLI, chunked byte appends without waiting for LF, every generation and buffer within max-bytes, byte-exact, contract feature byte-stream required by the helper check; _archive_log archives all rotated generations. Check: new scripts/session-log-writer.test.sh (no-LF live growth, 3 MiB bound, cleanup); scripts/test.
+- [x] TASK-HHB-008 [standard] Per design Decision 9 (D3): rewrite scripts/session-log-writer in stdlib Python, same path and positional CLI, chunked byte appends without waiting for LF, every generation and buffer within max-bytes, byte-exact, contract feature byte-stream required by the helper check; _archive_log archives all rotated generations. Check: new scripts/session-log-writer.test.sh (no-LF live growth, 3 MiB bound, cleanup); scripts/test.
 
 - [x] TASK-HHB-009 [standard] Per design Decision 10 (D4, D5): Codex nudge --message delivers via codex queue like send; pane fallback verifies with a Codex composer classifier and fails as unverified, never `nudged`; Antigravity classifier ignores the status bar, herdr working/done counts as submitted, no extra Enter after delivery. Check: new scripts/session-nudge-agents.test.sh with spike-derived fixtures; existing nudge suites unchanged; scripts/test.
 
