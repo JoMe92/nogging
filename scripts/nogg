@@ -564,10 +564,11 @@ def task_done(bead_id):
     """
     broker = os.environ.get("NOGG_TASK_DONE_SOCKET")
     if broker:
+        checkout = canonical_repository_state(Path.cwd())["checkout_root"]
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
             client.settimeout(30)
             client.connect(broker)
-            client.sendall(json.dumps({"bead_id": bead_id}).encode())
+            client.sendall(json.dumps({"bead_id": bead_id, "checkout": checkout}).encode())
             client.shutdown(socket.SHUT_WR)
             chunks = []
             while chunk := client.recv(65536):
@@ -3110,7 +3111,7 @@ def preflight_session_helpers(argv, agent):
     validate_launch_contract(helper_contract(argv[0]), argv, agent)
     boundary = helper_contract(ROOT / "scripts/openspec-sandbox")
     if (not isinstance(boundary.get('features'), list)
-            or not {'readonly-mounts', 'closed-task-broker'}.issubset(boundary['features'])):
+            or not {'readonly-mounts', 'closed-task-broker', 'checkout-task-broker'}.issubset(boundary['features'])):
         raise RuntimeError("OpenSpec filesystem boundary contract is incompatible; run Nogging update")
     writer = helper_contract(ROOT / "scripts/session-log-writer")
     if writer.get("positional") != 3:
@@ -3144,7 +3145,7 @@ def session_helper_diagnostics():
     try:
         boundary = helper_contract(ROOT / "scripts/openspec-sandbox")
         if (not isinstance(boundary.get('features'), list)
-                or not {'readonly-mounts', 'closed-task-broker'}.issubset(boundary['features'])):
+                or not {'readonly-mounts', 'closed-task-broker', 'checkout-task-broker'}.issubset(boundary['features'])):
             raise RuntimeError("OpenSpec filesystem boundary contract is incompatible; run Nogging update")
         checks.append(("OpenSpec filesystem boundary helper contract", True))
     except RuntimeError as exc:
