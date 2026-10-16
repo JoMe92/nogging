@@ -184,6 +184,16 @@ class HerdrBackend:
                 raise ValueError("socket identity or PID namespace mismatch")
             if (legacy or same_namespace(namespace)) and process_start(owned["pid"]) != owned["start"]:
                 raise ValueError("server process identity mismatch")
+            if legacy:
+                # A host-side verification is sufficient to make an old
+                # receipt usable from fenced callers in this checkout.
+                host_namespace = pid_namespace()
+                if not host_namespace:
+                    raise ValueError("host PID namespace identity is unavailable")
+                owned.update(pid_ns=host_namespace, socket=identity)
+                receipt_path = self.state / "server.json"
+                receipt_path.write_text(json.dumps(owned))
+                receipt_path.chmod(0o600)
             return owned
         except (OSError, ValueError, KeyError, TypeError, BackendError) as exc:
             raise BackendError(f"herdr dedicated server is not owned by Nogging: {exc}; "
@@ -234,6 +244,12 @@ class HerdrBackend:
                 receipt.write_text(json.dumps(owned))
                 receipt.chmod(0o600)
                 return owned
+
+    def start_server(self):
+        """Host-side idempotent server recovery, without creating a pane/record."""
+        if os.environ.get("NOGG_OPENSPEC_FENCED") == "1":
+            raise BackendError("herdr server start is host-only; run it from an unsandboxed shell")
+        return self._ensure_server()
 
     def prepare(self, name, cwd):
         """Server/workspace/socket preconditions, before the caller writes a record."""
@@ -377,6 +393,30 @@ class HerdrBackend:
                     ref[key] = rec[key]
             groups.setdefault(ref.get("herdr_session", self.session), []).append((rec, ref))
         for namespace, group in groups.items():
+            # A stopped dedicated server is definite evidence that none of its
+            # panes can still be live, but require the status and session list
+            # to agree. Every other failure remains unknown.
+            try:
+                status = self._cli("status", ref={"herdr_session": namespace})
+                match = re.search(r"^server:\s*\n\s+status:\s*(running|not running)\s*$",
+                                  status.stdout, re.M) if status.returncode == 0 else None
+                if not match:
+                    raise BackendError("herdr backend returned unrecognized server status")
+                sessions = self._json("session", "list", "--json",
+                                      ref={"herdr_session": namespace}).get("sessions")
+                matches = [s for s in sessions if s.get("name") == namespace] if isinstance(sessions, list) else []
+                if len(matches) != 1 or type(matches[0].get("running")) is not bool:
+                    raise BackendError("herdr backend could not verify dedicated session status")
+                listed_running = matches[0]["running"]
+                status_running = match[1] == "running"
+            except (BackendError, KeyError, TypeError):
+                unknown.update(rec["name"] for rec, _ in group)
+                continue
+            if status_running != listed_running:
+                unknown.update(rec["name"] for rec, _ in group)
+                continue
+            if not status_running:
+                continue
             try:
                 panes = self._panes({"herdr_session": namespace})
             except (BackendError, KeyError, TypeError):
