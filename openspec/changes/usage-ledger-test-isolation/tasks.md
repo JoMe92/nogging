@@ -6,7 +6,7 @@
 
 ## 2. Test bootstrap (independent refactor/ lane)
 
-- [ ] TASK-ULT-003 [standard] Add shared scripts/lib/test-env.sh and replace scripts/test's fixed list per design Decision 3; clear exported NOGG_* plus NOGGING_ROOT before fixtures, preserve parent/unrelated settings and ship helper where needed. Check: new scripts/test-environment.test.sh (future names, strict-shell, nested cleanup, parent preservation), package checks, scripts/test. Branch: refactor/usage-ledger-test-isolation. No dependency.
+- [x] TASK-ULT-003 [standard] Add shared scripts/lib/test-env.sh and replace scripts/test's fixed list per design Decision 3; clear exported NOGG_* plus NOGGING_ROOT before fixtures, preserve parent/unrelated settings and ship helper where needed. Check: new scripts/test-environment.test.sh (future names, strict-shell, nested cleanup, parent preservation), package checks, scripts/test. Branch: refactor/usage-ledger-test-isolation. No dependency.
 
 ## 3. Direct entry points (test/ and chore/ lanes, parallel)
 
