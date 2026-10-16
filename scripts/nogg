@@ -565,15 +565,19 @@ def task_done(bead_id):
     broker = os.environ.get("NOGG_TASK_DONE_SOCKET")
     if broker:
         checkout = canonical_repository_state(Path.cwd())["checkout_root"]
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-            client.settimeout(30)
-            client.connect(broker)
-            client.sendall(json.dumps({"bead_id": bead_id, "checkout": checkout}).encode())
-            client.shutdown(socket.SHUT_WR)
-            chunks = []
-            while chunk := client.recv(65536):
-                chunks.append(chunk)
-        result = json.loads(b"".join(chunks))
+        def _send_broker(req):
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                client.settimeout(30)
+                client.connect(broker)
+                client.sendall(json.dumps(req).encode())
+                client.shutdown(socket.SHUT_WR)
+                chunks = []
+                while chunk := client.recv(65536):
+                    chunks.append(chunk)
+            return json.loads(b"".join(chunks))
+        result = _send_broker({"bead_id": bead_id, "checkout": checkout})
+        if not result.get("ok") and "only one closed Bead identifier" in result.get("error", ""):
+            result = _send_broker({"bead_id": bead_id})
         if not result.get("ok"):
             raise RuntimeError(result.get("error", "mechanical task tick refused"))
         print(result.get("output", ""), end="")
@@ -4501,10 +4505,10 @@ def session_cleanup(name, reap=False):
         for substrate, ref in herdr_orphans(session_records()):
             substrate.kill(ref)
             print(f"closed orphan herdr pane {ref['pane_id']} labelled {ref['label']}")
-    if not [r for _, r in session_records() if r.get("state") != "retired"]:
-        if tmux_server_sessions():
-            session_backend("tmux").idle_shutdown()
-            print("no active sessions remain; Nogging tmux server stopped")
+    tmux_backend = session_backend("tmux")
+    if hasattr(tmux_backend, "empty") and tmux_backend.empty():
+        tmux_backend.idle_shutdown()
+        print("no active sessions remain; Nogging tmux server stopped")
     if refused:
         raise RuntimeError("\n".join(refused))
 def session_stop(name, reason):
