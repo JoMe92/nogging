@@ -16,7 +16,7 @@
 
 ## 3. Documentation and acceptance (branch prefix docs/, sequential)
 
-- [ ] TASK-HSS-007 [standard] Per design Decision 8: document the fenced tmux refusal and the nudge clear and exact check (running-work-in-sessions), the sandbox-born tmux server, the worktree orchestrator lock and the task-done relaunch (failure-recovery), and the host-only tmux birth and canonical orchestrator lock (operating-model, architecture). Check: scripts/test green (docs, installation, security, package-manifest suites), links resolve.
+- [x] TASK-HSS-007 [standard] Per design Decision 8: document the fenced tmux refusal and the nudge clear and exact check (running-work-in-sessions), the sandbox-born tmux server, the worktree orchestrator lock and the task-done relaunch (failure-recovery), and the host-only tmux birth and canonical orchestrator lock (operating-model, architecture). Check: scripts/test green (docs, installation, security, package-manifest suites), links resolve.
 
 - [ ] TASK-HSS-008 [complex] Per design Decision 9: short real Pi re-acceptance on a throwaway tmux socket: sandboxed tmux birth refused, then host start and survival; N4 lock and unit from a worktree; live D10 task-done tick; hardening step 43 on tmux and herdr plus steps 9, 12, 15; the N3 wording. Write docs/acceptance/<date>-session-stability.md unsigned with an empty Signed-off-by line. Check: report committed, scripts/test green.
 

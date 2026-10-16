@@ -1,6 +1,6 @@
 ## 1. Independent foundations (fix/, feat/, refactor/)
 
-- [ ] TASK-RSI-001 [standard] Per design Decisions 1-2: implement unique tmux stdin paste buffers, bracketed paste with LF preservation and failure cleanup; retain fenced argv and no transport Enter. Update runner stdin forwarding and primitive docs. Branch fix/. Depends on SPEC-culj. Check: scripts/session-paste-transport.test.sh; scripts/test.
+- [x] TASK-RSI-001 [standard] Per design Decisions 1-2: implement unique tmux stdin paste buffers, bracketed paste with LF preservation and failure cleanup; retain fenced argv and no transport Enter. Update runner stdin forwarding and primitive docs. Branch fix/. Depends on SPEC-culj. Check: scripts/session-paste-transport.test.sh; scripts/test.
 
 - [ ] TASK-RSI-002 [standard] Per design Decisions 1 and 3: validate timing keys and add bounded runtime readiness; replace AGY's fixed first-turn wait with current Stop or two exact-process idle/empty samples, with timeout diagnostics and no speculative input. Own readiness functions only. Branch feat/. Check: scripts/session-input-ready.test.sh; scripts/test.
 
