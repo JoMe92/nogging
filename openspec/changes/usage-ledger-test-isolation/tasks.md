@@ -1,6 +1,6 @@
 ## 1. Ledger compatibility (fix/ lane, sequential)
 
-- [ ] TASK-ULT-001 [complex] Implement tolerant ledger decoding, stable accounting validation and opaque-entry preservation per design Decisions 1-2; read both legacy shapes and version 1, count future entries without probes, fail safely on invalid accounting. Check: new scripts/usage-ledger-schema.test.sh, existing usage-reservations.test.sh and usage-gate.test.sh, scripts/test. Branch: fix/usage-ledger-test-isolation. No dependency.
+- [x] TASK-ULT-001 [complex] Implement tolerant ledger decoding, stable accounting validation and opaque-entry preservation per design Decisions 1-2; read both legacy shapes and version 1, count future entries without probes, fail safely on invalid accounting. Check: new scripts/usage-ledger-schema.test.sh, existing usage-reservations.test.sh and usage-gate.test.sh, scripts/test. Branch: fix/usage-ledger-test-isolation. No dependency.
 
 - [ ] TASK-ULT-002 [standard] Stamp pending/bound entries with schema_version 1, preserve extensions and refuse opaque-target bind/release per design Decisions 1-2. Check: new scripts/usage-ledger-writers.test.sh (pending/bound lifecycle, opaque targets, failure cleanup), usage-reservations.test.sh, scripts/test. Branch: fix/usage-ledger-test-isolation. Depends on TASK-ULT-001.
 
@@ -10,9 +10,9 @@
 
 ## 3. Direct entry points (test/ and chore/ lanes, parallel)
 
-- [ ] TASK-ULT-004 [standard] Isolate the shell planning/Claude test group and report all three nogg.test.sh planning setup failures by name per design Decision 4. Check: new scripts/direct-planning-isolation.test.sh (actual direct suites, poisoned context, zero broker contacts, forced setup failure), scripts/test. Branch: test/usage-ledger-test-isolation. Depends on TASK-ULT-003.
+- [x] TASK-ULT-004 [standard] Isolate the shell planning/Claude test group and report all three nogg.test.sh planning setup failures by name per design Decision 4. Check: new scripts/direct-planning-isolation.test.sh (actual direct suites, poisoned context, zero broker contacts, forced setup failure), scripts/test. Branch: test/usage-ledger-test-isolation. Depends on TASK-ULT-003.
 
-- [ ] TASK-ULT-005 [standard] Isolate Python/Pi/Antigravity guard test entries before imports and audit every test/harness for remaining planning/guard calls per design Decision 4; record inventory. Check: new scripts/direct-guard-isolation.test.sh (actual direct suites, poisoned context, zero broker contacts, explicit fixture authority), scripts/test. Branch: chore/usage-ledger-test-isolation. Depends on TASK-ULT-003.
+- [x] TASK-ULT-005 [standard] Isolate Python/Pi/Antigravity guard test entries before imports and audit every test/harness for remaining planning/guard calls per design Decision 4; record inventory. Check: new scripts/direct-guard-isolation.test.sh (actual direct suites, poisoned context, zero broker contacts, explicit fixture authority), scripts/test. Branch: chore/usage-ledger-test-isolation. Depends on TASK-ULT-003.
 
 ## 4. Mixed-version integration and guidance
 
