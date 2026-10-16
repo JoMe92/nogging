@@ -75,14 +75,15 @@ def canonical_repository_state(cwd):
 
 CFG = json.loads((ROOT / ".nogging/config.json").read_text())
 LOCKS, STATE, REPORTS = (ROOT / ".nogging/locks", ROOT / ".nogging/state", ROOT / ".nogging/reports")
-# Only planning boundary locks and discovery acknowledgements become shared.
-# Session, sync, report and allocation state retain their existing locations.
+# Planning and orchestrator singleton state belongs to the main checkout.
+# Other session, sync, report and allocation state remains checkout-local.
 try:
-    PLANNING_LOCKS = Path(canonical_repository_state(ROOT)["locks_dir"])
+    ORCHESTRATOR_HOME = Path(canonical_repository_state(ROOT)["main_checkout"])
 except RuntimeError:
     # Pure helper tests can import this module without a Git checkout. The
     # public resolver and planning mutations still reject unsupported layouts.
-    PLANNING_LOCKS = LOCKS
+    ORCHESTRATOR_HOME = ROOT
+PLANNING_LOCKS = ORCHESTRATOR_LOCKS = ORCHESTRATOR_HOME / ".nogging/locks"
 WORKTREE_STATE = STATE / "worktrees"
 PR_STATE = STATE / "pull-requests"
 TASK_RE = re.compile(r"^- \[[ x]\] (TASK-[A-Z0-9-]+)\s+(.+)$", re.M)
@@ -1250,7 +1251,7 @@ def classify_orchestrator_lock(info=None, path=None, ttl=None, now_dt=None):
     """Shared classifier for orchestrator.lock state (design.md Decision 3).
     Used by orchestrator run, orchestrator status, recover, and doctor."""
     if path is None:
-        path = data_dir(LOCKS) / "orchestrator.lock"
+        path = ORCHESTRATOR_LOCKS / "orchestrator.lock"
     if info is None:
         if not path.exists():
             return OrchestratorLockClassification(
@@ -1364,7 +1365,7 @@ def acquire_orchestrator_lock(force=False):
     naming the holder, when held by a live verified holder, unverifiable holder,
     or fresh remote holder. Stale locks are reclaimable without `--force`.
     `--force` reclaims unconditionally."""
-    path = data_dir(LOCKS) / "orchestrator.lock"
+    path = data_dir(ORCHESTRATOR_LOCKS) / "orchestrator.lock"
     if path.exists() and not force:
         try:
             info = json.loads(path.read_text())
@@ -1385,7 +1386,7 @@ def acquire_orchestrator_lock(force=False):
     atomic_json_state(path, record)
     return path
 def release_orchestrator_lock():
-    (LOCKS / "orchestrator.lock").unlink(missing_ok=True)
+    (ORCHESTRATOR_LOCKS / "orchestrator.lock").unlink(missing_ok=True)
 
 LIMBO_TOKEN_RE = re.compile(r"\[([A-Z][A-Z0-9]*-[0-9a-z]+)\]")
 def branch_commit_tokens():
@@ -2412,8 +2413,7 @@ def slugify(name):
     s = re.sub(r"-+$", "", re.sub(r"^-+", "", re.sub(r"[^a-z0-9]+", "-", str(name).lower())))
     return s or "repo"
 def repo_slug():
-    """The per-repository slug — `slugify(<repo dir basename>)`. Used for the
-    singleton orchestrator session name `nogg-orchestrator-<slug>`."""
+    """The current checkout's slug for backend configuration."""
     return slugify(ROOT.name)
 def normalize_role(role):
     """Return (metadata_role, name_slug). Accepts `lead`, `specialist:<type>`
@@ -2429,8 +2429,10 @@ def normalize_role(role):
         return f"specialist:{role[5:]}", role
     raise RuntimeError(
         f"--role must be 'lead', 'planning', 'specialist:<type>' or 'orchestrator', got {role!r}")
-def session_records():
+def session_records(directory=None):
     """Enumerate true session-record files only.
+
+    Defaults to this checkout's store; the orchestrator supplies its main store.
 
     The per-session effective-settings file is `<name>.settings.json` and is
     itself valid JSON, so a bare `*.json` glob would load it as a bogus record
@@ -2440,7 +2442,7 @@ def session_records():
     (a `name` and a `bead_id`). `session list`, both `session cleanup`
     variants, and the `session_launch` collision guard all read through here."""
     out = []
-    for p in sorted(sessions_dir().glob("*.json")):
+    for p in sorted((directory if directory is not None else sessions_dir()).glob("*.json")):
         if p.name.endswith((".settings.json", ".checks.json")): continue
         try: rec = json.loads(p.read_text())
         except (ValueError, OSError): continue
@@ -4055,7 +4057,7 @@ def _session_launch(role, bead, cwd, read_only, owner,
     # The orchestrator is a singleton: a fixed, nonce-free `nogg-orchestrator-<slug>`
     # name (a stale terminal record of the same name is reused in place). Every
     # other role gets the deterministic `sf-<role>-<bead>-<nonce>` shape.
-    name = f"nogg-orchestrator-{repo_slug()}" if is_orchestrator else "pending"
+    name = orchestrator_session_name() if is_orchestrator else "pending"
     workdir = str(Path(cwd or ROOT).resolve())
     sdir = ROOT / scfg("session_state_dir", ".nogging/state/sessions")
     rec_path, log_path = sdir / f"{name}.json", sdir / f"{name}.log"
@@ -5601,8 +5603,15 @@ def session_resume_when_ready(name, message=None, poll_interval=60):
 # an append-only log, listed by `session list`) — not a bespoke daemon. `status`
 # / `stop` / `restart` drive the service so the operator does not fight the
 # generic `session` commands.
-def orchestrator_slug(): return repo_slug()
+def orchestrator_slug(): return slugify(ORCHESTRATOR_HOME.name)
 def orchestrator_session_name(): return f"nogg-orchestrator-{orchestrator_slug()}"
+def orchestrator_sessions_dir():
+    return ORCHESTRATOR_HOME / scfg("session_state_dir", ".nogging/state/sessions")
+def orchestrator_local_lock_note():
+    path = LOCKS / "orchestrator.lock"
+    if LOCKS != ORCHESTRATOR_LOCKS and path.exists():
+        return f"checkout-local orchestrator lock ignored: {path}; canonical lock: {ORCHESTRATOR_LOCKS / 'orchestrator.lock'}"
+    return None
 def claude_conversation_transcript_exists(workdir, session_id):
     """True when Claude Code has a stored transcript for this exact
     `session_id` under `workdir`'s project directory — the precise,
@@ -5642,7 +5651,7 @@ def orchestrator_live_session():
     record's role is `orchestrator`, its tmux session exists, and its
     reconciled state is active."""
     live = tmux_sessions()
-    for path, rec in session_records():
+    for path, rec in session_records(orchestrator_sessions_dir()):
         if (rec.get("role") == "orchestrator" and rec.get("name") in live
                 and reconciled_state(rec, live) in SESSION_ACTIVE_STATES):
             return path, rec
@@ -5655,6 +5664,8 @@ def orchestrator_run(force=False):
     block until the tmux session exits; release the lock; exit non-zero so
     `Restart=always` brings it back unless `orchestrator stop` disabled the
     unit."""
+    if ROOT != ORCHESTRATOR_HOME:
+        raise RuntimeError(f"orchestrator run must be invoked from the main checkout: {ORCHESTRATOR_HOME}")
     def _term(_signum, _frame): raise SystemExit(1)
     signal.signal(signal.SIGTERM, _term)
     name = orchestrator_session_name()
@@ -5733,7 +5744,7 @@ def orchestrator_status():
     print(f"  enabled: {enabled}")
     print(f"  active:  {active}")
     print(f"  linger:  {'on' if _linger_on() else 'off'}")
-    path = (LOCKS / "orchestrator.lock")
+    path = ORCHESTRATOR_LOCKS / "orchestrator.lock"
     if not path.exists():
         print("  lock:    free")
     else:
@@ -5760,14 +5771,17 @@ def orchestrator_stop():
     _systemctl("stop", unit)
     _systemctl("disable", unit)
     name = orchestrator_session_name()
-    if tmux_has_session(name, "tmux"):
-        session_action(name, "send_keys", "ctrl+c", check=False)
+    rec_path = orchestrator_sessions_dir() / f"{name}.json"
+    rec = json.loads(rec_path.read_text()) if rec_path.exists() else None
+    substrate = session_backend("tmux")
+    ref = record_backend_ref(rec) if rec else name
+    if substrate.exists(ref):
+        substrate.send_keys(ref, "ctrl+c", check=False)
         deadline = time.monotonic() + float(scfg("session_stop_grace_seconds", 10))
-        while time.monotonic() < deadline and tmux_has_session(name, "tmux"):
+        while time.monotonic() < deadline and substrate.exists(ref):
             time.sleep(0.2)
-        if tmux_has_session(name, "tmux"):
-            session_action(name, "kill")
-    rec_path = sessions_dir() / f"{name}.json"
+        if substrate.exists(ref):
+            substrate.kill(ref)
     if rec_path.exists():
         rec = json.loads(rec_path.read_text())
         if rec.get("state") in SESSION_ACTIVE_STATES:
@@ -5859,7 +5873,8 @@ def recover_scan():
     for name, ttl in (("planning", CFG.get("planning_lock_ttl_seconds", 7200)),
                       ("sync", CFG.get("sync_lock_ttl_seconds", 120)),
                       ("orchestrator", orchestrator_lock_ttl())):
-        path = (PLANNING_LOCKS if name == "planning" else LOCKS) / f"{name}.lock"
+        lock_dir = {"planning": PLANNING_LOCKS, "orchestrator": ORCHESTRATOR_LOCKS}.get(name, LOCKS)
+        path = lock_dir / f"{name}.lock"
         if not path.exists():
             continue
         try:
@@ -5893,6 +5908,9 @@ def recover_scan():
         if not fresh:
             attention.append(f"stale {name}.lock")
     section("Locks", lock_lines)
+    local_lock_note = orchestrator_local_lock_note()
+    if local_lock_note:
+        section("Notes", [f"NOTE {local_lock_note}"])
 
     issues = beads()
     by_id = {str(issue_id(i)): i for i in issues}
@@ -6417,6 +6435,11 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
     # inactivity is never a failure (it is opt-in, like the Codex/Pi paths);
     # only a service that is enabled while user lingering is off rates a NOTE.
     orch_unit = orchestrator_unit()
+    orch_lock = classify_orchestrator_lock()
+    notes.append(f"orchestrator lock: {orch_lock.display_state} ({ORCHESTRATOR_LOCKS / 'orchestrator.lock'}); {orch_lock.liveness}")
+    local_lock_note = orchestrator_local_lock_note()
+    if local_lock_note:
+        notes.append(local_lock_note)
     if tool_on_path("systemctl"):
         enabled = _systemctl("is-enabled", orch_unit).stdout.strip()
         active = _systemctl("is-active", orch_unit).stdout.strip() or "inactive"
