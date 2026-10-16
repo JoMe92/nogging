@@ -6283,6 +6283,20 @@ def herdr_doctor_diagnostics():
 
     if reachable:
         notes.append(f"herdr server ({herdr_session}): reachable (running)")
+        try:
+            substrate = session_backend("herdr")
+            workspaces_val = substrate._json("workspace", "list", ref={"herdr_session": herdr_session})
+            workspaces = workspaces_val.get("workspaces", [])
+            target_ws_ids = {w["workspace_id"] for w in workspaces if w.get("label") == substrate.slug}
+            if target_ws_ids:
+                panes = substrate._panes(ref={"herdr_session": herdr_session})
+                for p in panes:
+                    if p.get("workspace_id") in target_ws_ids and not p.get("label"):
+                        pane_id = p.get("pane_id")
+                        if pane_id:
+                            notes.append(f"legacy root pane {pane_id} found in herdr workspace; not closed automatically")
+        except Exception:
+            pass
     else:
         notes.append(f"herdr server ({herdr_session}): not running (starts on demand)")
 
