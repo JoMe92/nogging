@@ -26,6 +26,7 @@ module.exports = {
     'scripts/lib/token_usage_report.py',
     'scripts/lib/token_usage_store.py',
     'scripts/lib/token_usage_sync.py',
+    'scripts/lib/test-env.sh',
     'scripts/session-launch',
     'scripts/openspec-sandbox',
     'scripts/session-log-writer',
