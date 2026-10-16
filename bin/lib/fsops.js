@@ -42,7 +42,15 @@ function copyFile(srcAbs, destRel, ctx, { mode } = {}) {
   const nextDigest = manifestStore.sha256(next);
   const curDigest = fs.existsSync(destAbs)
     ? manifestStore.sha256(fs.readFileSync(destAbs)) : null;
-  const recordedDigest = manifestStore.getRecordedDigest(ctx.installedManifest, destRel);
+  // Without a recorded digest (legacy install, no manifest), fall back to the
+  // bundled release baselines: a file matching one is an unmodified old release.
+  const recordedDigest = manifestStore.getRecordedDigest(ctx.installedManifest, destRel)
+    || (curDigest ? manifestStore.resolveRecordedDigest({
+      manifestObj: ctx.installedManifest || { files: {} },
+      relPath: destRel,
+      recordedVersion: ctx.recordedVersion,
+      curDigest,
+    }) : null);
   const state = manifestStore.evaluateFileState({ curDigest, nextDigest, recordedDigest });
   const action = state === 'preserve' && ctx.force ? 'force-overwrite' : state;
   const outputAbs = action === 'preserve' ? `${destAbs}.nogging-new` : destAbs;

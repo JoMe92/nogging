@@ -60,9 +60,21 @@ function src(ctx, rel) {
 
 // --- phases -----------------------------------------------------------------
 
+// The version recorded in the target's config, used to pick legacy baselines
+// when no installed manifest exists. Null when absent or unreadable.
+function readRecordedVersion(ctx) {
+  try {
+    const data = JSON.parse(fsops.readTarget('.nogging/config.json', ctx));
+    return typeof data.nogging_version === 'string' ? data.nogging_version : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 function prepareInstalledManifest(ctx) {
   if (ctx.nextInstalledManifest) return;
   ctx.installedManifest = manifestStore.readManifest(ctx.targetRoot);
+  ctx.recordedVersion = readRecordedVersion(ctx);
   ctx.nextInstalledManifest = {
     manifest_version: manifestStore.CURRENT_MANIFEST_VERSION,
     nogging_version: ctx.version,
