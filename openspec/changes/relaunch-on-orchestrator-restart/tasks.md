@@ -1,6 +1,6 @@
 ## 1. Helper extraction (branch prefix refactor/)
 
-- [ ] TASK-ORR-001 [routine] Per design Decision 2: factor out orchestrator session termination into terminate_orchestrator_session(exit_reason) in scripts/nogg covering tmux Ctrl+C, grace wait, kill fallback, record transition to stopped and lock release; use it in orchestrator_stop. Check: scripts/orchestrator.test.sh; scripts/test.
+- [x] TASK-ORR-001 [routine] Per design Decision 2: factor out orchestrator session termination into terminate_orchestrator_session(exit_reason) in scripts/nogg covering tmux Ctrl+C, grace wait, kill fallback, record transition to stopped and lock release; use it in orchestrator_stop. Check: scripts/orchestrator.test.sh; scripts/test.
 
 ## 2. Restart sequence (branch prefix fix/)
 
