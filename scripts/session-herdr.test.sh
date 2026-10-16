@@ -63,7 +63,22 @@ with Scratch() as root:
     (root / ".nogging/locks").mkdir(parents=True)
     (root / ".nogging/locks/openspec.readonly").touch()
     (root / "openspec").mkdir()
-    (root / "scripts").symlink_to(source / "scripts", target_is_directory=True)
+    (root / "scripts").mkdir()
+    for helper in ("nogg", "nogg_usage.py", "session-launch", "session-log-writer",
+                   "session-pty-recorder"):
+        shutil.copy2(source / "scripts" / helper, root / "scripts" / helper)
+    (root / "scripts/lib").symlink_to(source / "scripts/lib", target_is_directory=True)
+    # This suite exercises herdr lifecycle, not Linux mount support. Isolate
+    # the fence just as session-startup.test.sh does, keeping contract checks
+    # real and every herdr assertion active on hosts that deny user namespaces.
+    # openspec-sandbox.test.sh and packed-session-launch.test.sh test the fence.
+    boundary = root / "scripts/openspec-sandbox"
+    boundary.write_text("#!/bin/sh\n"
+        'if [ "${1:-}" = --contract ]; then\n'
+        "  exec " + shlex.quote(str(source / "scripts/openspec-sandbox")) + ' --contract\n'
+        "fi\n"
+        'NOGG_OPENSPEC_FENCED=1 exec "$@"\n')
+    boundary.chmod(0o755)
     for name in ("launch-profiles", "launch-prompts"):
         shutil.copytree(source / ".nogging" / name, root / ".nogging" / name)
     subprocess.run(["git", "init", "-q", str(root)], check=True)
@@ -127,7 +142,7 @@ esac
                 str(source / "scripts/fixtures/herdr/bin") + os.pathsep + env["PATH"],
                 "HERDR_STUB_DIR": str(stub), "TMUX_STUB_DIR": str(root / "tmux"),
                 "TEST_TOKEN": "private-e2e-token"})
-    nogg = str(source / "scripts/nogg")
+    nogg = str(root / "scripts/nogg")
     control = str(source / "scripts/fixtures/herdr/bin/herdr-stub-control")
     sessions = root / ".nogging/state/sessions"
 
