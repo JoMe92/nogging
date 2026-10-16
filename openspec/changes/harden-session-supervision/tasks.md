@@ -1,12 +1,12 @@
 ## 1. Shared tmux server (branch prefix fix/, sequential)
 
-- [ ] TASK-HSS-001 [standard] Per design Decision 2: fenced callers pass tmux -N on every command; a fenced session launch whose tmux server is down is refused in the backend prepare step before any record, settings or log, pointing to an unsandboxed launch; unfenced argv unchanged. Check: new scripts/session-tmux-fenced-server.test.sh (tmux argv stub, refusal without side effects, race ends failed); scripts/test.
+- [x] TASK-HSS-001 [standard] Per design Decision 2: fenced callers pass tmux -N on every command; a fenced session launch whose tmux server is down is refused in the backend prepare step before any record, settings or log, pointing to an unsandboxed launch; unfenced argv unchanged. Check: new scripts/session-tmux-fenced-server.test.sh (tmux argv stub, refusal without side effects, race ends failed); scripts/test.
 
 - [ ] TASK-HSS-002 [standard] Per design Decision 3: classify the dedicated tmux server via SO_PEERCRED and ns/pid+ns/mnt links as host, sandboxed, outside, down or unknown; doctor WARN, session list NOTE, orchestrator status line, WARN on orchestrator run and unfenced launch; never kill or signal the server. Check: new scripts/session-tmux-server-namespace.test.sh (Python listener, short TMUX_TMPDIR, injected namespaces); scripts/test.
 
 ## 2. Independent fixes (one prefix each, start at once)
 
-- [ ] TASK-HSS-003 [standard] Per design Decision 4 (N4): resolve the orchestrator lock, slug, session name, unit name and live-session lookup from the main checkout; orchestrator run in a linked worktree refuses before locking; a worktree-local lock is reported and ignored. Check: new scripts/orchestrator-canonical-lock.test.sh (temp repo plus linked worktree, stubbed bd/systemctl/loginctl, live child holder); scripts/test.
+- [x] TASK-HSS-003 [standard] Per design Decision 4 (N4): resolve the orchestrator lock, slug, session name, unit name and live-session lookup from the main checkout; orchestrator run in a linked worktree refuses before locking; a worktree-local lock is reported and ignored. Check: new scripts/orchestrator-canonical-lock.test.sh (temp repo plus linked worktree, stubbed bd/systemctl/loginctl, live child holder); scripts/test.
 
 - [ ] TASK-HSS-004 [routine] Per design Decision 5 (N1): task_done sends one checkout-aware broker request; on the pre-update refusal it fails non-zero with a relaunch instruction, sends no second request, ticks nothing and never falls back locally. Check: new scripts/task-done-mixed-broker.test.sh (Python broker stub on a short socket recording requests); scripts/test.
 
