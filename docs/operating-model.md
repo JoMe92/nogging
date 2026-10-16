@@ -163,7 +163,14 @@ the Product Owner's one reserved act.
 phone" requirement — is a Claude feature; a Codex/Pi orchestrator is a recorded
 follow-up. The `/orchestrate` command file documents how the operator reaches
 and scopes the session; `scripts/nogg orchestrator {run,status,stop,restart}`
-drives the service.
+drives the service. `scripts/nogg orchestrator restart` terminates the live
+orchestrator tmux session gracefully (sending Ctrl+C, waiting the grace period,
+and falling back to kill) and bounces the supervisor service, so the next
+supervisor run starts a fresh Claude session with the current launch prompt and
+settings while resuming conversation transcript history. Passing
+`--supervisor-only` restarts only the systemd supervisor service without
+terminating the tmux session, adopting the live session without relaunching.
+
 
 ## Resuming an interrupted run
 
@@ -405,7 +412,7 @@ From any plain SSH shell (no `TERM`, no tmux client needed):
 | `session cleanup [<name>] [--reap]` | remove a lingering backend session, archive-rotate the log (including rotated `.1..N` files), retire the record. **Refuses** a `starting`/`running`/`idle` record — stop or `--reap` it first. Stops the shared tmux server only when its own listing succeeds and is empty. |
 | `orchestrator run` | the idempotent supervisor the systemd unit runs: acquire the orchestrator lock, adopt or start the `nogg-orchestrator-<slug>` session (pinned to tmux; `claude --continue` when a prior conversation exists), block until it exits, release the lock, exit non-zero. Takes `--force` to reclaim a stale lock. |
 | `orchestrator status` | the unit's enabled/active state, whether user lingering is on, the lock holder, and the live `FULL-ACCESS` session with its last log lines. Read-only. |
-| `orchestrator stop` \| `restart` | stop-and-disable the unit (ending the session and releasing the lock; idempotent), or restart it. |
+| `orchestrator stop` \| `restart [--supervisor-only]` | stop-and-disable the unit (ending the session and releasing the lock; idempotent), or restart it (terminating the live session to relaunch Claude with updated prompt/settings while resuming transcript; `--supervisor-only` restarts the supervisor without ending the tmux session). |
 
 ### Relationship to Task-tool specialists
 
