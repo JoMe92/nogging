@@ -133,12 +133,19 @@ determined SHALL be reported as unknown, never as failed.
 
 Each launched session SHALL stream its console output to an append-only log
 file whose path is recorded in the session metadata. The log SHALL be readable
-without attaching to the tmux session. Log file growth SHALL be bounded by a
-configured size limit with rotation. A Claude Code session MAY additionally
-have a structured events file (`<name>.events.jsonl`) written by its own
-hooks; where present, this file supplements the console log and SHALL NOT
-replace it — the console log remains the complete record regardless of
-whether the events file exists.
+without attaching to the backend session.
+
+Output SHALL reach the log as it arrives, without waiting for a line break, so
+the log of a full-screen agent that emits few line feeds grows while the
+session runs. The log writer SHALL hold at most a bounded chunk of output in
+memory. Log growth SHALL be bounded by the configured size limit with
+rotation, and no log generation SHALL exceed that limit. The writer SHALL
+preserve the output bytes exactly.
+
+A Claude Code session MAY additionally have a structured events file
+(`<name>.events.jsonl`) written by its own hooks; where present, this file
+supplements the console log and SHALL NOT replace it — the console log remains
+the complete record regardless of whether the events file exists.
 
 #### Scenario: Session output is captured to a log
 
@@ -150,13 +157,18 @@ whether the events file exists.
 
 - **WHEN** an operator reads or follows a session's log from an SSH shell
 - **THEN** they see the session's output
-- **AND** they do not attach to or disturb the tmux session
+- **AND** they do not attach to or disturb the backend session
+
+#### Scenario: A full-screen agent's log grows live
+
+- **WHEN** a running session emits output that contains no line feed
+- **THEN** that output appears in the log before the session ends
 
 #### Scenario: Log size is bounded
 
-- **WHEN** a session's log file reaches the configured size limit
-- **THEN** it is rotated
-- **AND** the active log file does not grow without bound
+- **WHEN** a session's output, with or without line feeds, exceeds the configured size limit
+- **THEN** the log is rotated
+- **AND** no log generation exceeds the configured size limit
 
 #### Scenario: An events file supplements, never replaces, the console log
 
@@ -175,9 +187,14 @@ and SHALL record a final state with the time and reason.
 
 Cleanup SHALL remove the backend session and retire its metadata. It SHALL run
 only for a session that has completed its task or been stopped, and SHALL
-refuse to act on a session that is still starting, running or idle. Once no
-session remains, cleanup SHALL stop the dedicated Nogging tmux server. It
-SHALL never stop the herdr server.
+refuse to act on a session that is still starting, running or idle.
+
+Cleanup SHALL archive the session's log together with every rotated
+generation of it. Cleanup SHALL stop the dedicated Nogging tmux server only
+when that server's own session listing succeeds and reports no session. That
+the current checkout has no remaining record SHALL NOT be a reason to stop a
+server that still hosts the Orchestration Agent or another checkout's session.
+Cleanup SHALL never stop the herdr server.
 
 #### Scenario: Stopping a session records a final state
 
@@ -196,6 +213,17 @@ SHALL never stop the herdr server.
 - **WHEN** a session has completed its task or been stopped and an operator runs cleanup for it
 - **THEN** the backend session is removed
 - **AND** the metadata record is retired
+
+#### Scenario: Cleanup in a quiet checkout keeps the shared tmux server
+
+- **WHEN** cleanup retires the last record of a checkout while the Orchestration Agent runs on the shared tmux server
+- **THEN** the tmux server and the Orchestration Agent session keep running
+
+#### Scenario: Cleanup archives every log generation
+
+- **WHEN** cleanup retires a session whose log has rotated generations
+- **THEN** the active log and every rotated generation are archived
+- **AND** no generation of that log is left in place
 
 #### Scenario: Attach never happens automatically
 
