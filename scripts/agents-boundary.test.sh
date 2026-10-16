@@ -14,6 +14,8 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/lib/test-env.sh
+source "$here/lib/test-env.sh"
 repo_root="$(cd "$here/.." && pwd)"
 guard="$repo_root/scripts/hooks/pre-tool-use-openspec-guard"
 agents_dir="$repo_root/.claude/agents"
