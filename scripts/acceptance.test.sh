@@ -13,6 +13,8 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/lib/test-env.sh
+source "$here/lib/test-env.sh"
 
 if ! command -v node >/dev/null 2>&1; then
   echo "ok   - skipped (node not installed)"
