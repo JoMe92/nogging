@@ -260,13 +260,67 @@ class HerdrBackend:
         matches = [w for w in workspaces if w.get("label") == self.slug]
         if len(matches) > 1:
             raise BackendError("herdr workspace label is ambiguous")
-        workspace = (matches[0] if matches else self._json(
-            "workspace", "create", "--label", self.slug, "--cwd", str(self.root), "--no-focus")["workspace"])
+        if matches:
+            workspace = matches[0]
+        else:
+            created = self._json(
+                "workspace", "create", "--label", self.slug, "--cwd", str(self.root), "--no-focus")
+            workspace = created["workspace"]
+            root_pane = created.get("root_pane")
+            if isinstance(root_pane, dict) and root_pane.get("pane_id"):
+                self._record_root_pane(workspace["workspace_id"], root_pane)
         self.verify_socket(path)
         self._prepared = {"name": name, "label": name, "herdr_session": self.session,
                           "workspace": workspace["workspace_id"], "socket_path": path,
                           "session_pid_ns": owned.get("pid_ns") or pid_namespace()}
         return dict(self._prepared)
+
+    def _record_root_pane(self, workspace_id, root_pane):
+        try:
+            self.state.mkdir(parents=True, exist_ok=True, mode=0o700)
+            target = self.state / "workspace.json"
+            data = {
+                "workspace_id": workspace_id,
+                "pane_id": root_pane.get("pane_id"),
+                "terminal_id": root_pane.get("terminal_id")
+            }
+            target.write_text(json.dumps(data))
+            target.chmod(0o600)
+        except OSError:
+            pass
+
+    def _close_tracked_root_pane(self, ref):
+        target = self.state / "workspace.json"
+        if not target.exists():
+            return
+        try:
+            tracked = json.loads(target.read_text())
+        except (OSError, ValueError):
+            return
+        if not isinstance(tracked, dict):
+            return
+        tracked_ws = tracked.get("workspace_id")
+        tracked_pane_id = tracked.get("pane_id")
+        tracked_term_id = tracked.get("terminal_id")
+        if tracked_ws != ref.get("workspace") or not tracked_pane_id:
+            return
+
+        try:
+            panes = self._panes(ref)
+            candidates = [p for p in panes if p.get("pane_id") == tracked_pane_id]
+            if len(candidates) == 1:
+                p = candidates[0]
+                # Re-check that pane is still unlabelled, still in workspace, and matches terminal_id
+                if (not p.get("label") and p.get("workspace_id") == tracked_ws
+                        and (not tracked_term_id or p.get("terminal_id") == tracked_term_id)):
+                    self._cli("pane", "close", tracked_pane_id, ref=ref, check=False)
+        except Exception:
+            pass
+        finally:
+            try:
+                target.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     def _panes(self, ref=None):
         value = self._json("pane", "list", ref=ref)
@@ -302,33 +356,58 @@ class HerdrBackend:
         request = {"id": str(uuid.uuid4()), "method": "layout.apply", "params": {
             "workspace_id": ref["workspace"], "tab_label": name,
             "root": {"type": "pane", "command": command, "cwd": str(cwd), "env": pane_env, "label": name}}}
-        reply = None
-        try:
-            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-                client.settimeout(self.timeout)
-                client.connect(ref["socket_path"])
-                deadline = time.monotonic() + self.timeout
-                client.sendall((json.dumps(request) + "\n").encode())
-                line = b""
-                while b"\n" not in line and len(line) <= 1024 * 1024:
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        raise TimeoutError()
-                    client.settimeout(remaining)
-                    chunk = client.recv(65536)
-                    if not chunk:
-                        break
-                    line += chunk
-                if len(line) > 1024 * 1024 or not line.endswith(b"\n"):
-                    raise ValueError()
-                reply = json.loads(line)
-                if not isinstance(reply, dict) or reply.get("id") != request["id"]:
-                    reply = None
-        except (OSError, ValueError):
-            pass
+
+        def _send_request(req):
+            rep = None
+            try:
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                    client.settimeout(self.timeout)
+                    client.connect(ref["socket_path"])
+                    deadline = time.monotonic() + self.timeout
+                    client.sendall((json.dumps(req) + "\n").encode())
+                    line = b""
+                    while b"\n" not in line and len(line) <= 1024 * 1024:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            raise TimeoutError()
+                        client.settimeout(remaining)
+                        chunk = client.recv(65536)
+                        if not chunk:
+                            break
+                        line += chunk
+                    if len(line) > 1024 * 1024 or not line.endswith(b"\n"):
+                        raise ValueError()
+                    rep = json.loads(line)
+                    if not isinstance(rep, dict) or rep.get("id") != req["id"]:
+                        rep = None
+            except (OSError, ValueError):
+                pass
+            return rep
+
+        reply = _send_request(request)
         if reply and isinstance(reply.get("error"), dict):
             code = reply["error"].get("code", "unknown_error")
-            raise BackendError(f"herdr layout.apply failed ({code})")
+            if code == "workspace_not_found":
+                # Close the missing/stale workspace from state if needed, recreate once
+                # and retry layout.apply over a newly connected socket
+                if ref.get("workspace"):
+                    self._cli("workspace", "close", ref["workspace"], ref=ref, check=False)
+                created = self._json(
+                    "workspace", "create", "--label", self.slug, "--cwd", str(self.root), "--no-focus")
+                new_ws = created["workspace"]["workspace_id"]
+                ref["workspace"] = new_ws
+                root_pane = created.get("root_pane")
+                if isinstance(root_pane, dict) and root_pane.get("pane_id"):
+                    self._record_root_pane(new_ws, root_pane)
+                request["id"] = str(uuid.uuid4())
+                request["params"]["workspace_id"] = new_ws
+                reply = _send_request(request)
+                if reply and isinstance(reply.get("error"), dict):
+                    retry_code = reply["error"].get("code", "unknown_error")
+                    raise BackendError(f"herdr layout.apply failed ({retry_code})")
+            else:
+                raise BackendError(f"herdr layout.apply failed ({code})")
+
         try:
             ref["pane_id"] = reply["result"]["layout"]["root"]["pane_id"]
             if not isinstance(ref["pane_id"], str):
@@ -347,6 +426,7 @@ class HerdrBackend:
         if local and not birth:
             raise BackendError("herdr pane root process identity is unavailable")
         ref.update(terminal_id=pane["terminal_id"], session_pid=pid, session_pid_start=birth)
+        self._close_tracked_root_pane(ref)
         return ref
 
     def pid(self, ref):
