@@ -12,7 +12,7 @@
 
 - [ ] TASK-HSS-005 [standard] Per design Decision 6 (N2): nudge --message clears pending input by bounded ctrl+u repeats, then a bounded backspace fallback, and types only on an empty composer; it submits only when the composer holds exactly the message, else fails with nothing submitted; Claude, Codex fallback, Antigravity; both backends. Check: new scripts/session-nudge-clear.test.sh (derived wrapped fixtures, tmux stub, fake herdr); scripts/test.
 
-- [ ] TASK-HSS-006 [routine] Per design Decision 7 (N3): docs/using-with-herdr.md quotes the real advisory `NOTE: <N> foreign herdr pane(s) left untouched`; no behaviour change. Check: new scripts/docs-herdr-foreign-note.test.sh asserting the guide quotes the format string in scripts/nogg; scripts/test.
+- [x] TASK-HSS-006 [routine] Per design Decision 7 (N3): docs/using-with-herdr.md quotes the real advisory `NOTE: <N> foreign herdr pane(s) left untouched`; no behaviour change. Check: new scripts/docs-herdr-foreign-note.test.sh asserting the guide quotes the format string in scripts/nogg; scripts/test.
 
 ## 3. Documentation and acceptance (branch prefix docs/, sequential)
 
