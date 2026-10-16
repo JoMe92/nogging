@@ -893,15 +893,93 @@ class Reservations:
             'XDG_CACHE_HOME', str(Path.home() / '.cache'))) / 'nogging/usage/reservations'
         self.pending = {}
 
+    @staticmethod
+    def _validate_accounting(entry):
+        if not isinstance(entry, dict):
+            raise ValueError('entry must be a dictionary')
+        scope = entry.get('scope')
+        if not isinstance(scope, str) or not scope.strip():
+            raise ValueError('missing or empty scope')
+        estimate = entry.get('estimate')
+        if isinstance(estimate, bool) or not isinstance(estimate, (int, float)) or not math.isfinite(estimate) or estimate < 0:
+            raise ValueError('missing or non-finite/negative estimate')
+        windows = entry.get('windows')
+        if not isinstance(windows, dict):
+            raise ValueError('missing or invalid windows mapping')
+        for bucket, reset in windows.items():
+            if not isinstance(bucket, str) or not bucket.strip():
+                raise ValueError('invalid window bucket')
+            if reset is not None:
+                try:
+                    timestamp(reset)
+                except Exception as exc:
+                    raise ValueError(f'invalid window reset timestamp: {reset!r}') from exc
+        owner = entry.get('owner')
+        if not isinstance(owner, str) or not owner.strip() or owner != owner.strip():
+            raise ValueError('missing or empty owner')
+        if os.path.basename(owner) != owner or owner in ('.', '..') or '/' in owner or '\\' in owner or '\0' in owner:
+            raise ValueError(f'unsafe owner filename: {owner!r}')
+
+    @staticmethod
+    def _classify(entry):
+        """Return (is_understood, reason_if_opaque)."""
+        if 'schema_version' not in entry:
+            pass  # legacy
+        else:
+            ver = entry['schema_version']
+            if isinstance(ver, bool) or not isinstance(ver, int):
+                return False, 'invalid explicit schema version'
+            if ver == 1:
+                pass  # version 1
+            elif ver > 1:
+                return False, f'unsupported schema version {ver}'
+            else:
+                return False, f'invalid schema version {ver}'
+
+        if 'session' not in entry:
+            return True, None
+
+        sess = entry['session']
+        if not isinstance(sess, dict):
+            return False, 'malformed session metadata'
+
+        path = sess.get('path')
+        name = sess.get('name')
+        if not isinstance(path, str) or not path or not isinstance(name, str) or not name:
+            return False, 'malformed session metadata'
+
+        if 'probe' in sess:
+            probe = sess['probe']
+            if (not isinstance(probe, dict)
+                    or not isinstance(probe.get('backend'), str) or not probe['backend']
+                    or not isinstance(probe.get('argv'), list) or not probe['argv']
+                    or not all(isinstance(a, str) and a for a in probe['argv'])):
+                return False, 'malformed probe metadata'
+            return True, None
+        elif 'tmux' in sess and 'socket' in sess:
+            tmux = sess['tmux']
+            socket = sess['socket']
+            if not isinstance(tmux, str) or not tmux or not isinstance(socket, str) or not socket:
+                return False, 'malformed legacy tmux session metadata'
+            return True, None
+        else:
+            return False, 'malformed session metadata'
+
+    def is_opaque(self, entry):
+        return not self._classify(entry)[0]
+
     def _alive(self, entry):
         import subprocess
+        understood, _ = self._classify(entry)
+        if not understood:
+            return True
         owner = entry.get('session')
         if owner:
             try:
                 record = json.loads(Path(owner['path']).read_text())
             except (OSError, ValueError):
                 record = None
-            if record and record.get('state') in ('stopped', 'failed', 'retired'):
+            if record and isinstance(record, dict) and record.get('state') in ('stopped', 'failed', 'retired'):
                 return False
             try:
                 probe = owner.get('probe')
@@ -944,26 +1022,46 @@ class Reservations:
 
     def _transaction(self, action, *, readonly=False):
         import fcntl
+        import sys
         import tempfile
-        if readonly and not (self.root / 'ledger.json').exists():
+        ledger_path = self.root / 'ledger.json'
+        lock_path = self.root / 'ledger.lock'
+        if readonly and not ledger_path.exists():
             return action({})
-        if not readonly:
+        if readonly:
+            target_lock = lock_path if lock_path.exists() else ledger_path
+            lock_fd = os.open(target_lock, os.O_RDONLY)
+        else:
             self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
             self.root.chmod(0o700)
-        lock_fd = os.open(self.root / 'ledger.lock', os.O_RDONLY if readonly else os.O_CREAT | os.O_RDWR, 0o600)
+            lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
         with os.fdopen(lock_fd, 'r' if readonly else 'a+') as lock:
             if not readonly:
                 os.fchmod(lock.fileno(), 0o600)
             fcntl.flock(lock, fcntl.LOCK_SH if readonly else fcntl.LOCK_EX)
-            path = self.root / 'ledger.json'
             try:
-                entries = json.loads(path.read_text())
+                content = ledger_path.read_text()
+                entries = json.loads(content)
                 if not isinstance(entries, dict):
                     raise ValueError('invalid ledger')
             except FileNotFoundError:
                 entries = {}
             except ValueError as exc:
                 raise RuntimeError('usage reservation ledger is malformed; admission refused') from exc
+
+            for token, entry in entries.items():
+                if not isinstance(token, str) or not token.strip():
+                    raise RuntimeError('usage reservation ledger is malformed; admission refused')
+                try:
+                    self._validate_accounting(entry)
+                except ValueError as exc:
+                    raise RuntimeError(f'usage reservation ledger is malformed ({exc}); admission refused') from exc
+
+            for token, entry in entries.items():
+                understood, reason = self._classify(entry)
+                if not understood:
+                    print(f"warning: reservation {token}: {reason}; retained without probing", file=sys.stderr)
+
             original = dict(entries)
             entries = {key: value for key, value in entries.items() if self._alive(value)}
             result = action(entries)
@@ -976,7 +1074,8 @@ class Reservations:
                     json.dump(entries, stream, allow_nan=False)
                     stream.flush()
                     os.fsync(stream.fileno())
-                os.replace(temporary, path)
+                os.chmod(temporary, 0o600)
+                os.replace(temporary, ledger_path)
                 for key in original.keys() - entries.keys():
                     (self.root / original[key]['owner']).unlink(missing_ok=True)
             finally:
