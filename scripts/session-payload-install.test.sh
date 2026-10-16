@@ -88,12 +88,17 @@ check_helpers
 
 # A partial older install: one absent wrapper and one stale, non-executable wrapper.
 python3 - "$consumer" <<'PY'
-import pathlib, sys
+import hashlib, json, pathlib, sys
 root = pathlib.Path(sys.argv[1])
 (root / 'scripts/session-launch').unlink()
 writer = root / 'scripts/session-log-writer'
 writer.write_text('obsolete wrapper\n')
 writer.chmod(0o644)
+# This fixture simulates an untouched older release, not a local customization.
+manifest_path = root / '.nogging/installed-manifest.json'
+manifest = json.loads(manifest_path.read_text())
+manifest['files']['scripts/session-log-writer'] = hashlib.sha256(writer.read_bytes()).hexdigest()
+manifest_path.write_text(json.dumps(manifest))
 PY
 (cd "$consumer" && node "$package/bin/cli.js" update --no-beads --no-hooks --no-systemd >/dev/null)
 check_helpers
