@@ -4,7 +4,7 @@
 
 ## 2. Local modification detection and preservation (fix/ lane)
 
-- [ ] TASK-PVE-002 [complex] Implement three-way hash comparison in fsops and install to preserve locally modified verbatim files as .nogging-new by default per design Decision 2; support --dry-run reporting. Check: new scripts/manifest-update.test.sh, scripts/test. Branch: fix/preserve-modified-verbatim-files. Depends on TASK-PVE-001.
+- [x] TASK-PVE-002 [complex] Implement three-way hash comparison in fsops and install to preserve locally modified verbatim files as .nogging-new by default per design Decision 2; support --dry-run reporting. Check: new scripts/manifest-update.test.sh, scripts/test. Branch: fix/preserve-modified-verbatim-files. Depends on TASK-PVE-001.
 
 ## 3. Backward compatibility and CLI options (fix/ lane)
 
