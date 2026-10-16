@@ -5,6 +5,7 @@ import os
 import socket
 import shlex
 import struct
+import uuid
 
 from session_backend import BackendError, Capabilities, KEYS
 
@@ -72,9 +73,11 @@ class TmuxBackend:
     def _fenced_prefix():
         return ("-N",) if os.environ.get("NOGG_OPENSPEC_FENCED") == "1" else ()
 
-    def command(self, *args, check=True):
-        return self._run(self.binary, "-L", self.socket, *self._fenced_prefix(),
-                         *args, check=check)
+    def command(self, *args, check=True, stdin=None):
+        argv = (self.binary, "-L", self.socket, *self._fenced_prefix(), *args)
+        if stdin is None:
+            return self._run(*argv, check=check)
+        return self._run(*argv, check=check, input=stdin)
 
     def prepare(self, name, cwd):
         """Check fenced callers can use the host server before any record is written."""
@@ -125,7 +128,19 @@ class TmuxBackend:
         return int(raw) if raw.isdigit() and int(raw) > 0 else None
 
     def send_text(self, ref, text):
-        self._invoke("send-keys", "-t", self._name(ref), "-l", text)
+        """Paste text through an isolated stdin buffer; never submit it."""
+        buffer = f"nogg-{uuid.uuid4()}"
+        try:
+            self._invoke("load-buffer", "-b", buffer, "-", stdin=text)
+            self._invoke("paste-buffer", "-p", "-r", "-d", "-b", buffer,
+                         "-t", self._name(ref))
+        finally:
+            try:
+                self._invoke("delete-buffer", "-b", buffer, check=False)
+            except Exception:
+                # Cleanup must not replace a transport error. A successful
+                # paste also requests deletion with paste-buffer -d.
+                pass
 
     def send_keys(self, ref, key, *, check=True):
         if key not in KEYS:
