@@ -4,7 +4,7 @@
 
 - [ ] TASK-RSI-002 [standard] Per design Decisions 1 and 3: validate timing keys and add bounded runtime readiness; replace AGY's fixed first-turn wait with current Stop or two exact-process idle/empty samples, with timeout diagnostics and no speculative input. Own readiness functions only. Branch feat/. Check: scripts/session-input-ready.test.sh; scripts/test.
 
-- [ ] TASK-RSI-004 [standard] Per design Decisions 1 and 5: add pure exact-thread incremental Codex user-message receipt reader with source snapshots, partial-line handling, bounded reads and unknown outcomes; ship module via installer manifest without persisting transcript text. Branch refactor/. Check: scripts/session-codex-receipt.test.sh including scratch init/update; scripts/test.
+- [x] TASK-RSI-004 [standard] Per design Decisions 1 and 5: add pure exact-thread incremental Codex user-message receipt reader with source snapshots, partial-line handling, bounded reads and unknown outcomes; ship module via installer manifest without persisting transcript text. Branch refactor/. Check: scripts/session-codex-receipt.test.sh including scratch init/update; scripts/test.
 
 ## 2. Delivery integration (fix/, sequential)
 
