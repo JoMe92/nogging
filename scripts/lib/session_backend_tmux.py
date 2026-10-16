@@ -69,6 +69,21 @@ class TmuxBackend:
                  if result.returncode == 0 else set())
         return alive, set()
 
+    def empty(self):
+        """Return True only if list-sessions succeeded and listed no sessions.
+
+        A failed listing counts as not empty so cleanup never kills a server
+        whose state could not be determined.
+        """
+        try:
+            result = self._invoke("list-sessions", "-F", "#{session_name}", check=False)
+        except Exception:
+            return False
+        if getattr(result, "returncode", 1) != 0:
+            return False
+        stdout = getattr(result, "stdout", "") or ""
+        return not any(line.strip() for line in stdout.splitlines())
+
     def exists(self, ref):
         return self._invoke("has-session", "-t", self._name(ref), check=False).returncode == 0
 
