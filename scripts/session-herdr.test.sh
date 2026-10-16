@@ -4,7 +4,7 @@ set -euo pipefail
 
 # Test fixtures must not inherit the supervised agent's private session context.
 while IFS='=' read -r name _; do
-  case "$name" in NOGG_*|NOGGING_ROOT) unset "$name" ;; esac
+  case "$name" in NOGG_*|HERDR_*|TMUX|NOGGING_ROOT) unset "$name" ;; esac
 done < <(env)
 
 source_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -195,6 +195,12 @@ esac
     assert refused.returncode and "0600" in refused.stderr, refused.stderr
     assert len(list(sessions.glob("sf-lead-*.json"))) == before
     sock_path.chmod(0o600)
+    # The permission fault also changes ctime. Re-seal this test fixture's
+    # receipt after deliberately restoring the socket for later launches.
+    receipt_path = root / '.nogging/state/herdr/hdr-e2e/server.json'
+    receipt = json.loads(receipt_path.read_text())
+    receipt['socket'] = backend.verify_socket(str(sock_path))
+    receipt_path.write_text(json.dumps(receipt))
 
     # Mixed listing, send, no-message nudge safety, explicit nudge and kickoff.
     state_file = stub / "state.json"
