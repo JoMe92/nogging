@@ -6412,6 +6412,9 @@ def main():
     orcsub.add_parser("stop")
     orcsub.add_parser("restart")
     s = sub.add_parser("session"); ssub = s.add_subparsers(dest="session_command", required=True)
+    hs = ssub.add_parser("herdr-server", help="manage the dedicated herdr server")
+    hs.add_subparsers(dest="herdr_server_command", required=True).add_parser(
+        "start", help="start or verify the owned dedicated server from the host")
     sl = ssub.add_parser("launch")
     sl.add_argument("--role", required=True)
     sl.add_argument("--backend", help="session substrate (tmux or herdr); defaults to session_backend config or tmux")
@@ -6528,7 +6531,13 @@ def main():
     elif args.command == "orchestrator": orchestrator_cmd(args)
     else: doctor(args.command == "audit", getattr(args, "recover", False), getattr(args, "sandbox", False))
 def session_cmd(args):
-    if args.session_command == "launch":
+    if args.session_command == "herdr-server":
+        try:
+            session_backend("herdr").start_server()
+        except AttributeError as exc:
+            raise RuntimeError("herdr backend does not support server recovery") from exc
+        print(f"herdr server ({scfg('session_herdr_session', 'nogging')}): running (owned)")
+    elif args.session_command == "launch":
         session_launch(args.role, args.bead, args.cwd, args.read_only, args.owner,
                        args.profile, args.prompt, args.full_access, args.agent,
                        resume=args.resume, kickoff=args.kickoff, planning_id=args.planning_id, description=args.description,

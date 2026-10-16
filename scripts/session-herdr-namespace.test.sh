@@ -121,13 +121,15 @@ with tempfile.TemporaryDirectory(prefix='nogg.', dir='/tmp') as directory:
         rejects(backend._ensure_server, 'process identity')
         receipt(owned)
 
-        # Legacy ownership remains host-verifiable but fenced callers cannot
-        # adopt it. This task intentionally leaves the upgrade command to 005.
+        # Legacy ownership is verified and upgraded by a host caller; fenced
+        # callers can then verify the resulting modern receipt.
         legacy = {key: owned[key] for key in ('pid', 'start')}
         receipt(legacy)
-        assert backend._ensure_server() == legacy
+        upgraded = backend._ensure_server()
+        assert upgraded['pid'] == legacy['pid'] and upgraded['start'] == legacy['start']
+        assert upgraded['pid_ns'] == pid_namespace() and upgraded['socket'] == owned['socket']
         with patch.dict(os.environ, NOGG_OPENSPEC_FENCED='1'):
-            rejects(backend._ensure_server, 'session herdr-server start')
+            assert backend._ensure_server() == upgraded
 
         # Real same-namespace process birth checks are retained for old records.
         local_child = subprocess.Popen(['/bin/sleep', '120'])
