@@ -116,3 +116,12 @@
     Planned 2026-10-16 in harden-herdr-session-backend (planning commits 25afc1c archive, 22f0d0e plan; planning-id herdr-hardening). Read only the mapped tasks.md line, the design.md Decision it names, design Decision 1 (CI test discipline: no Dolt/bd, no PID-range assumptions, no user namespaces, socket paths under 108 bytes) and the matching capability requirement. Before allocating a dependent worktree, verify every prerequisite execution commit is integrated into develop. Complexity: routine. Branch: feat/harden-herdr-session-backend (lane prefix; reuse only after the previous lane branch is integrated and deleted). herdr lane tail (D8), after TASK-HHB-006. Source discovery: SPEC-emer D8.
     tier routine: assigned by orchestrator to antigravity; branch feat/harden-herdr-session-backend.
     commit 92325a67c13ce2e46c4c97e40e5c7cccb31c1fd7: close root pane on first layout.apply, recreate workspace once and retry on workspace_not_found, preserve untracked unlabelled panes, report legacy root panes in doctor. Verified by scripts/test passing completely.
+
+<!-- nogg:SPEC-nkot:2026-10-16T06:06:25Z -->
+- 2026-10-16T06:12:00+00:00 — SPEC-nkot closed for TASK-HHB-011 (Bead closed at 2026-10-16T06:06:25Z).
+  - implementation commits: 7697a35fba78, 25afc1c, 22f0d0e
+  - Bead note:
+    Planned 2026-10-16 in harden-herdr-session-backend (planning commits 25afc1c archive, 22f0d0e plan; planning-id herdr-hardening). Read only the mapped tasks.md line, the design.md Decision it names, design Decision 1 (CI test discipline: no Dolt/bd, no PID-range assumptions, no user namespaces, socket paths under 108 bytes) and the matching capability requirement. Before allocating a dependent worktree, verify every prerequisite execution commit is integrated into develop. Complexity: standard. Branch: docs/harden-herdr-session-backend (lane prefix; reuse only after the previous lane branch is integrated and deleted). Docs join point after TASK-HHB-001..010.
+    tier standard: assigned by orchestrator to antigravity; branch docs/harden-herdr-session-backend.
+    progress: reading task line, design Decision 12, and docs
+    commit 7697a35; PR https://github.com/JoMe92/nogging/pull/158; all tests passed via scripts/test
