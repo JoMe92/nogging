@@ -35,3 +35,11 @@
     progress: Implemented Codex queue-first nudge and agent-specific Codex/Antigravity composer verification; focused new, placeholder, and observability suites pass. Reviewing the final diff, then running scripts/test once before close.
     progress: Focused Codex/Antigravity tests and session-observability pass; scripts/test was run once. Full run hit read-only host npm/XDG caches; affected package suites, liveness, payload install, and observability pass with temporary writable caches. Closing this Bead, ticking its task line, then committing and opening the PR.
     Evidence: commit 6bf2c35f9f1c81b17d3d46e9c0e4354c5d24de64 ([SPEC-f11r]) includes the execution and TASK-HHB-009 task-done tick. Passed scripts/session-nudge-agents.test.sh, scripts/session-nudge-placeholder.test.sh, scripts/session-observability.test.sh (using a writable temporary XDG cache), and targeted package/release/liveness/payload suites with a temporary npm cache. scripts/test ran once; its npm/cache failures passed individually with temporary caches. Full output also initially showed an observability failure, fixed by preserving Codex's Pasted Content pending-input signal; the focused suite now passes.
+
+<!-- nogg:SPEC-d7vt:2026-10-16T02:24:50Z -->
+- 2026-10-16T02:26:04+00:00 — SPEC-d7vt closed for TASK-HHB-008 (Bead closed at 2026-10-16T02:24:50Z).
+  - implementation commits: 25afc1c, 22f0d0e
+  - Bead note:
+    Planned 2026-10-16 in harden-herdr-session-backend (planning commits 25afc1c archive, 22f0d0e plan; planning-id herdr-hardening). Read only the mapped tasks.md line, the design.md Decision it names, design Decision 1 (CI test discipline: no Dolt/bd, no PID-range assumptions, no user namespaces, socket paths under 108 bytes) and the matching capability requirement. Before allocating a dependent worktree, verify every prerequisite execution commit is integrated into develop. Complexity: standard. Branch: perf/harden-herdr-session-backend (lane prefix; reuse only after the previous lane branch is integrated and deleted). Both backends (D3): start immediately. Source discovery: SPEC-emer D3.
+    tier standard: assigned by orchestrator to antigravity; branch perf/harden-herdr-session-backend.
+    progress: claimed bead, reading task, design decisions 1 and 9, and spec requirements
