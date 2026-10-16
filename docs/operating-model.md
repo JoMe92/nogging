@@ -100,8 +100,10 @@ tmux and always runs on tmux, even if herdr is configured as the default backend
 keeps alive across a crash or a host reboot, resuming its own conversation with
 `claude --continue`. The launched session registers with Remote Control, so the
 Product Owner can read and drive it from a phone with no SSH. Exactly one runs
-at a time, guarded by `.nogging/locks/orchestrator.lock` (the planning-lock
-shape and staleness rule, independent of the planning lock).
+at a time, guarded by `.nogging/locks/orchestrator.lock` (which records
+`{pid, host, created_at, pid_start, pid_ns}`; staleness is bound to holder
+process liveness across PID namespaces rather than age alone, independent of
+the planning lock).
 
 **Default scope is orchestrate-only.** The Orchestration Agent reads the whole
 state (Beads, OpenSpec, session records and logs, `git`) and drives the loop by
@@ -284,7 +286,8 @@ specialist:<type>> --bead <id> [--cwd <path>] [--read-only]
   starts, so the association survives an SSH drop or a restart of the launcher;
 - streams all console output to an append-only `<name>.log` beside the record
   (`tmux pipe-pane` or herdr `scripts/session-pty-recorder` →
-  `scripts/session-log-writer`, size-rotated);
+  `scripts/session-log-writer`, streaming binary chunks via `O_APPEND` without waiting
+  for newlines, size-rotated to strictly bounded generations);
 - starts the selected agent through `scripts/session-launch` under a
   **selectable authority level**, defaulting to `restricted` (no `git push`, no
   remote Dolt sync, no destructive shell, scoped to the working directory)
@@ -386,7 +389,7 @@ From any plain SSH shell (no `TERM`, no tmux client needed):
 | `session log <name> [--follow]` | print or tail the append-only log without attaching. |
 | `session stop <name> [--reason <text>]` | interrupt the agent, terminate the backend session after the grace period, record `stopped` with `ended_at`/`exit_reason`. Idempotent. |
 | `session reap` | move every active-state record whose backend session is gone to `failed` (a live one is untouched), so `cleanup` can retire it. |
-| `session cleanup [<name>] [--reap]` | remove a lingering backend session, archive-rotate the log, retire the record. **Refuses** a `starting`/`running`/`idle` record — stop or `--reap` it first. |
+| `session cleanup [<name>] [--reap]` | remove a lingering backend session, archive-rotate the log (including rotated `.1..N` files), retire the record. **Refuses** a `starting`/`running`/`idle` record — stop or `--reap` it first. Stops the shared tmux server only when its own listing succeeds and is empty. |
 | `orchestrator run` | the idempotent supervisor the systemd unit runs: acquire the orchestrator lock, adopt or start the `nogg-orchestrator-<slug>` session (pinned to tmux; `claude --continue` when a prior conversation exists), block until it exits, release the lock, exit non-zero. Takes `--force` to reclaim a stale lock. |
 | `orchestrator status` | the unit's enabled/active state, whether user lingering is on, the lock holder, and the live `FULL-ACCESS` session with its last log lines. Read-only. |
 | `orchestrator stop` \| `restart` | stop-and-disable the unit (ending the session and releasing the lock; idempotent), or restart it. |

@@ -188,6 +188,48 @@ and resolves what it reports with the
 playbook — exactly as `AGENTS.md` § "Resuming a run" describes. The protocol is
 tool-neutral; nothing about it is Claude- or Codex-specific.
 
+## Exact session resume
+
+Nogging supports exact resume for Codex sessions:
+
+```bash
+./scripts/nogg session launch --agent codex --resume <session-id>
+```
+
+Exact resume resumes a prior Codex thread using native `codex resume <thread-id>`:
+- **UUID validation:** Before any worktree, filesystem, or metadata side effect, the
+  target session's thread ID is validated as a UUID. An invalid or non-UUID thread ID
+  refuses immediately.
+- **Thread identity:** The session record stores `codex_thread_id = <uuid>`. Subsequent
+  `session send`, `session nudge`, and `kickoff` use this thread ID to deliver input
+  directly through `codex queue` without needing interactive pane discovery.
+- **Authority preservation:** `scripts/session-launch` runs `codex resume <thread-id>`
+  with the identical authority flags used on a cold launch (sandbox mode, approval
+  policy, writable roots, network disabled/enabled, model, reasoning effort, and
+  read-only root fences).
+- **No prompt re-send:** The wrapper does *not* re-send the launch prompt as a new
+  first message: the resumed thread already contains the original system prompt and
+  conversation history, and an extra prompt would trigger an unsolicited turn.
+- **Required flag gating:** `session-launch` inspects `codex resume --help` on the
+  installed Codex build. If any required authority flag is not accepted by `resume`,
+  the launch is refused before side effects; no authority boundary is ever dropped
+  silently.
+- **Contract check:** The `session-launch` helper contract declares the `codex-resume`
+  feature, which launch preflight requires for any Codex resume.
+
+## Steering and nudge verification
+
+Steering a Codex session (`session send` and `session nudge`) uses queue-first delivery:
+- **Queue delivery:** `session nudge --message` attempts delivery first through
+  `codex_queue_send()` (`codex queue`), matching the reliable path used by `session send`.
+  When the queue accepts the message, delivery is verified.
+- **Pane fallback and composer classification:** If queue delivery fails or thread ID
+  is unavailable, nudge falls back to typing into the pane. Verification uses an ANSI
+  attribute classifier: the composer line begins with `›`; dim text represents a placeholder,
+  while non-dim text represents pending input. If the input remains pending, submit is
+  retried once. If the composer cannot be positively identified, the command fails as
+  **unverified** and never falsely reports success.
+
 ## A Codex session hit its usage limit
 
 `scripts/nogg session watch` and `scripts/nogg session resume-when-ready` work
