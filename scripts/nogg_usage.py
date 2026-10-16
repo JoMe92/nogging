@@ -1097,16 +1097,26 @@ class Reservations:
     def admit(self, report, config, estimate):
         import uuid
         scope = reservation_scope(report)
+        allocated_token = None
         def action(entries):
+            nonlocal allocated_token
             gate = evaluate_gate(report, config, estimate, self._totals(entries, scope, report))
             if gate['decision'] not in ('denied', 'unknown-denied'):
                 token = uuid.uuid4().hex
                 import fcntl
                 owner = token + '.owner'
-                descriptor = os.open(self.root / owner, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
-                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                owner_path = self.root / owner
+                descriptor = os.open(owner_path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+                try:
+                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BaseException:
+                    os.close(descriptor)
+                    owner_path.unlink(missing_ok=True)
+                    raise
                 self.pending[token] = descriptor
-                entries[token] = {'scope': scope, 'estimate': estimate,
+                allocated_token = token
+                entries[token] = {'schema_version': 1,
+                                  'scope': scope, 'estimate': estimate,
                                   'windows': {w['bucket']: w['resets_at'] for w in report['windows']},
                                   'owner': owner}
                 gate['reservation_id'] = token
@@ -1115,9 +1125,9 @@ class Reservations:
             return self._transaction(action)
         except BaseException:
             # An atomic ledger write can fail after the owner lock was taken.
-            for token in list(self.pending):
-                self.finish(token)
-                (self.root / (token + '.owner')).unlink(missing_ok=True)
+            if allocated_token is not None:
+                self.finish(allocated_token)
+                (self.root / (allocated_token + '.owner')).unlink(missing_ok=True)
             raise
 
     def bind(self, token, path, name, probe, socket=None):
@@ -1131,18 +1141,29 @@ class Reservations:
                                                'has-session', '-t', name]}
         if (not isinstance(probe, dict) or not isinstance(probe.get('backend'), str)
                 or not probe['backend'] or not isinstance(probe.get('argv'), list)
-                or not probe['argv'] or not all(isinstance(a, str) for a in probe['argv'])):
+                or not probe['argv'] or not all(isinstance(a, str) and a for a in probe['argv'])):
             raise ValueError('invalid session liveness probe')
         def action(entries):
             if token not in entries:
                 raise RuntimeError('usage admission reservation disappeared before launch completed')
-            entries[token]['session'] = {'path': str(Path(path).resolve()), 'name': name,
-                                        'probe': probe}
+            target = entries[token]
+            understood, reason = self._classify(target)
+            if not understood:
+                raise RuntimeError(f'cannot bind opaque reservation {token}: {reason}')
+            target.setdefault('schema_version', 1)
+            target['session'] = {'path': str(Path(path).resolve()), 'name': name,
+                                 'probe': probe}
         self._transaction(action)
 
     def release(self, token):
+        def action(entries):
+            if token in entries:
+                understood, reason = self._classify(entries[token])
+                if not understood:
+                    raise RuntimeError(f'cannot release opaque reservation {token}: {reason}')
+                del entries[token]
         try:
-            self._transaction(lambda entries: entries.pop(token, None))
+            self._transaction(action)
         finally:
             self.finish(token)
 
