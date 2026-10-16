@@ -577,10 +577,11 @@ def task_done(bead_id):
                     chunks.append(chunk)
             return json.loads(b"".join(chunks))
         result = _send_broker({"bead_id": bead_id, "checkout": checkout})
-        if not result.get("ok") and "only one closed Bead identifier" in result.get("error", ""):
-            result = _send_broker({"bead_id": bead_id})
         if not result.get("ok"):
-            raise RuntimeError(result.get("error", "mechanical task tick refused"))
+            err = result.get("error", "")
+            if "only one closed Bead identifier" in err:
+                raise RuntimeError("task-done: this session's sandbox broker predates checkout-aware ticks; relaunch the session and run task-done again; nothing was ticked")
+            raise RuntimeError(err or "mechanical task tick refused")
         print(result.get("output", ""), end="")
         return
     out = run(CFG["beads_command"], "show", bead_id, "--json").stdout.strip()
