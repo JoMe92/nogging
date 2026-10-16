@@ -12,3 +12,13 @@
     progress: implementation committed as a14c9e7; next push fix/harden-planning-sessions, create PR against develop, then inspect CI before closing the Bead.
     progress: PR #185 is open against develop at https://github.com/JoMe92/nogging/pull/185; acceptance, installer, validate, invariants, public-release-gates, dependency-review and compatibility checks are green; both script-tests jobs are still running.
     Commit a14c9e7dde2009a7da4a14afe9ef0776393b307e. Evidence: scripts/worktree-cleanup-in-use.test.sh (32 invariants), scripts/worktree-workflow.test.sh, scripts/session-backend.test.sh passed; full scripts/test completed with environment-sensitive unrelated failures documented in PR #185; GitHub PR #185 checks all green including both script-tests jobs.
+
+<!-- nogg:SPEC-g18z:2026-10-16T21:43:26Z -->
+- 2026-10-16T21:51:43+00:00 — SPEC-g18z closed for TASK-HPS-003 (Bead closed at 2026-10-16T21:43:26Z).
+  - implementation commits: 8efb7ae09eed, 6a87096, 100fb3c
+  - Bead note:
+    Planned 2026-10-16 in harden-planning-sessions (planning commit 6a87096; planning-id planning-robustness; GitHub #176 #177 #178). Read only the mapped tasks.md line, the design.md Decision it names, design Decision 1 (CI discipline: no Dolt/bd, no PID-range assumptions, no unshare or real mounts, no running tmux server; source scripts/lib/test-env.sh) and the matching capability requirement. Before allocating a dependent worktree, verify every prerequisite execution commit is integrated into develop. Execution contract: commit (Conventional subject ending in the Bead token) -> push -> PR against develop -> only then bd close and scripts/nogg task-done. A Codex Lead needs --full-access or --profile trusted to reach the shared Dolt server. Complexity: routine. Branch: feat/harden-planning-sessions. Suits a sandboxed Codex or Antigravity Lead.
+    Planning integrated into local develop at 100fb3c (rebased planning commit; supersedes draft SHA 6a87096). Strict validation 'openspec validate harden-planning-sessions --strict --no-interactive' passed; scratch archive rehearsal merged specs 30/30 valid; explicit edges 005<-001,002; 006<-003,004,005; 007<-006.
+    tier routine: assigned by orchestrator to antigravity; branch feat/harden-planning-sessions.
+    commit: 8efb7ae
+    evidence: scripts/agy-guard.test.sh and scripts/agy-guard-web-search.test.sh passed cleanly under both restricted and trusted authority levels and lead/planning roles. PR https://github.com/JoMe92/nogging/pull/189 created targeting develop.
