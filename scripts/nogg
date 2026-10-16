@@ -5739,10 +5739,6 @@ def is_inside_orchestrator_session():
             return True
     except Exception:
         pass
-    if os.environ.get("TMUX"):
-        res = run("tmux", "display-message", "-p", "#{session_name}", check=False)
-        if res.returncode == 0 and res.stdout.strip() == name:
-            return True
     return False
 def claude_project_trusted(workdir):
     """Whether `~/.claude.json` records `hasTrustDialogAccepted` for `workdir`.
