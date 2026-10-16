@@ -8,7 +8,7 @@
 
 ## 2. Delivery integration (fix/, sequential)
 
-- [ ] TASK-RSI-003 [standard] Per design Decisions 1 and 4: reuse HSS clear/exact helpers; serialize pane delivery, verify by default, wait before one Enter and retry once only for owned pending input; plain send refuses existing or unknown input. Branch fix/. Depends on RSI-001, RSI-002 and SPEC-culj. Check: scripts/session-submit-policy.test.sh; scripts/session-nudge-clear.test.sh; scripts/test.
+- [x] TASK-RSI-003 [standard] Per design Decisions 1 and 4: reuse HSS clear/exact helpers; serialize pane delivery, verify by default, wait before one Enter and retry once only for owned pending input; plain send refuses existing or unknown input. Branch fix/. Depends on RSI-001, RSI-002 and SPEC-culj. Check: scripts/session-submit-policy.test.sh; scripts/session-nudge-clear.test.sh; scripts/test.
 
 - [ ] TASK-RSI-005 [standard] Per design Decisions 1 and 6: integrate Codex queue outcomes and fresh receipts into send/nudge; recover exact queued composer text without retyping, fail accepted-but-unverified, and forbid ambiguous fallback or requeue. Branch fix/. Depends on RSI-003, RSI-004 and SPEC-culj. Check: scripts/session-codex-queue-delivery.test.sh; scripts/test.
 
