@@ -4,7 +4,7 @@
 
 ## 2. Restart sequence (branch prefix fix/)
 
-- [ ] TASK-ORR-002 [standard] Per design Decisions 1 and 3: update orchestrator_restart in scripts/nogg to stop unit, terminate session via helper with exit reason 'restarted by operator', and start unit; add CLI flag --supervisor-only to restart unit only without session kill. Check: python3 -m py_compile scripts/nogg; scripts/nogg orchestrator restart --help; scripts/test.
+- [x] TASK-ORR-002 [standard] Per design Decisions 1 and 3: update orchestrator_restart in scripts/nogg to stop unit, terminate session via helper with exit reason 'restarted by operator', and start unit; add CLI flag --supervisor-only to restart unit only without session kill. Check: python3 -m py_compile scripts/nogg; scripts/nogg orchestrator restart --help; scripts/test.
 
 ## 3. Regression tests and documentation (branch prefixes test/ and docs/)
 
