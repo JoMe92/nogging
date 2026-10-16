@@ -8,11 +8,11 @@
 
 ## 3. Backward compatibility and CLI options (fix/ lane)
 
-- [ ] TASK-PVE-003 [standard] Implement backward-compatible un-manifested upgrade and --force flag with .orig backups in CLI per design Decisions 3-4; update report output. Check: new scripts/manifest-legacy-upgrade.test.sh, scripts/test. Branch: fix/preserve-modified-verbatim-files. Depends on TASK-PVE-002.
+- [x] TASK-PVE-003 [standard] Implement backward-compatible un-manifested upgrade and --force flag with .orig backups in CLI per design Decisions 3-4; update report output. Check: new scripts/manifest-legacy-upgrade.test.sh, scripts/test. Branch: fix/preserve-modified-verbatim-files. Depends on TASK-PVE-002.
 
 ## 4. Diagnostics and removal (feat/ lane, parallel with 3)
 
-- [ ] TASK-PVE-004 [standard] Add doctor warnings for pending .nogging-new files and manifest cleanup in removal helper per design Decision 5. Check: new scripts/manifest-doctor.test.sh, scripts/installed-diagnostics.test.sh, scripts/test. Branch: feat/preserve-modified-verbatim-files. Depends on TASK-PVE-002.
+- [x] TASK-PVE-004 [standard] Add doctor warnings for pending .nogging-new files and manifest cleanup in removal helper per design Decision 5. Check: new scripts/manifest-doctor.test.sh, scripts/installed-diagnostics.test.sh, scripts/test. Branch: feat/preserve-modified-verbatim-files. Depends on TASK-PVE-002.
 
 ## 5. End-to-end installer coverage (test/ lane)
 
