@@ -710,11 +710,11 @@ touch "$TMUX_STUB_DIR/sess-lingering"
 "$nogg" session cleanup >"$out" 2>&1 \
   || { echo "FAIL - set-file: cleanup errored"; cat "$out"; fail=1; }
 check "set-file: the stopped record is retired" "retired $name"
-check "set-file: no-name cleanup stops the tmux server once nothing real is active" \
+refute "set-file: cleanup keeps the shared tmux server when sessions linger" \
   "Nogging tmux server stopped"
-[[ -z "$(ls "$TMUX_STUB_DIR"/sess-* 2>/dev/null)" ]] \
-  && echo "ok   - set-file: the lingering tmux session was torn down" \
-  || { echo "FAIL - set-file: tmux session survived the server stop"; fail=1; }
+[[ -f "$TMUX_STUB_DIR/sess-lingering" ]] \
+  && echo "ok   - set-file: the lingering tmux session was preserved" \
+  || { echo "FAIL - set-file: tmux session was killed"; fail=1; }
 unset NOGGING_ROOT
 
 # ===========================================================================
