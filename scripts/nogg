@@ -3991,6 +3991,74 @@ def session_state_grants(bead, explicit=(), records=None):
     return resolve_agent_state_roots(requests)
 
 
+def planning_launch_authority(arg1, arg2=None, arg3=None, arg4=False, *, role=None, agent=None, profile=None, full_access=None):
+    """Enforce explicit authority for Codex and Antigravity planning launches.
+
+    Raises when role is 'planning', agent is 'codex' or 'antigravity', and
+    neither --profile nor --full-access was given.
+    """
+    if arg1 in ("planning", "lead", "orchestrator") or str(arg1).startswith("specialist:"):
+        r = arg1 if role is None else role
+        a = arg2 if agent is None else agent
+        p = arg3 if profile is None else profile
+        f = arg4 if full_access is None else full_access
+    else:
+        a = arg1 if agent is None else agent
+        p = arg2 if profile is None else profile
+        f = arg3 if full_access is None else full_access
+        r = role if role is not None else (arg4 if isinstance(arg4, str) else "planning")
+
+    norm_role = "planning" if r == "planning" else r
+    if norm_role != "planning":
+        return
+
+    norm_agent = "antigravity" if a == "agy" else a
+    if norm_agent not in ("codex", "antigravity"):
+        return
+
+    if p is not None or bool(f):
+        return
+
+    display_agent = "antigravity" if a == "agy" else a
+    raise RuntimeError(
+        f"planning with {display_agent} needs an explicit authority: --profile trusted for an unattended planner, "
+        f"or --profile restricted to approve each step in the attached session "
+        f"(restricted {display_agent} stops at approval prompts)"
+    )
+
+
+def session_launch_profile_line(profile_label, prompt_path):
+    """Format the profile=<label> prompt=<prompt file stem> line for launch output."""
+    stem = Path(prompt_path).stem if prompt_path else ""
+    return f"  profile={profile_label} prompt={stem}"
+
+
+launch_profile_line = session_launch_profile_line
+
+
+def session_launch_notes(role_or_agent, agent_or_profile=None, profile_label=None, *, role=None, agent=None, profile=None, full_access=False):
+    """Return NOTE lines for launch output."""
+    if role_or_agent in ("planning", "lead", "orchestrator") or str(role_or_agent).startswith("specialist:"):
+        r = role_or_agent if role is None else role
+        a = agent_or_profile if agent is None else agent
+        p = profile_label if profile is None else profile
+    else:
+        a = role_or_agent if agent is None else agent
+        p = agent_or_profile if profile is None else profile
+        r = role if role is not None else (profile_label if isinstance(profile_label, str) else "planning")
+
+    norm_agent = "antigravity" if a == "agy" else a
+    notes = []
+    if r == "planning" and norm_agent in ("codex", "antigravity") and p == "restricted":
+        notes.append(f"NOTE: restricted {norm_agent} planning stops at approval prompts; attach to approve each step")
+    if norm_agent == "codex" and p == "restricted":
+        notes.append("NOTE: restricted Codex has no network; a Dolt-server-backed bd is unreachable from its sandbox")
+    return notes
+
+
+launch_notes = session_launch_notes
+
+
 def session_launch(*args, **kwargs):
     pending_before = set(_USAGE_PENDING)
     try:
@@ -4023,6 +4091,7 @@ def _session_launch(role, bead, cwd, read_only, owner,
     if agent == "codex" and resume is not None:
         validate_codex_resume_id(resume)
     role_meta, role_slug = normalize_role(role)
+    planning_launch_authority(role_meta, agent, profile, full_access)
     is_orchestrator = role_meta == "orchestrator"
     is_planning = role_meta == "planning"
     if os.environ.get("NOGG_CODEX_EXTRA_WRITABLE_ROOTS"):
@@ -4388,8 +4457,12 @@ def _session_launch(role, bead, cwd, read_only, owner,
     if tier_selection:
         print(f"  tier={tier_selection['tier']} model={selected_model}"
               + (f" effort={reasoning_effort}" if agent in ("codex", "claude") and reasoning_effort else ""))
-    if (role_meta == "lead" or role_meta.startswith("specialist:")) and not (
-            profile or prompt or full_access):
+    print(session_launch_profile_line(profile_label, prompt_path))
+    for note in session_launch_notes(role_meta, agent, profile_label, profile=profile, full_access=full_access):
+        print(note)
+    if ((role_meta == "lead" or role_meta.startswith("specialist:")) and not (
+            profile or prompt or full_access)) or (
+            is_planning and agent == "claude" and not (profile or full_access)):
         print(f"⚠ {name} launched in restricted/manual mode — it will not act "
               f"without a human attached to approve each step; pass "
               f"--full-access (or an explicit --profile/--prompt) for "
