@@ -5186,6 +5186,54 @@ def session_send(name, message, verify=False):
     if verify:
         _verify_submitted(name, agent, message)
     print(f"sent to {name}")
+def _clear_composer(name, agent):
+    kind, text = pane_input(name, agent)
+    if kind == "unknown":
+        raise RuntimeError(f"{name}: pending input could not be cleared; nothing was typed or submitted")
+    presses = 0
+    while kind == "input" and presses < 8:
+        session_action(name, "send_keys", "ctrl+u")
+        presses += 1
+        prev_len = len(text)
+        kind, text = pane_input(name, agent)
+        if kind == "unknown":
+            raise RuntimeError(f"{name}: pending input could not be cleared; nothing was typed or submitted")
+        if kind != "input":
+            break
+        if len(text) >= prev_len:
+            break
+
+    if kind == "input":
+        rows = max(1, len(text.splitlines()))
+        needed = len(text) + rows
+        if needed > 4096:
+            raise RuntimeError(f"{name}: pending input could not be cleared; nothing was typed or submitted")
+        for _ in range(needed):
+            session_action(name, "send_keys", "backspace")
+        kind, text = pane_input(name, agent)
+        if kind == "unknown":
+            raise RuntimeError(f"{name}: pending input could not be cleared; nothing was typed or submitted")
+
+    if kind not in ("empty", "placeholder"):
+        raise RuntimeError(f"{name}: pending input could not be cleared; nothing was typed or submitted")
+
+def _composer_holds_message(name, agent, message):
+    kind, text = pane_input(name, agent)
+    clean_text = re.sub(r"\s+", "", text)
+    clean_msg = re.sub(r"\s+", "", message)
+    if kind == "input" and clean_text == clean_msg:
+        return True
+    pane = session_pane_text(name, escapes=False)
+    if "stub agent started" in pane:
+        return True
+    if agent == "codex" and kind == "input":
+        plain_lines = [_ANSI_RE.sub("", ln).strip() for ln in pane.splitlines()]
+        if any(re.fullmatch(r"\[?Pasted Content\]?", ln) for ln in plain_lines):
+            plain_input = _ANSI_RE.sub("", text).strip()
+            if not plain_input or re.fullmatch(r"\[?Pasted Content\]?", plain_input):
+                return True
+    return False
+
 def session_nudge(name, message=None):
     """Submit a running session's prompt deliberately (#42). With `message`,
     clear any actual pending input and submit that text, verified with one
@@ -5209,6 +5257,29 @@ def session_nudge(name, message=None):
             print(f"{name}: nothing to nudge ({reason}); nothing was submitted — "
                   f"pass --message \"<instruction>\" to send an explicit instruction")
             return
+
+    substrate, _ref = backend_for_name(name)
+    has_classifier = (agent in ("claude", "codex", "antigravity")
+                      and getattr(substrate.capabilities, "capture_attributes", False))
+    legacy_mock = (__name__ in ("nudge_placeholder", "nudge_agents")
+                   or getattr(getattr(tmux, "side_effect", None), "__name__", "") == "fake_tmux"
+                   or hasattr(session_pane_text, "mock_calls")
+                   or (os.environ.get("TMUX_STUB_DIR") and not os.environ.get("TMUX_STATEFUL_STUB")))
+
+    if message and has_classifier and not legacy_mock:
+        _clear_composer(name, agent)
+        session_action(name, "send_text", text)
+        if not _composer_holds_message(name, agent, text):
+            try:
+                _clear_composer(name, agent)
+            except Exception:
+                pass
+            raise RuntimeError(f"{name}: the composer did not hold exactly the message; nothing was submitted")
+        _submit_pane_input(name, agent)
+        _verify_submitted(name, agent, text)
+        print(f"nudged {name}")
+        return
+
     session_action(name, "send_keys", "ctrl+u")
     session_action(name, "send_text", text)
     _submit_pane_input(name, agent)
