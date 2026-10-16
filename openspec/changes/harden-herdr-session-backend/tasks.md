@@ -14,7 +14,7 @@
 
 - [x] TASK-HHB-006 [routine] Per design Decision 7 (D1): herdr orphans are only panes whose label names a record of the current checkout (any state) with no live owner; panes naming no local record are foreign, never closed or adopted, and counted in one session list NOTE. Check: new scripts/session-herdr-ownership.test.sh with two checkouts' record stores on one fake herdr state; scripts/test.
 
-- [ ] TASK-HHB-007 [routine] Per design Decision 8 (D8): store the root pane from Nogging's own workspace create in workspace.json and close it after the next successful layout.apply (re-check unlabelled, same ID and terminal_id); recreate the workspace and retry once only on an explicit workspace_not_found error reply; doctor notes legacy root panes. Check: new scripts/session-herdr-root-pane.test.sh; scripts/test.
+- [x] TASK-HHB-007 [routine] Per design Decision 8 (D8): store the root pane from Nogging's own workspace create in workspace.json and close it after the next successful layout.apply (re-check unlabelled, same ID and terminal_id); recreate the workspace and retry once only on an explicit workspace_not_found error reply; doctor notes legacy root panes. Check: new scripts/session-herdr-root-pane.test.sh; scripts/test.
 
 ## 3. Both backends
 
