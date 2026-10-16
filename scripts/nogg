@@ -5897,18 +5897,27 @@ def orchestrator_stop():
     _systemctl("disable", unit)
     terminate_orchestrator_session("stopped by operator")
     print(f"orchestrator: stopped and disabled ({unit})")
-def orchestrator_restart():
+def orchestrator_restart(supervisor_only=False):
     unit = orchestrator_unit()
-    res = _systemctl("restart", unit)
+    if supervisor_only:
+        res = _systemctl("restart", unit)
+        if res.returncode:
+            raise RuntimeError(f"systemctl --user restart {unit} failed: "
+                               f"{res.stderr.strip() or res.stdout.strip()}")
+        print(f"orchestrator: restarted ({unit})")
+        return
+    _systemctl("stop", unit)
+    terminate_orchestrator_session("restarted by operator")
+    res = _systemctl("start", unit)
     if res.returncode:
-        raise RuntimeError(f"systemctl --user restart {unit} failed: "
+        raise RuntimeError(f"systemctl --user start {unit} failed: "
                            f"{res.stderr.strip() or res.stdout.strip()}")
     print(f"orchestrator: restarted ({unit})")
 def orchestrator_cmd(args):
     if args.orchestrator_command == "run": orchestrator_run(args.force)
     elif args.orchestrator_command == "status": orchestrator_status()
     elif args.orchestrator_command == "stop": orchestrator_stop()
-    elif args.orchestrator_command == "restart": orchestrator_restart()
+    elif args.orchestrator_command == "restart": orchestrator_restart(supervisor_only=args.supervisor_only)
 def recover_base_branch():
     """The branch a run's LIMBO / commits-since-fork scan is measured against.
     `recover_base_branch` config key wins; otherwise the first protected branch
@@ -6786,7 +6795,9 @@ def main():
                       help="reclaim a stale orchestrator lock (verify it is stale first)")
     orcsub.add_parser("status")
     orcsub.add_parser("stop")
-    orcsub.add_parser("restart")
+    ores = orcsub.add_parser("restart")
+    ores.add_argument("--supervisor-only", action="store_true",
+                      help="restart only the systemd supervisor without terminating the tmux session")
     s = sub.add_parser("session"); ssub = s.add_subparsers(dest="session_command", required=True)
     hs = ssub.add_parser("herdr-server", help="manage the dedicated herdr server")
     hs.add_subparsers(dest="herdr_server_command", required=True).add_parser(

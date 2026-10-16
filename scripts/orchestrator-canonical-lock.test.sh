@@ -176,13 +176,14 @@ try:
         raise AssertionError("main checkout accepted another holder")
     except main_mod.LockBusyError:
         pass
+    cli(linked, "orchestrator", "restart", "--supervisor-only")
     cli(linked, "orchestrator", "restart")
     cli(linked, "orchestrator", "stop")
     assert json.loads(record.read_text())["state"] == "stopped"
     assert json.loads(decoy.read_text())["state"] == "stopped"
     assert not lock.exists() and local_lock.exists()
     service_calls = calls.read_text()
-    for action in ("restart", "stop", "disable"):
+    for action in ("restart", "start", "stop", "disable"):
         assert f"systemctl --user {action} {unit}" in service_calls, service_calls
     assert "nogg-orchestrator-different-worktree" not in service_calls
     print("ok - stop and restart from worktrees address canonical state")
