@@ -18,6 +18,8 @@
 # The [A] steps (4 real-npx install, 6 authoring, 10 delegation, 14 discovery
 # review, 17 report, 18 sign-off) are the human remainder recorded in the report.
 set -euo pipefail
+# shellcheck source=scripts/lib/test-env.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-env.sh"
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
