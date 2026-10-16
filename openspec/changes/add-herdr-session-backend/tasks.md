@@ -34,7 +34,7 @@
 
 - [x] TASK-HDR-011 [standard] Add the end-to-end suite scripts/session-herdr.test.sh via scripts/nogg on the HDR-014 fake herdr: launch (record before exec, one socket layout.apply with recorder argv, redaction), unsafe-socket refusal, mixed list, send, nudge, kickoff, stop, reap after pane loss and restart, cleanup (orphan panes closed, server kept), attach, reservation probe, orchestrator on tmux, packed install. Check: suite and full scripts/test green, inherited NOGG_* unset.
 
-- [ ] TASK-HDR-012 [complex] Real Pi acceptance on herdr 0.9.x: one --backend herdr Lead session each for Claude, Codex and Antigravity through send, nudge (with and without --message), log, agent_status, stop, simulated server restart, reap, cleanup and exact resume, plus one parallel tmux Lead regression; write docs/acceptance/<date>-herdr-backend.md from the template, unsigned with an empty Signed-off-by line. Check: report committed unsigned, scripts/test green, doctor shows herdr.
+- [x] TASK-HDR-012 [complex] Real Pi acceptance on herdr 0.9.x: one --backend herdr Lead session each for Claude, Codex and Antigravity through send, nudge (with and without --message), log, agent_status, stop, simulated server restart, reap, cleanup and exact resume, plus one parallel tmux Lead regression; write docs/acceptance/<date>-herdr-backend.md from the template, unsigned with an empty Signed-off-by line. Check: report committed unsigned, scripts/test green, doctor shows herdr.
 
 ## Independent Codex compatibility fix
 
