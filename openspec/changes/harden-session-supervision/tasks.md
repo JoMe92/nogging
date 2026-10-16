@@ -8,7 +8,7 @@
 
 - [x] TASK-HSS-003 [standard] Per design Decision 4 (N4): resolve the orchestrator lock, slug, session name, unit name and live-session lookup from the main checkout; orchestrator run in a linked worktree refuses before locking; a worktree-local lock is reported and ignored. Check: new scripts/orchestrator-canonical-lock.test.sh (temp repo plus linked worktree, stubbed bd/systemctl/loginctl, live child holder); scripts/test.
 
-- [ ] TASK-HSS-004 [routine] Per design Decision 5 (N1): task_done sends one checkout-aware broker request; on the pre-update refusal it fails non-zero with a relaunch instruction, sends no second request, ticks nothing and never falls back locally. Check: new scripts/task-done-mixed-broker.test.sh (Python broker stub on a short socket recording requests); scripts/test.
+- [x] TASK-HSS-004 [routine] Per design Decision 5 (N1): task_done sends one checkout-aware broker request; on the pre-update refusal it fails non-zero with a relaunch instruction, sends no second request, ticks nothing and never falls back locally. Check: new scripts/task-done-mixed-broker.test.sh (Python broker stub on a short socket recording requests); scripts/test.
 
 - [ ] TASK-HSS-005 [standard] Per design Decision 6 (N2): nudge --message clears pending input by bounded ctrl+u repeats, then a bounded backspace fallback, and types only on an empty composer; it submits only when the composer holds exactly the message, else fails with nothing submitted; Claude, Codex fallback, Antigravity; both backends. Check: new scripts/session-nudge-clear.test.sh (derived wrapped fixtures, tmux stub, fake herdr); scripts/test.
 
