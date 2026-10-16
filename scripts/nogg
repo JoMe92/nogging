@@ -3090,6 +3090,9 @@ def validate_launch_contract(contract, argv, agent):
         raise RuntimeError(f"session-launch contract does not support agent {agent}; run Nogging update")
     if not isinstance(contract.get("features"), list) or "startup-stderr" not in contract["features"]:
         raise RuntimeError("session-launch contract lacks startup stderr capture; run Nogging update")
+    if (agent == "codex" and "--resume" in argv[1:]
+            and "codex-resume" not in contract["features"]):
+        raise RuntimeError("session-launch contract lacks Codex exact resume; run Nogging update")
     if "--effort" in argv[1:] and "claude-effort-forwarding" not in contract["features"]:
         raise RuntimeError("session-launch contract lacks Claude effort forwarding; run Nogging update")
     options = contract.get("options")
@@ -3118,6 +3121,48 @@ def preflight_session_helpers(argv, agent):
             or not isinstance(writer.get("features"), list)
             or "byte-stream" not in writer["features"]):
         raise RuntimeError("session-log-writer contract must accept three arguments and support byte-stream; run Nogging update")
+
+def validate_codex_resume_id(value):
+    try:
+        if not isinstance(value, str) or str(uuid.UUID(value)) != value:
+            raise ValueError()
+    except ValueError as exc:
+        raise RuntimeError("invalid Codex conversation ID") from exc
+    return value
+
+def codex_resume_options():
+    """Return installed `codex resume` help or refuse before launch side effects."""
+    try:
+        result = subprocess.run(["codex", "resume", "--help"], text=True,
+                                capture_output=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError("cannot inspect codex resume options; resume refused") from exc
+    if result.returncode:
+        raise RuntimeError("cannot inspect codex resume options; resume refused")
+    return result.stdout + result.stderr
+
+def codex_plain_options():
+    try:
+        result = subprocess.run(["codex", "--help"], text=True,
+                                capture_output=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError("cannot inspect Codex launch options; resume refused") from exc
+    if result.returncode:
+        raise RuntimeError("cannot inspect Codex launch options; resume refused")
+    return result.stdout + result.stderr
+
+def validate_codex_resume_options(help_text, readonly_root=False, add_dir=False, model=False):
+    required = ["--cd", "--sandbox", "--ask-for-approval", "--config"]
+    if add_dir:
+        required.append("--add-dir")
+    if model:
+        required.append("--model")
+    if readonly_root and "--sandbox-state-readable-root" in codex_plain_options():
+        required.append("--sandbox-state-readable-root")
+    missing = [flag for flag in required if flag not in help_text]
+    if missing:
+        raise RuntimeError("installed Codex resume does not support " + ", ".join(missing)
+                           + "; resume refused")
 
 def session_helper_diagnostics():
     checks = []
@@ -3727,9 +3772,9 @@ def _session_launch(role, bead, cwd, read_only, owner,
                    ignore_usage_gate=False, complexity=None, backend=None):
     """Start a supervised agent session for a Bead.
 
-    `resume` names the exact prior conversation: Claude uses `--resume <id>`;
-    Antigravity uses `--conversation <id>` and captures cold-start IDs from its
-    validated Stop hook. Neither uses a bare `--continue`, which
+    `resume` names the exact prior conversation: Claude and Codex use
+    `--resume <id>`; Antigravity uses `--conversation <id>` and captures
+    cold-start IDs from its validated Stop hook. No backend uses a bare `--continue`, which
     resumes whichever conversation is most recent for `cwd` and can pick up an
     unrelated one (SPEC-nfz8). Falsy `resume` cold-starts a Claude agent with a
     freshly generated `--session-id`, recorded as `claude_session_id` so a
@@ -3739,9 +3784,14 @@ def _session_launch(role, bead, cwd, read_only, owner,
     the read-only `bd show` inside bead_records(); it never claims, starts, or
     otherwise changes a Bead. Claiming stays a deliberate in-session action
     the operator directs (see .nogging/session-launch-prompt.md)."""
+    agent = resolve_agent(agent)
+    if agent == "codex" and resume is not None:
+        validate_codex_resume_id(resume)
+    role_meta, role_slug = normalize_role(role)
+    is_orchestrator = role_meta == "orchestrator"
+    is_planning = role_meta == "planning"
     if os.environ.get("NOGG_CODEX_EXTRA_WRITABLE_ROOTS"):
         session_state_grants(None)
-    agent = resolve_agent(agent)
     if effort is not None:
         if agent != "claude":
             raise RuntimeError("--effort is Claude-only; launch refused")
@@ -3752,9 +3802,6 @@ def _session_launch(role, bead, cwd, read_only, owner,
     # Complexity is snapshotted for usage attribution only; it never selects a
     # model. A disagreement with the tier refuses before any side effect.
     complexity, complexity_source = complexity_snapshot(tier_selection and tier_selection["tier"], complexity)
-    role_meta, role_slug = normalize_role(role)
-    is_orchestrator = role_meta == "orchestrator"
-    is_planning = role_meta == "planning"
     backend_name = choose_launch_backend(
         is_orchestrator, backend, CFG.get("session_backend", "tmux"))
     selected_backend = session_backend(backend_name)
@@ -3824,10 +3871,15 @@ def _session_launch(role, bead, cwd, read_only, owner,
         if effort is None and tier_effort is not None:
             reasoning_effort = tier_effort
             reasoning_effort_source = "launch"
+    if agent == "codex" and resume is not None:
+        codex_sandbox = "read-only" if read_only else codex_spec["sandbox"]
+        validate_codex_resume_options(
+            codex_resume_options(), readonly_root=openspec_readonly,
+            add_dir=codex_sandbox != "read-only", model=selected_model is not None)
     if agy_spec and Path(profile_path).name == "restricted.agy.toml" and agy_spec["approval"] != "ask":
         raise RuntimeError("Antigravity restricted profile requires ask approval")
-    if resume is not None and agent not in ("claude", "antigravity"):
-        raise RuntimeError("exact resume is supported only for Claude and Antigravity")
+    if resume is not None and agent not in ("claude", "antigravity", "codex"):
+        raise RuntimeError("exact resume is supported only for Claude, Codex and Antigravity")
     if agy_spec and resume is not None:
         validate_antigravity_conversation_id(resume)
     # The command-floor / openspec-boundary lift is the orchestrator's alone: the
@@ -3926,6 +3978,8 @@ def _session_launch(role, bead, cwd, read_only, owner,
             inner += ["--model", selected_model]
         if reasoning_effort is not None:
             inner += ["--reasoning-effort", reasoning_effort]
+        if resume is not None:
+            inner += ["--resume", resume]
     elif agent == "antigravity":
         effective_settings_path = None
         if not allocate_planning:
@@ -4018,6 +4072,7 @@ def _session_launch(role, bead, cwd, read_only, owner,
         "agent": agent, "openspec_readonly": bool(openspec_readonly),
         "floor_lifted": bool(floor_lifted), "claude_session_id": claude_session_id,
         "antigravity_conversation_id": resume if agent == "antigravity" else None,
+        "codex_thread_id": resume if agent == "codex" else None,
         "antigravity_initial_turn": agent == "antigravity",
         "planning_id": planning_id, "description": description,
         "agent_state_grants": grants,
@@ -6428,7 +6483,7 @@ def main():
     sl.add_argument("--prompt", help="named launch prompt or a path to a system-prompt file")
     sl.add_argument("--full-access", action="store_true",
                     help="shorthand for --profile trusted --prompt autonomous")
-    sl.add_argument("--resume", help="exact conversation ID (Antigravity or Claude); never latest")
+    sl.add_argument("--resume", help="exact conversation ID (Claude, Codex or Antigravity); never latest")
     sl.add_argument("--model", help="model for this launch; overrides the profile model, "
                                     "which overrides the runtime default")
     sl.add_argument("--tier", help="model-selection tier (routine, standard, complex): take the model "
