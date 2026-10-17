@@ -469,7 +469,7 @@ NODE
       [ "$rules_local" = "$(cat "$packrepo/.codex/rules/nogging.rules")" ]
     check "upstream content is written to .nogging-new" \
       cmp -s "$pkg2/.codex/rules/nogging.rules" "$packrepo/.codex/rules/nogging.rules.nogging-new"
-    check "update warns about the preserved file" \
+    check "update reports the preserved file for review" \
       bash -c "grep -q 'nogging.rules.nogging-new' <<< \"\$0\"" "$upd_out"
     check "unmodified file is refreshed cleanly" \
       cmp -s "$pkg2/.nogging/launch-prompts/orchestrator.md" "$packrepo/.nogging/launch-prompts/orchestrator.md"

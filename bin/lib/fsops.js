@@ -8,10 +8,17 @@ const manifestStore = require('./manifest-store');
 class ChangeLog {
   constructor() {
     this.entries = [];
+    this.cls = null;
+  }
+
+  // Tag the entries added from here on with the file class of the manifest
+  // entry that produces them (see report.js CLASSES).
+  setClass(cls) {
+    this.cls = cls;
   }
 
   add(action, relPath, note) {
-    this.entries.push({ action, path: relPath, note });
+    this.entries.push({ action, path: relPath, note, cls: this.cls });
   }
 
   // action counts, ignoring 'unchanged'
@@ -65,14 +72,8 @@ function copyFile(srcAbs, destRel, ctx, { mode } = {}) {
   if (ctx.nextInstalledManifest && action !== 'preserve') {
     ctx.nextInstalledManifest.files[destRel] = nextDigest;
   }
-  if (action === 'preserve') {
-    ctx.warnings.push(
-      `locally modified file preserved: ${destRel} (upstream ${ctx.dryRun ? 'would be written' : 'written'} to ${destRel}.nogging-new)`,
-    );
-  } else if (action === 'force-overwrite') {
-    ctx.warnings.push(
-      `locally modified file overwritten (--force): ${destRel} (backup ${ctx.dryRun ? 'would be saved' : 'saved'} to ${destRel}.orig)`,
-    );
+  if (action === 'preserve' || action === 'force-overwrite') {
+    (ctx.review ||= []).push({ kind: action === 'preserve' ? 'preserve' : 'force', path: destRel });
   }
   const note = action === 'preserve' ? `upstream: ${destRel}.nogging-new`
     : action === 'force-overwrite' ? `backup: ${destRel}.orig` : undefined;
