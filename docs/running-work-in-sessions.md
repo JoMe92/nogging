@@ -292,6 +292,48 @@ detaches. The session ends only if the agent itself exits (`/exit`) or you
 keystroke but cannot send input (supported on tmux; on herdr, where no read-only
 client exists, this is refused with a pointer to `session log --follow`).
 
+### Steering from outside: `session send`
+
+```bash
+./scripts/nogg session send <name> "<instruction>"
+```
+
+`session send` delivers an instruction into a running session without attaching.
+Delivery is verified by default for Claude, Codex, and Antigravity:
+- **Clean input precondition:** Ordinary pane send requires an identified empty
+  composer or placeholder before typing. If the composer holds actual input or
+  reads as unknown, `send` refuses before injecting text and directs the operator
+  to `nudge --message` to prevent unintentional merging or overwriting.
+- **Isolated paste and single Enter:** Multiline input is transferred using unique
+  per-operation tmux paste buffers (`load-buffer` / `paste-buffer -p -r -d`) with
+  LF preservation. After paste, Nogging confirms the exact text in the composer,
+  waits `session_submit_delay_seconds` (default 0.3s), and sends exactly one Enter.
+- **Verification and bounded retry:** Submission is confirmed when the composer
+  becomes empty/placeholder or the backend transitions to working/done. An
+  already-working status alone is not proof of receipt. If the operation's exact
+  input remains positively pending in the composer, submit is retried once after
+  the submit delay; otherwise, unverified outcomes fail non-zero without false
+  success confirmations. `--verify` remains accepted syntax.
+
+### Starting execution: `session kickoff`
+
+```bash
+./scripts/nogg session kickoff <name> [--message "<instruction>"]
+```
+
+Bare `session launch` brings the session up idle without sending a prompt.
+`session kickoff` delivers the initial instruction once startup readiness is
+positively confirmed:
+- **Startup readiness:** Kickoff waits up to `session_startup_timeout_seconds`
+  (default 120s) for a settled empty/placeholder composer and live idle state.
+  Startup dialogs (trust, permissions, feedback surveys) or limits are never
+  speculatively accepted; timeouts fail with diagnostic pointers to session logs.
+- **Serialized and idempotent delivery:** Kickoffs are serialized under a bounded
+  per-session lock. A delivery record tracks launch identity, timestamp, status
+  (`pending`, `submitted`, `unverified`), and message SHA-256 (no plaintext
+  prompts stored). A repeated kickoff rechecks existing submission evidence or
+  submits positively owned pending input, but never requeues or retypes text.
+
 ### Autonomous vs. step-by-step
 
 A launched session starts in the profile's default permission mode, which
@@ -432,6 +474,8 @@ orchestrate-only-by-default scope.
 | `session list` | list every session with live-reconciled state and its launch profile |
 | `session log <name> [--follow]` | print / tail the log; never attaches |
 | `session attach <name> [--read-only]` | attach the terminal; `Ctrl-b d` (tmux) or client detach (herdr) |
+| `session send <name> <text> [--verify]` | send verified instruction into session; verifies by default for Claude/Codex/Antigravity |
+| `session kickoff <name> [--message <m>] [--change <c>]` | deliver verified kickoff once startup readiness is confirmed |
 | `session stop <name> [--reason <text>]` | interrupt, terminate, record a terminal state; idempotent |
 | `session reap` | move vanished active-state records to `failed`; a live one is untouched |
 | `session cleanup [<name>] [--reap]` | retire terminal records, archives all rotated logs; refuses a live one; stops shared tmux server only when completely empty |
@@ -446,7 +490,12 @@ default `claude`), `session_backend` (`tmux` | `herdr`, default `tmux`),
 `session_herdr_session` (default `nogging`), `session_state_dir`,
 `session_log_max_bytes`, `session_log_rotation_depth`,
 `session_stop_grace_seconds`, `orchestrator_lock_ttl_seconds` (default 86400),
-`orchestrator_poll_seconds` (default 5). The launch profile / prompt directories default
+`orchestrator_poll_seconds` (default 5),
+`session_submit_delay_seconds` (pause before sending Enter, default 0.3s, accepted range 0 to 5s),
+`session_submit_verify_delay_seconds` (polling interval for submission verification, default 0.5s, accepted range >0 to 5s),
+`session_delivery_timeout_seconds` (timeout for verified message delivery, default 15s, accepted range 1 to 120s),
+`session_startup_timeout_seconds` (timeout waiting for initial session input readiness, default 120s, accepted range 1 to 600s).
+The launch profile / prompt directories default
 to `.nogging/launch-profiles/` and `.nogging/launch-prompts/` and are
 overridable with `session_launch_profile_dir` / `session_launch_prompt_dir`; a
 `session_launch_profile` / `session_launch_prompt` key still pins a single file
