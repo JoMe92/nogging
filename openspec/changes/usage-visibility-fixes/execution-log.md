@@ -13,3 +13,10 @@
   - Bead note:
     tier standard: observation validity rules in nogg_usage, one component
     commit 7fab1eb; PR #212. scripts/usage.test.sh + usage-gate.test.sh pass; scripts/test 131 PASS, installed-diagnostics/packed-session-launch/session-pty-recorder fail identically on unmodified origin/develop (host timeouts/pty), unrelated.
+
+<!-- nogg:SPEC-z1k3:2026-10-17T15:50:16Z -->
+- 2026-10-17T15:51:11+00:00 — SPEC-z1k3 closed for TASK-UVF-003 (Bead closed at 2026-10-17T15:50:16Z).
+  - implementation commits: 67b04aa9a2575a56c92655989982d6b8372b4641
+  - Bead note:
+    tier routine: advisory hint plumbing, mechanical
+    Implemented in commit 67b04aa9a2575a56c92655989982d6b8372b4641 on feat/usage-visibility-fixes; PR https://github.com/JoMe92/nogging/pull/214 open to develop. Evidence: scripts/usage-hints.test.sh, scripts/usage.test.sh, scripts/usage-statusline.test.sh, scripts/usage-gate.test.sh passed.
