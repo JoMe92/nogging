@@ -111,7 +111,10 @@ you have.
   cleanup refuses, do not retry or force it, stop the session first, then run
   the same cleanup. To start a separate planner instead, launch
   `scripts/nogg session launch --role planning --planning-id <id>
-  --description <desc>` and kick it off; never pre-acquire its lock.
+  --description <desc> --profile trusted` (or `--full-access`) and kick it
+  off; never pre-acquire its lock. The shared Dolt server is host-owned: the
+  planner must never start, stop or restart it, and reports an unreachable
+  server error for the operator to resolve.
   The trailer is not optional: your session has no per-session `openspec/**`
   deny and the guard hook will not fire, so that trailer is the **only** thing
   that keeps the commit legal — a planning commit without it fails the CI

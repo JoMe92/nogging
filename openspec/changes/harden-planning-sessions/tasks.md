@@ -12,7 +12,7 @@
 
 - [x] TASK-HPS-005 [standard] Per design Decisions 2 and 7: state plan-end before worktree retirement, the hand-off line and 'openspec validate <change> --strict --no-interactive' on the planning prompt, the four /plan surfaces, the kickoff text, AGENTS.md and template, the flow docs, the orchestrator prompt and command, and failure-recovery. Check: updated scripts/planning-docs.test.sh and planning-kickoff.test.sh green; scripts/test. Branch docs/.
 
-- [ ] TASK-HPS-006 [standard] Per design Decision 8: document that restricted Codex cannot reach the shared Dolt server, the host-owned Dolt rule in the launch prompts, search_web and named denials for Antigravity, the planning launch rule and profile= line, and orchestrator planner launches with --profile trusted. Check: new scripts/runtime-guidance-docs.test.sh; scripts/test. Branch docs/ (after TASK-HPS-005).
+- [x] TASK-HPS-006 [standard] Per design Decision 8: document that restricted Codex cannot reach the shared Dolt server, the host-owned Dolt rule in the launch prompts, search_web and named denials for Antigravity, the planning launch rule and profile= line, and orchestrator planner launches with --profile trusted. Check: new scripts/runtime-guidance-docs.test.sh; scripts/test. Branch docs/ (after TASK-HPS-005).
 
 - [ ] TASK-HPS-007 [complex] Per design Decision 9: short live re-acceptance in a scratch consumer repo: Codex launch refusal; trusted Codex planner plan-end from its worktree, own cleanup refused with no deletion, operator stop plus cleanup without --force; Claude self-retirement; agy search_web trusted and restricted with the query key confirmed. Write docs/acceptance/<date>-planning-robustness.md unsigned. Branch test/.
 
