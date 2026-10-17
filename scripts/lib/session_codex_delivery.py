@@ -30,6 +30,27 @@ def snapshot_source(path: str | os.PathLike[str], thread_id: str) -> dict[str, A
         return {"unknown": "source unavailable"}
 
 
+def persistable_source(snapshot: dict[str, Any]) -> dict[str, Any] | None:
+    """Opaque identity and start offset of the unread tail, with no transcript text.
+
+    The unfinished final line is rewound rather than stored, so the restored
+    snapshot re-reads it once it is complete."""
+    try:
+        return {"thread_id": snapshot["thread_id"], "path": snapshot["path"], "device": snapshot["device"],
+                "inode": snapshot["inode"], "offset": max(0, snapshot["offset"] - len(snapshot["partial"]))}
+    except (KeyError, TypeError):
+        return None
+
+
+def restore_snapshot(source: Any) -> dict[str, Any]:
+    """Rebuild a snapshot from `persistable_source`; anything else is unknown."""
+    try:
+        return {"thread_id": str(source["thread_id"]), "path": str(source["path"]), "device": int(source["device"]),
+                "inode": int(source["inode"]), "offset": int(source["offset"]), "partial": b"", "bytes_read": 0}
+    except (KeyError, TypeError, ValueError):
+        return {"unknown": "no persisted receipt source"}
+
+
 def _normalize(text: str) -> str:
     return text.replace("\r\n", "\n")
 
