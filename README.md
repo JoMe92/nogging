@@ -109,9 +109,13 @@ cd <printed planning worktree path>
 NOGGING_WRITER=planning git commit -m "docs(openspec): <summary>"  # commit before materialize
 ./scripts/nogg materialize <change-name>
 # Wire Beads dependencies explicitly, fast-forward the plan branch into develop,
-# then remove the clean, integrated planning worktree.
+# then release the lock and retire the worktree. plan-end always precedes
+# worktree retirement.
+./scripts/nogg plan-end   # from the planning worktree, in the owning session
 cd <main checkout>
-./scripts/nogg plan-end   # after cleanup, from the surviving canonical checkout
+./scripts/nogg worktree cleanup <record>   # last command, surviving canonical checkout
+# If cleanup refuses: ./scripts/nogg session stop <name>, then
+# ./scripts/nogg worktree cleanup <record> from the canonical checkout.
 ```
 
 A supervised planner is started with `./scripts/nogg session launch --role
@@ -227,7 +231,7 @@ plus the following, on every push and pull request:
 | `compatibility` | The tool-version matrix from [docs/compatibility.md](docs/compatibility.md) |
 | `script-tests` | `scripts/test` — every `scripts/**/*.test.sh` |
 | `installer` | `nogg init` / `update` against a scratch repository |
-| `validate` | `openspec validate --strict` over the committed changes |
+| `validate` | strict, non-interactive OpenSpec validation of the committed changes (`openspec validate <change> --strict --no-interactive`) |
 | `acceptance` | The mechanical subset of [docs/acceptance.md](docs/acceptance.md) |
 | `invariants` | The `openspec/` write boundary and archived-change consistency |
 | `public-release-gates` | Release-readiness checks from [docs/releasing.md](docs/releasing.md) |

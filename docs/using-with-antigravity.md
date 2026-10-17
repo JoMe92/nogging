@@ -73,7 +73,12 @@ include `scripts/hooks/agy-guard`, `scripts/nogg session emit turn_end`, and the
 session/boundary helpers. Workflow skills install under `.agents/skills/`:
 `nogging-plan`, `nogging-discovery-review`, and `nogging-sync-now`. They run the
 same `scripts/nogg` steps as other runtimes. Planning commits precede
-materialization, and safe integrated-worktree cleanup precedes `plan-end`.
+materialization, and `plan-end` always precedes worktree retirement: run
+`plan-end` from the planning worktree, then `worktree cleanup <record>` from
+the surviving canonical checkout. If cleanup refuses, hand off with
+`./scripts/nogg session stop <name>`, then `./scripts/nogg worktree cleanup <record>` from the canonical checkout. Validation is
+`./scripts/nogg validate` plus `openspec validate <change> --strict
+--no-interactive`.
 
 Each supervised process sets `AGY_CLI_DISABLE_AUTO_UPDATE=true`. Stop events
 capture the actual conversationId and append lifecycle events. Resume uses an
