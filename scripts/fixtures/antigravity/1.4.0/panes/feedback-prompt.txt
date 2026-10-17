@@ -1,0 +1,16 @@
+  BEREIT-203
+
+[90m────────────────────────────────────────────────────────────[39m
+[1m[34m> Orchestrator live delivery check after PR #203 merge: this deliberately long[0m
+[1m[34m  message must soft-wrap across several lines of the Antigravity composer so[0m
+[1m[34m  that the wrapped-text comparison is exercised for real. Do not run any tool.[0m
+[1m[34m  Reply with exactly ZUGESTELLT-203 and nothing else.[0m
+
+[31m⚠ Individual quota reached. Please upgrade your subscription to increase your[39m
+[31mlimits. Resets in 41m48s.[39m
+[90mError ID: e325db41-1685-41e3-813a-3800711b7107-2474[39m
+
+ [1mHow's the CLI experience so far? Help us improve:[0m
+ [94m[1] Good  [2] Fine  [3] Bad  [0] Skip[39m
+
+[90m? for shortcuts[39m                         [32maccept-edits[2m[39m · Gemini 3.8 Flash · medium
