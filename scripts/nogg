@@ -2659,9 +2659,10 @@ def bead_exists(bead_id):
 def unmet_dependencies(bead_id):
     """Return the blocking Bead IDs for `bead_id` (`bd dep list <id> --json`,
     default `--direction down` — "what this Bead depends on") whose own
-    `status` is not `closed`. Empty list when the Bead has no recorded
-    dependency, or every recorded dependency is already closed. Mirrors
-    `bd ready`'s own notion of readiness."""
+    `status` is not `closed` and whose edge `dependency_type` is `blocks` (or
+    absent, as in older bd output). Non-blocking edges such as `parent-child`
+    to an open epic never count. Empty list when the Bead has no blocking
+    dependency, or every blocking dependency is already closed."""
     res = run(CFG["beads_command"], "dep", "list", bead_id, "--json", check=False)
     if res.returncode != 0: return []
     try: decoded = json.loads(res.stdout.strip() or "[]")
@@ -2669,7 +2670,8 @@ def unmet_dependencies(bead_id):
     records = decoded.get("issues", decoded) if isinstance(decoded, dict) else decoded
     if isinstance(records, dict): records = [records]
     return [str(issue_id(r)) for r in records
-            if isinstance(r, dict) and r.get("status") != "closed"]
+            if isinstance(r, dict) and r.get("status") != "closed"
+            and (r.get("dependency_type") or "blocks") == "blocks"]
 def bead_change(bead_id):
     """The `openspec:change:` label value on `bead_id`, or None if the Bead
     does not exist or carries no such label. Read-only (`bd show --json`)."""
