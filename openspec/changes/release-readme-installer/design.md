@@ -11,8 +11,11 @@ or move them deliberately, in the same commit:
 - `scripts/nogging-identity.test.sh` requires `# Nogging` and the headings
   `## Project status and audience`, `## Supported environments`,
   `## Safety warning`, `## Documentation` and
-  `## Inspiration and related projects`. It also requires the phrase
-  `pre-public release candidate`, the Gas Town and Beads links, the
+  `## Inspiration and related projects`. It also required the phrase
+  `pre-public release candidate`; v3.0.0 is a public release, so RRI-001
+  inverts that assertion (the phrase and "release candidate" must be absent
+  and the private-repository note below must be present). It also requires
+  the Gas Town and Beads links, the
   independence statement (the check is sensitive to line breaks),
   `only Gas Town`, `optional sibling`, the exact line
   `npx github:JoMe92/nogging#v2.2.0 init --no-systemd`, no `git@github.com`,
@@ -22,9 +25,10 @@ or move them deliberately, in the same commit:
   `plan-end`, `worktree cleanup` and `surviving canonical checkout`. It also
   needs `--role planning` and `canonical`, and forbids a bare
   `openspec validate --strict`.
-- `scripts/security-docs.test.sh` requires
-  `[security and threat model](docs/security-model.md)` before the first
-  `session launch … --full-access` line.
+- `scripts/security-docs.test.sh` requires a Markdown link labelled
+  "security and threat model" that targets `docs/security-model.md` (written
+  in the README as bracketed label followed by the parenthesised path) before
+  the first `session launch … --full-access` line.
 - `scripts/package-publication.test.sh` requires `unscoped npm name` and the
   pinned `github:JoMe92/nogging#v2.2.0`.
 - `scripts/commands.test.sh` resolves every `.claude/commands/*.md` mention.
@@ -127,7 +131,7 @@ Top-level order. A structure test asserts it. `>` means "comes before":
    Codex, Pi, Antigravity) a team structure: a Planning Agent writes the
    approved plan in OpenSpec, a Lead Agent executes it as Beads tasks with Git
    evidence, and a sync mirrors the evidence back. A single blockquote may
-   follow. It states the pre-public status and links `#safety-warning`.
+   follow. It states that Nogging is a public release and links `#safety-warning`.
 3. `## Quick Guide`. At most eight numbered steps, each one line plus one
    command, from nothing to a closed first Bead: install, `doctor`, plan with
    `/plan`, `bd ready`, `session launch --role lead --bead <id>`,
@@ -152,7 +156,8 @@ Top-level order. A structure test asserts it. `>` means "comes before":
    - `### Launch a Lead`: `bd ready`, `bd show <id>`, and the restricted
      `session launch --role lead --bead <id>`. `--full-access` appears only
      after a sentence that links
-     `[security and threat model](docs/security-model.md)`.
+     the security and threat model (label "security and threat model",
+     target `docs/security-model.md`, as in the existing README link).
    - `### Watch and steer sessions`: `session list`,
      `session log <name> --follow`, `session attach <name> --read-only`,
      `session watch`, `session send`/`nudge` and `session stop`. One
@@ -166,7 +171,11 @@ Top-level order. A structure test asserts it. `>` means "comes before":
      diagram can sit here.
 6. After that, in this order: `## Safety warning` (shortened to at most two
    short paragraphs, keeping the risk statement and the link list),
-   `## Project status and audience`, `## Supported environments`,
+   `## Project status and audience` (v3.0.0 is a **public release**; the
+   section drops the "pre-public release candidate" wording and carries one
+   note: keep target repositories where agents run with full access private,
+   and read the safety warning before enabling `--full-access` or background
+   services), `## Supported environments`,
    `## Concepts` (the two phases, the roles, the non-negotiable boundaries
    table, the communication-model and tool-map diagrams, links to
    `docs/vision-and-architecture.md`, `docs/operating-model.md` and
@@ -191,6 +200,10 @@ network. It asserts:
 - every install URL is pinned to a `v<semver>` tag, never `main` or
   `develop`;
 - the security link comes before the first `--full-access`;
+- the README no longer contains `pre-public` or `release candidate`, and
+  the `## Project status and audience` section contains the private-
+  repository note (`private`, `full access`, `safety warning`,
+  `--full-access`, `background services`) and a link to `#safety-warning`;
 - `## Tests and CI` exists in `CONTRIBUTING.md` and no longer in
   `README.md`;
 - every relative link resolves to an existing file;

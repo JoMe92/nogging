@@ -21,12 +21,23 @@ be linked to `docs/`. The README SHALL keep the rule that install commands
 are pinned to a released tag and never to `main` or `develop`. It SHALL
 link the security and threat model before any command that grants full
 access.
+The README SHALL present Nogging as a public release and SHALL NOT describe
+it as a pre-public release candidate. Its project-status section SHALL advise
+keeping target repositories where agents run with full access private, and
+reading the safety warning before enabling `--full-access` or background
+services.
 
 #### Scenario: A newcomer reads the README top to bottom
 
 - **WHEN** a newcomer reads `README.md` from the top
 - **THEN** they meet the purpose, the Quick Guide, installation and day-to-day use before any concept, architecture or maintainer section
 - **AND** they can install, check readiness, plan a change and launch a Lead by copying commands from the Quick Guide
+
+#### Scenario: The README states the public status
+
+- **WHEN** a reader opens the project-status section of `README.md`
+- **THEN** the README does not call Nogging a pre-public release candidate
+- **AND** the section advises keeping repositories where agents run with full access private and reading the safety warning before enabling `--full-access` or background services
 
 #### Scenario: The order is checked mechanically
 
