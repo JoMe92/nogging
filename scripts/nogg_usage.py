@@ -422,6 +422,8 @@ def inspect_usage(agent, *, source=None, now=None, stale_after=600, model=None):
                         item.update(stale=True, age_seconds=int((now - observed).total_seconds()))
             except (KeyError, ValueError, TypeError, OverflowError, OSError):
                 item['reason'] = 'missing or malformed window'
+        if agent == 'claude' and item.get('reason') == 'missing usage source':
+            item['hint'] = 'run nogg usage install-statusline'
         windows.append(item)
     report = {'schema_version': 1, 'provider': agent, 'account': None,
               'model_group': None, 'status': 'known' if all(w['status'] == 'known' for w in windows) else 'unknown',
@@ -765,6 +767,8 @@ def evaluate_gate(report, config, estimate, reserved_percent=0):
         item = {'bucket': window['bucket'], 'reserved_percent': reserved, 'status': window['status'],
                 'reason': window['reason'], 'used_percent': window['used_percent'],
                 'resets_at': window['resets_at'], 'projected_percent': None, 'fits': None}
+        if 'hint' in window:
+            item['hint'] = window['hint']
         if window['status'] == 'known':
             projected = window['used_percent'] + reserved + estimate
             item.update(projected_percent=round(projected, 4), fits=projected <= config['cap_percent'])
@@ -874,7 +878,8 @@ def usage_command(agent, json_output=False, config=None, model=None):
                   f"reserved {projection['reserved_percent']:g}%; projected {projection['projected_percent']:g}% of cap {gate['cap_percent']:g}% "
                   f"({'fits' if projection['fits'] else 'does not fit'}){stale}")
         else:
-            print(f"  {window['bucket']}: unknown ({window['reason']})")
+            hint_str = f" — {window['hint']}" if window.get('hint') else ""
+            print(f"  {window['bucket']}: unknown ({window['reason']}){hint_str}")
     print(f"  estimate {gate['estimate_percent']:g}% per launch; reserved {gate['reserved_percent']:g}%; "
           f"fits: {'unknown' if gate['fits'] is None else ('yes' if gate['fits'] else 'no')}"
           + ('' if config['enabled'] else ' (usage_gate disabled)'))
