@@ -4,7 +4,7 @@
 
 - [ ] TASK-LHF-002 [standard] Per design Decisions 1 and 3 (#195): add an agent-binary preflight before any launch side effect and a bounded post-start settle check that fails non-zero with the startup-log tail, no kickoff hint, no chained `--kickoff`. Own the preflight/start region of `_session_launch()`. Branch feat/. Check: scripts/session-launch-agent-binary.test.sh (new); scripts/test.
 
-- [ ] TASK-LHF-003 [routine] Per design Decisions 1 and 4 (#204): write the Claude Stop/Notification hook commands with an absolute, shell-quoted launch-time path to scripts/nogg; update the old relative assertion in scripts/session-observability.test.sh. Own `OBSERVABILITY_HOOKS` only. Branch refactor/. Check: scripts/session-hook-absolute-path.test.sh (new); scripts/session-observability.test.sh; scripts/test.
+- [x] TASK-LHF-003 [routine] Per design Decisions 1 and 4 (#204): write the Claude Stop/Notification hook commands with an absolute, shell-quoted launch-time path to scripts/nogg; update the old relative assertion in scripts/session-observability.test.sh. Own `OBSERVABILITY_HOOKS` only. Branch refactor/. Check: scripts/session-hook-absolute-path.test.sh (new); scripts/session-observability.test.sh; scripts/test.
 
 ## Dependency contract
 
