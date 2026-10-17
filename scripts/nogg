@@ -5265,6 +5265,25 @@ def _locked_delivery(name, deadline):
 def _normalized_delivery_text(text):
     return re.sub(r"\s+", " ", (text or "").replace("\u00a0", " ").replace("\r\n", "\n")).strip()
 
+# Claude's composer shows only its last visual rows of a long input: the head
+# scrolls out, so the framed box holds a suffix of the message (#203 follow-up).
+COMPOSER_CLIP_ROWS = 8
+COMPOSER_CLIP_MIN_CHARS = 40
+
+def _composer_text_matches(text, message):
+    """Whether composer `text` is exactly `message` after whitespace
+    normalisation, or a visibly clipped view of it: a box at least
+    COMPOSER_CLIP_ROWS tall whose whole contents are a (soft-wrap tolerant)
+    proper suffix of the message. Foreign text never matches."""
+    if _normalized_delivery_text(text) == _normalized_delivery_text(message):
+        return True
+    visible, full = re.sub(r"\s+", "", text or ""), re.sub(r"\s+", "", message or "")
+    if visible == full:
+        return True
+    rows = [row for row in (text or "").splitlines() if row.strip()]
+    return (len(rows) >= COMPOSER_CLIP_ROWS and len(visible) >= COMPOSER_CLIP_MIN_CHARS
+            and len(visible) < len(full) and full.endswith(visible))
+
 def _delivery_composer_state(name, agent, message):
     """Classify the composer relative to this operation's exact message."""
     substrate, _ref = backend_for_name(name)
@@ -5284,8 +5303,7 @@ def _delivery_composer_state(name, agent, message):
             return "unknown"
         if not box.strip():
             return "empty"
-        if (_normalized_delivery_text(box) == _normalized_delivery_text(message)
-                or re.sub(r"\s+", "", box) == re.sub(r"\s+", "", message)):
+        if _composer_text_matches(box, message):
             return "pending"
         return "other"
     return "unknown"
@@ -5348,10 +5366,7 @@ def _verify_submitted(name, agent, submitted_text=None, *, baseline_status=None,
             pane = session_pane_text(name, escapes=False)
             box = (_claude_prompt_box_text(pane) if agent == "claude"
                    else _antigravity_prompt_box_text(pane))
-            return box is not None and (
-                _normalized_delivery_text(box) != _normalized_delivery_text(submitted_text)
-                and re.sub(r"\s+", "", box) != re.sub(r"\s+", "", submitted_text or "")
-            )
+            return box is not None and not _composer_text_matches(box, submitted_text or "")
 
         time.sleep(timing["session_submit_verify_delay_seconds"])
         if replacement_verified():
@@ -5607,9 +5622,7 @@ def _clear_composer(name, agent):
 def _composer_holds_message(name, agent, message):
     kind, text = pane_input(name, agent)
     if kind == "input":
-        if _normalized_delivery_text(text) == _normalized_delivery_text(message):
-            return True
-        if re.sub(r"\s+", "", text) == re.sub(r"\s+", "", message):
+        if _composer_text_matches(text, message):
             return True
     pane = session_pane_text(name, escapes=False)
     if "stub agent started" in pane:
