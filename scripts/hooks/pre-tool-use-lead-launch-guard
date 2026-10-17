@@ -52,7 +52,7 @@ beads_command=$(jq -r '.beads_command // "bd"' "$config" 2>/dev/null || echo "bd
 
 dep_json=$("$beads_command" dep list "$bead" --json 2>/dev/null) || dep_json="[]"
 blocking=$(printf '%s' "$dep_json" \
-  | jq -r '[.[]? | select(.status != "closed") | .id] | join(", ")' 2>/dev/null || true)
+  | jq -r '[.[]? | select((.dependency_type // "blocks") == "blocks") | select(.status != "closed") | .id] | join(", ")' 2>/dev/null || true)
 
 if [[ -n "$blocking" ]]; then
   {
