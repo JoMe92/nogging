@@ -60,6 +60,20 @@ closed sentinels take precedence. Linked worktrees share canonical lock state.
 An execution session remains read-only even while another planner has a lock.
 Multi-edit tool payloads remain unsupported until validated live.
 
+### Web search and denial reasons
+
+The guard accepts `search_web` only when `query` is a non-empty string without
+a NUL character. Trusted sessions may run that search; restricted sessions
+must approve it, just like `read_url_content`. An empty, missing or wrongly
+typed query is denied as `invalid search query`. Other denials name their
+cause; an unsupported tool denial includes its sanitized tool name (or
+`<invalid>`). Denials never repeat command, path, URL or query argument values.
+
+Codex and Antigravity planning launches must explicitly select authority with
+`--profile <name>` or `--full-access`. Without either flag, Nogging refuses the
+launch before creating a session or worktree. Successful launches show the
+effective `profile=` and `prompt=` values.
+
 **Sandbox operation is unsupported.** A profile requesting `sandbox = true`
 or the wrapper receiving `--sandbox true` refuses explicitly. No linked-worktree
 sandbox lifecycle has passed acceptance. Neither authority level promises

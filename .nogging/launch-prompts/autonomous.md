@@ -31,6 +31,8 @@ Every hard rule still holds:
 
 - Never edit `openspec/`. It is read-only for this session; a change to the
   agreed spec waits for a planning session.
+- The shared Dolt server is host-owned; never start, stop or restart it from
+  this session; if `bd` cannot reach it, stop and report the exact error.
 - Work only the Beads of the one named change. Never claim, close, commit, or
   otherwise touch a Bead that belongs to another change.
 - Never implement or commit implementation work in the shared `develop`

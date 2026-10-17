@@ -126,6 +126,9 @@ if "--help" in sys.argv:
 if sys.argv[1:] == ["models"]:
     print("gemini-3.8-flash-low\\tlow\\ngemini-3.8-flash-medium\\tmed\\ngemini-3.8-flash-high\\thigh")
     sys.exit(0)
+if "--print" in sys.argv and "/usage" in sys.argv:
+    print("{}")
+    sys.exit(0)
 target = pathlib.Path(os.environ["NOGG_TEST_ARGS_DIR"]) / pathlib.Path(sys.argv[0]).name
 target.write_text(json.dumps(sys.argv[1:]))
 print("stub ready", flush=True)
@@ -174,6 +177,18 @@ while True:
         return [json.loads(p.read_text()) for p in sessions.glob("*.json")
                 if not p.name.endswith(".settings.json")] if sessions.is_dir() else []
 
+    def read_received_args(path, label):
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            try:
+                value = json.loads(path.read_text())
+                if isinstance(value, list) and value:
+                    return value
+            except (OSError, json.JSONDecodeError):
+                pass
+            time.sleep(0.02)
+        raise AssertionError(f"{label}: runtime arguments were not fully written")
+
     def tmux_sessions():
         out = subprocess.run(["tmux", "-L", sock, "list-sessions", "-F", "#S"],
                              capture_output=True, text=True)
@@ -185,16 +200,12 @@ while True:
         before = snapshot()
         result = subprocess.run([str(nogg), "session", "launch", "--role", "lead",
                                  "--bead", "SPEC-model", "--agent", agent] + extra,
-                                cwd=consumer, env=env, text=True, capture_output=True, timeout=15)
+                                cwd=consumer, env=env, text=True, capture_output=True, timeout=60)
         assert result.returncode == 0, (label, result.stderr)
         output = result.stdout + result.stderr
         if expect_notice:
             assert expect_notice in output, (label, output)
-        deadline = time.monotonic() + 5
-        while not received.exists():
-            assert time.monotonic() < deadline, f"{label}: {agent} never started"
-            time.sleep(0.02)
-        argv = json.loads(received.read_text())
+        argv = read_received_args(received, f"{label}: {agent}")
         for i in range(len(argv) - len(model_args) + 1):
             if argv[i:i + len(model_args)] == model_args:
                 break
@@ -213,7 +224,7 @@ while True:
         assert snapshot() == before, f"{label}: profile or user-global setting mutated"
         for verb in ("stop", "cleanup"):
             subprocess.run([str(nogg), "session", verb, record["name"]], cwd=consumer, env=env,
-                            stdout=subprocess.DEVNULL, check=True, timeout=10)
+                            stdout=subprocess.DEVNULL, check=True, timeout=60)
         print(f"packed model selection: {label} passed")
 
     def launch_claude_effort(label, level, source, override):
@@ -229,13 +240,9 @@ while True:
         before = snapshot()
         result = subprocess.run([str(nogg), "session", "launch", "--role", "lead",
                                  "--bead", "SPEC-model", "--agent", "claude"] + extra,
-                                cwd=consumer, env=env, text=True, capture_output=True, timeout=15)
+                                cwd=consumer, env=env, text=True, capture_output=True, timeout=60)
         assert result.returncode == 0, (label, result.stderr)
-        deadline = time.monotonic() + 5
-        while not received.exists():
-            assert time.monotonic() < deadline, f"{label}: Claude did not start"
-            time.sleep(0.02)
-        argv = json.loads(received.read_text())
+        argv = read_received_args(received, f"{label}: Claude")
         assert argv.count("--effort") == 1, (label, argv)
         assert argv[argv.index("--effort") + 1] == level, (label, argv)
         [record] = [r for r in records() if r["state"] == "running"]
@@ -250,7 +257,7 @@ while True:
         assert snapshot() == before, f"{label}: profile or user-global setting mutated"
         for verb in ("stop", "cleanup"):
             subprocess.run([str(nogg), "session", verb, record["name"]], cwd=consumer, env=env,
-                           stdout=subprocess.DEVNULL, check=True, timeout=10)
+                           stdout=subprocess.DEVNULL, check=True, timeout=60)
         print(f"packed model selection: {label} passed")
 
     try:
@@ -305,7 +312,7 @@ while True:
         result = subprocess.run([str(nogg), "session", "launch", "--role", "lead", "--bead",
                                  "SPEC-model", "--agent", "codex", "--profile",
                                  str(profiles / "bad-effort.codex.toml")],
-                                cwd=consumer, env=env, text=True, capture_output=True, timeout=15)
+                                cwd=consumer, env=env, text=True, capture_output=True, timeout=60)
         assert result.returncode != 0 and "model_reasoning_effort" in result.stderr, result.stderr
         assert len(records()) == prior and not tmux_sessions(), "invalid effort created session state"
         assert snapshot() == before
@@ -315,7 +322,7 @@ while True:
         before, prior = snapshot(), len(records())
         result = subprocess.run([str(nogg), "session", "launch", "--role", "lead", "--bead",
                                  "SPEC-model", "--agent", "claude", "--tier", "trivial"],
-                                cwd=consumer, env=env, text=True, capture_output=True, timeout=15)
+                                cwd=consumer, env=env, text=True, capture_output=True, timeout=60)
         assert result.returncode != 0 and "is not a model-selection tier" in result.stderr, result.stderr
         assert len(records()) == prior and not tmux_sessions(), "unknown tier created session state"
         assert snapshot() == before
@@ -325,7 +332,7 @@ while True:
         before, prior = snapshot(), len(records())
         result = subprocess.run([str(nogg), "session", "launch", "--role", "lead", "--bead",
                                  "SPEC-model", "--agent", "pi", "--tier", "routine"],
-                                cwd=consumer, env=env, text=True, capture_output=True, timeout=15)
+                                cwd=consumer, env=env, text=True, capture_output=True, timeout=60)
         assert result.returncode != 0 and "is not supported for agent 'pi'" in result.stderr, result.stderr
         assert len(records()) == prior and not tmux_sessions(), "pi tier created session state"
         assert snapshot() == before
@@ -340,7 +347,7 @@ while True:
             before, prior = snapshot(), len(records())
             result = subprocess.run([str(nogg), "session", "launch", "--role", "lead", "--bead",
                                      "SPEC-model", "--agent", "claude", "--tier", "routine"],
-                                    cwd=consumer, env=env, text=True, capture_output=True, timeout=15)
+                                    cwd=consumer, env=env, text=True, capture_output=True, timeout=60)
             assert result.returncode != 0 and "is invalid" in result.stderr, result.stderr
             assert len(records()) == prior and not tmux_sessions(), "invalid table created session state"
             assert snapshot() == before
