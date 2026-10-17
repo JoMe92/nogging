@@ -2313,8 +2313,8 @@ def deny_openspec_writes(settings):
 # merge_observability_hooks() below — never replacing or reordering an
 # existing entry for that event, exactly like FLOOR_DENY / OPENSPEC_READONLY_DENY.
 OBSERVABILITY_HOOKS = {
-    "Stop": {"hooks": [{"type": "command", "command": "scripts/nogg session emit turn_end"}]},
-    "Notification": {"hooks": [{"type": "command", "command": "scripts/nogg session emit needs_input"}]},
+    "Stop": {"hooks": [{"type": "command", "command": f"{shlex.quote(str(ROOT / 'scripts/nogg'))} session emit turn_end"}]},
+    "Notification": {"hooks": [{"type": "command", "command": f"{shlex.quote(str(ROOT / 'scripts/nogg'))} session emit needs_input"}]},
 }
 def merge_observability_hooks(settings):
     """Return a deep copy of `settings` with the Layer-2 Stop/Notification
@@ -2322,7 +2322,11 @@ def merge_observability_hooks(settings):
     reordering any existing entry for that event. Input never mutated."""
     result = json.loads(json.dumps(settings))
     hooks = result.setdefault("hooks", {})
-    for event, entry in OBSERVABILITY_HOOKS.items():
+    obs_hooks = {
+        "Stop": {"hooks": [{"type": "command", "command": f"{shlex.quote(str(ROOT / 'scripts/nogg'))} session emit turn_end"}]},
+        "Notification": {"hooks": [{"type": "command", "command": f"{shlex.quote(str(ROOT / 'scripts/nogg'))} session emit needs_input"}]},
+    }
+    for event, entry in obs_hooks.items():
         existing = list(hooks.get(event) or [])
         existing.append(entry)
         hooks[event] = existing
