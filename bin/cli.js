@@ -8,6 +8,7 @@ const install = require('./lib/install');
 const { applyMerges } = require('./lib/merge');
 const { renderSystemd } = require('./lib/systemd');
 const { removeInstallation } = require('./lib/remove');
+const { runPreflight } = require('./lib/preflight');
 const { version: VERSION } = require('../package.json');
 
 const USAGE = `nogg — install the Nogging operating structure into a repo
@@ -93,6 +94,7 @@ function report(ctx) {
 
 function cmdInit(args) {
   const ctx = install.makeContext(args);
+  runPreflight(ctx);
   install.migrateLegacyStateRoot(ctx);
   const reinstall = fs.existsSync(path.join(ctx.targetRoot, '.nogging/config.json'));
   if (reinstall && !ctx.dryRun) {
@@ -116,6 +118,7 @@ function cmdInit(args) {
 
 function cmdUpdate(args) {
   const ctx = install.makeContext(args);
+  runPreflight(ctx);
   install.migrateLegacyStateRoot(ctx);
   if (!fs.existsSync(path.join(ctx.targetRoot, '.nogging/config.json'))) {
     throw Object.assign(new Error('no .nogging/config.json — run `init` first'), { userFacing: true });
