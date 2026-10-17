@@ -518,7 +518,10 @@ fi
 echo "0666" >"$HERDR_STUB_DIR/fault_socket_permissions"
 "$herdr_bin" --session nogging server &
 perm_pid=$!
-sleep 0.3
+for _ in {1..30}; do
+  if [[ -S "$socket_path" ]]; then break; fi
+  sleep 0.1
+done
 if [[ -S "$socket_path" ]]; then
   perm_mode=$(stat -c "%a" "$socket_path")
   if [[ "$perm_mode" == "666" ]]; then
@@ -535,7 +538,10 @@ rm -f "$HERDR_STUB_DIR/fault_socket_permissions"
 touch "$HERDR_STUB_DIR/fault_socket_symlink"
 "$herdr_bin" --session nogging server &
 sym_pid=$!
-sleep 0.3
+for _ in {1..30}; do
+  if [[ -L "$socket_path" ]]; then break; fi
+  sleep 0.1
+done
 if [[ -L "$socket_path" ]]; then
   ok "socket fault: fault_socket_symlink created a symlink socket"
 else
@@ -549,7 +555,10 @@ rm -f "$HERDR_STUB_DIR/fault_socket_symlink"
 touch "$HERDR_STUB_DIR/fault_socket_non_socket"
 "$herdr_bin" --session nogging server &
 nonsock_pid=$!
-sleep 0.3
+for _ in {1..30}; do
+  if [[ -f "$socket_path" && ! -S "$socket_path" ]]; then break; fi
+  sleep 0.1
+done
 if [[ -f "$socket_path" && ! -S "$socket_path" ]]; then
   ok "socket fault: fault_socket_non_socket created regular file instead of socket"
 else
