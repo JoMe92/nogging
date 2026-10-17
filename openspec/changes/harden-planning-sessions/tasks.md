@@ -10,7 +10,7 @@
 
 ## 2. Documentation and acceptance (branch prefix docs/, then test/)
 
-- [ ] TASK-HPS-005 [standard] Per design Decisions 2 and 7: state plan-end before worktree retirement, the hand-off line and 'openspec validate <change> --strict --no-interactive' on the planning prompt, the four /plan surfaces, the kickoff text, AGENTS.md and template, the flow docs, the orchestrator prompt and command, and failure-recovery. Check: updated scripts/planning-docs.test.sh and planning-kickoff.test.sh green; scripts/test. Branch docs/.
+- [x] TASK-HPS-005 [standard] Per design Decisions 2 and 7: state plan-end before worktree retirement, the hand-off line and 'openspec validate <change> --strict --no-interactive' on the planning prompt, the four /plan surfaces, the kickoff text, AGENTS.md and template, the flow docs, the orchestrator prompt and command, and failure-recovery. Check: updated scripts/planning-docs.test.sh and planning-kickoff.test.sh green; scripts/test. Branch docs/.
 
 - [ ] TASK-HPS-006 [standard] Per design Decision 8: document that restricted Codex cannot reach the shared Dolt server, the host-owned Dolt rule in the launch prompts, search_web and named denials for Antigravity, the planning launch rule and profile= line, and orchestrator planner launches with --profile trusted. Check: new scripts/runtime-guidance-docs.test.sh; scripts/test. Branch docs/ (after TASK-HPS-005).
 

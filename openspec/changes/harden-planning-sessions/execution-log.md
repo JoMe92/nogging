@@ -50,3 +50,13 @@
     progress: PR #196 is open and every required check passed; next close this Bead and run task-done.
     Task mapping tick committed as 0646f1bf0b5a9bedf585f1ba80c14b7406ce12c3; evidence: task-done marked TASK-HPS-002 complete, and PR #196 checks passed again on this commit.
     Correction: task mapping tick commit SHA is 0646f1bf2964a2f0dcda22647609c19ee33e0a33 (not the abbreviated/mistyped SHA in the prior note).
+
+<!-- nogg:SPEC-wwt8:2026-10-17T01:32:08Z -->
+- 2026-10-17T01:40:25+00:00 — SPEC-wwt8 closed for TASK-HPS-005 (Bead closed at 2026-10-17T01:32:08Z).
+  - implementation commits: 2c28632af9e9, 6a87096, 100fb3c, 3de829e
+  - Bead note:
+    Planned 2026-10-16 in harden-planning-sessions (planning commit 6a87096; planning-id planning-robustness; GitHub #176 #177 #178). Read only the mapped tasks.md line, the design.md Decision it names, design Decision 1 (CI discipline: no Dolt/bd, no PID-range assumptions, no unshare or real mounts, no running tmux server; source scripts/lib/test-env.sh) and the matching capability requirement. Before allocating a dependent worktree, verify every prerequisite execution commit is integrated into develop. Execution contract: commit (Conventional subject ending in the Bead token) -> push -> PR against develop -> only then bd close and scripts/nogg task-done. A Codex Lead needs --full-access or --profile trusted to reach the shared Dolt server. Complexity: standard. Branch: docs/harden-planning-sessions (after TASK-HPS-001 and 002 are integrated). Suits a sandboxed Lead. If reliable-session-input TASK-RSI-006 landed first in _session_kickoff, rebase and keep both.
+    Planning integrated into local develop at 100fb3c (rebased planning commit; supersedes draft SHA 6a87096). Strict validation 'openspec validate harden-planning-sessions --strict --no-interactive' passed; scratch archive rehearsal merged specs 30/30 valid; explicit edges 005<-001,002; 006<-003,004,005; 007<-006.
+    tier standard: plan-end ordering, hand-off line and validate wording across scripts/docs of one component, clear spec
+    Discovery: scripts/packed-session-launch.test.sh (assert installed bytes == packaged bytes, line ~51) and scripts/session-pty-recorder.test.sh (PTY resize / writer-kill) fail identically on unmodified develop 3de829e in this delivery host; pre-existing, unrelated to HPS-005.
+    commit 2c28632; PR https://github.com/JoMe92/nogging/pull/202; planning-docs, planning-kickoff, commands suites pass; all 123 scripts/*.test.sh pass except the two pre-existing failures above
