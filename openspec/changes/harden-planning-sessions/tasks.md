@@ -6,7 +6,7 @@
 
 - [x] TASK-HPS-003 [routine] Per design Decision 5 (#177): agy-guard accepts search_web with a non-empty string query (trusted allow, restricted force_ask); every denial names its cause and a sanitized tool name, never argument values; add the derived 1.4.0 search_web fixture with a README. Check: new scripts/agy-guard-web-search.test.sh; existing agy-guard.test.sh unchanged; scripts/test. Branch feat/.
 
-- [ ] TASK-HPS-004 [standard] Per design Decision 6 (#178): refuse a Codex or Antigravity planning launch without --profile or --full-access before any side effect, naming both flags; explicit restricted prints a NOTE; every launch prints profile=/prompt=; Claude implicit planning warns; restricted Codex prints the Dolt note. Check: new scripts/planning-launch-profile.test.sh (tmux PATH stub never called); scripts/test. Branch chore/.
+- [x] TASK-HPS-004 [standard] Per design Decision 6 (#178): refuse a Codex or Antigravity planning launch without --profile or --full-access before any side effect, naming both flags; explicit restricted prints a NOTE; every launch prints profile=/prompt=; Claude implicit planning warns; restricted Codex prints the Dolt note. Check: new scripts/planning-launch-profile.test.sh (tmux PATH stub never called); scripts/test. Branch chore/.
 
 ## 2. Documentation and acceptance (branch prefix docs/, then test/)
 
