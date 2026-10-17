@@ -1,6 +1,6 @@
 ## 1. Independent fixes (fix/, feat/, refactor/ — parallel, no prerequisites)
 
-- [ ] TASK-LHF-001 [standard] Per design Decisions 1-2 (#184): count only blocking edges (`dependency_type` `blocks` or absent, status not closed) in `unmet_dependencies()` and scripts/hooks/pre-tool-use-lead-launch-guard, so a child of an open epic launches while open blockers still refuse. Branch fix/. Check: scripts/launch-blocking-edges.test.sh (new); scripts/hooks/pre-tool-use-lead-launch-guard.test.sh; scripts/test.
+- [x] TASK-LHF-001 [standard] Per design Decisions 1-2 (#184): count only blocking edges (`dependency_type` `blocks` or absent, status not closed) in `unmet_dependencies()` and scripts/hooks/pre-tool-use-lead-launch-guard, so a child of an open epic launches while open blockers still refuse. Branch fix/. Check: scripts/launch-blocking-edges.test.sh (new); scripts/hooks/pre-tool-use-lead-launch-guard.test.sh; scripts/test.
 
 - [ ] TASK-LHF-002 [standard] Per design Decisions 1 and 3 (#195): add an agent-binary preflight before any launch side effect and a bounded post-start settle check that fails non-zero with the startup-log tail, no kickoff hint, no chained `--kickoff`. Own the preflight/start region of `_session_launch()`. Branch feat/. Check: scripts/session-launch-agent-binary.test.sh (new); scripts/test.
 
