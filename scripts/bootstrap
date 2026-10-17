@@ -87,6 +87,132 @@ report_step() {
   printf 'bootstrap: %-28s %-9s %s\n' "$1" "$2" "$3"
 }
 
+# --- Plan block (design.md, Decision 6) --------------------------------------
+# Side-effect-free probes for every tool bootstrap provisions, printing a plan
+# before any install command runs.
+report_plan() {
+  # report_plan <tool> <action> [detail]
+  tool="$1"; action="$2"; detail="${3:-}"
+  if [ -n "$detail" ]; then
+    printf '  %-24s %s %s\n' "$tool" "$action" "$detail"
+  else
+    printf '  %-24s %s\n' "$tool" "$action"
+  fi
+}
+
+plan_node() {
+  current_major=0
+  current_ver=""
+  if command -v node >/dev/null 2>&1; then
+    current_ver=$(node --version 2>/dev/null || node -v 2>/dev/null || true)
+    current_major=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo "$current_ver" | sed -E 's/^v?([0-9]+).*/\1/')
+  fi
+  satisfies=0
+  case " $NODE_LTS_LINE " in
+    *" $current_major "*) satisfies=1 ;;
+  esac
+  if [ "$satisfies" -eq 1 ]; then
+    report_plan "node" "present" "$current_ver"
+    return 0
+  fi
+  if [ -n "$current_ver" ] && [ "$current_major" -ne 0 ]; then
+    report_plan "node" "upgrade" "$current_ver → $NODE_LTS_PIN"
+    return 0
+  fi
+  report_plan "node" "install" "$NODE_LTS_PIN"
+}
+
+plan_npm_global() {
+  # plan_npm_global <npm-package> <pinned-version> [binary-on-path]
+  pkg="$1"; pin="$2"; bin="${3:-$1}"
+  installed=""
+  if command -v "$bin" >/dev/null 2>&1; then
+    installed=$("$bin" --version 2>/dev/null | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)
+  fi
+  if [ "$installed" = "$pin" ]; then
+    report_plan "$bin" "present" "$installed"
+    return 0
+  fi
+  if [ -n "$installed" ]; then
+    report_plan "$bin" "upgrade" "$installed → $pin"
+    return 0
+  fi
+  report_plan "$bin" "install" "$pin"
+}
+
+plan_dolt() {
+  installed=""
+  if command -v dolt >/dev/null 2>&1; then
+    installed=$(dolt version 2>/dev/null | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)
+  fi
+  case "$installed" in
+    2.3.*)
+      report_plan "dolt" "present" "$installed"
+      return 0
+      ;;
+  esac
+  if [ -n "$installed" ]; then
+    report_plan "dolt" "upgrade" "$installed → $DOLT_VERSION"
+    return 0
+  fi
+  report_plan "dolt" "install" "$DOLT_VERSION"
+}
+
+plan_bd() {
+  installed=""
+  if command -v bd >/dev/null 2>&1; then
+    installed=$(bd version 2>/dev/null | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)
+  fi
+  case "$installed" in
+    1.2.*)
+      report_plan "bd" "present" "$installed"
+      return 0
+      ;;
+  esac
+  if [ -n "$installed" ]; then
+    report_plan "bd" "upgrade" "$installed → $BD_VERSION"
+    return 0
+  fi
+  report_plan "bd" "install" "$BD_VERSION"
+}
+
+plan_system_package() {
+  tool="$1"
+  if command -v "$tool" >/dev/null 2>&1; then
+    ver=$("$tool" --version 2>/dev/null | grep -Eo '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -n1)
+    [ -n "$ver" ] || ver=$("$tool" -V 2>/dev/null | grep -Eo '[0-9]+\.[0-9]+[a-z]?' | head -n1)
+    if [ -n "$ver" ]; then
+      report_plan "$tool" "present" "$ver"
+    else
+      report_plan "$tool" "present" ""
+    fi
+  else
+    report_plan "$tool" "install" ""
+  fi
+}
+
+plan_system_packages() {
+  for tool in git tmux gh; do
+    plan_system_package "$tool"
+  done
+}
+
+print_plan() {
+  repo="$1"; with_pi="${2:-0}"
+  printf 'Plan for %s (Nogging %s):\n' "$repo" "$NOGGING_TAG"
+  plan_node
+  plan_npm_global "@anthropic-ai/claude-code" "$CLAUDE_CODE_VERSION" claude
+  plan_npm_global "@openai/codex" "$CODEX_VERSION" codex
+  plan_npm_global "@fission-ai/openspec" "$OPENSPEC_VERSION" openspec
+  if [ "$with_pi" -eq 1 ]; then
+    plan_npm_global "@earendil-works/pi-coding-agent" "$PI_VERSION" pi
+  fi
+  plan_dolt
+  plan_bd
+  plan_system_packages
+  printf '\n'
+}
+
 # --- Step 1: platform gate ---------------------------------------------------
 # docs/compatibility.md: supported is Debian/Ubuntu-family Linux, x86_64 or
 # aarch64, only. This must run and fail before anything else is touched.
@@ -115,8 +241,8 @@ check_platform() {
 Nogging bootstrap supports Debian/Ubuntu-family Linux on x86_64 or aarch64
 only (see docs/compatibility.md). Detected: ID="$os_id" ID_LIKE="$os_id_like"
 arch="$arch". Other Linux distributions/architectures are experimental, not
-installable by this script; macOS, Windows, and WSL are unsupported for
-2.0.x. Nothing has been installed.
+installable by this script; macOS, Windows, and WSL are unsupported.
+Nothing has been installed.
 EOF
     exit 1
   fi
@@ -325,18 +451,21 @@ run_nogging_init() {
   ( cd "$repo" && npx --yes "github:JoMe92/nogging#${NOGGING_TAG}" init $init_flags )
 
   doctor_status=0
+  doctor_log="$repo/.nogging/state/bootstrap-doctor.log"
+  mkdir -p "$repo/.nogging/state"
   if [ -x "$repo/scripts/nogg" ]; then
-    ( cd "$repo" && ./scripts/nogg doctor ) || doctor_status=$?
+    ( cd "$repo" && ./scripts/nogg doctor ) > "$doctor_log" 2>&1 || doctor_status=$?
+    grep -E '^(FAIL|WARN)\b' "$doctor_log" || true
+    if [ "$doctor_status" -eq 0 ]; then
+      echo "bootstrap: scripts/nogg doctor OK — full report in $doctor_log"
+    else
+      echo "bootstrap: scripts/nogg doctor reported problems (exit $doctor_status) — full report in $doctor_log" >&2
+    fi
   else
     echo "bootstrap: scripts/nogg not found in $repo after init" >&2
     doctor_status=1
   fi
 
-  if [ "$doctor_status" -eq 0 ]; then
-    echo "bootstrap: done — scripts/nogg doctor reports every required tool present and in range"
-  else
-    echo "bootstrap: done, but scripts/nogg doctor reported problems above (exit $doctor_status) — see FAIL/WARN lines" >&2
-  fi
   return "$doctor_status"
 }
 
@@ -485,15 +614,41 @@ run_auth_step() {
   offer_login "Claude Code" check_claude_auth claude
 }
 
-# --- Closing summary (design.md, Decision 3/5) -------------------------------
+query_auth_status() {
+  auth_out=""
+  if check_gh_auth; then
+    auth_out="${auth_out}GitHub: logged in
+"
+  else
+    auth_out="${auth_out}GitHub: not logged in — run gh auth login
+"
+  fi
+  if check_claude_auth; then
+    auth_out="${auth_out}Claude Code: logged in
+"
+  else
+    auth_out="${auth_out}Claude Code: not logged in — run claude
+"
+  fi
+  if check_codex_auth; then
+    auth_out="${auth_out}Codex: logged in
+"
+  else
+    auth_out="${auth_out}Codex: not logged in — run codex login
+"
+  fi
+  printf '%s' "$auth_out"
+}
+
+# --- Closing summary (design.md, Decision 3/5/6) -----------------------------
 # build_closing_summary <repo> <with_pi> <no_beads> <no_hooks> <no_systemd>
-# <auth_summary> -> the summary text on stdout, naming what was installed,
-# what was skipped, and the next command to run. Pure decision logic
-# (design.md, Decision 5) — no whiptail call, directly unit-testable; reads
-# the same with_pi/no_beads/no_hooks/no_systemd the checklist produced
-# (Decision 3), never a second source of truth about what got installed.
+# [<auth_summary>] [<doctor_status>] -> the summary text on stdout, naming what
+# was installed, what was skipped, auth status, and next steps. Pure decision
+# logic (design.md, Decision 5/6) — no whiptail call, directly unit-testable.
 build_closing_summary() {
-  repo="$1"; with_pi="$2"; no_beads="$3"; no_hooks="$4"; no_systemd="$5"; auth_summary="$6"
+  repo="$1"; with_pi="$2"; no_beads="$3"; no_hooks="$4"; no_systemd="$5"
+  auth_summary="${6:-}"
+  doctor_status="${7:-}"
 
   installed_list="the core toolchain and Nogging itself"
   [ "$with_pi" -eq 1 ] && installed_list="${installed_list}, the Pi coding agent"
@@ -509,8 +664,34 @@ build_closing_summary() {
   skipped_list="${skipped_list%, }"
   [ -n "$skipped_list" ] || skipped_list="nothing"
 
-  printf 'Installed: %s\n\nSkipped: %s\n\nAuthentication:\n%s\nNext: cd %s && ./scripts/nogg doctor\n' \
-    "$installed_list" "$skipped_list" "$auth_summary" "$repo"
+  if [ -z "$auth_summary" ]; then
+    auth_summary=$(query_auth_status)
+  fi
+
+  if [ "$doctor_status" = "" ]; then
+    next_line="Next: cd $repo && ./scripts/nogg doctor"
+  elif [ "$doctor_status" = "0" ]; then
+    next_line="Next: cd $repo"
+    if [ "$no_beads" -eq 1 ]; then
+      next_line="$next_line && bd init"
+    fi
+    next_line="$next_line; start your first plan with /plan or ./scripts/nogg worktree plan <planning-id> <description>"
+    if [ "$no_systemd" -eq 0 ]; then
+      next_line="$next_line (optional: systemctl --user enable --now nogging-sync.timer)"
+    fi
+  else
+    next_line="Next: cd $repo"
+    if [ "$no_beads" -eq 1 ]; then
+      next_line="$next_line && bd init"
+    fi
+    next_line="$next_line && ./scripts/nogg doctor; start your first plan with /plan or ./scripts/nogg worktree plan <planning-id> <description>"
+    if [ "$no_systemd" -eq 0 ]; then
+      next_line="$next_line (optional: systemctl --user enable --now nogging-sync.timer)"
+    fi
+  fi
+
+  printf 'Installed: %s\n\nSkipped: %s\n\nAuthentication:\n%s\n%s\n' \
+    "$installed_list" "$skipped_list" "$auth_summary" "$next_line"
 }
 
 show_closing_summary() {
@@ -578,6 +759,8 @@ main() {
   # have set via flags (design.md, Decision 3) — every step below runs
   # identically either way, closing summary included.
 
+  print_plan "$repo" "$with_pi"
+
   ensure_node
   ensure_npm_global "@anthropic-ai/claude-code" "$CLAUDE_CODE_VERSION" claude
   ensure_npm_global "@openai/codex" "$CODEX_VERSION" codex
@@ -593,8 +776,9 @@ main() {
   init_status=0
   run_nogging_init "$repo" "$no_beads" "$no_hooks" "$no_systemd" || init_status=$?
 
+  summary_text=$(build_closing_summary "$repo" "$with_pi" "$no_beads" "$no_hooks" "$no_systemd" "${auth_summary:-}" "$init_status")
+  printf '\n%s\n' "$summary_text"
   if [ "$run_mode" = "interactive" ]; then
-    summary_text=$(build_closing_summary "$repo" "$with_pi" "$no_beads" "$no_hooks" "$no_systemd" "${auth_summary:-}")
     show_closing_summary "$summary_text"
   fi
 
