@@ -108,16 +108,18 @@ command above.
 
 | Class | Paths | Behaviour |
 | --- | --- | --- |
-| Tool files | `scripts/nogg`, `scripts/session-launch`, `scripts/session-log-writer`, `scripts/install-hooks`, `scripts/test`, shipped `scripts/*.test.sh`, `scripts/hooks/*`, `.agents/skills/**` | copied verbatim, overwritten on every `init` / `update`; runtime helpers installed executable |
-| Reference docs | `docs/nogging/{operating-model,architecture,compatibility,failure-recovery,security-model,using-with-codex,using-with-pi,worktree-workflow}.md` | copied verbatim |
+| Tool files | `scripts/nogg`, `scripts/session-launch`, `scripts/session-log-writer`, `scripts/install-hooks`, `scripts/test`, shipped `scripts/*.test.sh`, `scripts/hooks/*`, `.agents/skills/**` | copied verbatim; tracked in `.nogging/installed-manifest.json`; unmodified files update cleanly, locally modified files preserved as `<file>.nogging-new` (or overwritten to `<file>.orig` with `--force`); runtime helpers installed executable |
+| Reference docs | `docs/nogging/{operating-model,architecture,compatibility,failure-recovery,security-model,using-with-codex,using-with-pi,worktree-workflow}.md` | copied verbatim; tracked in manifest; locally modified files preserved as `<file>.nogging-new` |
 | Scaffold | `openspec/config.yaml`, `openspec/project.md`, `.nogging/config.json` | written **only when absent** — never overwritten |
 | Merged | `.claude/settings.json`, `.gitignore`, `CLAUDE.md`, `AGENTS.md`, `.codex/hooks.json` | edited idempotently; your other content is preserved (a `bd`-written `.codex/hooks.json` is never clobbered) |
-| Codex payload | `.codex/rules/nogging.rules`, `.codex/prompts/{plan,discovery-review,sync-now}.md` | copied verbatim; only relevant if you run the loop from Codex — see [`docs/using-with-codex.md`](using-with-codex.md) |
-| Pi payload | `.pi/prompts/{plan,discovery-review,sync-now}.md`, `.pi/extensions/nogging-guard.ts` | copied verbatim; only relevant if you run the loop from Pi — see [`docs/using-with-pi.md`](using-with-pi.md) |
+| Codex payload | `.codex/rules/nogging.rules`, `.codex/prompts/{plan,discovery-review,sync-now}.md` | copied verbatim; tracked in manifest; locally modified files preserved as `<file>.nogging-new` (or overwritten with `--force`); only relevant if you run the loop from Codex — see [`docs/using-with-codex.md`](using-with-codex.md) |
+| Pi payload | `.pi/prompts/{plan,discovery-review,sync-now}.md`, `.pi/extensions/nogging-guard.ts` | copied verbatim; tracked in manifest; locally modified files preserved as `<file>.nogging-new` (or overwritten with `--force`); only relevant if you run the loop from Pi — see [`docs/using-with-pi.md`](using-with-pi.md) |
 | Rendered | `systemd/nogg-sync-<slug>.service` and `.timer`, `systemd/nogg-orchestrator-<slug>.service` | generated with this repo's absolute path; `<slug>` is the sanitized repo directory name |
 
 `.nogging/config.json` records `name` (your repo's directory name) and
 `nogging_version`.
+`.nogging/installed-manifest.json` tracks SHA-256 digests of all installed verbatim
+and doc files for three-way comparison during updates.
 
 Never touched: `openspec/changes/**`, `.beads/**`,
 `.nogging/{state,locks,reports}`, your `README.md`, your `package.json`.
@@ -125,13 +127,16 @@ Never touched: `openspec/changes/**`, `.beads/**`,
 ### Flags
 
 - `--dry-run` — print the change list, write nothing
+- `--force` — overwrite locally modified verbatim files on `init` or `update`
+  (backs up each existing file to `<file>.orig`; default preserves local modifications
+  and writes upstream to `<file>.nogging-new`)
 - `--no-beads` — skip the default `bd init`; use this only when the tracker is
   intentionally provisioned separately
 - `--no-hooks` — do not install the Git hooks
 - `--no-systemd` — do not render the systemd unit
 
-All four flags apply to `init`. On `update`, `--dry-run`, `--no-hooks`, and
-`--no-systemd` suppress the corresponding writes; `remove` supports
+All flags apply to `init`. On `update`, `--dry-run`, `--force`, `--no-hooks`, and
+`--no-systemd` apply to the corresponding writes; `remove` supports
 `--dry-run` for a non-mutating preview.
 `init` is idempotent; re-running it is safe.
 
@@ -173,6 +178,34 @@ npx github:JoMe92/nogging#<new-tag> update
 `nogging_version`. It does **not** run the scaffold step, so
 `openspec/project.md`, the config `name`, and everything under
 `openspec/changes/` are left exactly as they are.
+
+### Preserving local modifications (`.nogging-new` and `--force`)
+
+When updating, Nogging uses `.nogging/installed-manifest.json` (or bundled release
+baselines for upgrades from legacy releases) to perform a three-way comparison
+between the currently installed file, the incoming release, and the baseline digest:
+
+- **Unmodified files** update cleanly to the incoming version.
+- **Locally customized files** (for example, edited rules in `.codex/rules/nogging.rules`
+  or tuned prompt instructions in `.nogging/launch-prompts/orchestrator.md`) are
+  **preserved** by default. Nogging retains your modified file, writes the upstream
+  version alongside it as `<file>.nogging-new`, and emits a warning in the update report.
+- **Doctor warnings**: `./scripts/nogg doctor` inspects the repository and prints a
+  warning for each pending update:
+  ```text
+  WARN  locally modified file has pending upstream update: <path> (review <path>.nogging-new and reconcile)
+  ```
+  This warning is advisory and does not fail doctor checks. To reconcile, compare
+  `<file>` and `<file>.nogging-new`, incorporate desired changes into `<file>`, and
+  delete `<file>.nogging-new`.
+- **Force overwrite (`--force`)**: If you intentionally wish to overwrite local edits
+  with upstream files, pass `--force`:
+  ```bash
+  npx github:JoMe92/nogging#<new-tag> update --force
+  ```
+  With `--force`, Nogging backs up your existing file to `<file>.orig` before
+  overwriting it with the upstream release file. Review the `<file>.orig` backup
+  and delete it when satisfied.
 
 ### Updating and rolling back
 
