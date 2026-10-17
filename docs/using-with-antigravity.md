@@ -154,6 +154,8 @@ non-`SUCCESS` probe is unknown as well; exit status zero is not trusted.
 scripts/nogg usage --agent agy --model gemini-3.8-flash-medium --json
 ```
 
+A bare `nogg usage --agent antigravity` needs `--model` to select a group; without one, usage reports unknown.
+
 The probe runs `agy --print /usage` from a private directory with runtime
 auto-update disabled and caches only sanitized buckets (owner-only) under
 `$XDG_CACHE_HOME/nogging/usage/`. `AGY_NOGG_USAGE_PROBE=0` disables the
