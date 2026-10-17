@@ -22,6 +22,7 @@
     "bin/lib/merge.js",
     "bin/lib/preflight.js",
     "bin/lib/remove.js",
+    "bin/lib/report.js",
     "bin/lib/systemd.js",
     "templates/agents-block.md",
     "templates/claude-block.md",

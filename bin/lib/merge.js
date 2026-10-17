@@ -217,6 +217,7 @@ function readTemplate(ctx, rel) {
 }
 
 function applyMerges(ctx) {
+  ctx.log.setClass('merge');
   mergeClaudeSettings(ctx);
   mergeCodex(ctx);
   mergeAntigravity(ctx);
