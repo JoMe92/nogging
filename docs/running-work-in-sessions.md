@@ -637,6 +637,52 @@ reservation ledger is strictly host-local, and other machines or external
 tools consuming the account's quota are only observed once local usage snapshots
 update.
 
+The shared reservation ledger (`ledger.json`) uses a single top-level token
+map with integer per-entry `schema_version: 1` on new pending entries. Missing
+versions represent legacy entries (both unversioned tmux and backend-neutral
+shapes remain readable). All entries across versions share a strict accounting
+core: nonempty string `scope`, finite nonnegative `estimate`, a `windows`
+dictionary whose reset values are ISO timestamps or null, and a safe owner file
+basename in `owner`.
+
+### Tolerant reader floor and opaque entries
+
+Readers validate the entire ledger's accounting core before any action or
+rewrite. Corrupt accounting or malformed top-level data halts admission
+safely with a clear diagnostic (`usage reservation ledger is malformed; admission refused`).
+
+When an entry carries a future version (`schema_version > 1`), an invalid
+version, or malformed session metadata but retains a valid accounting core:
+- It is classified as **opaque**.
+- It is preserved verbatim across unrelated admissions, bindings, and releases.
+- It counts toward its matching scope and reset windows in totals and admission.
+- A concise stderr diagnostic (`warning: reservation <token>: <reason>; retained without probing`) is emitted once during ledger transactions.
+- Its probe is **never executed**, its session record is never inspected, its owner lock is never taken as proof of death, and it is **never reaped**, even if its record appears terminal.
+- Direct `bind()` and `release()` refuse to alter an opaque target (`cannot bind/release opaque reservation <token>`).
+
+To operate safely across concurrent versions, all active consumers on the host
+must meet the **tolerant reader floor**: updating older installations to a release
+incorporating tolerant decoding is required before relying on mixed-version operation.
+Downgrading or running unpatched versions (such as v2.2.0) alongside newer
+versioned writers is unsupported because unpatched readers crash on backend-neutral
+or versioned shapes (`KeyError: 'tmux'`).
+
+### Direct test execution and environment isolation
+
+Direct test invocations (such as running `scripts/*.test.sh` directly from a
+terminal or from within a supervised session) isolate their execution
+environment by sourcing `scripts/lib/test-env.sh`.
+
+This removes inherited `NOGG_*` session environment variables (such as
+`NOGG_SESSION_ROLE`, `NOGG_SESSION_NAME`, `NOGG_OPENSPEC_FENCED`, and
+`NOGG_TASK_DONE_SOCKET`) and `NOGGING_ROOT` before imports, fixtures, or child
+processes run. This ensures that direct test runs:
+- Never accidentally contact a live operator's task-done broker socket or emit ticks.
+- Never inherit execution roles that cause false OpenSpec write refusals during planning tests.
+- Never inherit planning roles that grant unauthorized OpenSpec writes during guard tests.
+- Always retain unrelated environment variables, custom quota fixtures, and npm cache settings.
+Fixtures explicitly configure any required session variables after sourcing `test-env.sh`.
+
 Configure it with the optional `usage_gate` object in `.nogging/config.json`;
 these are the defaults:
 
