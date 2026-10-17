@@ -336,6 +336,55 @@ current model, never by switching to one. If a session is stuck on a usage
 limit, wait it out (or run `resume-when-ready`) — do not spend a session-cycle
 retrying with a different model.
 
+## Usage reservation ledger recovery and rollback
+
+The host-wide reservation ledger (`$XDG_CACHE_HOME/nogging/usage/reservations/ledger.json`)
+manages shared quota headroom across repositories.
+
+- **Malformed ledger diagnostic:** If the ledger file contains invalid JSON,
+  malformed top-level entries, or broken accounting core fields (missing scope,
+  non-finite/negative estimate, invalid reset timestamps, or unsafe owner filenames),
+  any admission attempt halts with:
+  ```text
+  usage reservation ledger is malformed (<detail>); admission refused
+  ```
+  Admission exits non-zero before launching side effects or rewriting the file.
+  Inspect `ledger.json`. Correct or remove invalid accounting entries; never
+  hand-edit reservations while other sessions are actively admitting or launching.
+- **Opaque reservations:** When an entry has an unrecognized version
+  (`schema_version > 1`) or malformed session metadata but a valid accounting
+  core, readers log:
+  ```text
+  warning: reservation <token>: <reason>; retained without probing
+  ```
+  Opaque entries are retained without executing probes or reaping them, which
+  conservatively preserves headroom. If opaque entries hold quota longer than
+  necessary, update the host tools to a version that understands their schema.
+  Do not delete entries of live sessions.
+- **Rollback to an earlier version:** Safe rollback requires rolling back only
+  to a release that satisfies the **tolerant reader floor** (supporting the
+  shared accounting core and tolerant decoding). Downgrading directly to
+  unpatched v2.2.0 while newer sessions or version-1 entries exist is unsupported
+  because v2.2.0 crashes with `KeyError: 'tmux'`. To roll back, wait for active
+  sessions to complete and ensure all entries are released, or rollback to a
+  patched tolerant release. Never split the ledger or delete live reservations.
+
+## Direct test execution isolation and setup diagnostics
+
+Direct test scripts (`scripts/**/*.test.sh`) source `scripts/lib/test-env.sh` to
+strip `NOGG_*` and `NOGGING_ROOT` from the calling environment.
+
+- **Preventing task-done broker contamination:** In a supervised session,
+  `NOGG_TASK_DONE_SOCKET` points to the active session's task broker. By clearing
+  this variable before tests run, test fixtures (such as those in `nogg.test.sh`)
+  are prevented from accidentally connecting to the live broker and ticking real
+  tasks.
+- **Named setup failures:** Direct planning setup steps (such as `plan-begin`
+  fixtures in `scripts/nogg.test.sh`) report named failures (`FAIL - <scenario>: plan-begin setup failed`)
+  and print captured error output rather than silently aborting or ignoring errors
+  under `set -e`. Dependent assertions are skipped on setup failure, and the test
+  exits non-zero.
+
 ## `openspec/` stuck read-only or stuck writable
 
 The canonical boundary lives in the **main checkout's** `.nogging/locks`,
