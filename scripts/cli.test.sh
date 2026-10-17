@@ -408,6 +408,101 @@ if command -v npm >/dev/null 2>&1; then
     check "packed install ships codex prompt sync-now.md" test -f "$packrepo/.codex/prompts/sync-now.md"
     check "packed install AGENTS.md has Tool notes"  grep -q 'Tool notes' "$packrepo/AGENTS.md"
     check "packed install AGENTS.md labels Pi"       grep -q '.pi/extensions/nogging-guard.ts' "$packrepo/AGENTS.md"
+
+    # --- package "files" list validation (design Decision 6) ---------------
+    # Every module the installer requires must be inside the tarball, else the
+    # real npx install dies at load time even though the checkout works.
+    missing=$(node - "$root" "$pkg" <<'NODE'
+const fs = require('fs');
+const path = require('path');
+const [root, pkg] = process.argv.slice(2);
+const missing = [];
+const dirs = ['bin', 'bin/lib'];
+for (const d of dirs) {
+  for (const f of fs.readdirSync(path.join(root, d))) {
+    if (!f.endsWith('.js')) continue;
+    const rel = `${d}/${f}`;
+    if (!fs.existsSync(path.join(pkg, rel))) missing.push(rel);
+    const src = fs.readFileSync(path.join(root, rel), 'utf8');
+    for (const m of src.matchAll(/require\('(\.[^']+)'\)/g)) {
+      const base = path.join(path.dirname(path.join(pkg, rel)), m[1]);
+      if (![base, `${base}.js`, `${base}.json`].some((p) => fs.existsSync(p) && fs.statSync(p).isFile())) {
+        missing.push(`${rel} -> ${m[1]}`);
+      }
+    }
+  }
+}
+process.stdout.write(missing.join('\n'));
+NODE
+)
+    check "packed bin/ modules and their relative requires are all shipped${missing:+ (missing: $missing)}" \
+      [ -z "$missing" ]
+    for helper in bin/lib/manifest-store.js bin/lib/baselines.js bin/lib/fsops.js bin/lib/install.js bin/lib/remove.js; do
+      check "packed package ships $helper" test -f "$pkg/$helper"
+    done
+    check "package.json files lists the manifest helpers" \
+      node -e "const f=require('$root/package.json').files; process.exit(['bin/lib/manifest-store.js','bin/lib/baselines.js'].every(p=>f.includes(p))?0:1)"
+
+    # --- manifest + preservation workflow from the packed install ----------
+    manifest="$packrepo/.nogging/installed-manifest.json"
+    check "packed install writes the installed manifest" test -f "$manifest"
+    check "packed manifest declares schema 1 and the package version" \
+      node -e "const m=require('$manifest'); process.exit(m.manifest_version===1 && m.nogging_version===require('$root/package.json').version ? 0 : 1)"
+    check "packed manifest records the codex rules floor" \
+      node -e "process.exit(require('$manifest').files['.codex/rules/nogging.rules'] ? 0 : 1)"
+    manifest_before=$(cat "$manifest")
+    ( cd "$packrepo" && node "$pkg/bin/cli.js" update --no-systemd >/dev/null 2>&1 ) || rc=$?
+    check "packed update with no changes leaves the manifest identical" [ "$manifest_before" = "$(cat "$manifest")" ]
+    check "packed update with no changes writes no .nogging-new" \
+      [ -z "$(find "$packrepo" -name '*.nogging-new' -not -path '*/.git/*' | head -1)" ]
+
+    # A "next release": same package with changed upstream content.
+    pkg2="$pack/package-next"; cp -r "$pkg" "$pkg2"
+    printf '\n# upstream next release\n' >> "$pkg2/.codex/rules/nogging.rules"
+    printf '\n# upstream next release\n' >> "$pkg2/.nogging/launch-prompts/orchestrator.md"
+    printf '\n# local customisation\n' >> "$packrepo/.codex/rules/nogging.rules"
+    rules_local=$(cat "$packrepo/.codex/rules/nogging.rules")
+    rc=0
+    upd_out=$( cd "$packrepo" && node "$pkg2/bin/cli.js" update --no-systemd 2>&1 ) || rc=$?
+    check "packed update over a modified file exits 0" [ "$rc" -eq 0 ]
+    check "locally modified file is left unchanged" \
+      [ "$rules_local" = "$(cat "$packrepo/.codex/rules/nogging.rules")" ]
+    check "upstream content is written to .nogging-new" \
+      cmp -s "$pkg2/.codex/rules/nogging.rules" "$packrepo/.codex/rules/nogging.rules.nogging-new"
+    check "update warns about the preserved file" \
+      bash -c "grep -q 'nogging.rules.nogging-new' <<< \"\$0\"" "$upd_out"
+    check "unmodified file is refreshed cleanly" \
+      cmp -s "$pkg2/.nogging/launch-prompts/orchestrator.md" "$packrepo/.nogging/launch-prompts/orchestrator.md"
+    check "refreshed file gets no .nogging-new" \
+      test ! -e "$packrepo/.nogging/launch-prompts/orchestrator.md.nogging-new"
+    check "manifest baseline still points at the old upstream for the preserved file" \
+      node -e "
+        const s=require('$root/bin/lib/manifest-store');
+        const m=require('$manifest');
+        process.exit(m.files['.codex/rules/nogging.rules']===s.hashFile('$pkg/.codex/rules/nogging.rules') ? 0 : 1)"
+
+    # doctor surfaces the pending update without failing on it alone.
+    doc_out=$( cd "$packrepo" && ./scripts/nogg doctor 2>&1 ) || true
+    check "doctor warns about the pending .nogging-new" \
+      bash -c "grep -q 'WARN.*nogging.rules.nogging-new' <<< \"\$0\"" "$doc_out"
+
+    # --force backs the local file up and takes upstream.
+    rc=0
+    ( cd "$packrepo" && node "$pkg2/bin/cli.js" update --force --no-systemd >/dev/null 2>&1 ) || rc=$?
+    check "packed update --force exits 0" [ "$rc" -eq 0 ]
+    check "--force backs the local file up to .orig" \
+      [ "$rules_local" = "$(cat "$packrepo/.codex/rules/nogging.rules.orig")" ]
+    check "--force installs upstream content" \
+      cmp -s "$pkg2/.codex/rules/nogging.rules" "$packrepo/.codex/rules/nogging.rules"
+
+    # remove cleans up the manifest and the leftover artifacts.
+    printf 'x\n' > "$packrepo/.codex/rules/nogging.rules.nogging-new"
+    rc=0
+    ( cd "$packrepo" && node "$pkg2/bin/cli.js" remove >/dev/null 2>&1 ) || rc=$?
+    check "packed remove exits 0" [ "$rc" -eq 0 ]
+    check "remove deletes the installed manifest" test ! -e "$manifest"
+    check "remove deletes .nogging-new and .orig leftovers" \
+      [ -z "$(find "$packrepo" \( -name '*.nogging-new' -o -name '*.orig' \) -not -path '*/.git/*' | head -1)" ]
   else
     echo "ok   - packed-install check skipped (npm pack failed)"
   fi
