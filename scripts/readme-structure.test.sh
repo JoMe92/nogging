@@ -67,7 +67,7 @@ if not intro_text:
 elif len(re.findall(r"[.!?](?=\s|$)", intro_text)) > 3:
     fail("intro paragraph has more than three sentences")
 if "(#safety-warning)" not in "\n".join(prose[i:first_h2]):
-    fail("pre-public blockquote does not link #safety-warning")
+    fail("status blockquote does not link #safety-warning")
 
 # --- section order ---------------------------------------------------------
 def headings(level):
@@ -135,6 +135,21 @@ if link < 0:
     fail("README does not link the security and threat model")
 elif 0 <= full < link:
     fail("--full-access appears before the security and threat model link")
+
+# --- public release: no pre-public wording, private-repository note -------
+if re.search(r"pre-public|release candidate", readme, re.I):
+    fail("README still says pre-public or release candidate")
+status, inside = [], False
+for l in lines:
+    if l.startswith("## "):
+        inside = l[3:].strip() == "Project status and audience"
+    elif inside:
+        status.append(l)
+status_text = re.sub(r"\s+", " ", " ".join(status)).lower()
+for needle in ("private", "full access", "safety warning", "--full-access",
+               "background services", "(#safety-warning)"):
+    if needle not in status_text:
+        fail(f"Project status section lacks the private-repository note: {needle}")
 
 # --- CI table lives in CONTRIBUTING.md -------------------------------------
 if not re.search(r"^## Tests and CI$", (root / "CONTRIBUTING.md").read_text(), re.M):

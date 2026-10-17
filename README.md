@@ -8,9 +8,9 @@
 
 Nogging gives coding agents (Claude Code, Codex, Pi, Antigravity) a team structure with a defined role and write boundary for each. A Planning Agent writes the approved plan in OpenSpec, a Lead Agent executes it as Beads tasks with Git evidence, and a sync mirrors that evidence back into the plan. The command and installed state are named `nogg`.
 
-> Nogging is a **pre-public release candidate**: keep the repository private and
-> read the [safety warning](#safety-warning) before you enable anything that
-> grants agents full access or runs in the background.
+> Nogging is a **public release**. Read the [safety warning](#safety-warning)
+> and the [security and threat model](docs/security-model.md) before you enable
+> `--full-access` or background services.
 
 ## Quick Guide
 
@@ -162,11 +162,10 @@ always-on operation.
 
 ## Project status and audience
 
-Nogging is a **pre-public release candidate**. Its core workflow and Linux
-installation path are exercised in CI, but public-release acceptance is still
-in progress. Keep the repository private and avoid production-critical,
-unattended use until the signed acceptance report and final readiness report
-are complete.
+Nogging is a **public release**. Its core workflow and Linux installation path
+are exercised in CI. Keep target repositories where agents run with full access
+private, and read the [safety warning](#safety-warning) before enabling
+`--full-access` or background services.
 
 Nogging is for teams and maintainers who want autonomous coding agents to work
 from approved specifications with durable task ownership and auditable Git
