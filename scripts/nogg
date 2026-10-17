@@ -5447,7 +5447,8 @@ def _deliver_pane_locked(name, agent, message, *, mode="send", timing=None, base
                       deadline=deadline, timing=timing)
 
 def _session_send_locked(name, message, agent, verify, timing):
-    if agent == "codex" and codex_queue_send(load_session(name)[1], message):
+    if agent == "codex" and _codex_queue_deliver_locked(
+            name, load_session(name)[1], message, timing) == "submitted":
         return "codex queue"
     if agent == "pi" or _is_legacy_mock():
         session_action(name, "send_text", message)
@@ -5539,20 +5540,101 @@ def resolve_codex_thread_id(rec, merge=False):
     else:
         write_session(path, rec)
     return thread_id
-def codex_queue_send(rec, message):
-    """Primary send path for a codex session: `codex queue --thread <THREAD>
-    --message <TEXT>`, against the thread id `resolve_codex_thread_id` finds.
-    TASK-SOB-006 confirmed live that this delivers straight into the
-    session's pane and submits immediately — no `_submit_pane_input` quirk
-    to apply, unlike the Layer-1 path. Returns True if it delivered (the
-    caller then skips the Layer-1 pane-based send entirely), False to fall
-    back — a thread id not yet resolvable, or the `codex` binary itself
-    rejecting it. Never raises."""
+# A queue refusal counts as "nothing was accepted" only when its stderr matches
+# the committed fixture scripts/fixtures/codex-queue/synthetic-refused-unknown-thread.stderr.
+# Any other non-zero exit is ambiguous and never permits a second delivery.
+CODEX_QUEUE_REFUSALS = (
+    re.compile(r"\b(?:no such|unknown|could not find|cannot find)\b[^\n]*\b(?:thread|session)\b", re.I),
+    re.compile(r"\b(?:thread|session)\b[^\n]*\bnot found\b", re.I),
+)
+def codex_delivery_module():
+    """Load the pure Codex receipt reader from scripts/lib beside this script."""
+    lib = str(Path(__file__).resolve().parent / "lib")
+    if lib not in sys.path:
+        sys.path.insert(0, lib)
+    sys.dont_write_bytecode = True
+    import session_codex_delivery
+    return session_codex_delivery
+def _codex_rollout_path(thread_id, cwd):
+    """The rollout file whose own session_meta names exactly this thread and cwd."""
+    for path in _codex_rollout_files():
+        if not path.name.endswith(f"-{thread_id}.jsonl"):
+            continue
+        meta = _codex_rollout_session_meta(path)
+        if meta and meta[0] == thread_id and meta[1] == cwd:
+            return path
+    return None
+def _codex_queue_invoke(thread_id, message, timeout):
+    """Run `codex queue` once. Returns "accepted", "refused-before-acceptance"
+    or "unverified" (timeout or an ambiguous failure). Never raises and never
+    echoes the message."""
+    try:
+        result = run("codex", "queue", "--thread", thread_id, "--message", message,
+                     check=False, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return "unverified"
+    except FileNotFoundError:
+        return "refused-before-acceptance"   # the binary never ran
+    except OSError:
+        return "unverified"
+    if result.returncode == 0:
+        return "accepted"
+    if any(rx.search(result.stderr or "") for rx in CODEX_QUEUE_REFUSALS):
+        return "refused-before-acceptance"
+    return "unverified"
+def _codex_unverified_error(name, detail):
+    return RuntimeError(
+        f"{name}: Codex accepted the queued message but {detail}; it was not typed or "
+        f"queued again. Inspect with `session log {name}` / `session watch`, then "
+        f"deliberately run `session nudge {name} --message ...` if it is still needed")
+def _codex_queue_deliver_locked(name, rec, message, timing):
+    """Deliver one message through `codex queue` and prove it was submitted.
+
+    Returns "not-attempted" (no exact thread; pane fallback allowed),
+    "refused-before-acceptance" (pane fallback allowed) or "submitted".
+    Raises once the queue accepted or may have accepted the message without
+    submission evidence: that is never retyped, requeued or sent to the pane."""
     thread_id = resolve_codex_thread_id(rec)
     if not thread_id:
-        return False
-    result = run("codex", "queue", "--thread", thread_id, "--message", message, check=False)
-    return result.returncode == 0
+        return "not-attempted"
+    deadline = time.monotonic() + timing["session_delivery_timeout_seconds"]
+    interval = timing["session_submit_verify_delay_seconds"]
+    submit_delay = timing["session_submit_delay_seconds"]
+    receipts = codex_delivery_module()
+    path = _codex_rollout_path(thread_id, rec.get("working_dir"))
+    snapshot = (receipts.snapshot_source(path, thread_id) if path
+                else {"unknown": "transcript not found"})
+    clean_baseline = _delivery_composer_state(name, "codex", message) == "empty"
+    outcome = _codex_queue_invoke(thread_id, message, max(0.001, deadline - time.monotonic()))
+    if outcome == "refused-before-acceptance":
+        return outcome
+    if outcome == "unverified":
+        raise _codex_unverified_error(name, "the queue call timed out or failed ambiguously")
+    enters = 0
+    while True:
+        receipt, snapshot = receipts.read_fresh_receipt(snapshot, message)
+        if receipt["status"] == "receipt":
+            return "submitted"
+        state = _delivery_composer_state(name, "codex", message)
+        if enters and state == "empty":
+            return "submitted"   # the owned buffer left the composer after our Enter
+        if clean_baseline and state == "pending" and enters < 2:
+            if deadline - time.monotonic() < submit_delay:
+                break
+            time.sleep(submit_delay)
+            receipt, snapshot = receipts.read_fresh_receipt(snapshot, message)
+            if receipt["status"] == "receipt":
+                return "submitted"
+            if _delivery_composer_state(name, "codex", message) == "pending":
+                _submit_pane_input(name, "codex")
+                enters += 1
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        time.sleep(min(interval, remaining))
+    if enters:
+        raise _codex_unverified_error(name, "its text is still unsubmitted after one retry Enter")
+    raise _codex_unverified_error(name, "no fresh submission receipt or pending composer text appeared")
 def session_send(name, message, verify=False):
     """Send one message through the serialized, verified delivery path."""
     _, rec = load_session(name)
@@ -5652,7 +5734,8 @@ def session_nudge(name, message=None):
             _verify_submitted(name, agent, message, timing=timing)
             print(f"nudged {name}")
             return
-        if message and agent == "codex" and codex_queue_send(rec, message):
+        if message and agent == "codex" and _codex_queue_deliver_locked(
+                name, rec, message, timing) == "submitted":
             print(f"nudged {name} (codex queue)")
             return
         if not message:
