@@ -3532,6 +3532,20 @@ def usage_module():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def usage_cache_observations():
+    """Current claude/codex observations for `doctor`: local caches and rollout
+    logs only. Antigravity is skipped because its observation can spawn `agy`."""
+    usage = usage_module()
+    stale = usage.gate_config(CFG.get("usage_gate"))["stale_seconds"]
+    found = {}
+    for agent in ("claude", "codex"):
+        try:
+            found[agent] = usage.inspect_usage(agent, stale_after=stale)
+        except Exception:
+            pass
+    return found
 _USAGE_PENDING = {}
 
 def usage_collection_module():
@@ -3978,9 +3992,11 @@ def usage_gate_admission(role_meta, agent, records, ignore, model=None):
     if gate["decision"] in ("denied", "unknown-denied"):
         raise UsageGateDenied(f"usage gate denied {agent} launch: {describe_denial(gate)}")
     if gate["decision"] == "unknown-admitted":
-        reasons = "; ".join(f"{w['bucket']}: {w['reason']}" for w in gate["windows"] if w["status"] != "known")
-        print(f"warning: {agent} usage is unknown ({reasons}); launching without known headroom "
-              "(usage_gate.on_unknown is warn)", file=sys.stderr)
+        reasons = "; ".join(
+            f"{w['bucket']}: {w['reason']}" + (f" — {w['hint']}" if w.get("hint") else "")
+            for w in gate["windows"] if w["status"] != "known")
+        print(f"WARN: {agent} usage is unknown ({reasons}); launch admitted WITHOUT known headroom "
+              '(usage_gate.on_unknown is warn; set it to "deny" to block)', file=sys.stderr)
     return gate
 def session_state_grants(bead, explicit=(), records=None):
     if os.environ.get("NOGG_CODEX_EXTRA_WRITABLE_ROOTS"):
@@ -7197,6 +7213,10 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
     notes.extend(usage_collection_notes())
     try:
         notes.extend(usage_module().quota_freshness_notes(CFG.get("usage_gate")))
+    except Exception:
+        pass
+    try:
+        notes.extend(usage_module().unknown_policy_notes(CFG.get("usage_gate"), usage_cache_observations()))
     except Exception:
         pass
     for note in notes: print(f"NOTE  {note}")
