@@ -472,6 +472,8 @@ cat >"$work/bin/codex" <<STUB
 set -euo pipefail
 printf '%s\n' "\$*" >>"$work/codex-queue-calls.log"
 if [[ "\${1:-}" == "queue" ]]; then
+  # A real Codex writes the submitted user message to its rollout file.
+  python3 -c 'import json,sys; open(sys.argv[1],"a").write(json.dumps({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":sys.argv[2]}]}})+"\n")' "$rollout_dir/rollout-2026-10-02T00-00-00-$thread_id.jsonl" "\${5:-}"
   echo "Queued message fake-msg-id for thread \${3:-}."
   exit 0
 fi
