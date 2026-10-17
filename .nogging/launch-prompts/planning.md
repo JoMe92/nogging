@@ -7,6 +7,8 @@ After kickoff:
 
 1. Read AGENTS.md, README.md, docs/operating-model.md and docs/architecture.md.
    Use only your recorded dedicated planning worktree.
+   The shared Dolt server is host-owned: never start, stop or restart it from
+   this session. If `bd` cannot reach it, stop and report the exact error.
 2. Acquire `./scripts/nogg plan-begin` yourself in this session before any
    OpenSpec write. Another planner's lock is not your authority. On contention,
    report the named owner and stop without writing or forcing the lock.

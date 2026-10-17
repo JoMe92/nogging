@@ -42,14 +42,24 @@ with tempfile.TemporaryDirectory(prefix="nogg packed launch ") as directory:
         if scenario == "old-install-update":
             (consumer / "scripts/session-launch").unlink()
             writer = consumer / "scripts/session-log-writer"
-            writer.write_text("#!/bin/sh\necho obsolete\n")
-            writer.chmod(0o644)
+            writer.write_text("#!/bin/sh\necho locally customized\n")
+            writer.chmod(0o755)
             subprocess.run(install + ["update"] + flags, cwd=consumer, env=env,
                            stdout=subprocess.DEVNULL, check=True)
         for name in ("nogg", "session-launch", "session-log-writer", "openspec-sandbox"):
             installed = consumer / "scripts" / name
-            assert installed.read_bytes() == (package / "scripts" / name).read_bytes()
+            if scenario == "old-install-update" and name == "session-log-writer":
+                assert installed.read_text() == "#!/bin/sh\necho locally customized\n"
+                pending = installed.with_name(installed.name + ".nogging-new")
+                assert pending.read_bytes() == (package / "scripts" / name).read_bytes()
+            else:
+                assert installed.read_bytes() == (package / "scripts" / name).read_bytes()
             assert os.access(installed, os.X_OK)
+        if scenario == "old-install-update":
+            # The preservation contract was verified above. Restore the fixture's
+            # executable helper so subsequent launch assertions exercise the
+            # installed package rather than the intentionally customized copy.
+            writer.write_bytes((package / "scripts/session-log-writer").read_bytes())
         binaries, arguments = consumer / "stub-bin", consumer / "received-args"
         binaries.mkdir()
         arguments.mkdir()
