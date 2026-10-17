@@ -73,7 +73,8 @@ with tempfile.TemporaryDirectory() as tmp:
     pathlib.Path(tmp,'dirty').write_text('pending')
     assert not m._local_integration_verified(record), 'dirty worktree'
 # Explicit change kickoff persists scope; specialist kickoff never expands it.
-with patch.object(m,'_require_running',return_value=(pathlib.Path('/unused'),rec)), patch.object(m,'bead_change',return_value='scope'), patch.object(m,'_session_kickoff') as send, patch.object(m,'load_session',return_value=(None,dict(rec))), patch.object(m,'write_session') as write:
+# Delivery and startup readiness are stubbed: scripts/session-input-ready.test.sh owns readiness.
+with patch.object(m,'await_session_input_ready',return_value='composer'), patch.object(m,'_require_running',return_value=(pathlib.Path('/unused'),rec)), patch.object(m,'bead_change',return_value='scope'), patch.object(m,'_session_kickoff') as send, patch.object(m,'load_session',return_value=(None,dict(rec))), patch.object(m,'write_session') as write:
     m.session_kickoff('session',change='scope')
     assert send.call_count == 1
     assert write.call_args.args[1]['authorized_change']=='scope'

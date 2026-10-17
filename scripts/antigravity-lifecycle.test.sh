@@ -37,13 +37,23 @@ with tempfile.TemporaryDirectory() as tmp:
     refused(lambda: m.antigravity_stop_event(name,{}))
     refused(lambda: m.antigravity_stop_event(name,{'cwd':str(workdir/'.agents'),'payload':fixture}))
     assert not m.session_events_path(name).exists()
-    with patch.object(m,'tmux_sessions',return_value={name}), patch.object(m,'tmux_has_session',return_value=True):
+    # Startup readiness reads the pane: serve a captured idle agy 1.4.0 pane
+    # (mode hint, `? for shortcuts`) and record every other tmux call.
+    idle = (root/'scripts/fixtures/antigravity/1.4.0/panes/accept-edits-hint.txt').read_text()
+    calls = []
+    def fake_tmux(*a, **kw):
+        if a and a[0] == 'capture-pane':
+            return subprocess.CompletedProcess(a, 0, idle, '')
+        calls.append(a)
+    with patch.object(m,'tmux_sessions',return_value={name}), patch.object(m,'tmux_has_session',return_value=True), \
+         patch.object(m,'tmux',side_effect=fake_tmux):
+        # An idle pane alone is not the first turn's end without a Stop or a verified process.
         refused(lambda: m.await_antigravity_first_turn(name,timeout=0))
         busy = copy.deepcopy(fixture); busy['fullyIdle'] = False
         m.antigravity_stop_event(name,busy)
         refused(lambda: m.await_antigravity_first_turn(name,timeout=0))
-        calls = []
-        with patch.object(m,'tmux',side_effect=lambda *a,**kw: calls.append(a)), patch.object(m,'bead_change',return_value='support-antigravity-runtime'):
+        assert not calls
+        with patch.object(m,'bead_change',return_value='support-antigravity-runtime'):
             with patch.dict(os.environ,{'NOGG_SESSION_NAME':name,'NOGG_SESSION_AGENT':'antigravity'}), patch.object(sys,'stdin',io.StringIO(json.dumps(fixture))):
                 m.session_emit('turn_end')
             # Capture survives the launcher's older in-memory lifecycle record.

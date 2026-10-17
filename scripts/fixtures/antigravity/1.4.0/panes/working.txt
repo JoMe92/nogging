@@ -1,0 +1,9 @@
+[31m⚠ Individual quota reached. Please upgrade your subscription to increase your[39m
+[31mlimits. Resets in 41m48s.[39m
+[90mError ID: e325db41-1685-41e3-813a-3800711b7107-2474[39m
+⡿  [90mWorking[94m...[39m
+[90m└ Tip: Use /btw to ask a question without breaking context.[39m
+[90m────────────────────────────────────────────────────────────────────────────────
+[94m>[39m
+[90m────────────────────────────────────────────────────────────────────────────────
+esc to cancel[39m                           [32maccept-edits[2m[39m · Gemini 3.8 Flash · medium

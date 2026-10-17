@@ -100,6 +100,12 @@ for action in [lambda: (pathlib.Path.cwd()/"openspec/forbidden.md").write_text("
     else: raise AssertionError("runtime persisted OpenSpec edit")
 target.write_text(json.dumps(sys.argv[1:]))
 print("stub ready", flush=True)
+# Kickoff waits for an identified empty composer, as a real runtime renders it.
+agent, rule = pathlib.Path(sys.argv[0]).name, "─" * 40
+if agent == "claude":
+    print(f"{rule}\\n❯ \\n{rule}", flush=True)
+elif agent == "codex":
+    print("› ", flush=True)
 while True:
     time.sleep(0.1)
 '''
