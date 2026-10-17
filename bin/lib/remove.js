@@ -94,13 +94,19 @@ function removeAntigravityHooks(ctx) {
 }
 
 function removeInstallation(ctx) {
+  ctx.log.setClass('tools');
   for (const rel of manifest.verbatim) removeManagedFile(ctx, rel);
+  ctx.log.setClass('agents');
   for (const dir of manifest.verbatimDirs) {
     for (const rel of sourceFiles(ctx.pkgRoot, dir.from, dir.to)) removeManagedFile(ctx, rel);
   }
+  ctx.log.setClass('docs');
   for (const doc of manifest.docs) removeManagedFile(ctx, doc.to);
+  ctx.log.setClass('merge');
   removeFile(ctx, MANIFEST_REL_PATH);
+  ctx.log.setClass('units');
   for (const unit of manifest.systemd) removeFile(ctx, unit.to.replace('{slug}', ctx.slug));
+  ctx.log.setClass('merge');
   removeMarkerBlock(ctx, 'CLAUDE.md');
   removeMarkerBlock(ctx, 'AGENTS.md');
   removeClaudeGuard(ctx);

@@ -48,9 +48,11 @@ function makeContext(opts) {
     noBeads: !!opts.noBeads,
     noHooks: !!opts.noHooks,
     noSystemd: !!opts.noSystemd,
+    verbose: !!opts.verbose,
     log: new fsops.ChangeLog(),
     notes: [],
     warnings: [],
+    review: [],
   };
 }
 
@@ -92,10 +94,12 @@ function recordInstalledManifest(ctx) {
 
 function copyVerbatim(ctx) {
   prepareInstalledManifest(ctx);
+  ctx.log.setClass('tools');
   for (const rel of manifest.verbatim) {
     const mode = manifest.executable.includes(rel) ? 0o755 : undefined;
     fsops.copyFile(src(ctx, rel), rel, ctx, { mode });
   }
+  ctx.log.setClass('agents');
   for (const dir of manifest.verbatimDirs) {
     fsops.copyDir(src(ctx, dir.from), dir.to, ctx);
   }
@@ -103,6 +107,7 @@ function copyVerbatim(ctx) {
 
 function copyDocs(ctx) {
   prepareInstalledManifest(ctx);
+  ctx.log.setClass('docs');
   for (const doc of manifest.docs) {
     fsops.copyFile(src(ctx, doc.from), doc.to, ctx);
   }
@@ -121,6 +126,7 @@ function renderScaffoldConfig(ctx, raw) {
 }
 
 function writeScaffold(ctx, { updating = false } = {}) {
+  ctx.log.setClass('scaffold');
   for (const item of manifest.scaffold) {
     if (updating && !item.onUpdate) continue;
     let content = fs.readFileSync(src(ctx, item.from), 'utf8');
@@ -143,6 +149,7 @@ function migrateLegacyStateRoot(ctx) {
   const legacyAbs = path.join(ctx.targetRoot, '.specforge');
   const currentAbs = path.join(ctx.targetRoot, '.nogging');
   if (fs.existsSync(currentAbs) || !fs.existsSync(legacyAbs)) return;
+  ctx.log.setClass('scaffold');
   fs.renameSync(legacyAbs, currentAbs);
   const configAbs = path.join(currentAbs, 'config.json');
   if (fs.existsSync(configAbs)) {
@@ -163,6 +170,7 @@ function migrateLegacyStateRoot(ctx) {
 
 // Record accepted managed-file baselines and bump the configured package version.
 function recordVersion(ctx) {
+  ctx.log.setClass('merge');
   recordInstalledManifest(ctx);
   const rel = '.nogging/config.json';
   const cur = fsops.readTarget(rel, ctx);
@@ -181,6 +189,7 @@ function recordVersion(ctx) {
 // Install the two git hooks, unless core.hooksPath diverts Git away from
 // .git/hooks (the known Beads collision) — in that case warn instead.
 function installGitHooks(ctx) {
+  ctx.log.setClass('tracker');
   if (ctx.noHooks) {
     ctx.log.add('skip', '.git/hooks', '--no-hooks');
     return;
@@ -255,6 +264,7 @@ function readinessVerdict(ctx) {
 // Idempotent, and never fatal: a missing `bd` or an unreachable backend is a
 // warning that the readiness verdict will also surface.
 function initBeads(ctx) {
+  ctx.log.setClass('tracker');
   const rel = '.beads';
   if (ctx.noBeads) {
     ctx.log.add('skip', rel, '--no-beads');
@@ -292,6 +302,7 @@ module.exports = {
   makeContext,
   src,
   migrateLegacyStateRoot,
+  readRecordedVersion,
   copyVerbatim,
   copyDocs,
   writeScaffold,

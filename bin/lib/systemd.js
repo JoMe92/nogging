@@ -16,6 +16,7 @@ function render(tmpl, ctx) {
 // Render the systemd sync service + timer with the target repo's absolute path
 // and a per-repo slug so units for different repos never collide.
 function renderSystemd(ctx) {
+  ctx.log.setClass('units');
   if (ctx.noSystemd) {
     ctx.log.add('skip', 'systemd/', '--no-systemd');
     return;
