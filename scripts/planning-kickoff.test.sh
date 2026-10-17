@@ -34,6 +34,9 @@ with tempfile.TemporaryDirectory(prefix='nogg planning kickoff ') as td:
             assert record['planning_id'] in message and record['working_dir'] in message
             assert 'acquire ./scripts/nogg plan-begin yourself' in message and 'before any OpenSpec write' in message
             assert 'Do not select or claim execution Beads' in message
+            assert message.index('plan-end') < message.index('worktree cleanup') and 'plan-end always precedes worktree retirement' in message
+            assert 'session stop <name>, then worktree cleanup <record>' in message
+            assert 'openspec validate <change> --strict --no-interactive' in message
         m.session_kickoff(records[0]['name'],'operator supplied scope')
         assert sent[-1][1]=='operator supplied scope'
     # Simulated agent processes consume the role-specific kickoff and acquire

@@ -56,8 +56,10 @@ own action after kickoff.
    `tasks.md`, and `specs/<capability>/spec.md` — under
    `openspec/changes/<change>/`.
 
-6. **Validate.** Run `scripts/nogg validate` and resolve every problem it
-   reports before continuing.
+6. **Validate.** Run `./scripts/nogg validate` and
+   `openspec validate <change> --strict --no-interactive` (always name the
+   change; never a bare `openspec validate`) and resolve every problem they
+   report before continuing.
 
 7. **Commit the `openspec/` changes as the `planning` writer.** Use a
    Conventional subject (`docs(openspec): …` or `chore(openspec): …`) and set
@@ -79,17 +81,25 @@ own action after kickoff.
    (`bd dep add <blocked> <blocker>`); never infer blocking work from
    `tasks.md` order or mere change association.
 
-9. **Integrate and clean up safely.** From a clean, unclaimed integration
-   checkout on `develop`, fast-forward merge the planning branch. Only after
-   that succeeds, and only when the planning worktree is clean, remove that
-   worktree and delete its retired branch. If it is dirty or not integrated,
-   stop and leave it intact for recovery. Cleanup always precedes
-   `plan-end`.
+9. **Integrate.** From a clean, unclaimed integration checkout on `develop`,
+   fast-forward merge the planning branch locally. A dirty or unintegrated
+   planning worktree is never retired: stop and leave it intact for recovery,
+   and never force cleanup.
 
-10. **Release the planning lock.** After the cleanup, run
-    `./scripts/nogg plan-end` from a surviving canonical checkout (the shared
-    checkout), never through the removed worktree path. Only the owning
-   session releases its lock.
+10. **Release the planning lock.** Run `./scripts/nogg plan-end` from the
+   planning worktree, in this session, with its inherited session identity.
+   The worktree and any sandbox built on it still exist, so this works on every
+   runtime. It releases only your own canonical lock and writes the canonical
+   sentinel. `plan-end` always precedes worktree retirement.
+
+11. **Retire the worktree, as the very last command.** Run
+   `cd <main checkout> && ./scripts/nogg worktree cleanup <record>` from the
+   surviving canonical checkout (the shared checkout). If cleanup
+   refuses (for example because the worktree is mounted into your sandbox, which
+   is the normal end for a Codex planner), do not retry, force it or delete files
+   by hand. Report the hand-off and stop: `./scripts/nogg session stop <name>`,
+   then `./scripts/nogg worktree cleanup <record>` from the canonical checkout,
+   run by the operator or the Orchestration Agent.
 
 ## Lock already held
 

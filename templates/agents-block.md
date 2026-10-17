@@ -57,9 +57,15 @@ checkout, owned by that session; nobody acquires it on its behalf. It writes
 or revises OpenSpec, validates, commits with `NOGGING_WRITER=planning`,
 materializes Beads (`./scripts/nogg materialize <change>`), wires Beads
 dependencies explicitly, fast-forward integrates the plan into `develop`, and
-safely retires only a clean integrated worktree. Only after that cleanup does
-it run `./scripts/nogg plan-end`, from a surviving canonical checkout. The
-commit precedes `materialize` so a crash between them never leaves Beads
+then runs `./scripts/nogg plan-end` from the planning worktree (`plan-end`
+always precedes worktree retirement) and, as the very last command, retires the
+clean, integrated worktree with `./scripts/nogg worktree cleanup <record>` from
+the surviving canonical checkout. If cleanup refuses, it does not retry, force
+it or delete files: it reports the hand-off, `./scripts/nogg session stop
+<name>`, then `./scripts/nogg worktree cleanup <record>` from the canonical
+checkout, and stops. Validation names the change: `./scripts/nogg validate`
+plus `openspec validate <change> --strict --no-interactive`, never a bare
+`openspec validate`. The commit precedes `materialize` so a crash between them never leaves Beads
 without a committed spec. Stop, cleanup and recovery never release another
 session's planning lock.
 

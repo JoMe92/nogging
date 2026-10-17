@@ -183,7 +183,8 @@ steps by hand:
   <description>` from updated `origin/develop`, then in that worktree run
   `plan-begin` → discovery review → author → `validate` → commit as the `planning` writer
   → `materialize <change>` → wire dependencies → integrate into `develop` →
-  safe cleanup → `plan-end` from a surviving canonical checkout. The spec is
+  `plan-end` from the planning worktree → `worktree cleanup` from the surviving
+  canonical checkout (`plan-end` always precedes worktree retirement). The spec is
   committed **before** `materialize`, so a crash between the two never leaves
   Beads without a committed spec.
 - `/discovery-review` — `scripts/nogg discoveries` (+ `--ack`).
@@ -205,9 +206,15 @@ a second planner reports the named owner and stops. It then writes or revises
 OpenSpec, runs validation, commits the change as the `planning` writer, and
 materializes Beads. It wires Beads dependencies explicitly and does not infer
 them from task order. It fast-forward integrates the planning branch into
-`develop` before removing only a clean worktree whose branch is integrated.
-Only after that cleanup does it run `plan-end`, from a surviving canonical
-checkout, never through the removed worktree. Committing before `materialize`
+`develop`, then runs `./scripts/nogg plan-end` from the planning worktree
+(`plan-end` always precedes worktree retirement) and, as the very last command,
+retires the clean, integrated worktree with `./scripts/nogg worktree cleanup
+<record>` from the surviving canonical checkout. If cleanup refuses, it does
+not retry, force it or delete files: it reports the hand-off, `./scripts/nogg
+session stop <name>`, then `./scripts/nogg worktree cleanup <record>` from the
+canonical checkout, and stops. Validation names the change: `./scripts/nogg
+validate` plus `openspec validate <change> --strict --no-interactive`, never a
+bare `openspec validate`. Committing before `materialize`
 keeps a crash in that window recoverable (`materialize` is idempotent and the
 committed spec is the source of truth). Stop, cleanup and recovery never
 release another session's planning lock. A held planning lock never makes

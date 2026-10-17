@@ -111,8 +111,9 @@ t = open(sys.argv[1]).read()
 allocation = t.find("worktree plan <planning-id> <description>")
 begin = t.find("plan-begin")
 integration = t.find("fast-forward merge")
-cleanup = t.find("remove that\n   worktree")
-sys.exit(0 if 0 <= allocation < begin and begin < integration < cleanup else 1)
+plan_end = t.find("./scripts/nogg plan-end", integration)
+cleanup = t.find("worktree cleanup <record>", plan_end)
+sys.exit(0 if 0 <= allocation < begin and begin < integration < plan_end < cleanup else 1)
 PY
   then
     ok "$path allocates, integrates, and safely cleans a planning worktree in order"
