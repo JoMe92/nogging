@@ -59,3 +59,11 @@
     tier standard: assigned by orchestrator to claude (antigravity denied by usage gate, codex near limit); branch fix/preserve-modified-verbatim-files.
     discovery: scripts/herdr-stub.test.sh and scripts/packed-session-launch.test.sh fail identically on unmodified develop in this delivery environment (herdr socket symlink assertions; packed-session-launch python AssertionError at line 43). Pre-existing, unrelated to TASK-PVE-003; not fixed here.
     commit c8e9884; PR https://github.com/JoMe92/nogging/pull/197; manifest-legacy-upgrade/manifest-update/manifest-store/package-manifest tests pass; full scripts/test: only pre-existing herdr-stub + packed-session-launch fail, installed-diagnostics passes alone (timeout under load in full run)
+
+<!-- nogg:SPEC-v96i:2026-10-17T00:36:06Z -->
+- 2026-10-17T00:44:53+00:00 — SPEC-v96i closed for TASK-PVE-005 (Bead closed at 2026-10-17T00:36:06Z).
+  - implementation commits: 17b9ed93bec1
+  - Bead note:
+    tier standard: offline end-to-end installer tests plus package-files validation in one component, clear spec
+    Pre-existing host-load flakiness, not caused by this change: scripts/packed-session-launch.test.sh and scripts/packed-model-selection.test.sh fail reproducibly on this Raspberry Pi delivery host with 10s subprocess timeouts (session launch/cleanup), also on baseline develop without the PVE-005 diff; direct-planning-isolation.test.sh failed once under full-suite load (twb-bootstrap) and passed in isolation (~8min). scripts/cli.test.sh with the new checks passes (~4min). Timeouts left unchanged per orchestrator instruction.
+    commit 17b9ed9; scripts/cli.test.sh passes (154 ok, 0 FAIL) incl. new packed files validation + manifest/.nogging-new/--force/doctor/remove e2e; full scripts/test: only pre-existing host-timeout failures (see discovery).
