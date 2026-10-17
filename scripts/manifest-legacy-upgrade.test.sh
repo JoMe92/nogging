@@ -102,8 +102,8 @@ try {
     assert.strictEqual(fs.readFileSync(path.join(t, rules), 'utf8'), 'old rules\n# my local tweak\n');
     assert.strictEqual(store.hashFile(path.join(t, `${rules}.nogging-new`)), upstream(rules));
     assert.strictEqual(entry(ctx, tool).action, 'update');
-    assert.strictEqual(ctx.warnings.length, 1);
-    assert.match(ctx.warnings[0], /locally modified file preserved: \.codex\/rules\/nogging\.rules/);
+    assert.deepStrictEqual(ctx.review, [{ kind: 'preserve', path: rules }]);
+    assert.deepStrictEqual(ctx.warnings, []);
   });
 
   check('a file matching no baseline is preserved conservatively and never recorded', () => {
@@ -172,15 +172,15 @@ try {
     const r = nogg(repo, 'update', ...flags);
     assert.strictEqual(r.status, 0, r.out);
     assert.strictEqual(fs.readFileSync(path.join(repo, rules), 'utf8'), 'local rules\n');
-    assert.match(r.out, /Locally modified files preserved/);
-    assert.match(r.out, /\.codex\/rules\/nogging\.rules {2}-> {2}\.codex\/rules\/nogging\.rules\.nogging-new/);
+    assert.match(r.out, /Needs your review/);
+    assert.match(r.out, /\.codex\/rules\/nogging\.rules — kept your edit; upstream in \.codex\/rules\/nogging\.rules\.nogging-new/);
     assert.match(r.out, /--force/);
     assert.ok(fs.existsSync(path.join(repo, store.MANIFEST_REL_PATH)));
   });
   check('update --dry-run --force names the backup and writes nothing', () => {
     const r = nogg(repo, 'update', '--dry-run', '--force', ...flags);
     assert.match(r.out, /would be overwritten \(--force\)/);
-    assert.match(r.out, /backup: \.codex\/rules\/nogging\.rules\.orig/);
+    assert.match(r.out, /backup would go to \.codex\/rules\/nogging\.rules\.orig/);
     assert.strictEqual(fs.existsSync(path.join(repo, `${rules}.orig`)), false);
     assert.strictEqual(fs.readFileSync(path.join(repo, rules), 'utf8'), 'local rules\n');
   });
@@ -188,7 +188,7 @@ try {
     const ctx = runInstall(repo, { force: true });
     assert.strictEqual(fs.readFileSync(path.join(repo, `${rules}.orig`), 'utf8'), 'local rules\n');
     assert.strictEqual(store.hashFile(path.join(repo, rules)), upstream(rules));
-    assert.match(ctx.warnings.join('\n'), /locally modified file overwritten \(--force\): \.codex\/rules\/nogging\.rules/);
+    assert.deepStrictEqual(ctx.review.filter((r) => r.path === rules), [{ kind: 'force', path: rules }]);
     assert.strictEqual(entry(ctx, rules).action, 'force-overwrite');
   });
 } finally {

@@ -98,7 +98,8 @@ try {
     assert.strictEqual(fs.readFileSync(`${f.dest}.nogging-new`, 'utf8'), 'upstream\n');
     assert.strictEqual(fs.statSync(`${f.dest}.nogging-new`).mode & 0o777, 0o755);
     assert.strictEqual(f.ctx.nextInstalledManifest.files[f.rel], store.sha256('previous'));
-    assert.match(f.ctx.warnings.join('\n'), /locally modified file preserved: scripts\/tool/);
+    assert.deepStrictEqual(f.ctx.review, [{ kind: 'preserve', path: f.rel }]);
+    assert.deepStrictEqual(f.ctx.warnings, []);
     assert.match(f.ctx.log.render(), /preserve.*scripts\/tool.nogging-new/);
   });
 
@@ -114,7 +115,8 @@ try {
     assert.strictEqual(fs.readFileSync(`${f.dest}.orig`, 'utf8'), 'local edit');
     assert.strictEqual(fs.readFileSync(f.dest, 'utf8'), 'upstream\n');
     assert.strictEqual(f.ctx.nextInstalledManifest.files[f.rel], store.sha256('upstream\n'));
-    assert.match(f.ctx.warnings.join('\n'), /overwritten \(--force\).*backup saved to scripts\/tool.orig/);
+    assert.deepStrictEqual(f.ctx.review, [{ kind: 'force', path: f.rel }]);
+    assert.deepStrictEqual(f.ctx.warnings, []);
     assert.match(f.ctx.log.render(), /force-overwrite.*backup: scripts\/tool.orig/);
   });
 
@@ -190,12 +192,13 @@ try {
     const ctx = runInstall({ dryRun: true });
     assert.deepStrictEqual(snapshot(targetRoot), before);
     assert.strictEqual(ctx.log.entries.filter(e => e.action === 'preserve').length, modified.length);
-    assert.match(ctx.warnings.join('\n'), /would be written/);
+    assert.strictEqual(ctx.review.filter(r => r.kind === 'preserve').length, modified.length);
+    assert.deepStrictEqual(ctx.warnings, []);
   });
   check('successive updates preserve edits across every managed file class', () => {
     for (let pass = 0; pass < 2; pass++) {
       const ctx = runInstall();
-      assert.strictEqual(ctx.warnings.length, modified.length);
+      assert.strictEqual(ctx.review.length, modified.length);
       for (const rel of modified) {
         assert.match(fs.readFileSync(path.join(targetRoot, rel), 'utf8'), /local customization/);
         assert.strictEqual(store.hashFile(path.join(targetRoot, `${rel}.nogging-new`)), accepted.files[rel]);
@@ -205,7 +208,7 @@ try {
   });
   check('installer force context backs up customized files across every managed file class', () => {
     const ctx = runInstall({ force: true });
-    assert.strictEqual(ctx.warnings.length, modified.length);
+    assert.strictEqual(ctx.review.length, modified.length);
     for (const rel of modified) {
       assert.match(fs.readFileSync(path.join(targetRoot, `${rel}.orig`), 'utf8'), /local customization/);
       assert.strictEqual(store.hashFile(path.join(targetRoot, rel)), accepted.files[rel]);
