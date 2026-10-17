@@ -176,6 +176,8 @@ for _ in $(seq 1 80); do [[ -f "$TMUX_STUB_DIR/sess-$name" ]] && break; sleep 0.
 [[ "$(git -C "$root" config --worktree --get user.email)" == "orchestrator@nogging.bot" ]] \
   && echo "ok   - run: sets the orchestrator@nogging.bot identity email" \
   || { echo "FAIL - run: user.email is $(git -C "$root" config --get user.email 2>/dev/null || echo unset)"; fail=1; }
+# the launch settle window must pass (the record turns running) before the session ends
+for _ in $(seq 1 100); do grep -q '^launched ' "$work/run.out" 2>/dev/null && break; sleep 0.1; done
 rm -f "$TMUX_STUB_DIR/sess-$name"     # the session ends
 for _ in $(seq 1 80); do [[ -f "$work/run.rc" ]] && break; sleep 0.1; done
 [[ "$(cat "$work/run.rc" 2>/dev/null)" == "1" ]] \
