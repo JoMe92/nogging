@@ -6,6 +6,7 @@
 # tables, classified via fixture pane captures — no live agent required.
 # Covers the `Auto-update failed` false-positive regression explicitly.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-agents.sh"; use_agent_stubs
 
 while IFS= read -r inherited; do
   case "$inherited" in

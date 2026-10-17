@@ -13,6 +13,7 @@
 #   - `doctor` prints the NOTE for an unknown agent and drops it when the
 #     policy is deny or the gate is disabled.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-agents.sh"; use_agent_stubs
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 nogg="$here/nogg"
