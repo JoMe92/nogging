@@ -20,6 +20,7 @@
     "bin/lib/install.js",
     "bin/lib/manifest.js",
     "bin/lib/merge.js",
+    "bin/lib/preflight.js",
     "bin/lib/remove.js",
     "bin/lib/systemd.js",
     "templates/agents-block.md",
