@@ -67,3 +67,12 @@
     tier standard: offline end-to-end installer tests plus package-files validation in one component, clear spec
     Pre-existing host-load flakiness, not caused by this change: scripts/packed-session-launch.test.sh and scripts/packed-model-selection.test.sh fail reproducibly on this Raspberry Pi delivery host with 10s subprocess timeouts (session launch/cleanup), also on baseline develop without the PVE-005 diff; direct-planning-isolation.test.sh failed once under full-suite load (twb-bootstrap) and passed in isolation (~8min). scripts/cli.test.sh with the new checks passes (~4min). Timeouts left unchanged per orchestrator instruction.
     commit 17b9ed9; scripts/cli.test.sh passes (154 ok, 0 FAIL) incl. new packed files validation + manifest/.nogging-new/--force/doctor/remove e2e; full scripts/test: only pre-existing host-timeout failures (see discovery).
+
+<!-- nogg:SPEC-mnh7:2026-10-17T03:18:37Z -->
+- 2026-10-17T03:27:52+00:00 — SPEC-mnh7 closed for TASK-PVE-006 (Bead closed at 2026-10-17T03:18:37Z).
+  - implementation commits: 0ccf574cb426
+  - Bead note:
+    tier routine: docs-only guide updates, fully specified
+    progress: allocate worktree and inspect open spec and docs
+    orchestrator: Antigravity individual quota reached at ~04:35 (reset ~05:17); session paused, resume same tier after reset
+    commit 0ccf574cb42617712c1307324b65b45cad3511b6; verified scripts/installation-docs.test.sh, manifest and diagnostic tests pass
