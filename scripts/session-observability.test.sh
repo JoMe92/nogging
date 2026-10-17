@@ -526,9 +526,12 @@ JSON
   --profile "$work/preexisting-hooks-profile.json" >/dev/null 2>&1
 name="$(sess_name "$root")"
 settings="$root/.nogging/state/sessions/$name.settings.json"
-hook_check=$(python3 - "$settings" <<'PY'
-import json, sys
+hook_check=$(python3 - "$settings" "$root" <<'PY'
+import json, os, shlex, sys
 d = json.load(open(sys.argv[1]))
+root = sys.argv[2]
+expected_stop = f"{shlex.quote(os.path.join(root, 'scripts/nogg'))} session emit turn_end"
+expected_notif = f"{shlex.quote(os.path.join(root, 'scripts/nogg'))} session emit needs_input"
 hooks = d.get("hooks", {})
 stop = hooks.get("Stop", [])
 notif = hooks.get("Notification", [])
@@ -536,9 +539,9 @@ pretool = hooks.get("PreToolUse", [])
 ok = (
     len(stop) == 2
     and stop[0]["hooks"][0]["command"] == "echo pre-existing-stop"
-    and stop[1]["hooks"][0]["command"] == "scripts/nogg session emit turn_end"
+    and stop[1]["hooks"][0]["command"] == expected_stop
     and len(notif) == 1
-    and notif[0]["hooks"][0]["command"] == "scripts/nogg session emit needs_input"
+    and notif[0]["hooks"][0]["command"] == expected_notif
     and len(pretool) == 1
     and pretool[0]["hooks"][0]["command"] == "echo guard"
 )
