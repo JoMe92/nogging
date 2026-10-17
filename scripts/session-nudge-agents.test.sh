@@ -38,6 +38,33 @@ agy_placeholder = agy_spike.replace(agy_plan_line,
 assert m._antigravity_composer_input(agy_placeholder) == ('placeholder', '')
 assert m._antigravity_composer_input('> unframed\n? for shortcuts') == ('unknown', '')
 
+# Antigravity composer soft-wraps a long message at narrow pane width onto
+# continuation lines indented by two spaces (Decision 4, TASK-RSI-003).
+# Composer extraction and normalized comparison tolerate soft-wrap while
+# still refusing genuinely different text.
+agy_wrapped_fixture = (root / 'scripts/fixtures/herdr/spike/read/agy/wrapped-narrow.ansi').read_text()
+long_msg = "Orchestrator live delivery check for Antigravity session. Please confirm receipt and status. Thank you. Reply with BEREIT."
+kind, wrapped_input = m._antigravity_composer_input(agy_wrapped_fixture)
+assert kind == 'input'
+assert m._normalized_delivery_text(wrapped_input) == m._normalized_delivery_text(long_msg)
+assert m._normalized_delivery_text(wrapped_input) != m._normalized_delivery_text("different text")
+
+# Plain text fallback (no SGR attributes):
+plain_box = m._antigravity_prompt_box_text(agy_wrapped_fixture)
+assert plain_box is not None
+assert m._normalized_delivery_text(plain_box) == m._normalized_delivery_text(long_msg)
+
+# _composer_holds_message and _delivery_composer_state accept soft-wrapped Antigravity composer
+probe_rec = {'name': 'probe', 'agent': 'antigravity'}
+with patch.object(m, 'session_pane_text', return_value=agy_wrapped_fixture), \
+     patch.object(m, '_require_running', return_value=(None, probe_rec)), \
+     patch.object(m, 'backend_for_name', return_value=(SimpleNamespace(capabilities=SimpleNamespace(capture_attributes=True)), {})):
+    assert m._composer_holds_message('probe', 'antigravity', long_msg)
+    assert m._delivery_composer_state('probe', 'antigravity', long_msg) == 'pending'
+    # Genuinely different text is refused as other
+    assert not m._composer_holds_message('probe', 'antigravity', 'different message')
+    assert m._delivery_composer_state('probe', 'antigravity', 'different message') == 'other'
+
 # Codex nudge uses the queue first and never touches the pane when accepted.
 rec = {'name': 'probe', 'agent': 'codex', 'codex_thread_id': 'thread'}
 out = io.StringIO()
@@ -62,7 +89,7 @@ with patch.object(m, '_require_running', return_value=(None, codex_rec)), \
     try:
         m.session_nudge('probe', 'continue testing')
     except RuntimeError as exc:
-        assert 'unsubmitted after a retry' in str(exc)
+        assert 'unsubmitted after one retry' in str(exc)
     else:
         raise AssertionError('pending Codex composer was accepted')
 assert not action.called or any(call.args[1:] == ('send_text', 'continue testing') for call in action.call_args_list)
