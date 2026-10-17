@@ -26,6 +26,29 @@ the terminal session with `session cleanup <name>`, and launch again. A quick
 failure can occur just after the launcher returns; check the record and log
 before assuming the agent is running.
 
+- **Startup readiness timeouts and hook diagnosis:** `session kickoff` and plain
+  `session send` wait boundedly up to `session_startup_timeout_seconds` (default 120s)
+  for a session to become ready for input. If startup readiness times out:
+  - For Claude, check if the session is still connecting to Remote Control or
+    blocked on an interactive prompt;
+  - For Codex, inspect the session for trust or approval dialogs;
+  - For Antigravity, check if the startup turn finished but failed to emit a `Stop`
+    hook event (verify `.agents/hooks.json` and `scripts/hooks/agy-guard` with
+    `./scripts/nogg doctor`), or if a feedback survey is active in the pane;
+  - Do not blindly resend or type speculative keys; inspect the pane with
+    `nogg session attach <name>` or check `nogg session log <name>` and `watch`.
+- **Unverified delivery and deliberate recovery:** When `session send`, `nudge`,
+  or `kickoff` reports an **unverified** outcome (for instance, a message accepted
+  by `codex queue` without a matching transcript receipt or confirmed composer
+  transition within `session_delivery_timeout_seconds`):
+  - Do not immediately reissue the send command; automated re-sending or blind
+    pane typing is refused to prevent duplicate instructions.
+  - Inspect the session log (`nogg session log <name> --follow`) or attach to the
+    pane to observe whether the agent received and is working on the instruction.
+  - If the instruction remained pending in the composer, use deliberate recovery
+    with `./scripts/nogg session nudge <name> --message "<instruction>"` to
+    cleanly replace and resubmit it with bounded verification.
+
 Normal `update` replaces managed helpers while preserving OpenSpec, Beads,
 custom profiles and unrelated agent settings. It does not upgrade the agent
 CLI itself or grant additional authority.
