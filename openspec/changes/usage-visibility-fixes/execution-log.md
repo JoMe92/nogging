@@ -20,3 +20,10 @@
   - Bead note:
     tier routine: advisory hint plumbing, mechanical
     Implemented in commit 67b04aa9a2575a56c92655989982d6b8372b4641 on feat/usage-visibility-fixes; PR https://github.com/JoMe92/nogging/pull/214 open to develop. Evidence: scripts/usage-hints.test.sh, scripts/usage.test.sh, scripts/usage-statusline.test.sh, scripts/usage-gate.test.sh passed.
+
+<!-- nogg:SPEC-ms6q:2026-10-17T16:02:18Z -->
+- 2026-10-17T16:10:06+00:00 — SPEC-ms6q closed for TASK-UVF-002 (Bead closed at 2026-10-17T16:02:18Z).
+  - implementation commits: 9263fdb7fd10
+  - Bead note:
+    tier routine: agy model mapping split, mechanical
+    commit 9263fdb, PR https://github.com/JoMe92/nogging/pull/215. Evidence: scripts/antigravity-usage.test.sh, scripts/packed-antigravity-usage.test.sh, scripts/packed-model-selection.test.sh, and scripts/usage-gate.test.sh all pass cleanly.
