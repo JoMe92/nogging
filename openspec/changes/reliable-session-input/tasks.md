@@ -18,7 +18,7 @@
 
 - [ ] TASK-RSI-007 [routine] Per design Decisions 1 and 8: document timing keys, verified sends, queue acceptance versus submission, startup/hook diagnosis and deliberate recovery in session, Codex, AGY and failure-recovery guides; leave old reports and restart paragraphs unchanged. Branch docs/. Depends on RSI-006. Check: scripts/session-delivery-docs.test.sh; scripts/test.
 
-- [ ] TASK-RSI-008 [standard] Per design Decisions 1 and 8: add installed-consumer CLI regression for both backend fakes and three agents, init/update packaging, slow startup, queued drafts, multiline HSS replacement, no duplicates and unchanged Pi delivery. Branch test/. Depends on RSI-006. Check: scripts/session-delivery-integration.test.sh; scripts/test.
+- [x] TASK-RSI-008 [standard] Per design Decisions 1 and 8: add installed-consumer CLI regression for both backend fakes and three agents, init/update packaging, slow startup, queued drafts, multiline HSS replacement, no duplicates and unchanged Pi delivery. Branch test/. Depends on RSI-006. Check: scripts/session-delivery-integration.test.sh; scripts/test.
 
 ## 4. Delivery-host acceptance (docs/, host-capable Lead)
 
