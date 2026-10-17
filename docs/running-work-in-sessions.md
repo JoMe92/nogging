@@ -104,10 +104,15 @@ behalf.
 
 The planner commits the validated spec as the `planning` writer before
 `materialize`, wires Beads
-dependencies explicitly, fast-forward integrates its branch, and removes only
-a clean, integrated worktree. Only then does it run `plan-end`, from a
-surviving canonical checkout. `session stop`, cleanup and recovery release
-only the planning lock owned by that session, never another session's.
+dependencies explicitly, and fast-forward integrates its branch. It then runs
+`plan-end` from the planning worktree (`plan-end` always precedes worktree
+retirement) and, as the very last command, retires the clean, integrated
+worktree with `worktree cleanup <record>` from the surviving canonical
+checkout. If cleanup refuses, it reports the hand-off — `./scripts/nogg session stop <name>`, then `./scripts/nogg worktree cleanup <record>` from the canonical checkout — and
+stops. Stopping the owning planner waits within the stop grace period for the
+owner to exit and then releases that session's lock without `--force`;
+`session stop`, cleanup and recovery release only the planning lock owned by
+that session, never another session's.
 Execution sessions stay fenced from `openspec/` while any planning lock is
 held.
 

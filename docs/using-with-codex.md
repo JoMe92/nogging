@@ -146,9 +146,13 @@ requirement is behavioural — the file can be rewritten without a spec change.
 The persona and step text are identical; only the invocation surface differs.
 Each is a thin wrapper over `scripts/nogg` — the mechanical steps
 (`plan-begin` → discovery review → author → `validate` → commit as the
-`planning` writer → `materialize` → wire dependencies → integrate → safe
-cleanup → `plan-end` from a surviving canonical checkout; `discoveries` /
-`--ack`; `sync --now`) are agent-neutral.
+`planning` writer → `materialize` → wire dependencies → integrate →
+`plan-end` from the planning worktree → `worktree cleanup` from the surviving
+canonical checkout; `discoveries` /
+`--ack`; `sync --now`) are agent-neutral. `plan-end` always precedes worktree
+retirement. A trusted Codex planner runs `plan-end` from its worktree, but its
+sandbox mounts that worktree, so `worktree cleanup` refuses; that refusal is
+the normal end. The planner reports the hand-off — `./scripts/nogg session stop <name>`, then `./scripts/nogg worktree cleanup <record>` from the canonical checkout — and stops.
 
 **Custom-prompt discovery is version-dependent.** codex-cli 0.148 loads custom
 prompts only from `${CODEX_HOME:-~/.codex}/prompts/` (user-scoped); repo-scoped

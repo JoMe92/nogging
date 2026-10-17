@@ -5514,8 +5514,12 @@ def _session_kickoff(name, message=None):
                      "You are the Planning Agent: acquire ./scripts/nogg plan-begin yourself in this session "
                      "before any OpenSpec write. If another planner owns the lock, report its owner and stop "
                      "without writing. Follow the planning prompt through validation, planning commit, "
-                     "materialization, explicit dependency wiring, local integration, safe cleanup and plan-end "
-                     "from a surviving checkout. Do not select or claim execution Beads.")
+                     "materialization, explicit dependency wiring and local integration. Then run plan-end from "
+                     "your planning worktree (plan-end always precedes worktree retirement) and, as the "
+                     "very last command, worktree cleanup from the surviving canonical checkout; if cleanup "
+                     "refuses, report the hand-off (session stop <name>, then worktree cleanup <record>) "
+                     "and stop. Validate with openspec validate <change> --strict --no-interactive. "
+                     "Do not select or claim execution Beads.")
         return
     bead_id = rec.get("bead_id")
     if not bead_id:

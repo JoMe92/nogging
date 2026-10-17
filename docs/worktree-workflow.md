@@ -15,13 +15,23 @@ scripts/nogg worktree plan <planning-id> <description>
 Change into the printed path, run `plan-begin`, author and validate OpenSpec,
 commit as the `planning` writer, materialize the Beads and wire their
 dependencies explicitly. Fast-forward the planning branch into `develop` and
-push `develop` before starting implementation. Cleanup accepts only a clean,
-integrated worktree, and it comes before `plan-end`, which runs from a
-surviving canonical checkout:
+push `develop` before starting implementation. `plan-end` always precedes
+worktree retirement: run it from the planning worktree in the owning session,
+then, as the very last command, retire the worktree with `worktree cleanup`
+from the surviving canonical checkout. Cleanup accepts only a clean,
+integrated worktree:
 
 ```bash
-scripts/nogg worktree cleanup <planning-record.json>
+scripts/nogg plan-end                                  # from the planning worktree
+cd <main checkout>
+scripts/nogg worktree cleanup <planning-record.json>   # last command
 ```
+
+Validate with `scripts/nogg validate` plus `openspec validate <change> --strict
+--no-interactive`. If cleanup refuses (the worktree is mounted into the
+planner's sandbox, the caller's directory is inside it, or another session
+works there), do not retry, force it or delete files by hand. Hand off:
+`./scripts/nogg session stop <name>`, then `./scripts/nogg worktree cleanup <record>` from the canonical checkout, run by the operator or the Orchestration Agent.
 
 ## Implementation
 
