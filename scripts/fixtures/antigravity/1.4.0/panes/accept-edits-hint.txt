@@ -1,0 +1,8 @@
+ [33m┃[39m [1mVerbosity now defaults to medium[0m
+ [33m┃[39m Verbosity is now medium by default, so tool calls and thoughts roll up into summaries. You can
+ [33m┃[39m change your preferred verbosity anytime in /config > Verbosity.
+ [33m┃[39m [90mesc to dismiss[39m
+[90m────────────────────────────────────────────────────────────────────────────────────────────────────
+[94m>[39m [90mAccept-edits mode: file edits auto-approved (shift+tab to cycle)[39m
+[90m────────────────────────────────────────────────────────────────────────────────────────────────────
+? for shortcuts[39m                                                [32maccept-edits[2m[39m · Gemini 3.8 Flash · low

@@ -2138,7 +2138,8 @@ CODEX_ADAPTER = Adapter(
 # stay unvalidated live: they only ever add a `limit` classification.
 ANTIGRAVITY_ADAPTER = Adapter(
     name="antigravity",
-    working=_pats(r"^\s*[\u2800-\u28ff]\s+Generating\.\.\."),
+    # 1.4.0 spins `Working...` (fixtures/antigravity/1.4.0/panes/working.txt).
+    working=_pats(r"^\s*[\u2800-\u28ff]\s+(?:Generating\.\.\.|Working\b)"),
     needs_input=_pats(r"^\s*Run this command\?", r"^\s*Requesting permission for",
                       r"^\s*Do you trust the contents of this project\?"),
     limit=_pats(r"AI credits balance is too low", r"(?:usage|quota|rate) limit (?:reached|exceeded|exhausted)",
@@ -2618,7 +2619,8 @@ def transition(path, rec, state, **extra):
         fcntl.flock(lock, fcntl.LOCK_EX)
         if path.exists():
             latest = json.loads(path.read_text())
-            for key in ("antigravity_conversation_id", "antigravity_ready_at", "kickoff_sent_at"):
+            for key in ("antigravity_conversation_id", "antigravity_ready_at", "kickoff_sent_at",
+                        "input_ready_source", "input_ready_at"):
                 if key in latest:
                     rec[key] = latest[key]
             if (state in ("running", "failed")
@@ -4908,15 +4910,272 @@ def antigravity_stop_event(name, value):
                                 "event": "turn_end", "conversation_id": conversation,
                                 "fully_idle": payload["fullyIdle"]}) + "\n")
 
-def await_antigravity_first_turn(name, timeout=30):
+# --- session input readiness (Decision 3) ----------------------------------
+# A first instruction is typed only into a runtime that positively shows a
+# ready composer. Waiting is bounded by session_startup_timeout_seconds on a
+# monotonic clock, samples at the verification interval and never types, keys
+# or queues anything. Antigravity's first turn is over at a Stop event of this
+# launch or, without one, at two consecutive idle samples of the exact recorded
+# process once that turn is known to have run: agy 1.4.0 draws an idle composer
+# for a moment before its startup turn starts (live probe, 2026-10-17). Claude
+# and Codex are ready with an identified empty or placeholder composer, no
+# working/dialog/limit state and an unchanged render across two samples: their
+# idle prompt line is a placeholder suggestion, not `❯` alone.
+READINESS_NOTE_SECONDS = 5.0
+READINESS_LABELS = {"claude": "Claude", "codex": "Codex", "antigravity": "Antigravity"}
+READINESS_CONTRARY = {"working": "is working", "limit": "reports a usage limit",
+                      "needs_input": "shows a trust, permission or approval prompt"}
+# Claude Code 2.1.302 ends its banner's third row with `· /rc connecting…`
+# until Remote Control connects (scripts/fixtures/claude-panes/startup-*.txt).
+_CLAUDE_STARTING_RE = re.compile(r"· /rc connecting…\s*$")
+# A turn spins `Generating...`/`Working...` and shows `esc to cancel`; idle
+# samples count only after one of these, or a Stop event, was seen.
+_AGY_TURN_RE = re.compile(r"[\u2800-\u28ff]\s+(?:Generating|Working)\b")
+READINESS_LOG_SCAN_BYTES = 1 << 20
+
+class _EvidenceTimeout(BaseException):
+    """One readiness evidence read outlived the operation's deadline. A
+    BaseException, so `except Exception` around a backend call cannot absorb it."""
+
+@contextmanager
+def _evidence_budget(deadline):
+    """Bound the reads of one readiness sample (record, liveness, pane, status)
+    by the remaining deadline. SIGALRM is main-thread only; a worker thread's
+    reads stay unbounded, like every other subprocess call here."""
+    def expire(_signum, _frame):
+        raise _EvidenceTimeout()
+    try:
+        previous = signal.signal(signal.SIGALRM, expire)
+        armed = True
+    except ValueError:
+        armed = False
+    if armed:
+        signal.setitimer(signal.ITIMER_REAL, max(deadline - time.monotonic(), 0.5))
+    try:
+        yield
+    finally:
+        if armed:
+            try:
+                signal.setitimer(signal.ITIMER_REAL, 0)
+            finally:
+                signal.signal(signal.SIGALRM, signal.SIG_DFL if previous is None else previous)
+
+def _process_identity(name, rec):
+    """True when the backend reports the recorded pane process, False when it
+    reports another, None when it is unrecorded or unknown this sample. The
+    PID is the backend's own (tmux or herdr server namespace), so it is never
+    checked against this process's /proc, which may be another namespace."""
+    expected = rec.get("session_pid")
+    if not expected:
+        return None
+    try:
+        pid = session_action(name, "pid")
+    except Exception:
+        return None
+    return None if pid is None else pid == expected
+
+def _ready_composer_kind(name, agent):
+    """The composer kind readiness relies on; never its text."""
+    kind, _text = pane_input(name, agent)
+    substrate, _ref = backend_for_name(name)
+    if (kind == "unknown" and agent == "antigravity"
+            and not getattr(substrate.capabilities, "capture_attributes", False)):
+        box = _antigravity_prompt_box_text(session_pane_text(name))
+        if box is not None:
+            kind = "input" if box.strip() else "empty"
+    return kind
+
+def _settle_signature(pane, agent):
+    """The render down to the composer's bottom rule, ignoring the status
+    lines below it, so two samples can show the screen stopped changing."""
+    plain = [_ANSI_RE.sub("", ln).rstrip() for ln in (pane or "").splitlines()]
+    if agent == "antigravity":
+        box = _antigravity_composer_box(pane)
+        plain = plain[:box[3] + 1] if box else plain
+    elif agent == "claude":
+        rules = [i for i, ln in enumerate(plain) if _PROMPT_RULE_RE.match(ln)]
+        plain = plain[:rules[-1] + 1] if rules else plain
+    return "\n".join(plain).rstrip()
+
+def _stop_belongs_to_launch(rec):
+    """Whether the recorded fullyIdle Stop time is not older than this launch."""
+    ready_at = rec.get("antigravity_ready_at")
+    if not ready_at:
+        return False
+    try:
+        return not rec.get("started_at") or parse_iso(ready_at) >= parse_iso(rec["started_at"])
+    except (TypeError, ValueError):
+        return False
+
+def _antigravity_turn_logged(name, rec, memory):
+    """Whether this launch's Stop events or session log show a turn ran.
+    The log is scanned incrementally, at most READINESS_LOG_SCAN_BYTES per
+    sample; nothing read is stored."""
+    try:
+        if any(json.loads(line).get("event") == "turn_end"
+               for line in session_events_path(name).read_text().splitlines() if line.strip()):
+            return True
+    except (OSError, ValueError, AttributeError):
+        pass
+    log = Path(rec.get("log_path") or "")
+    if not log.is_file():
+        return False
+    sources = [log]
+    if not memory.get("rotated_scanned"):
+        memory["rotated_scanned"] = True
+        sources.insert(0, log.with_name(log.name + ".1"))
+    for source in sources:
+        try:
+            with source.open("rb") as fh:
+                offset = memory.get("log_offset", 0) if source == log else 0
+                if source == log and fh.seek(0, 2) < offset:
+                    offset = 0                    # rotated since the last sample
+                fh.seek(max(0, offset - 64))
+                chunk = fh.read(READINESS_LOG_SCAN_BYTES)
+                if source == log:
+                    memory["log_offset"] = fh.tell()
+        except OSError:
+            continue
+        if _AGY_TURN_RE.search(_ANSI_RE.sub("", chunk.decode("utf-8", "replace"))):
+            return True
+    return False
+
+def _readiness_observation(name, rec, agent, for_kickoff, memory):
+    """One sample: (status, missing, signature, source, remedy). `ready` is
+    enough alone, `candidate` needs an identical second sample one interval
+    later, `wait`/`refuse` name the missing evidence, `skip` needs none."""
+    label = READINESS_LABELS[agent]
+    attach = f"answer it yourself in the pane (`nogg session attach {name}`), then retry"
+    startup_done = True
+    if agent == "antigravity":
+        stop_current = _stop_belongs_to_launch(rec)
+        startup_done = (not rec.get("antigravity_initial_turn") or stop_current
+                        or bool(rec.get("input_ready_at")))
+        plain = session_pane_text(name)
+        if _antigravity_feedback_prompt(plain):
+            return (("refuse" if startup_done and not for_kickoff else "wait"),
+                    "Antigravity's feedback survey (\"How's the CLI experience so far?\") replaced "
+                    "the composer and its digit keys would answer it", None, None,
+                    f"dismiss it with its Skip option (key 0) in the pane (`nogg session attach {name}`), then retry")
+    elif not for_kickoff:
+        return "skip", None, None, None, None
+    else:
+        plain = session_pane_text(name)
+    if not for_kickoff and startup_done:
+        return "skip", None, None, None, None
+    # A capture lists every pane row; blank rows below a short render would
+    # push the footer out of classify()'s last-lines window.
+    plain = (plain or "").rstrip()
+    live = classify(plain, ADAPTERS[agent])
+    status = _capture_backend_status(name)
+    footer = _ANSI_RE.sub("", plain.splitlines()[-1]).strip() if plain else ""
+    if agent == "antigravity" and (live == "working" or status in ("working", "done")
+                                   or footer.startswith("esc to cancel")):
+        memory["turn"] = True
+    if live in READINESS_CONTRARY:
+        return ("wait", f"{label} {READINESS_CONTRARY[live]}", None, None,
+                attach if live == "needs_input" else None)
+    if status in ("working", "blocked"):
+        return "wait", f"the backend reports {label} {status}", None, None, None
+    kind = _ready_composer_kind(name, agent)
+    if kind not in ("empty", "placeholder"):
+        shown = "not identifiable yet" if kind == "unknown" else "holding input"
+        return "wait", f"{label}'s composer is {shown}", None, None, None
+    signature = _settle_signature(plain, agent)
+    if agent == "claude" and any(_CLAUDE_STARTING_RE.search(ln) for ln in plain.splitlines()[:6]):
+        # Bounded: a Remote Control that never connects must not block kickoff.
+        since = memory.setdefault("rc_since", memory["now"])
+        if memory["now"] - since < memory["rc_grace"]:
+            return "wait", "Claude is still starting (Remote Control is connecting)", None, None, None
+    if agent != "antigravity":
+        return "candidate", "confirming the render has settled", signature, "composer", None
+    if live != "idle" and status not in ("idle", "done"):
+        return "wait", "Antigravity does not report idle (no `? for shortcuts` footer)", None, None, None
+    if startup_done:
+        return "ready", None, None, "stop" if stop_current else "composer", None
+    stale = " (only a Stop older than this launch)" if rec.get("antigravity_ready_at") else ""
+    if not (memory.get("turn") or _antigravity_turn_logged(name, rec, memory)):
+        return ("wait", f"no Stop event from this launch yet{stale} and no sign its startup turn "
+                "has run", None, None, None)
+    memory["turn"] = True
+    if _process_identity(name, rec) is not True:
+        return ("wait", f"no Stop event from this launch yet{stale} and the pane process "
+                "identity is unverified", None, None, None)
+    return ("candidate", "no Stop event from this launch yet; confirming a second idle sample",
+            signature, "live", None)
+
+def _record_input_ready(path, source, deadline):
+    with path.with_suffix(".lifecycle.lock").open("a") as lock:
+        acquire_bounded_flock(lock, deadline)
+        rec = json.loads(path.read_text())
+        rec["input_ready_source"], rec["input_ready_at"] = source, now()
+        write_session(path, rec)
+
+def await_session_input_ready(name, *, for_kickoff=True, timeout=None):
+    """Wait until `name` can positively take an instruction and record why.
+
+    A kickoff needs startup readiness for every agent; a plain send waits only
+    for Antigravity's first turn and refuses its feedback survey. Returns the
+    readiness source, or None when nothing was required (Pi keeps its path).
+    Failure names the missing evidence and the operator's next step."""
+    timing = validate_session_timing_config()
+    if timeout is None:
+        timeout = timing["session_startup_timeout_seconds"]
+    interval = timing["session_submit_verify_delay_seconds"]
     deadline = time.monotonic() + timeout
+    noted, previous, agent = time.monotonic(), None, None
+    memory = {"rc_grace": timing["session_delivery_timeout_seconds"]}
+    backend_error = session_backend_module().BackendError
     while True:
-        _, rec = _require_running(name)
-        if not rec.get("antigravity_initial_turn") or rec.get("antigravity_ready_at"):
-            return
-        if time.monotonic() >= deadline:
-            raise RuntimeError(f"{name}: Antigravity first turn has not finished; retry after its Stop hook")
-        time.sleep(0.2)
+        observed = None
+        try:
+            with _evidence_budget(deadline):
+                path, rec = _require_running(name)
+                agent = rec.get("agent") or "claude"
+                if agent not in READINESS_LABELS:
+                    return None
+                if _process_identity(name, rec) is False:
+                    raise RuntimeError(f"{name}: the recorded {READINESS_LABELS[agent]} process changed or "
+                                       "vanished; nothing was typed, keyed or queued")
+                memory["now"] = time.monotonic()
+                try:
+                    observed = _readiness_observation(name, rec, agent, for_kickoff, memory)
+                except backend_error as exc:
+                    # One slow or failed backend read is missing evidence, not a verdict.
+                    observed = "wait", f"the backend did not answer ({exc})", None, None, None
+        except _EvidenceTimeout:
+            pass
+        status, missing, signature, source, remedy = observed or (
+            "wait", "an evidence read did not finish before the deadline", None, None, None)
+        if status == "skip":
+            return None
+        if status == "refuse":
+            raise RuntimeError(f"{name}: {missing}; nothing was typed, keyed or queued; {remedy}")
+        mono = time.monotonic()
+        if status == "ready" or (status == "candidate" and previous and previous[0] == signature
+                                 and mono - previous[1] >= interval):
+            _record_input_ready(path, source, max(deadline, mono + interval))
+            return source
+        if status != "candidate":
+            previous = None
+        elif not previous or previous[0] != signature:
+            previous = (signature, mono)
+        remaining = deadline - mono
+        label = READINESS_LABELS.get(agent, "The session")
+        if remaining <= 0:
+            hint = "; a missing Stop event points at its Stop hook (`nogg doctor`)" if agent == "antigravity" else ""
+            raise RuntimeError(
+                f"{name}: {label} was not ready for input within {timeout:g}s ({missing}); nothing was "
+                f"typed, keyed or queued. Inspect it with `nogg session log {name}` or `nogg session "
+                f"watch {name}`{hint}" + (f"; {remedy}" if remedy else ""))
+        if mono - noted >= READINESS_NOTE_SECONDS:
+            print(f"{name}: waiting for {label} to be ready for input: {missing}", file=sys.stderr)
+            noted = mono
+        time.sleep(min(interval, remaining))
+
+def await_antigravity_first_turn(name, timeout=None):
+    """Compatibility wrapper: a plain send waits out Antigravity's first turn."""
+    return await_session_input_ready(name, for_kickoff=False, timeout=timeout)
 
 def session_emit(event):
     """Append one structured JSON line to the calling session's own
@@ -5145,22 +5404,121 @@ def _codex_composer_input(pane):
         return "input", ""
     return _attributed_prompt_input(pane, _CODEX_PROMPT_RE)
 
+# Antigravity 1.4.0 layout (scripts/fixtures/antigravity/1.4.0/panes): the
+# composer is the rule-framed `>` box nearest the one-line footer; a running
+# background task adds its own framed panel between them. A fresh session shows
+# its mode hint in gray (SGR 90, not dim) until the first keystroke: the hint is
+# recognised by its text, and other gray composer text stays unknown. tmux
+# carries SGR state from one captured line to the next.
+_AGY_MODE_HINT_RE = re.compile(r"(?:Accept-edits|Plan) mode: .+ \(shift\+tab to cycle\)")
+_AGY_HINT_COLOURS = {"90", "38;5;8"}
+_AGY_FEEDBACK_RE = re.compile(r"How's the CLI experience so far\?")
+_AGY_FEEDBACK_OPTIONS_RE = re.compile(r"\[0\]\s*Skip")
+
+def _antigravity_composer_box(pane):
+    """(lines, plain, top, bottom) of Antigravity's live composer, or None.
+    Only the footer (wrapped onto two rows at most) may follow the last rule;
+    panels below the composer are skipped, so a box further up the transcript
+    is never mistaken for it, and the three-row feedback survey is no box."""
+    lines = (pane or "").splitlines()
+    plain = [_ANSI_RE.sub("", ln) for ln in lines]
+    end = len(plain)
+    while end and not plain[end - 1].strip():
+        end -= 1
+    rules = [i for i in range(end) if _PROMPT_RULE_RE.match(plain[i])]
+    if len(rules) < 2 or sum(1 for i in range(rules[-1] + 1, end) if plain[i].strip()) > 2:
+        return None
+    for top, bottom in reversed(list(zip(rules, rules[1:]))):
+        body = [i for i in range(top + 1, bottom) if plain[i].strip()]
+        if body and plain[body[0]].lstrip().startswith(">"):
+            return lines, plain, top, bottom
+    return None
+
+def _sgr_state(state, params):
+    """Apply one SGR parameter list to a (faint, foreground) state."""
+    faint, fg = state
+    codes = (params or "0").split(";")
+    i = 0
+    while i < len(codes):
+        code = codes[i] or "0"
+        if code in ("38", "48"):
+            span = {"5": 3, "2": 5}.get(codes[i + 1] if i + 1 < len(codes) else "", 1)
+            if code == "38":
+                fg = ";".join(codes[i:i + span])
+            i += span
+            continue
+        if code == "0": faint, fg = False, None
+        elif code == "2": faint = True
+        elif code == "22": faint = False
+        elif code == "39": fg = None
+        elif code.isdigit() and (30 <= int(code) <= 37 or 90 <= int(code) <= 97): fg = code
+        i += 1
+    return faint, fg
+
+def _sgr_runs(line, state):
+    """Split one captured line into (text, (faint, fg)) runs, starting from the
+    state the previous line left (tmux emits only attribute changes)."""
+    runs, pos = [], 0
+    for match in _SGR_RE.finditer(line):
+        runs.append((line[pos:match.start()], state))
+        state = _sgr_state(state, match.group(1))
+        pos = match.end()
+    runs.append((line[pos:], state))
+    return [(_ANSI_RE.sub("", text), st) for text, st in runs], state
+
 def _antigravity_composer_input(pane):
-    return _attributed_prompt_input(pane, re.compile(r"^>\s?"), _PROMPT_RULE_RE)
+    """Classify Antigravity's composer: ("input", text), ("empty", ""),
+    ("placeholder", "") or ("unknown", ""). Dim text and the known mode hint
+    are placeholders; other gray or mixed-attribute text is unknown, never
+    input and never an empty composer."""
+    box = _antigravity_composer_box(pane)
+    if box is None:
+        return "unknown", ""
+    lines, plain, top, bottom = box
+    state = (False, None)
+    for line in lines[:top + 1]:
+        _runs, state = _sgr_runs(line, state)
+    texts, hints, marker = [], set(), True
+    for i in range(top + 1, bottom):
+        runs, state = _sgr_runs(lines[i], state)
+        if not plain[i].strip():
+            continue
+        if marker:
+            k = next(k for k, (text, _st) in enumerate(runs) if text.strip())
+            text, st = runs[k]
+            runs[k] = (text[text.index(">") + 1:], st)
+            marker = False
+        hints.update("dim" if faint else "gray" if fg in _AGY_HINT_COLOURS else "plain"
+                     for text, (faint, fg) in runs if text.replace("\u00a0", " ").strip())
+        texts.append("".join(text for text, _st in runs).replace("\u00a0", " ").rstrip())
+    text = "\n".join(texts).strip()
+    if not text:
+        return "empty", ""
+    if hints == {"dim"} or _AGY_MODE_HINT_RE.fullmatch(" ".join(text.split())):
+        return "placeholder", ""
+    if hints == {"plain"}:
+        return "input", text
+    return "unknown", ""
 
 def _antigravity_prompt_box_text(pane):
-    """Return plain Antigravity composer contents without interpreting SGR."""
-    lines = pane.splitlines()
-    plain = [_ANSI_RE.sub("", ln) for ln in lines]
-    rules = [i for i, ln in enumerate(plain) if _PROMPT_RULE_RE.match(ln)]
-    if len(rules) < 2:
+    """Return plain Antigravity composer contents without interpreting SGR;
+    the fresh-session mode hint reads as an empty composer."""
+    box = _antigravity_composer_box(pane)
+    if box is None:
         return None
-    top, bottom = rules[-2], rules[-1]
+    _lines, plain, top, bottom = box
     body = [i for i in range(top + 1, bottom) if plain[i].strip()]
-    if not body or not plain[body[0]].lstrip().startswith(">"):
-        return None
     first = plain[body[0]].lstrip()[1:]
-    return "\n".join([first] + [plain[i] for i in body[1:]]).strip()
+    text = "\n".join([first] + [plain[i] for i in body[1:]]).strip()
+    return "" if _AGY_MODE_HINT_RE.fullmatch(" ".join(text.split())) else text
+
+def _antigravity_feedback_prompt(pane):
+    """Whether agy's feedback survey has replaced the composer. Its digit
+    options answer the survey, so nothing may be typed while it shows."""
+    tail = [ln for ln in (_ANSI_RE.sub("", ln) for ln in (pane or "").splitlines()) if ln.strip()][-6:]
+    return (_antigravity_composer_box(pane) is None
+            and any(_AGY_FEEDBACK_RE.search(ln) for ln in tail)
+            and any(_AGY_FEEDBACK_OPTIONS_RE.search(ln) for ln in tail))
 def pane_input(name, agent):
     """(kind, text) for a session's unsubmitted prompt input; kind is
     `input`, `empty`, `placeholder` or `unknown`. Only an adapter that can
@@ -5819,7 +6177,7 @@ def specialist_kickoff_message(bead_id):
             "Return your structured result and validation evidence to the Main Worker.")
 
 def session_kickoff(name, message=None, change=None):
-    """Send one kickoff only, after the runtime's startup turn finishes."""
+    """Send one kickoff only, once the runtime positively shows a ready composer."""
     path, rec = _require_running(name)
     if change is not None:
         if (rec.get("role") or "lead") != "lead" or bead_change(rec.get("bead_id")) != change:
@@ -5838,9 +6196,13 @@ def session_kickoff(name, message=None, change=None):
                                    bead_id=None, task_id=None))
         write_session(path, rec)
         return
+    if rec.get("agent") == "antigravity" and rec.get("kickoff_sent_at"):
+        print(f"{name}: kickoff already sent")
+        return
+    message = _kickoff_message(name, rec, message)   # refuse before any wait
+    await_session_input_ready(name)
     if rec.get("agent") != "antigravity":
         return _session_kickoff(name, message)
-    await_antigravity_first_turn(name)
     with path.with_suffix(".kickoff.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         _, rec = _require_running(name)
@@ -5856,35 +6218,36 @@ def session_kickoff(name, message=None, change=None):
 
 def _session_kickoff(name, message=None):
     _, rec = _require_running(name)
+    session_send(name, _kickoff_message(name, rec, message))
+
+def _kickoff_message(name, rec, message=None):
+    """The exact first instruction for `rec`, refusing an unscoped session."""
     if message:
-        session_send(name, message)
-        return
+        return message
     role = rec.get("role") or "lead"  # legacy records were Lead sessions
     if role == "planning":
         planning_id = require_kebab(rec.get("planning_id"), "planning ID")
         description = require_kebab(rec.get("description"), "planning description")
         workdir = planning_launch_workdir(planning_id, description, rec.get("working_dir"))
-        session_send(name, f"Begin authorized planning {planning_id} ({description}) in {workdir}. "
-                     "You are the Planning Agent: acquire ./scripts/nogg plan-begin yourself in this session "
-                     "before any OpenSpec write. If another planner owns the lock, report its owner and stop "
-                     "without writing. Follow the planning prompt through validation, planning commit, "
-                     "materialization, explicit dependency wiring and local integration. Then run plan-end from "
-                     "your planning worktree (plan-end always precedes worktree retirement) and, as the "
-                     "very last command, worktree cleanup from the surviving canonical checkout; if cleanup "
-                     "refuses, report the hand-off (session stop <name>, then worktree cleanup <record>) "
-                     "and stop. Validate with openspec validate <change> --strict --no-interactive. "
-                     "Do not select or claim execution Beads.")
-        return
+        return (f"Begin authorized planning {planning_id} ({description}) in {workdir}. "
+                "You are the Planning Agent: acquire ./scripts/nogg plan-begin yourself in this session "
+                "before any OpenSpec write. If another planner owns the lock, report its owner and stop "
+                "without writing. Follow the planning prompt through validation, planning commit, "
+                "materialization, explicit dependency wiring and local integration. Then run plan-end from "
+                "your planning worktree (plan-end always precedes worktree retirement) and, as the "
+                "very last command, worktree cleanup from the surviving canonical checkout; if cleanup "
+                "refuses, report the hand-off (session stop <name>, then worktree cleanup <record>) "
+                "and stop. Validate with openspec validate <change> --strict --no-interactive. "
+                "Do not select or claim execution Beads.")
     bead_id = rec.get("bead_id")
     if not bead_id:
         raise RuntimeError(f"kickoff: {name} carries no bead_id; pass --message to kick it off explicitly")
     if role.startswith("specialist:"):
-        session_send(name, specialist_kickoff_message(bead_id))
-        return
+        return specialist_kickoff_message(bead_id)
     change = bead_change(bead_id)
     if not change:
         raise RuntimeError(f"kickoff: Bead {bead_id} carries no openspec:change: label; pass --message explicitly")
-    session_send(name, _compose_kickoff_message(bead_id, change))
+    return _compose_kickoff_message(bead_id, change)
 # --- session observability: sweep --------------------------------------
 def change_beads(change):
     """Every Bead materialized under `openspec:change:<change>`, across all
