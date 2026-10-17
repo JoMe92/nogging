@@ -46,14 +46,31 @@ restricted split:
 
 | Level | Selected by | Sandbox / approval | Outbound network | Can `git push` |
 | --- | --- | --- | --- | --- |
-| **trusted** | `--full-access` | `workspace-write` / `never` | **on** (`network_access = true`) | **yes** |
-| **restricted** | default (also `--read-only` forces the sandbox to `read-only`) | `workspace-write` / `on-request` | **off** (`network_access = false`) | no |
+| **trusted** | `--profile trusted` or `--full-access` | `workspace-write` / `never` | **on** (`network_access = true`) | **yes** |
+| **restricted** | default or `--profile restricted` (`--read-only` forces the sandbox to `read-only`) | `workspace-write` / `on-request` | **off** (`network_access = false`) | no |
 
 A **trusted** Codex Lead session completes an integration itself, exactly like
 the Claude trusted path: it pushes the feature branch, fast-forward-merges into
 `develop` locally, and pushes `develop` — **no pull request**. A **restricted**
 session has no network, so `git push`, `bd sync`, and `dolt push|pull` all fail;
 it stops and reports instead.
+
+#### Shared Dolt and planning launches
+
+The shared Beads database uses a host-owned Dolt server over loopback TCP.
+Restricted Codex has network access disabled, including loopback, so a `bd`
+command that needs this server fails with an error such as `Dolt server
+unreachable at 127.0.0.1:3308: ... socket: operation not permitted`. Do not
+start Dolt from the session. Relaunch with `--profile trusted` (or
+`--full-access` when the autonomous prompt is intended), or ask the operator
+to run the `bd` step on the host.
+
+Codex planning launches require an explicit authority choice. Supply
+`--profile restricted`, `--profile trusted`, or `--full-access`; a launch with
+neither `--profile` nor `--full-access` is refused before creating a session
+or worktree. Successful launches print the effective `profile=` and `prompt=`
+line. An explicitly restricted Codex launch also prints a NOTE that its
+network-off sandbox cannot reach a Dolt-server-backed `bd`.
 
 Both levels explicitly add the shared Git directory and the current worktree's
 Git directory to `sandbox_workspace_write.writable_roots`, because Codex

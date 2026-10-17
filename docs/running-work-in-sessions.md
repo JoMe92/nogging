@@ -86,6 +86,13 @@ briefing file.
 
 ## Start a planning session
 
+Codex and Antigravity planning launches must name their authority with
+`--profile <name>` or `--full-access`; otherwise Nogging refuses before any
+session or worktree side effect. Every successful launch prints its effective
+`profile=` and `prompt=`. Restricted Codex additionally prints a NOTE that its
+network-off sandbox cannot reach the shared, Dolt-server-backed Beads database,
+including over loopback.
+
 ```bash
 ./scripts/nogg session launch --role planning \
   --planning-id <planning-id> --description <description> [--bead SPEC-xxx]
