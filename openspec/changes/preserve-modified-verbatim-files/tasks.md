@@ -20,7 +20,7 @@
 
 ## 6. Documentation (docs/ lane)
 
-- [ ] TASK-PVE-006 [routine] Document installed-manifest tracking, .nogging-new preservation workflow, --force, and doctor warnings in installation and recovery guides per design Migration Plan. Check: scripts/installation-docs.test.sh, scripts/test. Branch: docs/preserve-modified-verbatim-files. Depends on TASK-PVE-005.
+- [x] TASK-PVE-006 [routine] Document installed-manifest tracking, .nogging-new preservation workflow, --force, and doctor warnings in installation and recovery guides per design Migration Plan. Check: scripts/installation-docs.test.sh, scripts/test. Branch: docs/preserve-modified-verbatim-files. Depends on TASK-PVE-005.
 
 ## Dependency contract
 
