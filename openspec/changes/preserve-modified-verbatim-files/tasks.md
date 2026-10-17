@@ -16,7 +16,7 @@
 
 ## 5. End-to-end installer coverage (test/ lane)
 
-- [ ] TASK-PVE-005 [standard] Integrate end-to-end installer tests and package files list validation in cli.test.sh per design Decision 6; verify offline runner stability. Check: scripts/cli.test.sh, scripts/installed-diagnostics.test.sh, scripts/test. Branch: test/preserve-modified-verbatim-files. Depends on TASK-PVE-003 and TASK-PVE-004.
+- [x] TASK-PVE-005 [standard] Integrate end-to-end installer tests and package files list validation in cli.test.sh per design Decision 6; verify offline runner stability. Check: scripts/cli.test.sh, scripts/installed-diagnostics.test.sh, scripts/test. Branch: test/preserve-modified-verbatim-files. Depends on TASK-PVE-003 and TASK-PVE-004.
 
 ## 6. Documentation (docs/ lane)
 
