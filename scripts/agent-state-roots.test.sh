@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-agents.sh"; use_agent_stubs
 python3 - "$(dirname "$0")/nogg" <<'PY'
 import os, tempfile
 from pathlib import Path

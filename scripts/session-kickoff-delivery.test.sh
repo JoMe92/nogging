@@ -8,6 +8,7 @@
 # with a fake monotonic clock and a scratch Codex transcript. No test-mode
 # bypass, real tmux server, bd or Dolt is involved.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-agents.sh"; use_agent_stubs
 for name in $(compgen -e); do
   case "$name" in NOGG_*|NOGGING_*|HERDR_*|TMUX|TMUX_TMPDIR|TMUX_STUB_DIR|TMUX_STATEFUL_STUB) unset "$name" ;; esac
 done

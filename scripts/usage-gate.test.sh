@@ -41,18 +41,17 @@ printf '%s %s\n' "$cmd" "$*" >>"$d/calls.log"
 case "$cmd" in
   has-session)
     [[ "${1:-}" == -t ]] && shift
-    [[ "${TMUX_STUB_LIVE:-0}" == 1 && -f "$d/live-${1:-}" ]] ;;
+    [[ -f "$d/live-${1:-}" ]] ;;
   new-session)
     [[ "${TMUX_STUB_FAIL:-0}" == 1 ]] && exit 1
-    if [[ "${TMUX_STUB_LIVE:-0}" == 1 ]]; then
-      while [[ $# -gt 0 && "$1" != -s ]]; do shift; done
-      [[ "${1:-}" == -s ]] && touch "$d/live-${2:?}"
-    fi
+    while [[ $# -gt 0 && "$1" != -s ]]; do shift; done
+    [[ "${1:-}" == -s ]] && touch "$d/live-${2:?}"
     exit 0 ;;
   *) : ;;
 esac
 STUB
 chmod +x "$work/bin/bd" "$work/bin/tmux"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-agents.sh"; stub_agent_binaries "$work/bin"
 export PATH="$work/bin:$PATH"
 export HOME="$work/home" XDG_CACHE_HOME="$work/cache"
 mkdir -p "$HOME"

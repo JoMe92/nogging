@@ -155,9 +155,10 @@ cat >"$bin_dir/tmux" <<STUB
 [[ "\${1:-}" == "-L" ]] && shift 2
 cmd="\${1:-}"; shift || true
 printf '%s %s\n' "\$cmd" "\$*" >>"$tmux_log"
+if [[ "\$cmd" == new-session ]]; then a=("\$@"); for i in "\${!a[@]}"; do [[ "\${a[i]}" == -s ]] && : >"${tmux_log}.live-\${a[i+1]}"; done; fi
 case "\$cmd" in
   has-session)
-    exit 1 ;;
+    [[ -e "${tmux_log}.live-\${2:-}" ]] || exit 1 ;;
   new-session)
     exit 0 ;;
   kill-session)
@@ -166,6 +167,7 @@ case "\$cmd" in
     exit 0 ;;
 esac
 STUB
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-agents.sh"; stub_agent_binaries "$bin_dir"
 chmod +x "$bin_dir/bd" "$bin_dir/tmux"
 
 run_launch() {
