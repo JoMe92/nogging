@@ -14,3 +14,13 @@ stub_agent_binaries() {
     chmod +x "$dir/$name"
   done
 }
+
+# Append a shared stub directory to PATH so a fixture that never stubs the agent
+# itself still passes the launch preflight on a host without the real binaries
+# (GitHub runners). Appended, never prepended: a real or fixture-supplied agent
+# earlier on PATH keeps winning. The directory is fixed per user and idempotent.
+use_agent_stubs() {
+  local dir="${TMPDIR:-/tmp}/nogg-agent-stubs-$(id -u)"
+  stub_agent_binaries "$dir"
+  case ":$PATH:" in *":$dir:"*) ;; *) export PATH="$PATH:$dir" ;; esac
+}
