@@ -19,7 +19,6 @@ m = SourceFileLoader("composer_clip", f"{sys.argv[1]}/scripts/nogg").load_module
 assert not m._is_legacy_mock(), "the real verification path must run"
 R = "─" * 30
 EMPTY_CLAUDE, EMPTY_AGY = f"{R}\n❯ \n{R}\n", f"{R}\n> \n{R}\n"
-VISIBLE = 8
 
 ROWS = [f"Step {i:02d}: carry out the mapped task slice {i} and record evidence for it" for i in range(1, 15)]
 assert len(ROWS) > 10
@@ -36,7 +35,7 @@ class Clock:
     def sleep(self, seconds): self.now += seconds
 
 class Substrate:
-    def __init__(self, attributes, agent, visible_rows=ROWS[-VISIBLE:], swallow=0, never=False):
+    def __init__(self, attributes, agent, visible_rows, swallow=0, never=False):
         self.capabilities = SimpleNamespace(capture_attributes=attributes, agent_status=True)
         self.agent, self.visible, self.swallow, self.never = agent, visible_rows, swallow, never
         self.box = claude_box if agent == "claude" else agy_box
@@ -64,48 +63,51 @@ def deliver(sub, agent, message=MSG):
     except RuntimeError as exc:
         return str(exc)
 
-for attributes in (True, False):
-    # The fixture itself must be the clipped suffix the orchestrator observed.
-    sub = Substrate(attributes, "claude")
-    probe = m._claude_prompt_box_text(claude_box(ROWS[-VISIBLE:]))
-    assert MSG.endswith(probe.replace("\n  ", "\n").strip()) and len(probe) < len(MSG)
+# The visible height depends on the pane (7 rows in the archive-planner failure,
+# Claude Code 2.1.302 at 120 columns), so several heights must all be recognised.
+for visible_rows in (8, 7, 5):
+    tail = ROWS[-visible_rows:]
+    for attributes in (True, False):
+        # The fixture itself must be a clipped suffix of the message.
+        probe = m._claude_prompt_box_text(claude_box(tail))
+        assert MSG.endswith(probe.replace("\n  ", "\n").strip()) and len(probe) < len(MSG)
 
-    # A clipped long Claude input is this operation's own message: one Enter, no retype.
-    sub = Substrate(attributes, "claude")
-    assert deliver(sub, "claude") == "ok" and sub.enters == 1 and sub.typed == [MSG], (attributes, sub.enters)
+        # A clipped long Claude input is this operation's own message: one Enter, no retype.
+        sub = Substrate(attributes, "claude", tail)
+        assert deliver(sub, "claude") == "ok" and sub.enters == 1 and sub.typed == [MSG], (visible_rows, attributes, sub.enters)
 
-    # A swallowed first Enter is retried once while the clipped text is still pending.
-    sub = Substrate(attributes, "claude", swallow=1)
-    assert deliver(sub, "claude") == "ok" and sub.enters == 2 and sub.typed == [MSG], (attributes, sub.enters)
+        # A swallowed first Enter is retried once while the clipped text is still pending.
+        sub = Substrate(attributes, "claude", tail, swallow=1)
+        assert deliver(sub, "claude") == "ok" and sub.enters == 2 and sub.typed == [MSG], (visible_rows, attributes, sub.enters)
 
-    # Never submitted: fails after exactly one retry, never claiming success.
-    sub = Substrate(attributes, "claude", never=True)
-    result = deliver(sub, "claude")
-    assert result != "ok" and sub.enters == 2 and sub.typed == [MSG], (attributes, result, sub.enters)
+        # Never submitted: fails after exactly one retry, never claiming success.
+        sub = Substrate(attributes, "claude", tail, never=True)
+        result = deliver(sub, "claude")
+        assert result != "ok" and sub.enters == 2 and sub.typed == [MSG], (visible_rows, attributes, result, sub.enters)
 
-    # Foreign text of the same height is refused before any Enter.
-    foreign = [f"Operator draft row {i:02d}: unrelated words that are not the kickoff" for i in range(VISIBLE)]
-    sub = Substrate(attributes, "claude", visible_rows=foreign)
-    result = deliver(sub, "claude")
-    assert "did not hold exactly the message" in result and sub.enters == 0, (attributes, result)
+        # Foreign text of the same height is refused before any Enter.
+        foreign = [f"Operator draft row {i:02d}: unrelated words that are not the kickoff" for i in range(visible_rows)]
+        sub = Substrate(attributes, "claude", foreign)
+        result = deliver(sub, "claude")
+        assert "did not hold exactly the message" in result and sub.enters == 0, (visible_rows, attributes, result)
 
-    # A box shorter than the clip height is not a clipped view: a mere suffix is refused.
-    sub = Substrate(attributes, "claude", visible_rows=ROWS[-(VISIBLE - 1):])
-    result = deliver(sub, "claude")
-    assert "did not hold exactly the message" in result and sub.enters == 0, (attributes, result)
+        # A tall box whose rows start with foreign text is not a suffix either.
+        sub = Substrate(attributes, "claude", ["Operator note first"] + tail[1:])
+        result = deliver(sub, "claude")
+        assert "did not hold exactly the message" in result and sub.enters == 0, (visible_rows, attributes, result)
 
-    # A tall box whose rows start with foreign text is not a suffix either.
-    sub = Substrate(attributes, "claude", visible_rows=["Operator note first"] + ROWS[-(VISIBLE - 1):])
-    result = deliver(sub, "claude")
-    assert "did not hold exactly the message" in result and sub.enters == 0, (attributes, result)
+    # Antigravity's framed composer is checked through the same plain-box classification.
+    sub = Substrate(False, "antigravity", tail)
+    assert deliver(sub, "antigravity") == "ok" and sub.enters == 1 and sub.typed == [MSG]
+    sub = Substrate(False, "antigravity", tail, never=True)
+    assert deliver(sub, "antigravity") != "ok" and sub.enters == 2
+    sub = Substrate(False, "antigravity", [f"Foreign row {i:02d} not from the kickoff text at all" for i in range(visible_rows)])
+    assert "did not hold exactly the message" in deliver(sub, "antigravity") and sub.enters == 0
 
-# Antigravity's framed composer clips the same way; check the plain (herdr) classification.
-sub = Substrate(False, "antigravity")
-assert deliver(sub, "antigravity") == "ok" and sub.enters == 1 and sub.typed == [MSG]
-sub = Substrate(False, "antigravity", never=True)
-assert deliver(sub, "antigravity") != "ok" and sub.enters == 2
-sub = Substrate(False, "antigravity", visible_rows=[f"Foreign row {i:02d} not from the kickoff text at all" for i in range(VISIBLE)])
-assert "did not hold exactly the message" in deliver(sub, "antigravity") and sub.enters == 0
+# A tail too short to be identifying (under 40 characters) is never accepted as clipping.
+short_msg = "\n".join(ROWS[:-1] + ["ok, thanks"])
+sub = Substrate(True, "claude", ["ok, thanks"])
+assert "did not hold exactly the message" in deliver(sub, "claude", short_msg) and sub.enters == 0
 
 # Unit boundaries of the matcher.
 assert m._composer_text_matches(MSG, MSG)
