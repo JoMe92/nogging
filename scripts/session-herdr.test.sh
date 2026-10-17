@@ -217,7 +217,17 @@ esac
     assert "nothing was submitted" in safe_nudge.stdout
     assert calls_path.read_text().count("pane send-keys ") == before_calls
     run([nogg, "session", "nudge", name, "--message", "e2e explicit nudge"], env=env)
-    run([nogg, "session", "kickoff", name], env=env)
+    # Kickoff waits for startup readiness: an idle runtime with a ready composer.
+    def set_status(value):
+        state = json.loads(state_file.read_text())
+        for pane in state.get("panes", {}).values():
+            if pane.get("label") == name: pane["agent_status"] = value
+        state_file.write_text(json.dumps(state))
+    set_status("idle")
+    # Two readiness samples precede the kickoff, each several stub CLI round
+    # trips; a loaded host needs more than the default 20 s for all of them.
+    run([nogg, "session", "kickoff", name], env=env, timeout=90)
+    set_status("working")
     # The orchestrator stays on tmux even with herdr configured as the default.
     orchestrator = run([nogg, "session", "launch", "--role", "orchestrator",
                         "--profile", "orchestrator", "--agent", "claude"], env=env)
