@@ -241,7 +241,7 @@ for backend in ("tmux", "herdr"):
     rec = {"name": f"s5_{backend}", "agent": "codex"}
     buf = io.StringIO()
     with patch.object(m, "_require_running", return_value=(None, rec)), \
-         patch.object(m, "codex_queue_send", return_value=False), \
+         patch.object(m, "_codex_queue_deliver_locked", return_value="not-attempted"), \
          patch.object(m, "backend_for_name", return_value=(sub, {})), \
          patch.object(m.time, "sleep"), \
          contextlib.redirect_stdout(buf):
@@ -262,7 +262,7 @@ for backend in ("tmux", "herdr"):
     sub.custom_handler = handler_5b
     rec = {"name": f"s5b_{backend}", "agent": "codex"}
     with patch.object(m, "_require_running", return_value=(None, rec)), \
-         patch.object(m, "codex_queue_send", return_value=False), \
+         patch.object(m, "_codex_queue_deliver_locked", return_value="not-attempted"), \
          patch.object(m, "backend_for_name", return_value=(sub, {})), \
          patch.object(m.time, "sleep"):
         try:
@@ -319,7 +319,7 @@ for backend in ("tmux", "herdr"):
     rec = {"name": f"s6_codex_{backend}", "agent": "codex", "codex_thread_id": "tid"}
     buf = io.StringIO()
     with patch.object(m, "_require_running", return_value=(None, rec)), \
-         patch.object(m, "codex_queue_send", return_value=True) as qsend, \
+         patch.object(m, "_codex_queue_deliver_locked", return_value="submitted") as qsend, \
          patch.object(m, "backend_for_name", return_value=(sub, {})), \
          contextlib.redirect_stdout(buf):
         m.session_nudge(rec["name"], "via queue")

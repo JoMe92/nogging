@@ -69,10 +69,10 @@ with patch.object(m, 'session_pane_text', return_value=agy_wrapped_fixture), \
 rec = {'name': 'probe', 'agent': 'codex', 'codex_thread_id': 'thread'}
 out = io.StringIO()
 with patch.object(m, '_require_running', return_value=(None, rec)), \
-     patch.object(m, 'codex_queue_send', return_value=True) as queue, \
+     patch.object(m, '_codex_queue_deliver_locked', return_value='submitted') as queue, \
      patch.object(m, 'session_action') as action, contextlib.redirect_stdout(out):
     m.session_nudge('probe', 'please continue')
-assert queue.call_args.args == (rec, 'please continue')
+assert queue.call_args.args[:3] == ('probe', rec, 'please continue')
 assert not action.called and 'nudged probe' in out.getvalue()
 
 # If the queue refuses, a pending Codex composer is retried once and the
@@ -81,7 +81,7 @@ codex_tmux = SimpleNamespace(capabilities=SimpleNamespace(capture_attributes=Tru
 codex_rec = {'name': 'probe', 'agent': 'codex'}
 out = io.StringIO()
 with patch.object(m, '_require_running', return_value=(None, codex_rec)), \
-     patch.object(m, 'codex_queue_send', return_value=False), \
+     patch.object(m, '_codex_queue_deliver_locked', return_value='not-attempted'), \
      patch.object(m, 'backend_for_name', return_value=(codex_tmux, {})), \
      patch.object(m, 'session_pane_text', return_value=codex_typed), \
      patch.object(m, 'session_action') as action, \
