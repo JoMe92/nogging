@@ -37,9 +37,14 @@ with patch.object(m, 'session_pane_text', return_value='> something'):
 rec = dict(name='s', agent='claude', bead_id='B1')
 LAST_SENT = []
 LAST_TEXT = []
+TIMING = {"session_submit_delay_seconds": .3, "session_submit_verify_delay_seconds": .5,
+          "session_delivery_timeout_seconds": 2., "session_startup_timeout_seconds": 4.}
 def nudge(pane, after=None, message=None, agent='claude'):
     """Run session_nudge against a fixture pane; return (output, keys sent)."""
     state = {'pane': pane}
+    clock = [0.0]
+    def fake_sleep(seconds): clock[0] += seconds
+    def fake_monotonic(): return clock[0]
     sent = LAST_SENT; sent.clear()
     texts = LAST_TEXT; texts.clear()
     def fake_tmux(*args, check=True, stdin=None):
@@ -47,15 +52,22 @@ def nudge(pane, after=None, message=None, agent='claude'):
             from types import SimpleNamespace
             return SimpleNamespace(returncode=0, stdout=state['pane'])
         sent.append(args)
-        if stdin is not None: texts.append(stdin)
-        if args[-1] == 'Enter' and after is not None: state['pane'] = after
+        if stdin is not None:
+            texts.append(stdin)
+            state['pane'] = f'{R}\n❯ {stdin}\n{R}\n'
+        if args[-1] in ('C-u', 'BSpace'):
+            state['pane'] = fixtures['empty']
+        if args[-1].lower() == 'enter' and after is not None: state['pane'] = after
         from types import SimpleNamespace
         return SimpleNamespace(returncode=0, stdout='')
     buf = io.StringIO()
     with patch.object(m, '_require_running', return_value=(None, dict(rec, agent=agent))), \
-         patch.object(m, 'tmux', side_effect=fake_tmux), patch.object(m.time, 'sleep'), \
+         patch.object(m, 'tmux', side_effect=fake_tmux), patch.object(m.time, 'sleep', side_effect=fake_sleep), \
+         patch.object(m.time, 'monotonic', side_effect=fake_monotonic), \
+         patch.object(m, 'validate_session_timing_config', return_value=TIMING), \
          contextlib.redirect_stdout(buf):
-        m.session_nudge('s', message)
+        try: m.session_nudge('s', message)
+        except Exception: raise
     return buf.getvalue(), sent
 # Placeholder-only, empty, unknown and multi-line panes execute nothing.
 for pane, why in [(fixtures['placeholder'], 'placeholder'), (fixtures['empty'], 'empty'),
@@ -63,28 +75,28 @@ for pane, why in [(fixtures['placeholder'], 'placeholder'), (fixtures['empty'], 
                   (f'{R}\n❯ line one\n  line two\n{R}\n', 'cannot be resent')]:
     out, sent = nudge(pane)
     assert sent == [], (why, sent)
-    assert 'nothing was submitted' in out and '--message' in out and why in out, out
+    assert 'nothing was submitted' in out and '--message' in out and why in out, (why, out)
 out, sent = nudge('> pending', agent='codex')
 assert sent == [] and '--message' in out
 # Positively identified actual input is resent and verified.
 out, sent = nudge(fixtures['input'], after=fixtures['empty'])
 assert any(a[0] == 'paste-buffer' for a in sent) and LAST_TEXT == ['continue with the next task'] and 'nudged s' in out
 # Explicit --message replaces the placeholder deliberately and is verified.
-out, sent = nudge(fixtures['placeholder'], after=fixtures['placeholder'], message='Wie ist der Stand')
-assert sent[0] == ('send-keys', '-t', 's', 'C-u')
+out, sent = nudge(fixtures['placeholder'], after=fixtures['empty'], message='Wie ist der Stand')
+assert ('send-keys', '-t', 's', 'ctrl+u') not in sent, sent
 assert any(a[0] == 'paste-buffer' for a in sent) and LAST_TEXT == ['Wie ist der Stand'] and 'nudged s' in out
 # Explicit --message over unrelated actual input replaces it.
 out, sent = nudge(fixtures['input'], after=fixtures['empty'], message='explicit')
 assert any(a[0] == 'paste-buffer' for a in sent) and LAST_TEXT == ['explicit']
 # Bounded retry: still-pending input is resubmitted once, then fails; an
 # unidentifiable pane is unverified, never reported as submitted.
-for after, reason in [(fixtures['input'], 'unsubmitted'), ('unidentifiable', 'could not be verified')]:
+for after, reason in [(f'{R}\n❯ go\n{R}\n', 'unsubmitted'), ('unidentifiable', 'composer is unknown')]:
     try: nudge(fixtures['empty'], after=after, message='go')
     except RuntimeError as exc: assert reason in str(exc), exc
     else: raise AssertionError('unverified submission reported as success')
-    enters = sum(1 for a in LAST_SENT if a[-1] == 'Enter')
-    # Claude submits with two Enters; a single retry doubles that, no more.
-    assert enters == (4 if reason == 'unsubmitted' else 2), LAST_SENT
+    enters = sum(1 for a in LAST_SENT if a[-1].lower() == 'enter')
+    # Exactly one retry Enter is sent, and only while this message stays pending.
+    assert enters == (2 if reason == 'unsubmitted' else 1), LAST_SENT
 # Non-running sessions are refused before any tmux interaction.
 with patch.object(m, 'load_session', return_value=(None, rec)), \
      patch.object(m, 'reconciled_state', return_value='stopped'), patch.object(m, 'tmux_sessions', return_value=set()), \
@@ -104,7 +116,8 @@ def herdr_action(name, operation, *args, **kwargs):
     state['actions'].append((operation, args))
     if operation == 'capture': return state['pane']
     if operation == 'agent_status': return state['status']
-    if operation == 'send_keys' and args[0] == 'enter': state['pane'] = f'{R}\n❯ \n{R}\n'
+    if operation == 'send_text': state['pane'] = f'{R}\n❯ {args[0]}\n{R}\n'
+    if operation == 'send_keys' and args[0] in ('ctrl+u', 'enter'): state['pane'] = f'{R}\n❯ \n{R}\n'
     return None
 with patch.object(m, 'backend_for_name', return_value=(herdr, {'herdr_session': 'nogging'})), \
      patch.object(m, 'session_action', side_effect=herdr_action), \
@@ -113,7 +126,8 @@ with patch.object(m, 'backend_for_name', return_value=(herdr, {'herdr_session': 
     assert m.pane_input('s', 'claude') == ('unknown', '')
     m.session_nudge('s')
     assert not any(op in ('send_text', 'send_keys') for op, _ in state['actions']), state['actions']
-    # Replacement from a typed/suggested box to an empty box verifies.
+    # Explicit send from a positively empty box verifies.
+    state['pane'] = f'{R}\n❯ \n{R}\n'
     m.session_nudge('s', 'explicit')
     assert 'nudged s' in output.getvalue()
     assert ('send_text', ('explicit',)) in state['actions']
@@ -129,16 +143,24 @@ with patch.object(m, 'backend_for_name', return_value=(herdr, {'herdr_session': 
 state.update(pane=f'{R}\n❯ \n{R}\n', status='idle', actions=[])
 def herdr_stuck_action(name, operation, *args, **kwargs):
     state['actions'].append((operation, args))
-    if operation == 'capture': return f'{R}\n❯ explicit\n{R}\n'
+    if operation == 'capture': return state['pane']
+    if operation == 'send_text': state['pane'] = f'{R}\n❯ {args[0]}\n{R}\n'
     if operation == 'agent_status': return 'idle'
+    if operation == 'send_keys' and args[0] == 'ctrl+u': state['pane'] = f'{R}\n❯ \n{R}\n'
     return None
+clock = [0.0]
+def fake_stuck_sleep(seconds): clock[0] += seconds
+def fake_stuck_monotonic(): return clock[0]
 with patch.object(m, 'backend_for_name', return_value=(herdr, {'herdr_session': 'nogging'})), \
      patch.object(m, 'session_action', side_effect=herdr_stuck_action), \
      patch.object(m, '_require_running', return_value=(None, dict(rec, agent='claude'))), \
-     patch.object(m.time, 'sleep'), contextlib.redirect_stdout(io.StringIO()):
+     patch.object(m.time, 'sleep', side_effect=fake_stuck_sleep), \
+     patch.object(m.time, 'monotonic', side_effect=fake_stuck_monotonic), \
+     patch.object(m, 'validate_session_timing_config', return_value=TIMING), \
+     contextlib.redirect_stdout(io.StringIO()):
     try: m.session_nudge('s', 'explicit')
-    except RuntimeError as exc: assert 'unverified after a retry' in str(exc), exc
+    except RuntimeError as exc: assert 'after a retry' in str(exc), exc
     else: raise AssertionError('herdr submission without replacement was accepted')
-    assert sum(op == 'send_keys' and args == ('enter',) for op, args in state['actions']) == 4
+    assert sum(op == 'send_keys' and args == ('enter',) for op, args in state['actions']) == 2
 print('Herdr no-attributes nudge/send verification regressions passed')
 PY
