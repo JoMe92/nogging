@@ -390,8 +390,11 @@ def inspect_usage(agent, *, source=None, now=None, stale_after=600, model=None):
         age = (now - observed).total_seconds()
         if age < 0:
             reason = 'observation is in the future'
-        elif age > stale_after:
+        elif age > stale_after and agent != 'codex':
             reason = 'stale observation'
+    # Codex logs a fresh sample every turn on this host, so its newest event
+    # stays the best knowledge until each window's own reset; age is reported.
+    stale = agent == 'codex' and observed is not None and (now - observed).total_seconds() > stale_after
     if not isinstance(limits, dict) and reason is None:
         reason = 'missing or unsupported usage windows'
     windows = []
@@ -415,12 +418,17 @@ def inspect_usage(agent, *, source=None, now=None, stale_after=600, model=None):
                     item['reason'] = 'reset precedes observation'
                 else:
                     item.update(status='known', reason=None, used_percent=used, resets_at=iso(reset))
+                    if stale:
+                        item.update(stale=True, age_seconds=int((now - observed).total_seconds()))
             except (KeyError, ValueError, TypeError, OverflowError, OSError):
                 item['reason'] = 'missing or malformed window'
         windows.append(item)
-    return {'schema_version': 1, 'provider': agent, 'account': None,
-            'model_group': None, 'status': 'known' if all(w['status'] == 'known' for w in windows) else 'unknown',
-            'windows': windows}
+    report = {'schema_version': 1, 'provider': agent, 'account': None,
+              'model_group': None, 'status': 'known' if all(w['status'] == 'known' for w in windows) else 'unknown',
+              'windows': windows}
+    if any(w.get('stale') for w in windows):
+        report['stale'] = True
+    return report
 
 
 GATE_KEYS = ('enabled', 'cap_percent', 'estimate_percent', 'stale_seconds',
@@ -834,6 +842,15 @@ def describe_denial(gate):
     return 'usage would exceed the cap: ' + '; '.join(parts) + f"; retry after {gate['retry_after']} (scheduling uses all limiting reset windows without model switching)"
 
 
+def format_age(seconds):
+    seconds = int(seconds)
+    if seconds < 3600:
+        return f'{max(seconds // 60, 1)}m'
+    if seconds < 86400:
+        return f'{seconds // 3600}h{seconds % 3600 // 60:02d}m'
+    return f'{seconds // 86400}d{seconds % 86400 // 3600:02d}h'
+
+
 def usage_command(agent, json_output=False, config=None, model=None):
     config = gate_config(config)
     report = observe(agent, config, model=model)
@@ -852,9 +869,10 @@ def usage_command(agent, json_output=False, config=None, model=None):
     print(f"{target_desc} usage ({identity})")
     for window, projection in zip(report['windows'], gate['windows']):
         if window['status'] == 'known':
+            stale = f"; stale (observed {format_age(window['age_seconds'])} ago)" if window.get('stale') else ''
             print(f"  {window['bucket']}: {window['used_percent']:g}% used; reset {window['resets_at']}; observed {window['observed_at']}; "
                   f"reserved {projection['reserved_percent']:g}%; projected {projection['projected_percent']:g}% of cap {gate['cap_percent']:g}% "
-                  f"({'fits' if projection['fits'] else 'does not fit'})")
+                  f"({'fits' if projection['fits'] else 'does not fit'}){stale}")
         else:
             print(f"  {window['bucket']}: unknown ({window['reason']})")
     print(f"  estimate {gate['estimate_percent']:g}% per launch; reserved {gate['reserved_percent']:g}%; "
@@ -1411,13 +1429,15 @@ def quota_freshness_notes(config=None, now=None):
     try:
         obs = inspect_usage('codex', source=codex_sessions, now=now, stale_after=stale_sec)
         if obs['status'] == 'known':
-            notes.append("quota observation (codex): fresh observation metadata")
+            aged = [w['age_seconds'] for w in obs['windows'] if w.get('stale')]
+            if aged:
+                notes.append(f"quota observation (codex): observation is {format_age(max(aged))} old but windows have not reset — still used")
+            else:
+                notes.append("quota observation (codex): fresh observation metadata")
         else:
             reasons = '; '.join(w.get('reason') or 'unknown' for w in obs['windows'] if w.get('status') != 'known')
             if 'missing usage source' in reasons:
                 notes.append("quota observation (codex): missing usage source (no rollout session metadata)")
-            elif 'stale observation' in reasons:
-                notes.append(f"quota observation (codex): observation is stale (> {stale_sec}s old) — run Codex to refresh")
             else:
                 notes.append(f"quota observation (codex): observation unavailable ({reasons})")
     except Exception as exc:

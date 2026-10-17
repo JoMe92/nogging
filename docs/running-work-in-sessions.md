@@ -594,8 +594,12 @@ before touching the backend. `session sweep` reports `has-unsent-input` as `yes`
 
 Run `./scripts/nogg usage --agent codex` or `--agent claude`; add `--json`
 for normalized machine-readable observations. Short and weekly windows are
-reported separately. Missing, unsupported, malformed, future-dated, older than
-600 seconds, and already-reset observations are unknown rather than zero.
+reported separately. Missing, unsupported, malformed, future-dated, and
+already-reset observations are unknown rather than zero, as are Claude and
+Antigravity observations older than 600 seconds. A Codex observation (the
+host's newest rollout quota sample) stays valid for each window until that
+window's own reset, even when older than 600 seconds; `nogg usage` marks it
+`stale (observed <age> ago)`.
 This observation command does not install capture, launch sessions, reserve
 headroom, or access authentication files. Account and model-group identities are reported as
 unknown; a source directory does not prove account or model-group identity.
@@ -763,7 +767,9 @@ safely, the command refuses with manual configuration instructions.
 `./scripts/nogg doctor` reports advisory notes on quota cache freshness:
 - Missing observation sources (advising `nogg usage install-statusline` when
   Claude statusline cache is absent).
-- Stale observations exceeding `stale_seconds` (default 600s).
+- Claude and Antigravity observations exceeding `stale_seconds` (default 600s).
+- Aged Codex observations whose windows have not reset (`observation is N old
+  but windows have not reset — still used`).
 - Fresh observation caches.
 
 ### Orchestrator retry guidance and scheduling
