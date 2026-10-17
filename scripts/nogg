@@ -2620,7 +2620,7 @@ def transition(path, rec, state, **extra):
         if path.exists():
             latest = json.loads(path.read_text())
             for key in ("antigravity_conversation_id", "antigravity_ready_at", "kickoff_sent_at",
-                        "input_ready_source", "input_ready_at"):
+                        "input_ready_source", "input_ready_at", "kickoff_delivery"):
                 if key in latest:
                     rec[key] = latest[key]
             if (state in ("running", "failed")
@@ -5824,7 +5824,7 @@ def _capture_backend_status(name):
     except Exception:
         return "unknown"
 
-def _deliver_pane_locked(name, agent, message, *, mode="send", timing=None, baseline_status=None):
+def _deliver_pane_locked(name, agent, message, *, mode="send", timing=None, baseline_status=None, attempt=None):
     """Perform an already-serialized pane delivery with owned-input verification."""
     timing = timing or validate_session_timing_config()
     deadline = time.monotonic() + timing["session_delivery_timeout_seconds"]
@@ -5836,6 +5836,8 @@ def _deliver_pane_locked(name, agent, message, *, mode="send", timing=None, base
             raise RuntimeError(f"{name}: composer is {state}; nothing was typed or submitted; use nudge --message to replace input")
     elif mode == "nudge":
         _clear_composer(name, agent)
+    if attempt:
+        attempt.begin()
     session_action(name, "send_text", message)
     _wait_for_owned_composer(name, agent, message, deadline, timing, clean_baseline=True)
     remaining = deadline - time.monotonic()
@@ -5850,17 +5852,19 @@ def _deliver_pane_locked(name, agent, message, *, mode="send", timing=None, base
     _verify_submitted(name, agent, message, baseline_status=baseline_status,
                       deadline=deadline, timing=timing, clean_baseline=True)
 
-def _session_send_locked(name, message, agent, verify, timing):
+def _session_send_locked(name, message, agent, verify, timing, attempt=None):
     if agent == "codex" and _codex_queue_deliver_locked(
-            name, load_session(name)[1], message, timing) == "submitted":
+            name, load_session(name)[1], message, timing, attempt) == "submitted":
         return "codex queue"
     if agent == "pi" or _is_legacy_mock():
+        if attempt:
+            attempt.begin()
         session_action(name, "send_text", message)
         _submit_pane_input(name, agent)
         if verify:
             _verify_submitted(name, agent, message, timing=timing)
         return "pane"
-    _deliver_pane_locked(name, agent, message, timing=timing)
+    _deliver_pane_locked(name, agent, message, timing=timing, attempt=attempt)
     return "pane"
 
 def _require_running(name):
@@ -5991,7 +5995,7 @@ def _codex_unverified_error(name, detail):
         f"{name}: Codex accepted the queued message but {detail}; it was not typed or "
         f"queued again. Inspect with `session log {name}` / `session watch`, then "
         f"deliberately run `session nudge {name} --message ...` if it is still needed")
-def _codex_queue_deliver_locked(name, rec, message, timing):
+def _codex_queue_deliver_locked(name, rec, message, timing, attempt=None):
     """Deliver one message through `codex queue` and prove it was submitted.
 
     Returns "not-attempted" (no exact thread; pane fallback allowed),
@@ -6009,8 +6013,12 @@ def _codex_queue_deliver_locked(name, rec, message, timing):
     snapshot = (receipts.snapshot_source(path, thread_id) if path
                 else {"unknown": "transcript not found"})
     clean_baseline = _delivery_composer_state(name, "codex", message) == "empty"
+    if attempt:
+        attempt.begin(receipts.persistable_source(snapshot))
     outcome = _codex_queue_invoke(thread_id, message, max(0.001, deadline - time.monotonic()))
     if outcome == "refused-before-acceptance":
+        if attempt:
+            attempt.retract()
         return outcome
     if outcome == "unverified":
         raise _codex_unverified_error(name, "the queue call timed out or failed ambiguously")
@@ -6042,17 +6050,21 @@ def _codex_queue_deliver_locked(name, rec, message, timing):
 def session_send(name, message, verify=False):
     """Send one message through the serialized, verified delivery path."""
     _, rec = load_session(name)
+    if (rec.get("agent") or "claude") == "antigravity":
+        await_antigravity_first_turn(name)
+    _send_serialized(name, message, verify)
+
+def _send_serialized(name, message, verify=False, attempt=None):
+    """The delivery half of `session_send`: take the delivery lock and send.
+    Callers have already established readiness (once per operation)."""
     if not tmux_has_session(name):
         raise RuntimeError(f"{name} has no live tmux session; cannot send")
     timing = validate_session_timing_config()
-    agent = rec.get("agent") or "claude"
-    if agent == "antigravity":
-        await_antigravity_first_turn(name)
     deadline = time.monotonic() + timing["session_delivery_timeout_seconds"]
     with _locked_delivery(name, deadline):
         _, rec = _require_running(name)
         agent = rec.get("agent") or "claude"
-        route = _session_send_locked(name, message, agent, verify, timing)
+        route = _session_send_locked(name, message, agent, verify, timing, attempt)
     print(f"sent to {name} (codex queue)" if route == "codex queue" else f"sent to {name}")
 
 def _clear_composer(name, agent):
@@ -6176,8 +6188,143 @@ def specialist_kickoff_message(bead_id):
             "Do not claim, re-status, close or commit any Bead, select sibling tasks, or edit openspec/. "
             "Return your structured result and validation evidence to the Main Worker.")
 
+def _launch_identity(rec):
+    """What distinguishes this launch of a session name from an earlier one."""
+    return "|".join(str(rec.get(key) or "") for key in ("started_at", "session_pid_start"))
+
+def _write_kickoff_delivery(name, record, *, sent=False):
+    """Merge the kickoff delivery record into the session record under the
+    lifecycle lock, so concurrently captured Stop-event metadata survives."""
+    path = sessions_dir() / f"{name}.json"
+    deadline = time.monotonic() + validate_session_timing_config()["session_delivery_timeout_seconds"]
+    with path.with_suffix(".lifecycle.lock").open("a") as lock:
+        acquire_bounded_flock(lock, deadline)
+        rec = json.loads(path.read_text())
+        if record is None:
+            rec.pop("kickoff_delivery", None)
+        else:
+            rec["kickoff_delivery"] = record
+        if sent:
+            rec["kickoff_sent_at"] = now()
+        write_session(path, rec)
+
+class _KickoffAttempt:
+    """One kickoff's delivery record: message hash, launch identity, time and
+    status (pending, submitted, unverified), never the plaintext. `begin` runs
+    immediately before the first possible transport side effect."""
+    def __init__(self, name, rec, message, record=None):
+        self.name, self.previous = name, rec.get("kickoff_delivery")
+        self.record = dict(record) if record else {
+            "message_sha256": hashlib.sha256(message.encode()).hexdigest(),
+            "launch": _launch_identity(rec)}
+        self.begun = record is not None
+
+    def begin(self, source=None):
+        if source:
+            self.record["receipt_source"] = source   # opaque offsets, never transcript text
+        self.record.update(status="pending", at=now())
+        _write_kickoff_delivery(self.name, self.record)
+        self.begun = True
+
+    def retract(self):
+        """The transport refused before accepting anything: nothing was attempted."""
+        if self.begun:
+            _write_kickoff_delivery(self.name, self.previous)
+            self.begun = False
+            self.record.pop("receipt_source", None)
+
+    def finish(self, status, **extra):
+        self.record.update(status=status, at=now(), **extra)
+        _write_kickoff_delivery(self.name, self.record, sent=status == "submitted")
+
+def _prior_kickoff(rec, message):
+    """The recorded delivery of exactly this message in this launch, if any."""
+    prior = rec.get("kickoff_delivery")
+    if (isinstance(prior, dict) and prior.get("launch") == _launch_identity(rec)
+            and prior.get("message_sha256") == hashlib.sha256(message.encode()).hexdigest()):
+        return prior
+    return None
+
+def _kickoff_unverified_error(name, status, why):
+    return RuntimeError(
+        f"{name}: this kickoff was already attempted ({status}) and {why}; it was not typed or "
+        f"queued again. Inspect with `session log {name}` / `session watch {name}`, then "
+        f"deliberately run `session nudge {name} --message ...` if it is still needed")
+
+def _scan_codex_receipt(snapshot, message):
+    """Bounded incremental scan for a fresh receipt of `message`."""
+    receipts = codex_delivery_module()
+    for _ in range(receipts.OPERATION_LIMIT // receipts.POLL_LIMIT + 1):
+        receipt, following = receipts.read_fresh_receipt(snapshot, message)
+        if receipt["status"] == "receipt":
+            return receipt, following
+        if following.get("offset") == snapshot.get("offset"):
+            return None, following
+        snapshot = following
+    return None, snapshot
+
+def _kickoff_evidence_locked(name, agent, message, prior, timing):
+    """Recheck an ambiguous earlier kickoff without typing or queueing it again.
+
+    Returns extra record fields once the earlier attempt is shown to have been
+    submitted (or its exactly-owned pending composer text is now submitted by
+    the shared bounded routine); raises when that cannot be shown."""
+    status = prior.get("status")
+    deadline = time.monotonic() + timing["session_delivery_timeout_seconds"]
+    interval, submit_delay = timing["session_submit_verify_delay_seconds"], timing["session_submit_delay_seconds"]
+    receipts = codex_delivery_module() if agent == "codex" else None
+    snapshot = receipts.restore_snapshot(prior.get("receipt_source")) if receipts else None
+    if receipts:
+        receipt, snapshot = _scan_codex_receipt(snapshot, message)
+        if receipt:
+            return {"receipt": receipt["identity"]}
+    if agent == "pi" or _is_legacy_mock():
+        raise _kickoff_unverified_error(name, status, "no evidence of its submission can be read for this session")
+    state = _delivery_composer_state(name, agent, message)
+    if state != "pending":
+        raise _kickoff_unverified_error(name, status, {
+            "empty": "no fresh submission evidence or pending composer text was found",
+            "other": "the composer now holds different text",
+            "unknown": "the composer cannot be identified"}.get(state, "its outcome cannot be established"))
+    baseline_status = _capture_backend_status(name)
+    _submit_pane_input(name, agent)
+    if not receipts:
+        _verify_submitted(name, agent, message, baseline_status=baseline_status, deadline=deadline, timing=timing)
+        return {}
+    retried = False
+    while True:
+        receipt, snapshot = _scan_codex_receipt(snapshot, message)
+        if receipt:
+            return {"receipt": receipt["identity"]}
+        state = _delivery_composer_state(name, agent, message)
+        if state == "empty":
+            return {}   # the owned buffer left the composer after our Enter
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise _kickoff_unverified_error(name, status, "its text is still unsubmitted after the pending input was submitted")
+        time.sleep(min(interval, remaining))
+        if state == "pending" and not retried and deadline - time.monotonic() >= submit_delay:
+            time.sleep(submit_delay)
+            if _delivery_composer_state(name, agent, message) == "pending":
+                _submit_pane_input(name, agent)
+                retried = True
+
+def _recheck_kickoff(name, rec, message, prior, timing):
+    attempt = _KickoffAttempt(name, rec, message, record=prior)
+    try:
+        with _locked_delivery(name, time.monotonic() + timing["session_delivery_timeout_seconds"]):
+            extra = _kickoff_evidence_locked(name, rec.get("agent") or "claude", message, prior, timing)
+    except Exception:
+        if prior.get("status") == "pending":
+            attempt.finish("unverified")
+        raise
+    attempt.finish("submitted", **extra)
+    print(f"{name}: kickoff delivery confirmed; nothing was typed or queued again")
+
 def session_kickoff(name, message=None, change=None):
-    """Send one kickoff only, once the runtime positively shows a ready composer."""
+    """Deliver one kickoff, once the runtime positively shows a ready composer.
+
+    Returns "delivered" or "noop" (an already confirmed repeat)."""
     path, rec = _require_running(name)
     if change is not None:
         if (rec.get("role") or "lead") != "lead" or bead_change(rec.get("bead_id")) != change:
@@ -6185,8 +6332,10 @@ def session_kickoff(name, message=None, change=None):
         message = message or (f"Implement all mapped tasks in authorized change {change} in tasks.md order. "
                               "Follow the implementation, validation, commit and close protocol.")
         boundary_at = usage_now()   # before the handoff message can cause usage
-        session_kickoff(name, message)
+        outcome = session_kickoff(name, message)
         _, rec = load_session(name)
+        if outcome == "noop" and rec.get("authorized_change") == change:
+            return outcome
         rec["authorized_change"] = change
         # Operator-directed task handoff: new usage belongs to the change;
         # which Bead/task inside it is unproven, so those stay unknown.
@@ -6194,31 +6343,54 @@ def session_kickoff(name, message=None, change=None):
         if boundaries:
             boundaries.append(dict(boundaries[-1], at=boundary_at, change_id=change,
                                    bead_id=None, task_id=None))
-        write_session(path, rec)
-        return
-    if rec.get("agent") == "antigravity" and rec.get("kickoff_sent_at"):
-        print(f"{name}: kickoff already sent")
-        return
-    message = _kickoff_message(name, rec, message)   # refuse before any wait
-    await_session_input_ready(name)
-    if rec.get("agent") != "antigravity":
-        return _session_kickoff(name, message)
-    with path.with_suffix(".kickoff.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        _, rec = _require_running(name)
-        if rec.get("kickoff_sent_at"):
-            print(f"{name}: kickoff already sent")
-            return
-        _session_kickoff(name, message)
         with path.with_suffix(".lifecycle.lock").open("a") as lifecycle:
             fcntl.flock(lifecycle, fcntl.LOCK_EX)
-            _, rec = load_session(name)
-            rec["kickoff_sent_at"] = now()
+            latest = load_session(name)[1]
+            for key in ("kickoff_delivery", "kickoff_sent_at", "input_ready_source", "input_ready_at"):
+                if key in latest:
+                    rec[key] = latest[key]
             write_session(path, rec)
+        return outcome
+    if rec.get("agent") == "antigravity" and rec.get("kickoff_sent_at"):
+        print(f"{name}: kickoff already sent")
+        return "noop"
+    message = _kickoff_message(name, rec, message)   # role scope is validated before any wait or input
+    timing = validate_session_timing_config()
+    lock_deadline = (time.monotonic() + timing["session_startup_timeout_seconds"]
+                     + timing["session_delivery_timeout_seconds"])
+    with path.with_suffix(".kickoff.lock").open("a") as lock:
+        try:
+            acquire_bounded_flock(lock, lock_deadline)
+        except RuntimeError:
+            raise RuntimeError(f"{name}: another kickoff is still in progress; nothing was typed, keyed or "
+                               "queued by this call. Retry once it finishes") from None
+        _, rec = _require_running(name)
+        if rec.get("agent") == "antigravity" and rec.get("kickoff_sent_at"):
+            print(f"{name}: kickoff already sent")
+            return "noop"
+        prior = _prior_kickoff(rec, message)
+        if prior and prior.get("status") == "submitted":
+            print(f"{name}: kickoff already sent")
+            return "noop"
+        if prior:
+            _recheck_kickoff(name, rec, message, prior, timing)
+            return "delivered"
+        await_session_input_ready(name)
+        _, rec = _require_running(name)   # the session may have ended while we waited
+        attempt = _KickoffAttempt(name, rec, message)
+        try:
+            _session_kickoff(name, message, attempt)
+        except Exception:
+            if attempt.begun:
+                attempt.finish("unverified")
+            raise
+        attempt.finish("submitted")
+        return "delivered"
 
-def _session_kickoff(name, message=None):
-    _, rec = _require_running(name)
-    session_send(name, _kickoff_message(name, rec, message))
+def _session_kickoff(name, message, attempt):
+    """Deliver the already-composed kickoff through the verified send path
+    (readiness was established once by the caller)."""
+    _send_serialized(name, message, attempt=attempt)
 
 def _kickoff_message(name, rec, message=None):
     """The exact first instruction for `rec`, refusing an unscoped session."""

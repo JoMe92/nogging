@@ -73,6 +73,20 @@ class ReceiptReaderTests(unittest.TestCase):
         result, _ = reader.read_fresh_receipt(next_snap, "hello", poll_limit=8, operation_limit=16)
         self.assertEqual("unknown", result["status"])
 
+    def test_persisted_source_is_opaque_and_rereads_the_unfinished_line(self):
+        self.append(row("hello")[:20])        # an unfinished line at the snapshot
+        self.snap = reader.snapshot_source(self.path, "thread-1")
+        stored = reader.persistable_source(self.snap)
+        self.assertEqual({"thread_id", "path", "device", "inode", "offset"}, set(stored))
+        self.assertNotIn("hello", json.dumps(stored))
+        self.append(row("hello")[20:] + b"\n")
+        restored = reader.restore_snapshot(json.loads(json.dumps(stored)))
+        result, _ = reader.read_fresh_receipt(restored, "hello")
+        self.assertEqual("receipt", result["status"])
+        for bad in (None, {}, {"thread_id": "t"}, "x"):
+            self.assertIn("unknown", reader.restore_snapshot(bad))
+        self.assertIsNone(reader.persistable_source({"unknown": "source unavailable"}))
+
     def test_unavailable_source_is_unknown(self):
         self.assertEqual("source unavailable", reader.snapshot_source(self.path / "missing", "thread")["unknown"])
 

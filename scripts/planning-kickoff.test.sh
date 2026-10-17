@@ -27,7 +27,7 @@ with tempfile.TemporaryDirectory(prefix='nogg planning kickoff ') as td:
         m.write_session(m.sessions_dir()/(name+'.json'),record);records.append(record)
     sent=[]
     # Message composition only: delivery and startup readiness (scripts/session-input-ready.test.sh) are stubbed.
-    with patch.object(m,'tmux_sessions',return_value={r['name'] for r in records}),patch.object(m,'session_send',side_effect=lambda name,message:sent.append((name,message))),patch.object(m,'await_session_input_ready',return_value='composer'):
+    with patch.object(m,'tmux_sessions',return_value={r['name'] for r in records}),patch.object(m,'_send_serialized',side_effect=lambda name,message,**kw:sent.append((name,message))),patch.object(m,'await_session_input_ready',return_value='composer'):
         for record in records:m.session_kickoff(record['name'])
         assert len(sent)==2 and not (root/'.nogging/locks/planning.lock').exists()
         for record,delivery in zip(records,sent):
@@ -118,7 +118,7 @@ with tempfile.TemporaryDirectory(prefix='nogg planning kickoff ') as td:
     # Specialist default kickoff has one already-claimed task and no Main
     # Worker mutation authority, even if an associated change has siblings.
     claimed=dict(id='SPEC-delegated',status='in_progress',assignee='Nogging Lead')
-    with patch.object(m,'_require_running',return_value=(None,dict(role='specialist:backend-engineer',bead_id='SPEC-delegated'))),patch.object(m,'run',return_value=subprocess.CompletedProcess([],0,json.dumps([claimed]),'')),patch.object(m,'session_send') as deliver,patch.object(m,'await_session_input_ready',return_value='composer'):
+    with patch.object(m,'_require_running',return_value=(Path(tempfile.mkdtemp())/'specialist-session.json',dict(role='specialist:backend-engineer',bead_id='SPEC-delegated'))),patch.object(m,'_write_kickoff_delivery'),patch.object(m,'run',return_value=subprocess.CompletedProcess([],0,json.dumps([claimed]),'')),patch.object(m,'_send_serialized') as deliver,patch.object(m,'await_session_input_ready',return_value='composer'):
         m.session_kickoff('specialist-session');message=deliver.call_args.args[1]
         assert 'already-claimed Bead SPEC-delegated' in message and 'Do not claim, re-status, close or commit' in message
         assert 'select sibling tasks' in message and 'edit openspec/' in message
