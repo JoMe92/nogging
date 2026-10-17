@@ -241,15 +241,24 @@ Exact resume resumes a prior Codex thread using native `codex resume <thread-id>
 ## Steering and nudge verification
 
 Steering a Codex session (`session send` and `session nudge`) uses queue-first delivery:
-- **Queue delivery:** `session nudge --message` attempts delivery first through
-  `codex_queue_send()` (`codex queue`), matching the reliable path used by `session send`.
-  When the queue accepts the message, delivery is verified.
-- **Pane fallback and composer classification:** If queue delivery fails or thread ID
-  is unavailable, nudge falls back to typing into the pane. Verification uses an ANSI
-  attribute classifier: the composer line begins with `›`; dim text represents a placeholder,
-  while non-dim text represents pending input. If the input remains pending, submit is
-  retried once. If the composer cannot be positively identified, the command fails as
-  **unverified** and never falsely reports success.
+- **Queue delivery and acceptance vs. submission:** When the exact session thread ID resolves,
+  `session send` and `session nudge --message` deliver through `codex queue`. Queue acceptance
+  (exit code 0) alone is **not** proof of submission. Delivery is confirmed only when fresh
+  incremental user-message receipt evidence appears in the exact thread transcript, or when the
+  known composer transitions appropriately. If queue acceptance leaves the exact message
+  positively pending in the composer, Nogging recovers it with a delayed single Enter (and at most
+  one retry) without retyping or requeuing the text.
+- **Unknown outcomes and no blind fallback:** If the queue accepts a message but no fresh receipt
+  or identifiable pending composer text is found within `session_delivery_timeout_seconds`, the
+  operation fails as **unverified**; Nogging never blindly falls back to pane typing or sends
+  unprompted Enters after queue acceptance. Operators are pointed to `nogg session log <name>`
+  or `watch` to inspect session state before taking deliberate action.
+- **Pane fallback and composer classification:** Pane typing is permitted only when thread ID is
+  unavailable or when the queue definitively refuses before acceptance. When typing into the pane,
+  verification uses an ANSI attribute classifier: the composer line begins with `›`; dim text
+  represents a placeholder, while non-dim text represents pending input. If the input remains
+  pending after submit, it is retried once. If the composer cannot be positively identified,
+  the command fails as **unverified** and never falsely reports success.
 
 ## A Codex session hit its usage limit
 

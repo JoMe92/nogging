@@ -104,8 +104,20 @@ scripts/nogg session launch --agent agy --role lead --bead <claimed-bead> \
 ```
 
 Use `session list`, `session log <name>`, `session send <name> <message>` and
-`session stop <name>` for supervision. The initial interactive turn must finish
-and emit Stop before kickoff/send proceeds; kickoff is delivered once.
+`session stop <name>` for supervision. Kickoff and plain `send` wait boundedly
+up to `session_startup_timeout_seconds` (default 120s) for the runtime to be
+positively ready for input:
+- **Stop hook readiness and fallback:** Readiness is ideally established by a
+  validated `fullyIdle` Stop hook event matching the current launch. If the Stop
+  hook is delayed or absent, readiness can also be confirmed by two consecutive
+  backend idle or done samples (with an empty composer, at least one polling
+  interval apart) from the exact recorded process.
+- **Hook diagnosis and surveys:** If startup readiness times out without evidence,
+  Nogging fails without typing or queueing speculative input, pointing the operator
+  to `session log`, `session watch`, and `.agents/hooks.json` diagnostics
+  (`nogg doctor`). Antigravity's post-launch feedback survey ("How's the CLI
+  experience so far?") replaces the composer and is refused with a prompt to
+  dismiss it (key 0) before retrying. Kickoff is delivered once and serialized.
 A bare launch grants no claim or implementation permission.
 
 Antigravity specialists run as separate supervised sessions, each on exactly
