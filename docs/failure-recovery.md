@@ -30,6 +30,44 @@ Normal `update` replaces managed helpers while preserving OpenSpec, Beads,
 custom profiles and unrelated agent settings. It does not upgrade the agent
 CLI itself or grant additional authority.
 
+## Locally modified files and pending `.nogging-new` updates
+
+When updating a repository where verbatim managed files (such as
+`.codex/rules/nogging.rules` or `.nogging/launch-prompts/orchestrator.md`) were
+customized locally, Nogging preserves the local modifications and writes the
+upstream release content to `<file>.nogging-new`.
+
+- **Doctor warning:**
+  `./scripts/nogg doctor` reports any pending files as:
+  ```text
+  WARN  locally modified file has pending upstream update: <path> (review <path>.nogging-new and reconcile)
+  ```
+  The warning is advisory and does not cause `doctor` to exit with an error. If
+  `<file>.orig` backup files are present from a previous `--force` update, `doctor`
+  also notes them:
+  ```text
+  NOTE  --force backup of a locally modified file: <path>.orig (delete it once reviewed)
+  ```
+- **Reconciliation workflow:**
+  1. Inspect the differences between your customized file and the incoming release:
+     ```bash
+     diff -u <file> <file>.nogging-new
+     ```
+  2. Merge the desired upstream changes into `<file>`.
+  3. Delete `<file>.nogging-new` once reconciled:
+     ```bash
+     rm <file>.nogging-new
+     ```
+- **Overwriting local modifications (`--force`):**
+  If you prefer to accept upstream changes unconditionally and discard local edits,
+  re-run update with `--force`:
+  ```bash
+  npx github:JoMe92/nogging#<tag> update --force
+  ```
+  Nogging creates a backup of your local file at `<file>.orig` and overwrites
+  `<file>` with the upstream version. Once verified, remove `<file>.orig`.
+
+
 ## Resuming an interrupted run
 
 A planning or development run can stop mid-way — the token budget runs out, the
