@@ -18,7 +18,7 @@
 
 - [x] TASK-ULT-006 [standard] Verify mixed ledger readers/writers and installed payload per design Decision 5; add labelled v2.2.0 negative fixture and extend packed-usage-gate.test.sh. Check: new scripts/usage-ledger-compatibility.test.sh (future preservation, readonly bytes, invalid core, atomic final slot), packed-usage-gate.test.sh, scripts/test. Branch: feat/usage-ledger-test-isolation. Depends on TASK-ULT-002 and TASK-ULT-003.
 
-- [ ] TASK-ULT-007 [routine] Document the tolerant-reader update floor, safe rollback/recovery and direct-test isolation in session/recovery guides per design Migration Plan; no release or live ledger changes. Check: guidance matches implemented diagnostics, links resolve, final entry-point inventory reviewed, installation-docs.test.sh and scripts/test pass. Branch: docs/usage-ledger-test-isolation. Depends on TASK-ULT-004, TASK-ULT-005 and TASK-ULT-006.
+- [x] TASK-ULT-007 [routine] Document the tolerant-reader update floor, safe rollback/recovery and direct-test isolation in session/recovery guides per design Migration Plan; no release or live ledger changes. Check: guidance matches implemented diagnostics, links resolve, final entry-point inventory reviewed, installation-docs.test.sh and scripts/test pass. Branch: docs/usage-ledger-test-isolation. Depends on TASK-ULT-004, TASK-ULT-005 and TASK-ULT-006.
 
 ## Dependency contract
 
