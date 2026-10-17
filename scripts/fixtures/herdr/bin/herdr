@@ -810,6 +810,14 @@ update:
     if cmd == "server":
         if subcmd == "stop":
             pid_file = os.path.join(get_session_dir(stub_dir, session_name), "herdr-server.pid")
+            if not os.path.exists(pid_file):
+                sessions_root = os.path.join(stub_dir, "sessions")
+                if os.path.isdir(sessions_root):
+                    for entry in os.listdir(sessions_root):
+                        candidate = os.path.join(sessions_root, entry, "herdr-server.pid")
+                        if os.path.exists(candidate):
+                            pid_file = candidate
+                            break
             if os.path.exists(pid_file):
                 try:
                     with open(pid_file, "r") as pf:
