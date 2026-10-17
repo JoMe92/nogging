@@ -5286,8 +5286,28 @@ def _composer_text_matches(text, message):
     return (len(visible) >= COMPOSER_CLIP_MIN_CHARS and len(visible) < len(full)
             and full.endswith(visible) and first_row(text) != first_row(message))
 
-def _delivery_composer_state(name, agent, message):
-    """Classify the composer relative to this operation's exact message."""
+# Claude Code collapses a large paste into a placeholder (optionally with a
+# "paste again to expand" hint) and shows nothing of the text itself.
+_CLAUDE_PASTE_PLACEHOLDER_RE = re.compile(
+    r"\[Pasted text #\d+(?: \+\d+ lines)?\](?:\s*\(?paste again to expand\)?)?", re.I)
+
+def _claude_paste_placeholder_pending(pane, message):
+    """Whether Claude's box shows only a collapsed-paste placeholder that a
+    paste of `message` can have produced (a long or multi-line message)."""
+    if len(message or "") < 200 and "\n" not in (message or ""):
+        return False
+    box = _claude_prompt_box_text(pane)
+    return box is not None and bool(_CLAUDE_PASTE_PLACEHOLDER_RE.fullmatch(" ".join(box.split())))
+
+def _delivery_composer_state(name, agent, message, *, clean_baseline=False):
+    """Classify the composer relative to this operation's exact message.
+
+    `clean_baseline` is true only when this operation verified the composer
+    empty before pasting; it alone lets a sole collapsed-paste placeholder
+    count as this operation's pending message."""
+    if (clean_baseline and agent == "claude"
+            and _claude_paste_placeholder_pending(session_pane_text(name, escapes=False), message)):
+        return "pending"
     substrate, _ref = backend_for_name(name)
     attributes = getattr(substrate.capabilities, "capture_attributes", False)
     kind, text = pane_input(name, agent)
@@ -5318,12 +5338,12 @@ def _is_legacy_mock():
             or bool(os.environ.get("NOGG_TEST_ARGS_DIR"))
             or (os.environ.get("TMUX_STUB_DIR") and not os.environ.get("TMUX_STATEFUL_STUB")))
 
-def _wait_for_owned_composer(name, agent, message, deadline, timing):
+def _wait_for_owned_composer(name, agent, message, deadline, timing, *, clean_baseline=False):
     if _is_legacy_mock():
         return
     interval = timing["session_submit_verify_delay_seconds"]
     while True:
-        state = _delivery_composer_state(name, agent, message)
+        state = _delivery_composer_state(name, agent, message, clean_baseline=clean_baseline)
         if state == "pending":
             return
         if state == "other":
@@ -5335,14 +5355,14 @@ def _wait_for_owned_composer(name, agent, message, deadline, timing):
             raise RuntimeError(f"{name}: timed out waiting for the exact message in the composer; nothing was submitted")
         time.sleep(min(interval, remaining))
 
-def _submission_observation(name, agent, message, baseline_status, was_pending):
+def _submission_observation(name, agent, message, baseline_status, was_pending, clean_baseline=False):
     try:
         status = session_action(name, "agent_status")
     except Exception:
         status = "unknown"
     if status in ("working", "done") and status != baseline_status:
         return "submitted"
-    state = _delivery_composer_state(name, agent, message)
+    state = _delivery_composer_state(name, agent, message, clean_baseline=clean_baseline)
     if was_pending and state == "empty":
         return "submitted"
     if state == "pending":
@@ -5350,7 +5370,7 @@ def _submission_observation(name, agent, message, baseline_status, was_pending):
     return state
 
 def _verify_submitted(name, agent, submitted_text=None, *, baseline_status=None,
-                      deadline=None, timing=None):
+                      deadline=None, timing=None, clean_baseline=False):
     """Verify delivery; retry Enter once only while this exact message remains pending."""
     timing = timing or validate_session_timing_config()
     if agent not in ("claude", "codex", "antigravity"):
@@ -5368,7 +5388,9 @@ def _verify_submitted(name, agent, submitted_text=None, *, baseline_status=None,
             pane = session_pane_text(name, escapes=False)
             box = (_claude_prompt_box_text(pane) if agent == "claude"
                    else _antigravity_prompt_box_text(pane))
-            return box is not None and not _composer_text_matches(box, submitted_text or "")
+            return (box is not None and not _composer_text_matches(box, submitted_text or "")
+                    and not (clean_baseline and agent == "claude"
+                             and _claude_paste_placeholder_pending(pane, submitted_text)))
 
         time.sleep(timing["session_submit_verify_delay_seconds"])
         if replacement_verified():
@@ -5382,7 +5404,7 @@ def _verify_submitted(name, agent, submitted_text=None, *, baseline_status=None,
 
     retry_sent = False
     while True:
-        outcome = _submission_observation(name, agent, submitted_text or "", baseline_status, True)
+        outcome = _submission_observation(name, agent, submitted_text or "", baseline_status, True, clean_baseline)
         if outcome == "submitted":
             return
         if outcome in ("unknown", "other"):
@@ -5400,7 +5422,7 @@ def _verify_submitted(name, agent, submitted_text=None, *, baseline_status=None,
         time.sleep(min(interval, remaining))
         if retry_sent:
             continue
-        outcome = _submission_observation(name, agent, submitted_text or "", baseline_status, True)
+        outcome = _submission_observation(name, agent, submitted_text or "", baseline_status, True, clean_baseline)
         if outcome == "submitted":
             return
         if outcome in ("unknown", "other"):
@@ -5412,7 +5434,7 @@ def _verify_submitted(name, agent, submitted_text=None, *, baseline_status=None,
         if remaining < submit_delay:
             raise RuntimeError(f"{name}: message still unverified before the delivery deadline")
         time.sleep(submit_delay)
-        if _submission_observation(name, agent, submitted_text or "", baseline_status, True) == "pending":
+        if _submission_observation(name, agent, submitted_text or "", baseline_status, True, clean_baseline) == "pending":
             _submit_pane_input(name, agent)
             retry_sent = True
 
@@ -5435,18 +5457,18 @@ def _deliver_pane_locked(name, agent, message, *, mode="send", timing=None, base
     elif mode == "nudge":
         _clear_composer(name, agent)
     session_action(name, "send_text", message)
-    _wait_for_owned_composer(name, agent, message, deadline, timing)
+    _wait_for_owned_composer(name, agent, message, deadline, timing, clean_baseline=True)
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         raise RuntimeError(f"{name}: delivery deadline expired before submit; nothing was submitted")
     if remaining < timing["session_submit_delay_seconds"]:
         raise RuntimeError(f"{name}: delivery deadline expired before submit; nothing was submitted")
     time.sleep(timing["session_submit_delay_seconds"])
-    if not _is_legacy_mock() and _delivery_composer_state(name, agent, message) != "pending":
+    if not _is_legacy_mock() and _delivery_composer_state(name, agent, message, clean_baseline=True) != "pending":
         raise RuntimeError(f"{name}: exact pending message was lost before submit; nothing was submitted")
     _submit_pane_input(name, agent)
     _verify_submitted(name, agent, message, baseline_status=baseline_status,
-                      deadline=deadline, timing=timing)
+                      deadline=deadline, timing=timing, clean_baseline=True)
 
 def _session_send_locked(name, message, agent, verify, timing):
     if agent == "codex" and _codex_queue_deliver_locked(
