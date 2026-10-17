@@ -339,6 +339,11 @@ A Codex session has no per-session `permissions` file; its command floor is the
 repo's `.codex/rules/` execpolicy directory (shipped by `codex-onboarding`),
 and `session launch` warns when that floor file is missing but still starts.
 `--full-access` maps to `trusted` + `autonomous` for whichever agent is in use.
+Codex and Antigravity planning launches require an explicit `--profile` or
+`--full-access`; otherwise launch is refused before side effects. Every
+successful launch prints `profile=<label>` and `prompt=<prompt name>`. A
+restricted Codex launch also notes that its network-off sandbox cannot reach
+the shared Dolt-server-backed Beads database, even on loopback.
 
 ### Antigravity sessions
 

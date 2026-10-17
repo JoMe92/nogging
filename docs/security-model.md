@@ -62,6 +62,11 @@ requests a single planning or code takeover.
   OpenSpec boundary. Supervised Pi explicitly loads the extension with run-scoped approval; no standing trust change is required. Treat Pi
   restricted mode as materially weaker than Claude or Codex restricted mode.
 
+Antigravity's guard treats `search_web` as guarded, read-only network access,
+alongside `read_url_content`: trusted permits a non-empty query, while
+restricted requires approval. Malformed queries and unsupported tools are
+denied with sanitized reasons that do not echo argument values.
+
 ### Session backends: tmux and herdr
 
 Supervised agent sessions run on either `tmux` (default) or `herdr` (experimental;
