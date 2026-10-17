@@ -1424,3 +1424,23 @@ def quota_freshness_notes(config=None, now=None):
         notes.append(f"quota observation (codex): unreadable metadata ({exc})")
 
     return notes
+
+
+def unknown_policy_notes(config=None, observations=None):
+    """Doctor notes for agents whose usage is unknown while launches are admitted.
+
+    `observations` maps agent -> usage report (as from `inspect_usage`). An agent
+    with a non-known report under `on_unknown == 'warn'` gets a NOTE; nothing is
+    printed when everything is known, the policy is `deny` or the gate is
+    disabled. Pure, never raises, never blocks.
+    """
+    try:
+        cfg = gate_config(config)
+        if not cfg['enabled'] or cfg['on_unknown'] != 'warn':
+            return []
+        return [f"usage gate: {agent} usage is unknown — launches are admitted without known headroom "
+                '(usage_gate.on_unknown=warn); set "deny" to block'
+                for agent, report in sorted((observations or {}).items())
+                if isinstance(report, dict) and report.get('status') != 'known']
+    except Exception:
+        return []
