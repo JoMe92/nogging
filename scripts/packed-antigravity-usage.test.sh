@@ -56,7 +56,8 @@ cat >"$bin_dir/tmux" <<STUB
 [[ "\${1:-}" == "-L" ]] && shift 2
 cmd="\${1:-}"; shift || true
 printf '%s %s\n' "\$cmd" "\$*" >>"$tmux_log"
-case "\$cmd" in has-session) exit 1 ;; *) exit 0 ;; esac
+if [[ "\$cmd" == new-session ]]; then a=("\$@"); for i in "\${!a[@]}"; do [[ "\${a[i]}" == -s ]] && : >"${tmux_log}.live-\${a[i+1]}"; done; fi
+case "\$cmd" in has-session) [[ -e "${tmux_log}.live-\${2:-}" ]] || exit 1 ;; *) exit 0 ;; esac
 STUB
 cat >"$bin_dir/agy" <<STUB
 #!/usr/bin/env bash
