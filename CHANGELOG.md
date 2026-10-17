@@ -9,6 +9,54 @@ and GitHub Releases for that history.
 
 ## [Unreleased]
 
+Upgrade notes: run `npx github:JoMe92/nogging#<new-tag> update` from each
+installed repository. Since `update` now keeps locally modified managed files,
+look for `<file>.nogging-new` files afterwards (`./scripts/nogg doctor` lists
+them), merge what you want, and delete them; `update --force` instead
+overwrites the file and keeps your copy as `<file>.orig`. Launch automation
+that starts Codex or Antigravity planning sessions must now name an authority
+(`--profile trusted`, `--profile restricted` or `--full-access`). Roll back to
+`v2.2.0` only after every usage reservation is released (no active supervised
+sessions), because `v2.2.0` cannot read the new reservation entries; see
+`docs/failure-recovery.md`.
+
+### Added
+
+- **A switchable, experimental session backend with herdr.** `session_backend: tmux|herdr` in `.nogging/config.json` and `session launch --backend` choose where a supervised session runs; `tmux` stays the default and recommended backend, and the Orchestration Agent stays on it. The herdr backend adds a PTY-recorded, size-rotated session log, a live `AGENT_STATUS` column in `session list`, `session herdr-server start` to start or verify the dedicated server, conditional `doctor` herdr checks and a setup guide (`docs/using-with-herdr.md`). Mixed backends run side by side, and `list`, `reap`, `stop`, `cleanup`, `attach` and `send` follow each record's own backend.
+- **Codex exact resume.** `session launch --resume <thread-id>` now works for Codex sessions, through `codex resume <id>` inside the normal launch wrapper.
+- **Reliable session input.** `session send`, `nudge` and `kickoff` paste with explicit bracketed paste (multiline text arrives intact), wait `session_submit_delay_seconds` before one Enter, and verify the submission by default for Claude, Codex and Antigravity. Codex queue delivery is checked against fresh receipts from the exact thread; a message that cannot be positively verified fails as unverified instead of reporting success, and is never silently re-queued. Kickoff waits for startup readiness (`session_startup_timeout_seconds`); the new `session_submit_delay_seconds`, `session_submit_verify_delay_seconds` and `session_delivery_timeout_seconds` keys are validated.
+- **`nudge --message` replaces pending input completely.** It clears wrapped pending input row by row, checks the composer is empty, and submits only when it then holds exactly the message, on both backends.
+- **`orchestrator restart` relaunches the agent.** It ends the live orchestrator session before restarting the unit, so the new supervisor starts Claude under the current prompt and settings and resumes the prior conversation. `--supervisor-only` keeps the old unit-only restart, and a restart from inside the orchestrator session is refused.
+- **Launch-path fail-fast.** `session launch` checks that the agent binary resolves before any side effect, and fails non-zero with the startup-log tail when the session dies within a short settle window instead of printing a success summary.
+- **Antigravity can search the web.** The `agy-guard` hook accepts `search_web` with a non-empty `query` (allowed under `trusted`, asks under `restricted`), and every denial now names its cause and the tool.
+- **Usage visibility.** A missing usage source carries a remediation hint (`run nogg usage install-statusline` for Claude), shown by `nogg usage`, the launch warning and `doctor`. A launch admitted with unknown usage prints a prominent `WARN`, and `doctor` prints a NOTE explaining `usage_gate.on_unknown: "deny"`. The default stays `warn`. An unset Antigravity model reports `no model selected; pass --model <id>`, and a drift guard keeps the model-selection table mapped to a `/usage` group.
+- **Installer change tracking.** `.nogging/installed-manifest.json` records SHA-256 digests of installed verbatim and documentation files, with baselines for `v2.1.0` and `v2.2.0` so installs without a manifest upgrade conservatively. `update` and `init` accept `--force`, `--dry-run` distinguishes preserved from overwritten files, `doctor` reports pending `<file>.nogging-new` files, and `remove` cleans the manifest.
+- **A stable, versioned usage reservation format.** Reservation entries carry a schema version; readers keep valid accounting, never probe or reap an entry they do not understand, and refuse admission with a clear message when the ledger cannot be understood. `docs/failure-recovery.md` documents ledger recovery and rollback.
+- **Test isolation.** `scripts/lib/test-env.sh` strips inherited `NOGG_*` and `NOGGING_ROOT` before any test runs, so direct test invocations no longer pick up a supervised session's identity, authority or task-tick broker. It ships with the other test helpers.
+
+### Changed
+
+- **BREAKING**: `update` (and re-running `init`) no longer overwrites a locally modified managed file. It keeps your file and writes the new upstream content to `<file>.nogging-new` with a warning. Automation that ran `update` to reset local edits now keeps them. **Migration:** pass `--force` to overwrite them (the previous file is saved as `<file>.orig`), or merge the `.nogging-new` file by hand and delete it.
+- **BREAKING**: a Codex or Antigravity planning launch without `--profile` or `--full-access` is refused before any side effect, with a message naming the options. A command line that `v2.2.0` accepted now exits non-zero. **Migration:** add `--profile trusted`, `--profile restricted` or `--full-access` to the launch. Every launch now prints its effective profile.
+- **BREAKING**: usage reservation entries are backend-neutral and versioned, and `v2.2.0` crashes on them with `KeyError: 'tmux'`. This makes the documented rollback ("run `update` from the exact preceding tag") unsafe while reservations exist. **Migration:** release every reservation, or wait for active sessions to end, before rolling back to `v2.2.0`; never split the ledger or delete live reservations (`docs/failure-recovery.md`).
+- **Planning close order.** A planner now runs `plan-end` from its planning worktree while that worktree and its sandbox still exist, and retires the worktree last, from the surviving canonical checkout. All planning surfaces state the new order and use `openspec validate <change> --strict --no-interactive`. `session stop` waits, within its grace period, for the planner to exit and then releases the lock without `--force`.
+- **Orchestrator state is read from the main checkout.** The orchestrator lock, singleton session name and systemd unit name resolve the same way from any worktree, so `recover`, `orchestrator status` and `doctor` report the real holder. `orchestrator run` in a linked worktree is refused. The lock's staleness is bound to the holder's liveness (PID, start time and PID namespace): a verified-alive holder is never stale, however old the lock.
+- **`task-done` ticks the requesting checkout.** The sandbox broker ticks the `tasks.md` of the registered worktree that asked, and refuses anything else; an older broker that rejects the request is reported as needing a session relaunch rather than retried without the checkout.
+- **Launch dependency check counts only blocking edges.** Only `blocks` (or untyped) dependency edges are unmet dependencies, in both `session launch` and the Lead launch guard; a `parent-child` link to an open epic no longer blocks a ready task.
+- **Claude Stop and Notification hooks use an absolute path** resolved at launch, so `turn_end` and `needs_input` events are no longer lost after the agent changes directory.
+- **Codex launch flags match the current CLI.** `--add-dir` is omitted for read-only launches, and `ask_for_approval = "untrusted"` is rejected during preflight (accepted values: `on-request`, `never`).
+- **Codex usage observations stay valid until each window resets.** An aged observation is marked stale but still gates, so a known window over its cap denies the launch instead of being discarded as `unknown`.
+- **Cleanup is safer.** `session cleanup` stops the dedicated tmux server only when it hosts no session, and removes only herdr panes that this checkout's records name. `worktree cleanup` refuses, before deleting anything, a worktree that is a mount point, contains the caller's current directory, or is another active session's working directory. A caller inside the OpenSpec sandbox never starts the shared tmux server (the launch is refused and points to an unsandboxed launch), and a server living in another namespace is reported by `doctor`, `session list` and `orchestrator status`.
+- **Session logs are byte-bounded.** `session-log-writer` appends output as it arrives without waiting for a newline, keeps memory and every log generation within `session_log_max_bytes`, and `session cleanup` archives every rotated generation (both backends).
+
+### Fixed
+
+- A Codex planner could not run `plan-end` once its planning worktree was retired, and `worktree cleanup` could delete tracked files before failing with `Device or resource busy`.
+- A day-old `orchestrator.lock` with a live holder read as stale and halted autonomous Lead sessions.
+- A usage reservation written by a newer Nogging could make an older reader fail or reap a live entry; entries of an unknown version are now retained without probing.
+- Antigravity's permanent status bar was mistaken for pending input when verifying a nudge, and a Codex pane message was reported as delivered without verification.
+- Mixed-version and direct test invocations inherited the calling session's identity and could send fixture task ticks to the operator's live broker.
+
 ## [2.2.0] - 2026-10-11
 
 ### Added
