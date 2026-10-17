@@ -13,6 +13,7 @@
 #   - `doctor` prints the NOTE for an unknown agent and drops it when the
 #     policy is deny or the gate is disabled.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-agents.sh"; use_agent_stubs
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 nogg="$here/nogg"
@@ -37,7 +38,9 @@ cmd="${1:-}"; shift || true
 d="${TMUX_STUB_DIR:?}"; mkdir -p "$d"
 printf '%s %s\n' "$cmd" "$*" >>"$d/calls.log"
 case "$cmd" in
-  has-session) [[ "${TMUX_STUB_LIVE:-0}" == 1 && -f "$d/live-${2:-}" ]] ;;
+  has-session) [[ -f "$d/live-${2:-}" ]] ;;
+  new-session) while [[ $# -gt 0 && "$1" != -s ]]; do shift; done
+               [[ "${1:-}" == -s ]] && touch "$d/live-${2:?}" ;;
   *) : ;;
 esac
 STUB

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-agents.sh"; use_agent_stubs
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 python3 - "$root" <<'PY'
 from importlib.machinery import SourceFileLoader

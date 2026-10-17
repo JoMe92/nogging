@@ -7,6 +7,7 @@
 # - Sockets in /tmp/nogg.XXXXXX with path length < 108 bytes
 # - Clean environment: unset inherited NOGG_*, HERDR_*, TMUX
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-agents.sh"; use_agent_stubs
 
 # Test fixtures must not inherit the supervised agent's private session context.
 while IFS='=' read -r name _; do

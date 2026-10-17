@@ -2,6 +2,7 @@
 set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source "$root/scripts/lib/test-env.sh"
+source "$root/scripts/lib/test-agents.sh"; use_agent_stubs
 python3 - "$root" <<'PY'
 import json, os, shutil, subprocess, sys, tempfile
 from pathlib import Path

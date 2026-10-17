@@ -5,6 +5,7 @@
 # before any side effect; explicit restricted prints NOTE; every launch prints
 # profile=/prompt=; Claude implicit planning warns; restricted Codex prints Dolt note.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-agents.sh"; use_agent_stubs
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib/test-env.sh"
 unset TMUX TMUX_TMPDIR

@@ -38,8 +38,10 @@ cat >"$work/bin/tmux" <<'STUB'
 import json, os, sys
 args = sys.argv[1:]
 if args[:1] == ["-L"]: args = args[2:]
-if args[:1] == ["has-session"]: sys.exit(1)
+def live_file(): return os.environ["TMUX_ARGV"] + ".live-" + args[args.index("-t" if args[0] == "has-session" else "-s") + 1]
+if args[:1] == ["has-session"]: sys.exit(0 if os.path.exists(live_file()) else 1)
 if args[:1] == ["new-session"]:
+    open(live_file(), "w").close()
     with open(os.environ["TMUX_ARGV"], "w") as f:
         json.dump(args[args.index("--") + 1:], f)
 STUB

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # TASK-HSS-001: fenced tmux calls never start a server.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-agents.sh"; use_agent_stubs
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 python3 - "$here" <<'PY'
 import json

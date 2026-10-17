@@ -17,6 +17,7 @@
 #   - a seeded secret value reaches neither the recorded command nor the log;
 #   - the append-only log writer rotates by size to the configured depth.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-agents.sh"; use_agent_stubs
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 nogg="$here/nogg"
