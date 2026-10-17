@@ -272,6 +272,8 @@ def agy_select_group(groups, model):
     """(group, reason): the one group that lists the selected model's family.
     An unset model, an unrecognized family, or zero/several matches is an
     unknown mapping, never a guess and never another group's headroom."""
+    if not model or not str(model).strip():
+        return None, 'unknown model mapping (no model selected; pass --model <id>)'
     family = agy_model_family(model)
     if family is None:
         return None, 'unknown model mapping'
