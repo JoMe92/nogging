@@ -40,7 +40,7 @@ next start — fresh, resumed, or after a tool switch — every agent runs
 
 | `recover` reports | Action |
 | --- | --- |
-| Stale `planning.lock` | Confirm no planning session is actually running, then `./scripts/nogg plan-end --force`. A lock that names a supervised session is refused while that owner is alive; `recover` names the owner. Never release another session's lock by stopping or cleaning up your own. |
+| Stale `planning.lock` | Confirm no planning session is actually running, then `./scripts/nogg plan-end --force`. A lock that names a supervised session is refused while that owner is alive; `recover` names the owner. Never release another session's lock by stopping or cleaning up your own. To release a stopped planner's own lock, run `./scripts/nogg session stop <name>` (see *A planning worktree whose cleanup is refused*). |
 | Fresh `planning.lock`, not yours | A planning session is active elsewhere. Do not start execution that depends on unmaterialized work — wait or coordinate. |
 | Stale `orchestrator.lock` | The lock holder's process is verified dead or start time mismatched (or expired on a remote host). Reclaim with `./scripts/nogg orchestrator run --force` or restart the supervisor. An unverifiable holder (fenced caller or foreign PID namespace) is never reported stale. |
 | `LIMBO: <id> committed … but status=<status>` | The work is **done**. `git show` the commit, run `scripts/test`, add the evidence note (`bd update <id> --append-notes "commit <sha>; <evidence>"`), `bd close <id>`. **Do not re-implement it** — that produces a duplicate commit. |
@@ -162,6 +162,32 @@ not lost; closed ones are marked "awaiting review". After a planning session
 acts on one, record it with `./scripts/nogg discoveries --ack <id>...` so
 it stops resurfacing. The ledger
 (`.nogging/state/acknowledged-discoveries.json`) is local and safe to delete.
+
+## A planning worktree whose cleanup is refused
+
+`plan-end` always precedes worktree retirement, so a planner that has run
+`plan-end` has already released its lock; only the worktree remains.
+`./scripts/nogg worktree cleanup <record>` refuses, before removing anything,
+when the worktree, a path under it or its Git directory appears in
+`/proc/self/mountinfo` (a Codex planner's sandbox mounts its own worktree),
+when the caller's working directory is inside it, when another active session
+record works there, or when the mount table cannot be read. A refusal changes
+no file, branch or record. Do not retry it, force it or delete files by hand.
+
+1. Hand off: `./scripts/nogg session stop <name>`, then
+   `./scripts/nogg worktree cleanup <record>` from the canonical checkout. The
+   operator or the Orchestration Agent runs both. For a Codex planner this is
+   the normal end.
+2. `session stop` of the owning planner waits within its grace period for the
+   owner to exit and then releases that session's planning lock without
+   `plan-end --force`. If the owner is still live afterwards the lock is kept,
+   and the message names `session stop <name>` to rerun once it has exited.
+   `recover` names the same step for an interrupted owner that still has a
+   session record.
+3. If an older build's partial `git worktree remove` already deleted tracked
+   files from the worktree, restore them with
+   `git -C <worktree> restore --source=HEAD --worktree -- .`, then run the
+   cleanup again.
 
 ## A crashed or stuck supervised session
 

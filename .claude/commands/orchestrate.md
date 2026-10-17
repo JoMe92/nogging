@@ -57,9 +57,12 @@ the orchestrator session — exactly one of:
 
 - **`takeover plan`** — one full planning sequence (`plan-begin` → author →
   `validate` → commit with a Conventional subject **and** a `Nogging-Writer:
-  planning` trailer → `materialize` → wire dependencies → integrate → safe
-  cleanup → `plan-end` from a surviving canonical checkout), then back to
-  orchestrate-only. The trailer is mandatory: the orchestrator session has no
+  planning` trailer → `materialize` → wire dependencies → integrate →
+  `plan-end` from the planning worktree → `worktree cleanup` from the surviving
+  canonical checkout; `plan-end` always precedes worktree retirement), then
+  back to orchestrate-only. After a separate planner reports that `plan-end`
+  ran, stop it (`session stop <name>`), then run `worktree cleanup <record>`
+  from the canonical checkout. The trailer is mandatory: the orchestrator session has no
   `openspec/**` write guard, so the trailer is the only thing that keeps the
   commit past the CI `invariants` job.
 - **`takeover code`** — claim the named Bead, implement, `scripts/test`, commit
