@@ -50,12 +50,51 @@ class UsageTests(unittest.TestCase):
     def test_timezone_stale_future_and_reset(self):
         self.row['timestamp']='2026-10-11T14:00:00+02:00'; self.write()
         self.assertEqual(self.inspect()['status'],'known')
+        # Codex observations outlive the staleness window; they are only marked stale.
         self.now += dt.timedelta(seconds=601)
-        self.assertEqual(self.inspect()['windows'][0]['reason'],'stale observation')
+        aged=self.inspect()
+        self.assertEqual(aged['status'],'known')
+        self.assertTrue(all(w['stale'] and w['age_seconds']==601 for w in aged['windows']))
+        self.assertTrue(aged['stale'])
         self.now -= dt.timedelta(seconds=602)
+        self.assertEqual(self.inspect()['windows'][0]['reason'],'observation is in the future')
         self.assertEqual(self.inspect()['status'],'unknown')
         self.now += dt.timedelta(seconds=3601)
         self.assertIn('reset elapsed',self.inspect(stale_after=7200)['windows'][0]['reason'])
+    def test_codex_known_until_each_window_resets(self):
+        self.assertNotIn('stale',self.inspect()['windows'][0])
+        self.assertNotIn('stale',self.inspect())
+        cfg=usage.gate_config(None)
+        self.row['payload']['rate_limits']['secondary']['used_percent']=98; self.write()
+        self.now += dt.timedelta(seconds=900)
+        report=self.inspect()
+        self.assertEqual(report['status'],'known')
+        gate=usage.evaluate_gate(report,cfg,5)
+        self.assertEqual(gate['decision'],'denied')
+        self.assertEqual(gate['retry_after'],report['windows'][1]['resets_at'])
+        self.row['payload']['rate_limits']['secondary']['used_percent']=50; self.write()
+        self.assertEqual(usage.evaluate_gate(self.inspect(),cfg,5)['decision'],'admitted')
+        # Short reset elapsed, weekly known and fitting: short unknown, unknown-admitted.
+        self.now += dt.timedelta(seconds=3600)
+        report=self.inspect()
+        self.assertEqual([w['status'] for w in report['windows']],['unknown','known'])
+        self.assertIn('reset elapsed',report['windows'][0]['reason'])
+        self.assertTrue(report['windows'][1]['stale'])
+        self.assertEqual(usage.evaluate_gate(report,cfg,5)['decision'],'unknown-admitted')
+        # Weekly over the cap still denies when the short window has reset.
+        self.row['payload']['rate_limits']['secondary']['used_percent']=98; self.write()
+        self.assertEqual(usage.evaluate_gate(self.inspect(),cfg,5)['decision'],'denied')
+    def test_stale_codex_doctor_note(self):
+        os.environ['CODEX_HOME']=str(self.root/'codex-home')
+        self.addCleanup(os.environ.pop,'CODEX_HOME',None)
+        sessions=Path(os.environ['CODEX_HOME'])/'sessions'
+        sessions.mkdir(parents=True)
+        shutil.copytree(self.root/'2026',sessions/'2026')
+        self.assertEqual(usage.format_age(900),'15m')
+        self.now += dt.timedelta(seconds=900)
+        notes=usage.quota_freshness_notes({'stale_seconds':600},now=self.now)
+        self.assertIn('quota observation (codex): observation is 15m old but windows have not reset — still used',notes)
+        self.assertFalse([n for n in notes if 'codex' in n and 'is stale' in n])
     def test_invalid_windows_and_partial(self):
         for invalid in [-1,101,True,'0',float('nan'),float('inf'),None]:
             with self.subTest(invalid=invalid):
