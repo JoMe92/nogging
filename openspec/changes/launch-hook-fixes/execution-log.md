@@ -20,3 +20,10 @@
     - scripts/session-hook-absolute-path.test.sh: passed (absolute, shell-quoted Stop/Notification hook commands tested in path with spaces; verified execution from subdirectory appends turn_end to session events file; verified no relative scripts/ command remains).
     - scripts/session-observability.test.sh: passed (updated assertion for absolute quoted path passes).
     - PR: https://github.com/JoMe92/nogging/pull/210
+
+<!-- nogg:SPEC-1fny:2026-10-17T16:37:29Z -->
+- 2026-10-17T17:52:50+00:00 — SPEC-1fny closed for TASK-LHF-002 (Bead closed at 2026-10-17T16:37:29Z).
+  - implementation commits: e2fdd94
+  - Bead note:
+    tier standard: launch preflight plus post-start failure detection, one component
+    commit e2fdd94; new scripts/session-launch-agent-binary.test.sh (17+ checks) and 16 touched launch suites pass after rebase on origin/develop; 5 env-failing suites (installed-diagnostics, packed-model-selection, packed-session-launch, session-liveness-acceptance, session-pty-recorder) fail on develop too
