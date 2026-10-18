@@ -7,7 +7,7 @@ import shlex
 import struct
 import uuid
 
-from session_backend import BackendError, Capabilities, KEYS
+from session_backend import BackendError, Capabilities, KEYS, safe_session_name
 
 
 def _namespace_links(pid):
@@ -81,6 +81,8 @@ class TmuxBackend:
 
     def prepare(self, name, cwd):
         """Check fenced callers can use the host server before any record is written."""
+        if safe_session_name(name) != name:
+            raise BackendError("tmux session name is not backend-safe")
         if os.environ.get("NOGG_OPENSPEC_FENCED") != "1":
             return {"name": name, "socket": self.socket}
         try:
@@ -107,6 +109,8 @@ class TmuxBackend:
         return ref["name"] if isinstance(ref, dict) else ref
 
     def start(self, name, cwd, env, argv, log):
+        if safe_session_name(name) != name:
+            raise BackendError("tmux session name is not backend-safe")
         args = ["new-session", "-d", "-s", name, "-c", cwd]
         for key, value in env.items():
             args.extend(["-e", f"{key}={value}"])
