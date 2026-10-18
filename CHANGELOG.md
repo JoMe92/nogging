@@ -9,6 +9,25 @@ and GitHub Releases for that history.
 
 ## [Unreleased]
 
+Upgrade notes: run `npx github:JoMe92/nogging#<new-tag> update` from each
+installed repository. Reconcile any `<file>.nogging-new` files after updating;
+`update --force` instead saves the replaced file as `<file>.orig`. Codex or
+Antigravity planning launches must name an authority. Roll back to `v2.2.0`
+only after all usage reservations are released.
+
+### Changed
+
+- **BREAKING**: `update` (and re-running `init`) preserves locally modified managed files and writes upstream content to `<file>.nogging-new`. **Migration:** use `--force` (which saves the old file as `<file>.orig`) or merge and remove the pending file.
+- **BREAKING**: Codex and Antigravity planning launches without an authority now refuse before side effects. **Migration:** pass `--profile trusted`, `--profile restricted` or `--full-access`.
+- **BREAKING**: versioned usage reservations cannot be read by `v2.2.0`, so rollback is unsafe while any remain; older readers may report `KeyError: 'tmux'`. **Migration:** release every reservation or wait for active sessions to end before rollback; never split the ledger or delete live reservations.
+
+### Added
+
+- **Safe session launch and Codex delivery guidance.** Document backend-safe
+  session names, cleanup after failed launches, Codex paste-placeholder and
+  startup-turn handling, busy-queue refusal, planner process identity recovery,
+  and updating older vendored Nogging copies.
+
 ## [3.0.0] - 2026-10-18
 
 Upgrade notes: run `npx github:JoMe92/nogging#<new-tag> update` from each

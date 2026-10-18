@@ -18,7 +18,7 @@
 
 ## 4. Guidance (docs/)
 
-- [ ] TASK-LCD-007 [routine] Per design Decisions 1 and 9: document in running-work-in-sessions, using-with-codex and failure-recovery what #207, #216 and #218 fixed and that an older vendored copy needs update, the safe-name rule and no-orphan launch failure, the Codex placeholder, startup-turn gate, busy-Codex refusal and the planner identity outcome; add a CHANGELOG Unreleased entry. Branch docs/. Depends on LCD-001 to LCD-006. Check: extend scripts/session-delivery-docs.test.sh; scripts/test.
+- [x] TASK-LCD-007 [routine] Per design Decisions 1 and 9: document in running-work-in-sessions, using-with-codex and failure-recovery what #207, #216 and #218 fixed and that an older vendored copy needs update, the safe-name rule and no-orphan launch failure, the Codex placeholder, startup-turn gate, busy-Codex refusal and the planner identity outcome; add a CHANGELOG Unreleased entry. Branch docs/. Depends on LCD-001 to LCD-006. Check: extend scripts/session-delivery-docs.test.sh; scripts/test.
 
 ## 5. Delivery-host acceptance (test/, host-capable Lead)
 

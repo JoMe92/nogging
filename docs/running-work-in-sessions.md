@@ -61,6 +61,19 @@ If the agent itself exits during startup, the failed record and redacted log
 retain the original error even when the pane has already disappeared. Check
 `session list` and `session log <name>` after a suspected quick failure.
 
+Generated session names replace periods (`.`) and colons (`:`) with
+underscores. This keeps Bead IDs such as `SPEC-abc.1` addressable by tmux,
+which can rename dotted session names; herdr labels use the same safe name as
+the session record. If launch fails before the session reaches `running`,
+Nogging attempts to remove the session it created and records the cleanup
+result. It never kills the tmux server. A refusal after the session is already
+running (for example, kickoff delivery could not be verified) leaves that
+session available for inspection.
+
+These launch and delivery guarantees require the updated Nogging helpers. If
+your repository vendors an older copy, update it using the pinned procedure in
+[`failure-recovery.md`](failure-recovery.md).
+
 ### Host-namespace tmux server start and fenced refusal
 
 On the `tmux` backend, the shared tmux server (`tmux -L nogging`) must be
