@@ -28,21 +28,11 @@ function renderSystemd(ctx) {
     fsops.writeFile(dest, render(tmpl, ctx), ctx);
     written.push(dest);
   }
+  // The next-steps block (nextsteps.js) names the units that can be enabled.
   const timer = written.find((p) => p.endsWith('.timer'));
-  if (timer) {
-    ctx.notes.push(
-      'Enable the sync timer:\n' +
-        `    systemctl --user enable --now "$PWD/${timer}"`,
-    );
-  }
+  if (timer) ctx.units.push({ kind: 'timer', rel: timer });
   const orchestrator = written.find((p) => p.includes('orchestrator'));
-  if (orchestrator) {
-    ctx.notes.push(
-      'Enable the always-on Orchestration Agent (optional — the operator\'s choice):\n' +
-        `    systemctl --user enable --now "$PWD/${orchestrator}"\n` +
-        `    loginctl enable-linger ${process.env.USER || '<user>'}   # so it starts at boot without a login`,
-    );
-  }
+  if (orchestrator) ctx.units.push({ kind: 'orchestrator', rel: orchestrator });
 }
 
 module.exports = { render, renderSystemd };
