@@ -349,6 +349,23 @@ class HerdrBackend:
         return matches[0] if matches else None
 
     def start(self, name, cwd, env, argv, log):
+        try:
+            return self._start(name, cwd, env, argv, log)
+        except Exception:
+            # layout.apply may create the pane before the reply, terminal
+            # identity, or process identity proves usable. Find only this
+            # unique label and close that pane; preserve the startup error.
+            ref = (dict(self._prepared) if self._prepared
+                   and self._prepared.get("name") == name else {"name": name, "label": name})
+            try:
+                pane = self._pane(ref)
+                if pane and pane.get("pane_id"):
+                    self._cli("pane", "close", pane["pane_id"], ref=ref, check=False)
+            except Exception:
+                pass
+            raise
+
+    def _start(self, name, cwd, env, argv, log):
         if safe_session_name(name) != name:
             raise BackendError("herdr session name is not backend-safe")
         ref = self._prepared if self._prepared and self._prepared["name"] == name else self.prepare(name, cwd)
