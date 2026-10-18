@@ -8,7 +8,7 @@
 
 ## 3. Orchestrator guidance
 
-- [ ] TASK-CEF-003 [routine] Per design Decision 5: add the Codex policy and both command spellings to .nogging/launch-prompts/orchestrator.md, .claude/commands/orchestrate.md and docs/operating-model.md Orchestration (explicit --model or --effort only on PO instruction, keep the honest tier). Check: model-selection prompt assertions extended; cli and orchestrator suites; scripts/test. Branch chore/.
+- [x] TASK-CEF-003 [routine] Per design Decision 5: add the Codex policy and both command spellings to .nogging/launch-prompts/orchestrator.md, .claude/commands/orchestrate.md and docs/operating-model.md Orchestration (explicit --model or --effort only on PO instruction, keep the honest tier). Check: model-selection prompt assertions extended; cli and orchestrator suites; scripts/test. Branch chore/.
 
 ## Dependency contract
 
