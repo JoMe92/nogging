@@ -193,8 +193,9 @@ product decision.
   the model selection (`requested_model`, `model_source`, `reasoning_effort`,
   `reasoning_effort_source` — `launch`, `profile` or `runtime-default`, written
   for Claude and Codex only and describing the launch request, not later
-  interactive changes — and `selection_tier` for a `--tier` launch resolved from the
-  model-selection table, see `model-selection.md`),
+  interactive changes — `selection_tier` for a `--tier` launch resolved from the
+  model-selection table, and `selection_tier_effort` when an explicit `--effort`
+  overrides the table's effort while preserving tier attribution, see `model-selection.md`),
   and `ended_at`/`exit_reason` on a terminal state. Written before the agent
   process is exec'd and updated on every transition. The store is local state
   (gitignored, like the rest of `.nogging/state/`) and safe to delete — a
