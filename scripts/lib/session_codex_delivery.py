@@ -12,6 +12,42 @@ from typing import Any
 
 POLL_LIMIT = 1 * 1024 * 1024
 OPERATION_LIMIT = 4 * 1024 * 1024
+TURN_STATE_LIMIT = 1 * 1024 * 1024
+
+
+def turn_state(path: str | os.PathLike[str]) -> str:
+    """Read bounded Codex rollout events and return running, idle or none.
+
+    Only a task_started followed by a terminal task event proves an idle turn.
+    Unknown event names are ignored so newer Codex versions remain readable.
+    """
+    try:
+        source = Path(path)
+        with source.open("rb") as stream:
+            stream.seek(max(0, source.stat().st_size - TURN_STATE_LIMIT))
+            data = stream.read(TURN_STATE_LIMIT)
+        if len(data) == TURN_STATE_LIMIT and not data.startswith(b"{"):
+            # The first record may be partial; discard it below.
+            data = data.split(b"\n", 1)[-1]
+        state = "none"
+        terminal = {"task_complete", "turn_aborted", "turn_interrupted",
+                    "task_aborted", "task_interrupted"}
+        for line in data.splitlines():
+            try:
+                record = json.loads(line)
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                continue
+            if not isinstance(record, dict) or record.get("type") != "event_msg":
+                continue
+            payload = record.get("payload")
+            event = payload.get("type") if isinstance(payload, dict) else None
+            if event == "task_started":
+                state = "running"
+            elif event in terminal and state == "running":
+                state = "idle"
+        return state
+    except (OSError, ValueError, TypeError):
+        return "none"
 
 
 def snapshot_source(path: str | os.PathLike[str], thread_id: str) -> dict[str, Any]:

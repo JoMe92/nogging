@@ -46,4 +46,44 @@ with patch.object(m, "session_pane_text", return_value="› \n"), \
     state = m._readiness_observation("codex-startup", resume_rec, "codex", True, memory)
 assert state[0] == "candidate", state
 
-print("Codex startup turn readiness: ok")
+# The real pane submit path waits when the Codex turn is running and proceeds
+# after the exact thread reaches a terminal event.
+rec_path = scratch / "session.json"
+rec_path.write_text(json.dumps(rec))
+clock = {"now": 0.0}
+def sleep(seconds):
+    clock["now"] += seconds
+def pane():
+    return "• Working (0s • esc to interrupt)\n\n› hello\n" if clock["now"] < 0.2 else "› hello\n"
+with patch.object(m, "session_pane_text", side_effect=lambda *_: pane()), \
+     patch.object(m, "load_session", return_value=(rec_path, rec)), \
+     patch.object(m, "resolve_codex_thread_id", return_value="thread-1"), \
+     patch.object(m, "_codex_rollout_path", return_value=rollout), \
+     patch.object(reader, "turn_state", side_effect=lambda _path: "running" if clock["now"] < 0.2 else "idle"), \
+     patch.object(m.time, "monotonic", side_effect=lambda: clock["now"]), \
+     patch.object(m.time, "sleep", side_effect=sleep):
+    m._wait_for_codex_turn_before_enter("codex-startup", 1.0,
+        {"session_submit_verify_delay_seconds": 0.1})
+assert clock["now"] >= 0.2, clock
+
+order = []
+with patch.object(m, "_capture_backend_status", return_value="idle"), \
+     patch.object(m, "_delivery_composer_state", side_effect=["empty", "pending", "pending"]), \
+     patch.object(m, "_wait_for_owned_composer"), \
+     patch.object(m, "_wait_for_codex_turn_before_enter", side_effect=lambda *_: order.append("idle")), \
+     patch.object(m, "_submission_observation", return_value="submitted"), \
+     patch.object(m, "session_action", side_effect=lambda _name, action, *_: order.append(action)), \
+     patch.object(m.time, "monotonic", return_value=0.0), \
+     patch.object(m.time, "sleep"):
+    m._deliver_pane_locked("codex-startup", "codex", "hello",
+        timing={"session_delivery_timeout_seconds": 2.0,
+                "session_submit_delay_seconds": 0.1,
+                "session_submit_verify_delay_seconds": 0.1})
+assert order.index("idle") < order.index("send_keys"), order
+
+# A changed working status alone cannot prove that Codex submitted pending text.
+with patch.object(m, "session_action", return_value="working"), \
+     patch.object(m, "_delivery_composer_state", return_value="pending"):
+    assert m._submission_observation("codex-startup", "codex", "hello", "idle", True) == "pending"
+
+print("Codex startup turn readiness and turn-gated submit: ok")
