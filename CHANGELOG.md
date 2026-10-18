@@ -9,25 +9,6 @@ and GitHub Releases for that history.
 
 ## [Unreleased]
 
-Upgrade notes: run `npx github:JoMe92/nogging#<new-tag> update` from each
-installed repository. Reconcile any `<file>.nogging-new` files after updating;
-`update --force` instead saves the replaced file as `<file>.orig`. Codex or
-Antigravity planning launches must name an authority. Roll back to `v2.2.0`
-only after all usage reservations are released.
-
-### Changed
-
-- **BREAKING**: `update` (and re-running `init`) preserves locally modified managed files and writes upstream content to `<file>.nogging-new`. **Migration:** use `--force` (which saves the old file as `<file>.orig`) or merge and remove the pending file.
-- **BREAKING**: Codex and Antigravity planning launches without an authority now refuse before side effects. **Migration:** pass `--profile trusted`, `--profile restricted` or `--full-access`.
-- **BREAKING**: versioned usage reservations cannot be read by `v2.2.0`, so rollback is unsafe while any remain; older readers may report `KeyError: 'tmux'`. **Migration:** release every reservation or wait for active sessions to end before rollback; never split the ledger or delete live reservations.
-
-### Added
-
-- **Safe session launch and Codex delivery guidance.** Document backend-safe
-  session names, cleanup after failed launches, Codex paste-placeholder and
-  startup-turn handling, busy-queue refusal, planner process identity recovery,
-  and updating older vendored Nogging copies.
-
 ## [3.0.0] - 2026-10-18
 
 Upgrade notes: run `npx github:JoMe92/nogging#<new-tag> update` from each
@@ -43,6 +24,10 @@ sessions), because `v2.2.0` cannot read the new reservation entries; see
 
 ### Added
 
+- **Safe session launch and Codex delivery guidance.** Document backend-safe
+  session names, cleanup after failed launches, Codex paste-placeholder and
+  startup-turn handling, busy-queue refusal, planner process identity recovery,
+  and updating older vendored Nogging copies.
 - **Codex `--effort` and the tier/model/effort combination.** `session launch --effort <level>` now works for Codex sessions, validated against Codex's reasoning-effort set and forwarded to the CLI. `--tier`, `--model` and `--effort` combine with a documented precedence (explicit flag over tier over profile), and `docs/model-selection.md` records the Product Owner cost policy: `gpt-6-luna` by default, `gpt-6.1-sol` only at low effort for extremely hard tasks.
 - **Installer preflight.** `init` and `update` run an advisory host preflight that reports missing prerequisites before changing anything, without blocking the install.
 - **Grouped installer output and numbered next steps.** `init`, `update` and `remove` group their output by file class with per-class counts, show each path once, collect preserved and forced files into a single review block and deduplicate warnings (`--verbose` lists every file). They end with a numbered next-steps block (required before optional) and a normalized readiness verdict that points to `/plan` when ready; `npx ... doctor` prints the report once, then the same verdict.
