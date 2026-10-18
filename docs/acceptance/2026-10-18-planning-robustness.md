@@ -35,11 +35,11 @@ commands; the actual `NOGG_OPENSPEC_FENCED=1` boundary was retained.
 | --- | --- | --- | --- | --- |
 | 1 | [M] | Install packed toolkit in a scratch consumer | pass | Packed installer exited 0. Consumer uses its own local bare origin and private socket; install readiness correctly reported no initialized tracker. |
 | 2 | [M] | Codex planning launch without explicit authority | pass | Exit 1 with the explicit-authority diagnostic. Consumer status stayed clean, only the main worktree existed, no session/worktree record or planning lock was created. |
-| 3 | [A] | Trusted Codex planner through plan-end, own cleanup refusal without deletion, operator stop then cleanup without force | fail | Trusted launch could not start without a host-owned private tmux server; no child agent ran, so none of the requested lifecycle or cleanup assertions was exercised. |
-| 4 | [A] | Claude plan-end followed by self-retirement | skipped | Same missing host-side private server; stopped further launches after the trusted Codex refusal. |
+| 3 | [A] | Trusted Codex planner through plan-end, own cleanup refusal without deletion, operator stop then cleanup without force | fail | The private socket was available and launch created a running session, but kickoff returned `Codex's composer is holding input`; the pane showed Codex's repository workspace-trust dialog. No consent was supplied, so plan-begin, plan-end and self-cleanup did not run. Operator stop succeeded; cleanup without `--force` then retired the clean, unchanged worktree. |
+| 4 | [A] | Claude plan-end followed by self-retirement | fail | Launch created a running session on the private socket, but kickoff returned `Claude's composer is not identifiable yet`; the pane showed Claude's workspace-trust question. No consent was supplied, so plan-begin, plan-end and self-retirement did not run. Operator stop succeeded; cleanup without `--force` retired the clean, unchanged worktree. |
 | 5 | [A] | Trusted Antigravity search_web with captured query key | skipped | Antigravity quota is exhausted until `2026-10-23T22:00Z`; no launch or search was attempted, and no query key was inferred. |
-| 6 | [A] | Restricted Antigravity search_web approval prompt | skipped | The same exhausted quota prevented a restricted launch; no approval was emulated. |
-| 7 | [M] | Named strict OpenSpec validation without an interactive prompt | skipped | The throwaway planner never started or authored its change. |
+| 6 | [A] | Restricted Antigravity search_web approval prompt | skipped | Antigravity quota is exhausted until `2026-10-23T22:00Z`; no restricted launch was attempted and no approval was emulated. |
+| 7 | [M] | Named strict OpenSpec validation without an interactive prompt | fail | `openspec validate hps007-live-claude-probe --strict --no-interactive` returned without prompting but exited 1 with `Unknown item 'hps007-live-claude-probe'`. Neither planner passed the workspace-trust prompt, so no named scratch change existed to validate. |
 | 8 | [M] | scripts/test | pending | No full suite was started in this worktree. A full run already active for a different Bead was not duplicated and is not evidence for this acceptance. |
 | 9 | [A] | Product Owner sign-off | skipped | Reserved for the Product Owner. |
 
@@ -76,6 +76,39 @@ The launch had already allocated the clean worktree
 intact for inspection. There is no scratch planning lock and no child session
 record. No operator stop, cleanup, force, or manual deletion was attempted.
 
+## Re-attempts with the host-owned private socket
+
+The operator started and kept alive tmux socket `hps007-20261018` outside the
+Codex sandbox. The consumer config selected this socket (`session_tmux_socket`);
+`session list` showed no managed sessions before the probes and the private
+server listed only its `keepalive` session. No command used `-L nogging`.
+
+The original Codex worktree was clean, on `plan/hps007-codex/close-order`, and
+at the same commit as the scratch consumer's `origin/develop`. It was reused
+with `--cwd` for the trusted Codex launch. Codex 0.163.0 launched at
+2026-10-18T03:24:13Z with `--profile trusted`, `--model gpt-6-luna`, and
+`--tier complex`. The latest available usage event was at 03:23:15Z: primary
+11%, weekly 17%; admission estimated 0% for this launch and reserved 6%.
+The first kickoff returned `Codex's composer is holding input`. Its preserved
+session log shows Codex's `Trust and continue` repository prompt. No keystroke
+or trust decision was sent. `session stop` stopped the session; from the
+canonical scratch consumer, `worktree cleanup
+plan--hps007-codex--close-order.json` retired the unchanged worktree without
+`--force`. No planning lock was acquired and no plan lifecycle command ran.
+
+A separate trusted Claude planner launched at 2026-10-18T03:25:42Z on the
+same private socket. Its kickoff returned `Claude's composer is not
+identifiable yet`. The preserved log shows Claude's workspace-access trust
+question with `No, exit` and `Yes, I trust this folder` choices. No choice was
+made. The operator stopped the session and retired its clean worktree with
+`worktree cleanup plan--hps007-claude--self-retire.json`, without
+`--force`. No planning lock or change was created and Claude did not self-retire.
+
+The named strict-validation command was then attempted from the same scratch
+consumer with `--no-interactive`; it exited 1 because the expected disposable
+change did not exist. This confirms that no prompt appeared, but does not pass
+the named-change validation check.
+
 ## Deviations
 
 - This is the short Decision 9 re-acceptance, not the full acceptance runbook.
@@ -84,16 +117,21 @@ record. No operator stop, cleanup, force, or manual deletion was attempted.
 - The first trusted launch attempt lacked the fixture origin and exited with
   `could not update origin/develop before allocating a planning worktree`.
   The local bare origin was then configured; both launch logs are retained.
-- This execution session cannot start a host-owned private tmux server. No
-  permission settings, fence flags, services, or fleet resources were changed
-  to bypass that refusal. No direct agent process was used as a fallback.
+- The initial fenced attempt could not start its private tmux server. The
+  operator later started the owned socket. No permission settings, fence flags,
+  services, or fleet resources were changed to bypass the initial refusal. No
+  direct agent process was used as a fallback.
+- With the operator-owned private socket available, both agents launched but
+  stopped at their explicit workspace-trust prompts. No consent was emulated;
+  the supervised sessions were stopped and their clean worktrees retired.
 - `./scripts/nogg doctor` was invoked in the scratch consumer; the preserved
   output contains no `FAIL` lines. It reports the Codex sandbox write probe as
   unavailable because the nested sandbox could not create its app-server
   socket directory. This diagnostic does not make the live checks pass.
 - Raw scratch logs remain under `/tmp/hps007-20261018/`: `install.log`,
   `codex-authority-refusal.log`, `codex-trusted-launch.log`,
-  `codex-trusted-launch-with-origin.log`, and `doctor.log`.
+  `codex-trusted-launch-with-origin.log`, and `doctor.log`. The two re-attempt
+  session logs remain in `/tmp/hps007-20261018/consumer/.nogging/state/sessions/`.
 
 ## Discoveries filed during this run
 
@@ -101,15 +139,18 @@ record. No operator stop, cleanup, force, or manual deletion was attempted.
 | --- | --- | --- |
 | SPEC-22a8 | yes | The assigned fenced session cannot create the private host-side tmux server required for live re-acceptance; trusted launch allocates a scratch worktree before refusing, leaving it for explicit recovery. |
 | SPEC-22a8 | yes | Antigravity quota is exhausted until `2026-10-23T22:00Z`; the trusted and restricted `search_web` cases could not be run in this acceptance window. |
+| SPEC-22a8 | yes | After the private socket became available, both trusted planners launched but displayed workspace-trust prompts before kickoff. No consent was supplied, so the lifecycle checks could not run; the strict-validation command had no named scratch change to validate. |
 
 ## Outcome
 
 - **Overall:** fail (blocked, incomplete).
 - **Summary:** Packed installation and authority-free Codex launch refusal
-  were observed. Codex cleanup safety, Claude self-retirement, live
-  Antigravity search permissions and argument shape, and strict validation
-  remain unverified. An operator must resume the live checks from a host
-  session using a private tmux socket. No PR or Bead closure is claimed.
+  were observed. The private socket allowed both trusted planner processes to
+  launch, but Codex and Claude each stopped at an explicit workspace-trust
+  prompt before any planning lifecycle command. Antigravity search remains
+  skipped until its quota reset; strict validation returned without a prompt
+  but failed because no named scratch change existed. PR #233 contains this
+  report update; `SPEC-22a8` remains blocked, unsigned, and unclosed.
 
 ## Sign-off
 
