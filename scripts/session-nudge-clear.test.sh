@@ -239,13 +239,14 @@ for backend in ("tmux", "herdr"):
 
     sub.custom_handler = handler_5
     rec = {"name": f"s5_{backend}", "agent": "codex"}
+    long_paste = "pasted text " + "follow the mapped task and record evidence; " * 8
     buf = io.StringIO()
     with patch.object(m, "_require_running", return_value=(None, rec)), \
          patch.object(m, "_codex_queue_deliver_locked", return_value="not-attempted"), \
          patch.object(m, "backend_for_name", return_value=(sub, {})), \
          patch.object(m.time, "sleep"), \
          contextlib.redirect_stdout(buf):
-        m.session_nudge(rec["name"], "pasted text")
+        m.session_nudge(rec["name"], long_paste)
 
     assert f"nudged {rec['name']}" in buf.getvalue()
     assert sub.enters_sent >= 1

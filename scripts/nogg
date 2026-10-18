@@ -5788,6 +5788,54 @@ def _composer_text_matches(text, message):
 # "paste again to expand" hint) and shows nothing of the text itself.
 _CLAUDE_PASTE_PLACEHOLDER_RE = re.compile(
     r"\[Pasted text #\d+(?: \+\d+ lines)?\](?:\s*\(?paste again to expand\)?)?", re.I)
+_CODEX_PASTE_PLACEHOLDER_RE = re.compile(r"\[Pasted Content [1-9][0-9]* chars\]")
+_CODEX_PASTE_BARE_RE = re.compile(r"\[?Pasted Content\]?")
+
+def _codex_paste_placeholder_pending(pane, message):
+    """Whether Codex's current composer contains only one collapsed paste.
+
+    The placeholder belongs to this operation only after it observed an empty
+    composer before typing. Codex's reported character count is deliberately
+    not compared with the message length; that count is runtime-dependent.
+    """
+    message = message or ""
+    if len(message) < 200 and "\n" not in message:
+        return False
+    plain = [_ANSI_RE.sub("", line).strip() for line in (pane or "").splitlines()]
+    prompt_rows = [i for i, line in enumerate(plain) if _CODEX_PROMPT_RE.match(line)]
+    if not prompt_rows:
+        return False
+    prompt = prompt_rows[-1]
+    first = plain[prompt][plain[prompt].find("›") + 1:].strip()
+    composer = [first] if first else []
+    footer = re.compile(r"^(?:tab to queue message|\? for shortcuts|\d+% context left|GPT-[^ ]+\b.*)$", re.I)
+    for line in plain[prompt + 1:]:
+        if not line:
+            continue
+        if footer.match(line):
+            break
+        composer.append(line)
+    nearby = plain[max(0, prompt - 2):prompt + len(composer) + 1]
+    token_rows = []
+    for line in nearby:
+        candidate = _CODEX_PROMPT_RE.sub("", line, count=1).strip()
+        if (_CODEX_PASTE_PLACEHOLDER_RE.fullmatch(candidate)
+                or _CODEX_PASTE_BARE_RE.fullmatch(candidate)):
+            token_rows.append(candidate)
+    if len(token_rows) != 1:
+        return False
+    if (len(composer) == 1
+            and (_CODEX_PASTE_PLACEHOLDER_RE.fullmatch(composer[0])
+                 or _CODEX_PASTE_BARE_RE.fullmatch(composer[0]))):
+        return True
+    # Older captures put the bare marker on the row immediately above the
+    # empty prompt. Keep that form for fixtures, but only with a clean baseline.
+    if prompt == 0 or not _CODEX_PASTE_BARE_RE.fullmatch(plain[prompt - 1]):
+        return False
+    without_marker = "\n".join(line for i, line in enumerate((pane or "").splitlines())
+                                if i != prompt - 1)
+    prompt_kind, _prompt_text = _attributed_prompt_input(without_marker, _CODEX_PROMPT_RE)
+    return prompt_kind in ("empty", "placeholder")
 
 def _claude_paste_placeholder_pending(pane, message):
     """Whether Claude's box shows only a collapsed-paste placeholder that a
@@ -5805,6 +5853,9 @@ def _delivery_composer_state(name, agent, message, *, clean_baseline=False):
     count as this operation's pending message."""
     if (clean_baseline and agent == "claude"
             and _claude_paste_placeholder_pending(session_pane_text(name, escapes=False), message)):
+        return "pending"
+    if (clean_baseline and agent == "codex"
+            and _codex_paste_placeholder_pending(session_pane_text(name, escapes=False), message)):
         return "pending"
     substrate, _ref = backend_for_name(name)
     attributes = getattr(substrate.capabilities, "capture_attributes", False)
@@ -6150,7 +6201,8 @@ def _codex_queue_deliver_locked(name, rec, message, timing, attempt=None):
         receipt, snapshot = receipts.read_fresh_receipt(snapshot, message)
         if receipt["status"] == "receipt":
             return "submitted"
-        state = _delivery_composer_state(name, "codex", message)
+        state = _delivery_composer_state(name, "codex", message,
+                                         clean_baseline=clean_baseline)
         if enters and state == "empty":
             return "submitted"   # the owned buffer left the composer after our Enter
         if clean_baseline and state == "pending" and enters < 2:
@@ -6160,7 +6212,8 @@ def _codex_queue_deliver_locked(name, rec, message, timing, attempt=None):
             receipt, snapshot = receipts.read_fresh_receipt(snapshot, message)
             if receipt["status"] == "receipt":
                 return "submitted"
-            if _delivery_composer_state(name, "codex", message) == "pending":
+            if _delivery_composer_state(name, "codex", message,
+                                        clean_baseline=clean_baseline) == "pending":
                 _wait_for_codex_turn_before_enter(name, deadline, timing)
                 _submit_pane_input(name, "codex")
                 enters += 1
@@ -6249,12 +6302,6 @@ def _composer_holds_message(name, agent, message):
     pane = session_pane_text(name, escapes=False)
     if "stub agent started" in pane:
         return True
-    if agent == "codex" and kind == "input":
-        plain_lines = [_ANSI_RE.sub("", ln).strip() for ln in pane.splitlines()]
-        if any(re.fullmatch(r"\[?Pasted Content\]?", ln) for ln in plain_lines):
-            plain_input = _ANSI_RE.sub("", text).strip()
-            if not plain_input or re.fullmatch(r"\[?Pasted Content\]?", plain_input):
-                return True
     return False
 
 def session_nudge(name, message=None):
