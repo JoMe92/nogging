@@ -18,7 +18,7 @@
 
 - [x] TASK-RRI-007 [standard] Per design Decision 8: align docs/installation.md and CLI help with the final installer and bootstrap output; prerequisites equal the preflight table; pin assertions read package.json; docs/releasing.md step 4 names scripts/bootstrap. Check: new scripts/install-surface-consistency.test.sh and scripts/release-pins.test.sh; scripts/test. Branch test/.
 
-- [ ] TASK-RRI-008 [routine] Per design Decision 9: docs/releasing.md steps 2-5 for 3.0.0: changelog bullets for this change, cut [Unreleased] to [3.0.0], package.json and lock to 3.0.0, every install pin to v3.0.0; commit chore(release): prepare v3.0.0 with the Bead token; never tag or release. Check: scripts/release-check 3.0.0 all OK, tag not yet existing; release-pins, changelog-format and scripts/test. Branch chore/ (after TASK-RRI-006).
+- [x] TASK-RRI-008 [routine] Per design Decision 9: docs/releasing.md steps 2-5 for 3.0.0: changelog bullets for this change, cut [Unreleased] to [3.0.0], package.json and lock to 3.0.0, every install pin to v3.0.0; commit chore(release): prepare v3.0.0 with the Bead token; never tag or release. Check: scripts/release-check 3.0.0 all OK, tag not yet existing; release-pins, changelog-format and scripts/test. Branch chore/ (after TASK-RRI-006).
 
 ## Dependency contract
 
