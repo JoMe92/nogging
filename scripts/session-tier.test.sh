@@ -7,7 +7,8 @@
 #     wrapper as separate argv elements: Claude --model, Codex --model plus
 #     --reasoning-effort, Antigravity (and its agy alias) --model;
 #   - precedence: --model beats the tier model while the tier still supplies
-#     the Codex effort; the tier beats the profile model and profile effort;
+#     the Codex effort, and an explicit Codex --effort beats the tier effort
+#     while the tier stays recorded (selection_tier, selection_tier_effort); the tier beats the profile model and profile effort;
 #   - a Claude tier forwards model and effort (wrapper --effort, source
 #     launch), an explicit --effort beats the tier, the tier beats profile
 #     effort, and a stale helper refuses before any side effect;
@@ -202,6 +203,31 @@ lacks "legacy-codex: no effort flag" "--reasoning-effort"
 
 # --- refusals before any side effect ---------------------------------------
 launch_refused "unknown-tier" "choose one of routine, standard, complex" --full-access --tier trivial
+launch_ok "codex-effort-over-tier" --agent codex --full-access --tier complex --effort low
+has "codex-effort-over-tier: tier model kept" "--model gpt-6.1-sol"
+has "codex-effort-over-tier: explicit --effort wins" "--reasoning-effort low"
+lacks "codex-effort-over-tier: tier effort not forwarded" "--reasoning-effort high"
+expect_record "codex-effort-over-tier: reasoning_effort" reasoning_effort low
+expect_record "codex-effort-over-tier: effort source launch" reasoning_effort_source launch
+expect_record "codex-effort-over-tier: selection_tier kept" selection_tier complex
+expect_record "codex-effort-over-tier: table effort kept for attribution" selection_tier_effort high
+
+launch_ok "codex-tier-model-effort" --agent codex --full-access --tier complex --model gpt-6-luna --effort medium
+has "codex-tier-model-effort: explicit model" "--model gpt-6-luna"
+has "codex-tier-model-effort: explicit effort" "--reasoning-effort medium"
+lacks "codex-tier-model-effort: tier model not forwarded" "gpt-6.1-sol"
+expect_record "codex-tier-model-effort: selection_tier kept" selection_tier complex
+expect_record "codex-tier-model-effort: requested_model" requested_model gpt-6-luna
+expect_record "codex-tier-model-effort: model source launch" model_source launch
+expect_record "codex-tier-model-effort: reasoning_effort" reasoning_effort medium
+expect_record "codex-tier-model-effort: effort source launch" reasoning_effort_source launch
+"$nogg" session list >"$out" 2>&1
+grep -E "SPEC-tier .*gpt-6-luna effort=medium \(launch\) tier=complex" "$out" >/dev/null \
+  && ok "codex-tier-model-effort: list shows tier with model and effort" || bad "codex-tier-model-effort: list"
+
+launch_refused "codex-tier-bad-effort" "must be one of none, minimal, low, medium, high, xhigh, max, ultra" \
+  --agent codex --full-access --tier complex --effort turbo
+
 launch_refused "pi-tier" "--tier is not supported for agent 'pi'" --agent pi --tier routine
 new_root; rm "$root/.nogging/model-selection.json"
 KEEP_ROOT=1 launch_refused "missing-table" "is missing" --agent codex --full-access --tier routine
