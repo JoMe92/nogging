@@ -114,6 +114,7 @@ def accepted_with(effect):
     return queue
 def assert_unverified(result, calls, pane, enters):
     assert "accepted the queued message" in result and "not typed or queued again" in result, result
+    assert f"thread {THREAD[:8]}" in result and "receipt scan:" in result, result
     assert "session nudge" in result and MSG not in result, result
     assert len(calls) == 1, calls
     assert pane.typed == [] and pane.enters == enters, (pane.typed, pane.enters)

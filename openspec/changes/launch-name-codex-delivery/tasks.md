@@ -10,7 +10,7 @@
 
 - [x] TASK-LCD-004 [standard] Per design Decisions 1 and 5: add a pure Codex turn_state reader, record whether a launch passed a startup prompt, gate Codex kickoff readiness on a completed startup turn, and press Enter for Codex only while the turn is not running, failing honestly at the deadline. Branch chore/. Check: new scripts/session-codex-startup-turn.test.sh (red first); readiness, kickoff and receipt suites green; scripts/test.
 
-- [ ] TASK-LCD-005 [standard] Per design Decisions 1 and 6: before 'codex queue' require an idle pane, backend status and turn_state; poll to idle or the delivery deadline, then refuse without invoking the queue; keep receipt-only success and the never-requeue unverified error with thread prefix and scan outcome; nudge --message follows. Branch perf/. Depends on LCD-004. Check: new scripts/session-codex-queue-busy.test.sh (red first); queue suite green; scripts/test.
+- [x] TASK-LCD-005 [standard] Per design Decisions 1 and 6: before 'codex queue' require an idle pane, backend status and turn_state; poll to idle or the delivery deadline, then refuse without invoking the queue; keep receipt-only success and the never-requeue unverified error with thread prefix and scan outcome; nudge --message follows. Branch perf/. Depends on LCD-004. Check: new scripts/session-codex-queue-busy.test.sh (red first); queue suite green; scripts/test.
 
 ## 3. Planner process identity (HPS-007 step 4)
 
