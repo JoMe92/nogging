@@ -6164,11 +6164,30 @@ def _codex_queue_invoke(thread_id, message, timeout):
     if any(rx.search(result.stderr or "") for rx in CODEX_QUEUE_REFUSALS):
         return "refused-before-acceptance"
     return "unverified"
-def _codex_unverified_error(name, detail):
+def _codex_unverified_error(name, thread_id, detail, scan_outcome):
     return RuntimeError(
-        f"{name}: Codex accepted the queued message but {detail}; it was not typed or "
+        f"{name}: Codex thread {thread_id[:8]} accepted the queued message but {detail}; "
+        f"receipt scan: {scan_outcome}; it was not typed or "
         f"queued again. Inspect with `session log {name}` / `session watch`, then "
         f"deliberately run `session nudge {name} --message ...` if it is still needed")
+def _wait_for_codex_idle_before_queue(name, rec, thread_id, deadline, timing):
+    """Require every available live signal to be idle before invoking codex queue."""
+    interval = timing["session_submit_verify_delay_seconds"]
+    while True:
+        pane = session_pane_text(name)
+        busy = classify((pane or "").rstrip(), CODEX_ADAPTER) == "working"
+        status = _capture_backend_status(name)
+        busy = busy or status in ("working", "blocked")
+        rollout = _codex_rollout_path(thread_id, rec.get("working_dir"))
+        busy = busy or (bool(rollout) and codex_delivery_module().turn_state(rollout) == "running")
+        if not busy:
+            return
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError(
+                f"{name}: Codex is busy; nothing was queued, typed or keyed; "
+                "retry when idle, or attach and type it yourself")
+        time.sleep(min(interval, remaining))
 def _codex_queue_deliver_locked(name, rec, message, timing, attempt=None):
     """Deliver one message through `codex queue` and prove it was submitted.
 
@@ -6187,6 +6206,7 @@ def _codex_queue_deliver_locked(name, rec, message, timing, attempt=None):
     snapshot = (receipts.snapshot_source(path, thread_id) if path
                 else {"unknown": "transcript not found"})
     clean_baseline = _delivery_composer_state(name, "codex", message) == "empty"
+    _wait_for_codex_idle_before_queue(name, rec, thread_id, deadline, timing)
     if attempt:
         attempt.begin(receipts.persistable_source(snapshot))
     outcome = _codex_queue_invoke(thread_id, message, max(0.001, deadline - time.monotonic()))
@@ -6195,10 +6215,15 @@ def _codex_queue_deliver_locked(name, rec, message, timing, attempt=None):
             attempt.retract()
         return outcome
     if outcome == "unverified":
-        raise _codex_unverified_error(name, "the queue call timed out or failed ambiguously")
+        raise _codex_unverified_error(
+            name, thread_id, "the queue call timed out or failed ambiguously",
+            "not run (ambiguous queue call)")
     enters = 0
     while True:
         receipt, snapshot = receipts.read_fresh_receipt(snapshot, message)
+        scan_outcome = receipt.get("status", "unknown")
+        if receipt.get("reason"):
+            scan_outcome += f" ({receipt['reason']})"
         if receipt["status"] == "receipt":
             return "submitted"
         state = _delivery_composer_state(name, "codex", message,
@@ -6222,8 +6247,10 @@ def _codex_queue_deliver_locked(name, rec, message, timing, attempt=None):
             break
         time.sleep(min(interval, remaining))
     if enters:
-        raise _codex_unverified_error(name, "its text is still unsubmitted after one retry Enter")
-    raise _codex_unverified_error(name, "no fresh submission receipt or pending composer text appeared")
+        raise _codex_unverified_error(
+            name, thread_id, "its text is still unsubmitted after one retry Enter", scan_outcome)
+    raise _codex_unverified_error(
+        name, thread_id, "no fresh submission receipt or pending composer text appeared", scan_outcome)
 def session_send(name, message, verify=False):
     """Send one message through the serialized, verified delivery path."""
     _, rec = load_session(name)
