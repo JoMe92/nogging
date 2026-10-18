@@ -56,6 +56,25 @@ m = SourceFileLoader("nogg_startup", str(wrapper.parent / "nogg")).load_module()
 log = pathlib.Path(os.environ["NOGG_STARTUP_LOG"])
 env = os.environ.copy()
 env.pop("NOGG_STARTUP_LOG", None)
+receipt_path = env.get("NOGG_PID_RECEIPT")
+if receipt_path:
+    identity = {"pid": os.getpid(), "start": m.process_start(os.getpid()),
+                "ns": m.pid_namespace(os.getpid())}
+    if not identity["start"] or not identity["ns"]:
+        print("session-launch: cannot read this wrapper process identity", file=sys.stderr)
+        sys.exit(1)
+    payload = (m.json.dumps(identity, separators=(",", ":")) + "\n").encode()
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(receipt_path, flags, 0o600)
+        with os.fdopen(fd, "wb") as receipt:
+            receipt.write(payload)
+            receipt.flush()
+            os.fsync(receipt.fileno())
+    except OSError as exc:
+        print(f"session-launch: cannot write private PID receipt: {exc}", file=sys.stderr)
+        sys.exit(1)
 with log.open("a"):
     pass
 child = subprocess.Popen([str(wrapper), *sys.argv[2:]], env=env,

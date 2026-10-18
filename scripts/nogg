@@ -4156,6 +4156,39 @@ def settle_launch(selected_backend, rec_path, record):
             return
         _settle_sleep(LAUNCH_SETTLE_POLL_SECONDS)
 
+def read_wrapper_identity(receipt_path, expected_pid):
+    """Read a private identity receipt only when it proves the pane PID."""
+    try:
+        if receipt_path.stat().st_size > 4096:
+            return None
+        receipt = json.loads(receipt_path.read_text())
+    except (OSError, ValueError, TypeError):
+        return None
+    if (not isinstance(receipt, dict) or type(receipt.get("pid")) is not int
+            or receipt.get("pid") != expected_pid
+            or not isinstance(receipt.get("start"), str) or not receipt["start"]
+            or not isinstance(receipt.get("ns"), str) or not receipt["ns"]):
+        return None
+    return receipt
+
+def settle_process_identity(receipt_path, expected_pid):
+    """Wait briefly for the pane wrapper's own-namespace identity receipt."""
+    deadline = _settle_clock() + LAUNCH_SETTLE_SECONDS
+    while True:
+        receipt = read_wrapper_identity(receipt_path, expected_pid)
+        if receipt:
+            return receipt
+        if _settle_clock() >= deadline:
+            return None
+        _settle_sleep(LAUNCH_SETTLE_POLL_SECONDS)
+
+def remove_process_identity_receipt(receipt_path):
+    """Best-effort removal must never prevent backend rollback."""
+    try:
+        receipt_path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
 def _session_launch(role, bead, cwd, read_only, owner,
                    profile=None, prompt=None, full_access=False, agent=None,
                    resume=None, kickoff=False, planning_id=None, description=None,
@@ -4506,6 +4539,8 @@ def _session_launch(role, bead, cwd, read_only, owner,
     }
     record["usage_attribution"] = [launch_attribution(record, records, complexity, complexity_source,
                                                       tier_selection, resume)]
+    identity_receipt = sdir / f".{name}.pid-receipt"
+    identity_receipt.unlink(missing_ok=True)
     write_session(rec_path, record)                       # metadata before exec
     token = usage_gate.get("reservation_id")
     if token:
@@ -4523,6 +4558,7 @@ def _session_launch(role, bead, cwd, read_only, owner,
             "NOGG_SESSION_ROOT": str(ROOT),
             "NOGG_OPENSPEC_FENCE": str(int(openspec_readonly)),
             "NOGG_STARTUP_LOG": str(log_path),
+            "NOGG_PID_RECEIPT": str(identity_receipt) if backend_name == "tmux" else "",
         }, inner, session_log_capture(log_path))
         write_session(rec_path, record)
         pid = (record["backend_ref"].get("session_pid")
@@ -4535,11 +4571,27 @@ def _session_launch(role, bead, cwd, read_only, owner,
             else:
                 record["session_pid_start"] = process_start(pid)
                 record["session_pid_ns"] = pid_namespace(pid)
+                if not record.get("session_pid_start") or not record.get("session_pid_ns"):
+                    receipt = (settle_process_identity(identity_receipt, pid)
+                               if role_meta == "planning"
+                               else read_wrapper_identity(identity_receipt, pid))
+                    if receipt:
+                        record["session_pid_start"] = receipt["start"]
+                        record["session_pid_ns"] = receipt["ns"]
+                        record["session_pid_identity_source"] = "wrapper"
+        if role_meta == "planning" and (
+                type(record.get("session_pid")) is not int
+                or not record.get("session_pid_start")
+                or not record.get("session_pid_ns")):
+            raise ToolError("planning launch has no provable process identity; "
+                            "launch from an unsandboxed shell")
+        remove_process_identity_receipt(identity_receipt)
         transition(rec_path, record, "running")
         if record.get("state") == "failed":
             raise ToolError(record.get("exit_reason") or "agent startup failed")
         settle_launch(selected_backend, rec_path, record)
     except Exception as exc:
+        remove_process_identity_receipt(identity_receipt)
         cleanup_ref = record.get("backend_ref") or prepared_ref or {
             "name": name, **({"socket": selected_backend.socket} if backend_name == "tmux" else {})}
         cleanup_ok = True
@@ -4565,6 +4617,9 @@ def _session_launch(role, bead, cwd, read_only, owner,
     print(f"launched {name}")
     print(f"  bead={bead or '-'} role={role_meta} cwd={workdir}")
     print(f"  log={log_path}")
+    if backend_name == "tmux" and role_meta != "planning" and record.get("session_pid") is not None and (
+            not record.get("session_pid_start") or not record.get("session_pid_ns")):
+        print("NOTE: session process identity could not be proven from this caller or its wrapper")
     print(f"  attach: {' '.join(selected_backend.attach_argv(record['backend_ref']))}  (or: nogg session attach {name})")
     if tier_selection:
         print(f"  tier={tier_selection['tier']} model={selected_model}"

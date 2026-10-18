@@ -28,12 +28,14 @@ with tempfile.TemporaryDirectory(prefix='nogg planning role ') as td:
     subprocess.run(['git','-C',str(root),'push','-q','origin','HEAD:develop'],check=True)
     os.environ['NOGGING_ROOT']=str(root)
     m=SourceFileLoader('planning_role',str(source/'scripts/nogg')).load_module()
+    m.session_backend_module()
+    from session_backend_tmux import TmuxBackend
     assert m.normalize_role('planning')==('planning','planning')
     try:m.normalize_role('planner')
     except RuntimeError:pass
     else:raise AssertionError('planner alias was accepted')
     calls=[]
-    with patch.object(m,'tmux',side_effect=lambda *args,**kwargs:calls.append(args)),patch.object(m,'tmux_sessions',return_value=set()),patch.object(m,'tmux_has_session',return_value=False),patch.object(m,'bead_records',return_value=[{'id':'SPEC-test','labels':[]}]) as lookup,patch.object(m,'unmet_dependencies',side_effect=AssertionError('planning consulted execution blockers')):
+    with patch.object(m,'tmux',side_effect=lambda *args,**kwargs:calls.append(args)),patch.object(TmuxBackend,'pid',return_value=os.getpid()),patch.object(m,'tmux_sessions',return_value=set()),patch.object(m,'tmux_has_session',return_value=False),patch.object(m,'bead_records',return_value=[{'id':'SPEC-test','labels':[]}]) as lookup,patch.object(m,'unmet_dependencies',side_effect=AssertionError('planning consulted execution blockers')):
         for agent in ['claude','codex','pi']:
             pid='planning-'+agent;description='scope-test';workdir=root.parent/pid
             subprocess.run(['git','-C',str(root),'worktree','add','-q','-b',f'plan/{pid}/{description}',str(workdir)],check=True)
