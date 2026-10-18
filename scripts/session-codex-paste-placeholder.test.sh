@@ -49,6 +49,7 @@ class Pane:
         self.text, self.typed, self.keys = EMPTY, [], []
         self.status, self.collapse, self.swallow, self.never = "idle", collapse, swallow, never
         self.enters = 0
+    def exists(self, ref): return True
     def action(self, name, operation, *args, **kwargs):
         if operation == "capture": return self.text
         if operation == "send_text":
@@ -112,9 +113,9 @@ assert pane.typed == [MULTILINE] and pane.enters == 1
 # The exact planning kickoff composed by production code is also accepted.
 planning = {"role": "planning", "planning_id": "planning-robustness",
             "description": "harden-planning-sessions", "working_dir": "/tmp"}
-with patch.object(m, "planning_launch_workdir", return_value="/tmp/hps007-consumer-plan-close-order-extra-path-000000"):
+with patch.object(m, "planning_launch_workdir", return_value="/tmp/hps007-consumer-plan-close-order-extra-path-00000012345678901234567890"):
     kickoff = m._kickoff_message("probe", planning)
-assert len(kickoff) >= 866
+assert len(kickoff) == 866
 pane = Pane()
 run_delivery(pane, kickoff)
 assert pane.typed == [kickoff] and pane.enters == 1
@@ -141,7 +142,7 @@ def exercise_public(operation, text):
              patch.object(m, "_require_running", side_effect=required), \
              patch.object(m, "await_session_input_ready", return_value=None):
             if operation == "nudge": m.session_nudge("probe", text)
-            else: m.session_kickoff("probe")
+            else: m.session_kickoff("probe", text)
     assert pane.typed == [text] and pane.enters == 1, (operation, pane.typed, pane.keys)
 
 exercise_public("nudge", LONG)
@@ -151,7 +152,7 @@ exercise_public("kickoff", LONG)
 # remain unowned and are never submitted.
 bad = ("› [Pasted Content 1000 chars] operator text\n",
        "› [Pasted Content 1000 chars]\n› [Pasted Content 20 chars]\n",
-       "› [Image #1]\n", "› [Pasted Content 12 chars]\n")
+       "› [Image #1]\n", "› [Pasted Content 0 chars]\n")
 for shown in bad:
     pane = Pane()
     pane.text = shown
