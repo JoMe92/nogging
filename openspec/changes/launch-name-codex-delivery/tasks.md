@@ -1,6 +1,6 @@
 ## 1. Launch-name safety (#235)
 
-- [ ] TASK-LCD-001 [standard] Per design Decisions 1-2: add shared safe_session_name ('.' and ':' to '_'), use it for generated and orchestrator names, make tmux and herdr prepare/start refuse an unsafe name before any side effect, herdr labels equal the record name. Branch fix/. Check: new scripts/session-name-safety.test.sh (red on develop first); scripts/test.
+- [x] TASK-LCD-001 [standard] Per design Decisions 1-2: add shared safe_session_name ('.' and ':' to '_'), use it for generated and orchestrator names, make tmux and herdr prepare/start refuse an unsafe name before any side effect, herdr labels equal the record name. Branch fix/. Check: new scripts/session-name-safety.test.sh (red on develop first); scripts/test.
 
 - [ ] TASK-LCD-002 [standard] Per design Decisions 1 and 3: tmux and herdr start() undo their own half-created session or pane; _session_launch removes the known backend session on any failure from start() through settle_launch, records failed with the cleanup outcome, never kill-server, and keeps a running session after a kickoff refusal. Branch refactor/. Depends on LCD-001. Check: new scripts/session-launch-cleanup.test.sh (red first); scripts/test.
 
