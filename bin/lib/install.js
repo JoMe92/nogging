@@ -6,6 +6,7 @@ const path = require('path');
 const manifest = require('./manifest');
 const fsops = require('./fsops');
 const manifestStore = require('./manifest-store');
+const nextsteps = require('./nextsteps');
 
 const PKG_ROOT = path.resolve(__dirname, '..', '..');
 
@@ -51,6 +52,7 @@ function makeContext(opts) {
     verbose: !!opts.verbose,
     log: new fsops.ChangeLog(),
     notes: [],
+    units: [],
     warnings: [],
     review: [],
   };
@@ -219,45 +221,15 @@ function installGitHooks(ctx) {
   }
 }
 
-function beadsHint(ctx) {
-  if (!fs.existsSync(path.join(ctx.targetRoot, '.beads'))) {
-    ctx.notes.push('Initialize the issue tracker:\n    bd init');
-  }
-}
-
 // Run the installed `scripts/nogg doctor` checks plus a tracker check and
-// print a single readiness verdict. The installer never installs system tools;
-// this only tells the operator whether the repo is ready to plan.
-function readinessVerdict(ctx) {
-  if (ctx.dryRun) return;
-  const gaps = [];
-  if (!fs.existsSync(path.join(ctx.targetRoot, '.beads'))) {
-    gaps.push('uninitialized tracker (run `bd init`)');
-  }
-  if (fs.existsSync(path.join(ctx.targetRoot, 'scripts', 'nogg'))) {
-    const { spawnSync } = require('child_process');
-    const r = spawnSync('scripts/nogg', ['doctor'], {
-      cwd: ctx.targetRoot,
-      encoding: 'utf8',
-    });
-    if (r.error) {
-      gaps.push('scripts/nogg doctor could not run');
-    } else {
-      for (const line of `${r.stdout || ''}\n${r.stderr || ''}`.split('\n')) {
-        const m = line.match(/^FAIL\s+(.+)$/);
-        if (m) gaps.push(m[1].trim());
-      }
-    }
-  } else {
-    gaps.push('scripts/nogg missing');
-  }
-  const uniq = [...new Set(gaps)];
-  process.stdout.write('\n');
-  if (uniq.length === 0) {
-    process.stdout.write('Nogging is ready — run ./scripts/nogg plan-begin to start.\n');
-  } else {
-    process.stdout.write(`Nogging is installed but not ready: ${uniq.join('; ')}\n`);
-  }
+// print a single readiness verdict with a fix line per gap. The installer never
+// installs system tools; this only tells the operator whether the repo is ready
+// to plan. Returns the gaps (empty when ready); a dry run prints nothing.
+function readinessVerdict(ctx, doctor = nextsteps.runDoctor(ctx.targetRoot)) {
+  if (ctx.dryRun) return [];
+  const gaps = nextsteps.collectGaps(ctx, doctor);
+  process.stdout.write(`\n${nextsteps.verdictLines(gaps).join('\n')}\n`);
+  return gaps;
 }
 
 // Initialize the Beads tracker in the target repo as the first install step.
@@ -308,7 +280,6 @@ module.exports = {
   writeScaffold,
   recordVersion,
   installGitHooks,
-  beadsHint,
   initBeads,
   readinessVerdict,
 };

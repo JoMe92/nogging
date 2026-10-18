@@ -105,14 +105,21 @@ function removeInstallation(ctx) {
   ctx.log.setClass('merge');
   removeFile(ctx, MANIFEST_REL_PATH);
   ctx.log.setClass('units');
-  for (const unit of manifest.systemd) removeFile(ctx, unit.to.replace('{slug}', ctx.slug));
+  for (const unit of manifest.systemd) {
+    const rel = unit.to.replace('{slug}', ctx.slug);
+    // Enable-able units, named by the next steps so they can be disabled first.
+    if (fs.existsSync(path.join(ctx.targetRoot, rel))) {
+      if (rel.endsWith('.timer')) ctx.units.push({ kind: 'timer', rel });
+      else if (rel.includes('orchestrator')) ctx.units.push({ kind: 'orchestrator', rel });
+    }
+    removeFile(ctx, rel);
+  }
   ctx.log.setClass('merge');
   removeMarkerBlock(ctx, 'CLAUDE.md');
   removeMarkerBlock(ctx, 'AGENTS.md');
   removeClaudeGuard(ctx);
   removeAntigravityHooks(ctx);
   ctx.notes.push('Target-owned OpenSpec, Beads, .nogging configuration/state, and unrelated settings were preserved.');
-  ctx.notes.push('Review shared .gitignore entries and Git hooks manually; ownership cannot be inferred safely.');
 }
 
 module.exports = { removeInstallation };

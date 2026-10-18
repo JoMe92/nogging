@@ -10,6 +10,7 @@ const { renderSystemd } = require('./lib/systemd');
 const { removeInstallation } = require('./lib/remove');
 const { runPreflight } = require('./lib/preflight');
 const reporter = require('./lib/report');
+const nextsteps = require('./lib/nextsteps');
 const { version: VERSION } = require('../package.json');
 
 const USAGE = `nogg — install the Nogging operating structure into a repo
@@ -68,6 +69,13 @@ function parseArgs(argv) {
   return args;
 }
 
+// Ends init, update and remove: the numbered next steps (not on a dry run).
+function printNextSteps(ctx, command, gaps) {
+  if (ctx.dryRun) return;
+  const lines = nextsteps.nextStepsLines(nextsteps.nextStepItems(ctx, command, gaps));
+  if (lines.length) process.stdout.write(`\n${lines.join('\n')}\n`);
+}
+
 function cmdInit(args) {
   const ctx = install.makeContext(args);
   process.stdout.write(`${reporter.header(ctx, 'init')}\n\n`);
@@ -88,9 +96,9 @@ function cmdInit(args) {
   renderSystemd(ctx);
   install.recordVersion(ctx);
   install.installGitHooks(ctx);
-  install.beadsHint(ctx);
   process.stdout.write(reporter.render(ctx));
-  install.readinessVerdict(ctx);
+  const gaps = install.readinessVerdict(ctx);
+  printNextSteps(ctx, 'init', gaps);
 }
 
 function cmdUpdate(args) {
@@ -110,7 +118,8 @@ function cmdUpdate(args) {
   install.recordVersion(ctx);
   install.installGitHooks(ctx);
   process.stdout.write(reporter.render(ctx));
-  install.readinessVerdict(ctx);
+  const gaps = install.readinessVerdict(ctx);
+  printNextSteps(ctx, 'update', gaps);
 }
 
 function cmdRemove(args) {
@@ -118,15 +127,22 @@ function cmdRemove(args) {
   process.stdout.write(`${reporter.header(ctx, 'remove')}\n\n`);
   removeInstallation(ctx);
   process.stdout.write(reporter.render(ctx));
+  printNextSteps(ctx, 'remove', []);
 }
 
+// Runs `scripts/nogg doctor` once, prints its report unchanged, then the same
+// readiness verdict and the init next steps; exits with doctor's status.
 function cmdDoctor() {
-  const { spawnSync } = require('child_process');
   if (!fs.existsSync('scripts/nogg')) {
     throw Object.assign(new Error('scripts/nogg not found — run `init` first'), { userFacing: true });
   }
-  const r = spawnSync('scripts/nogg', ['doctor'], { stdio: 'inherit' });
-  process.exit(r.status == null ? 1 : r.status);
+  const ctx = { targetRoot: process.cwd(), version: VERSION, units: [], review: [], dryRun: false };
+  const doctor = nextsteps.runDoctor(ctx.targetRoot);
+  process.stdout.write(doctor.stdout);
+  process.stderr.write(doctor.stderr);
+  const gaps = install.readinessVerdict(ctx, doctor);
+  printNextSteps(ctx, 'init', gaps);
+  process.exit(doctor.status == null ? 1 : doctor.status);
 }
 
 function main() {
