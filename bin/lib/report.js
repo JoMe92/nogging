@@ -143,7 +143,7 @@ function warnings(ctx) {
 
 function notes(ctx) {
   if (!ctx.notes.length || ctx.dryRun) return [];
-  return ['Next steps:', ...ctx.notes.map((n) => `  - ${n}`)];
+  return ['Notes', ...ctx.notes.map((n) => `  - ${n}`)];
 }
 
 // The whole post-run report, as a string.
