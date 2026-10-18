@@ -741,6 +741,9 @@ rec="$root/.nogging/state/sessions/$name.json"
 [[ "$(record "$rec" agent)" == "codex" ]] \
   && echo "ok   - codex-full: record shows agent codex" \
   || { echo "FAIL - codex-full: agent is $(record "$rec" agent)"; fail=1; }
+[[ "$(record "$rec" codex_startup_prompt)" == "True" ]] \
+  && echo "ok   - codex-full: cold launch records that it passed a startup prompt" \
+  || { echo "FAIL - codex-full: startup prompt marker is $(record "$rec" codex_startup_prompt)"; fail=1; }
 [[ "$(record "$rec" effective_settings_path)" == "None" ]] \
   && echo "ok   - codex-full: no per-session effective-settings file for Codex" \
   || { echo "FAIL - codex-full: effective_settings_path is $(record "$rec" effective_settings_path)"; fail=1; }

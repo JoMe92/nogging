@@ -4475,6 +4475,11 @@ def _session_launch(role, bead, cwd, read_only, owner,
         "floor_lifted": bool(floor_lifted), "claude_session_id": claude_session_id,
         "antigravity_conversation_id": resume if agent == "antigravity" else None,
         "codex_thread_id": resume if agent == "codex" else None,
+        # Cold Codex launches pass this positional prompt and start a turn;
+        # exact resumes do not pass a startup prompt.
+        "codex_startup_prompt": bool(
+            agent == "codex" and resume is None and prompt_path is not None
+            and Path(prompt_path).is_file()),
         "antigravity_initial_turn": agent == "antigravity",
         "planning_id": planning_id, "description": description,
         "agent_state_grants": grants,
@@ -5153,6 +5158,14 @@ def _readiness_observation(name, rec, agent, for_kickoff, memory):
     if kind not in ("empty", "placeholder"):
         shown = "not identifiable yet" if kind == "unknown" else "holding input"
         return "wait", f"{label}'s composer is {shown}", None, None, None
+    if agent == "codex" and for_kickoff and rec.get("codex_startup_prompt"):
+        receipts = codex_delivery_module()
+        thread_id = resolve_codex_thread_id(rec)
+        rollout = _codex_rollout_path(thread_id, rec.get("working_dir")) if thread_id else None
+        state = receipts.turn_state(rollout) if rollout else "none"
+        if state != "idle":
+            return ("wait", "no completed startup turn from this launch yet",
+                    None, None, None)
     signature = _settle_signature(plain, agent)
     if agent == "claude" and any(_CLAUDE_STARTING_RE.search(ln) for ln in plain.splitlines()[:6]):
         # Bounded: a Remote Control that never connects must not block kickoff.
@@ -5386,6 +5399,31 @@ def session_watch(names, interval, stall_after, fmt, once=False):
 def _submit_pane_input(name, agent=None):
     """Submit one already-verified composer message with one Enter."""
     session_action(name, "send_keys", "enter")
+
+def _wait_for_codex_turn_before_enter(name, deadline, timing):
+    """Wait until the pane and its exact rollout no longer show a running turn."""
+    interval = timing["session_submit_verify_delay_seconds"]
+    while True:
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f"{name}: text is still in the composer; Codex was busy; it was not submitted")
+        pane = session_pane_text(name)
+        busy = classify((pane or "").rstrip(), CODEX_ADAPTER) == "working"
+        try:
+            _, rec = load_session(name)
+        except RuntimeError:
+            # Small helper callers and legacy fixtures may have no managed
+            # record; the pane signal still gates Enter, with no rollout claim.
+            rec = {}
+        thread_id = resolve_codex_thread_id(rec)
+        if thread_id:
+            rollout = _codex_rollout_path(thread_id, rec.get("working_dir"))
+            busy = busy or bool(rollout and codex_delivery_module().turn_state(rollout) == "running")
+        if not busy and time.monotonic() < deadline:
+            return
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError(f"{name}: text is still in the composer; Codex was busy; it was not submitted")
+        time.sleep(min(interval, remaining))
 _SGR_RE = re.compile(r"\x1b\[([0-9;]*)m")
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 _PROMPT_RULE_RE = re.compile(r"^\s*─{10,}\s*$")
@@ -5812,7 +5850,8 @@ def _submission_observation(name, agent, message, baseline_status, was_pending, 
         status = session_action(name, "agent_status")
     except Exception:
         status = "unknown"
-    if status in ("working", "done") and status != baseline_status:
+    if (status in ("working", "done") and status != baseline_status
+            and agent != "codex"):
         return "submitted"
     state = _delivery_composer_state(name, agent, message, clean_baseline=clean_baseline)
     if was_pending and state == "empty":
@@ -5887,6 +5926,8 @@ def _verify_submitted(name, agent, submitted_text=None, *, baseline_status=None,
             raise RuntimeError(f"{name}: message still unverified before the delivery deadline")
         time.sleep(submit_delay)
         if _submission_observation(name, agent, submitted_text or "", baseline_status, True, clean_baseline) == "pending":
+            if agent == "codex":
+                _wait_for_codex_turn_before_enter(name, deadline, timing)
             _submit_pane_input(name, agent)
             retry_sent = True
 
@@ -5920,6 +5961,8 @@ def _deliver_pane_locked(name, agent, message, *, mode="send", timing=None, base
     time.sleep(timing["session_submit_delay_seconds"])
     if not _is_legacy_mock() and _delivery_composer_state(name, agent, message, clean_baseline=True) != "pending":
         raise RuntimeError(f"{name}: exact pending message was lost before submit; nothing was submitted")
+    if agent == "codex":
+        _wait_for_codex_turn_before_enter(name, deadline, timing)
     _submit_pane_input(name, agent)
     _verify_submitted(name, agent, message, baseline_status=baseline_status,
                       deadline=deadline, timing=timing, clean_baseline=True)
@@ -6110,6 +6153,7 @@ def _codex_queue_deliver_locked(name, rec, message, timing, attempt=None):
             if receipt["status"] == "receipt":
                 return "submitted"
             if _delivery_composer_state(name, "codex", message) == "pending":
+                _wait_for_codex_turn_before_enter(name, deadline, timing)
                 _submit_pane_input(name, "codex")
                 enters += 1
         remaining = deadline - time.monotonic()
