@@ -183,9 +183,10 @@ for mode, line in (("send", "sent to w (codex queue)"), ("nudge", "nudged w (cod
     def marker(clock, pane, path):
         pane.pane = "[Pasted Content]\n" + EMPTY
         pane.on_enter = lambda p: setattr(p, "pane", EMPTY)
-    r, calls, pane, *_ = scenario(mode=mode, message=S, queue=accepted_with(marker))
-    assert r == "ok" and pane.enters == 1 and pane.typed == []
-    r, calls, pane, *_ = scenario(mode=mode, message=S, pane=Pane("› operator draft\n"), queue=accepted_with(marker))
+    long_message = "Claim Bead SPEC-1 and implement\nits mapped task — “quoted”. " + "record evidence; " * 20
+    r, calls, pane, *_ = scenario(mode=mode, message=long_message, queue=accepted_with(marker))
+    assert r == "ok" and pane.enters == 1 and pane.typed == [], (r, pane.enters, pane.typed, pane.pane, calls)
+    r, calls, pane, *_ = scenario(mode=mode, message=long_message, pane=Pane("› operator draft\n"), queue=accepted_with(marker))
     assert_unverified(r, calls, pane, 0)
 
     # Busy before send: the operator's draft is never touched; only a receipt confirms.
