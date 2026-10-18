@@ -6,7 +6,7 @@
 
 ## 2. Codex delivery (#236, SPEC-t374, HPS-007 step 3)
 
-- [ ] TASK-LCD-003 [standard] Per design Decisions 1 and 4: accept exactly one '[Pasted Content N chars]' token as this operation's own pending paste on a verified-empty composer for a long or multi-line message, shared by send, nudge and kickoff, including the real 866-character planning kickoff; refuse foreign, repeated, pre-existing or image cases. Branch feat/. Check: new scripts/session-codex-paste-placeholder.test.sh (red first); related existing suites green; scripts/test.
+- [x] TASK-LCD-003 [standard] Per design Decisions 1 and 4: accept exactly one '[Pasted Content N chars]' token as this operation's own pending paste on a verified-empty composer for a long or multi-line message, shared by send, nudge and kickoff, including the real 866-character planning kickoff; refuse foreign, repeated, pre-existing or image cases. Branch feat/. Check: new scripts/session-codex-paste-placeholder.test.sh (red first); related existing suites green; scripts/test.
 
 - [x] TASK-LCD-004 [standard] Per design Decisions 1 and 5: add a pure Codex turn_state reader, record whether a launch passed a startup prompt, gate Codex kickoff readiness on a completed startup turn, and press Enter for Codex only while the turn is not running, failing honestly at the deadline. Branch chore/. Check: new scripts/session-codex-startup-turn.test.sh (red first); readiness, kickoff and receipt suites green; scripts/test.
 
