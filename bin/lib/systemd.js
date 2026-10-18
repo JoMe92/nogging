@@ -16,6 +16,7 @@ function render(tmpl, ctx) {
 // Render the systemd sync service + timer with the target repo's absolute path
 // and a per-repo slug so units for different repos never collide.
 function renderSystemd(ctx) {
+  ctx.log.setClass('units');
   if (ctx.noSystemd) {
     ctx.log.add('skip', 'systemd/', '--no-systemd');
     return;
@@ -27,21 +28,11 @@ function renderSystemd(ctx) {
     fsops.writeFile(dest, render(tmpl, ctx), ctx);
     written.push(dest);
   }
+  // The next-steps block (nextsteps.js) names the units that can be enabled.
   const timer = written.find((p) => p.endsWith('.timer'));
-  if (timer) {
-    ctx.notes.push(
-      'Enable the sync timer:\n' +
-        `    systemctl --user enable --now "$PWD/${timer}"`,
-    );
-  }
+  if (timer) ctx.units.push({ kind: 'timer', rel: timer });
   const orchestrator = written.find((p) => p.includes('orchestrator'));
-  if (orchestrator) {
-    ctx.notes.push(
-      'Enable the always-on Orchestration Agent (optional — the operator\'s choice):\n' +
-        `    systemctl --user enable --now "$PWD/${orchestrator}"\n` +
-        `    loginctl enable-linger ${process.env.USER || '<user>'}   # so it starts at boot without a login`,
-    );
-  }
+  if (orchestrator) ctx.units.push({ kind: 'orchestrator', rel: orchestrator });
 }
 
 module.exports = { render, renderSystemd };

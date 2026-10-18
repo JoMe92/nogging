@@ -27,10 +27,12 @@ a release candidate or a final release.
    `npm install --package-lock-only`) so `package-lock.json`'s top-level
    version matches.
 
-4. **Bump the pinned install tag** in `README.md` (Quick start and Install
-   into another repo) and `docs/installation.md` from the previous version to
-   `vX.Y.Z`. This was missed across three prior releases before `v2.0.1`,
-   leaving the documented quick start pointed at a stale tag — don't skip it.
+4. **Bump the pinned install tag** to `vX.Y.Z` in `README.md`,
+   `docs/installation.md` and `NOGGING_TAG` in `scripts/bootstrap`. This was
+   missed across three prior releases before `v2.0.1`, leaving the documented
+   quick start pointed at a stale tag — don't skip it. Run
+   `scripts/release-pins.test.sh`: it reads the version from `package.json` and
+   proves the bump is complete.
 
 5. **Commit** the version bump, changelog, and pin update as
    `chore(release): prepare vX.Y.Z [<Bead ID>]`.

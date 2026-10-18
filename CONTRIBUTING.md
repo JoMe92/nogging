@@ -30,3 +30,30 @@ rules. Maintainers cutting a release follow
 Participation is governed by our [Code of Conduct](CODE_OF_CONDUCT.md). By
 contributing, you agree that your contribution may be distributed under the
 repository's [ISC license](LICENSE).
+
+## Tests and CI
+
+```bash
+scripts/test   # runs every scripts/**/*.test.sh; also `npm test`
+```
+
+The runner is language-neutral and offline: bash and coreutils only, no Node,
+no network, and no running Beads/Dolt server (tests that need `bd` stub it). It
+covers the `commit-msg` boundary hook — Beads ID accepted, missing ID rejected,
+and the `planning`/`sync` `NOGGING_WRITER` exemptions.
+
+[Nogging validation](.github/workflows/nogging-validate.yml) runs this suite,
+plus the following, on every push and pull request:
+
+| Job | Checks |
+| --- | --- |
+| `compatibility` | The tool-version matrix from [docs/compatibility.md](docs/compatibility.md) |
+| `script-tests` | `scripts/test` — every `scripts/**/*.test.sh` |
+| `installer` | `nogg init` / `update` against a scratch repository |
+| `validate` | strict, non-interactive OpenSpec validation of the committed changes (`openspec validate <change> --strict --no-interactive`) |
+| `acceptance` | The mechanical subset of [docs/acceptance.md](docs/acceptance.md) |
+| `invariants` | The `openspec/` write boundary and archived-change consistency |
+| `public-release-gates` | Release-readiness checks from [docs/releasing.md](docs/releasing.md) |
+| `dependency-review` | `npm audit`-based dependency scanning |
+
+The badge at the top of this file tracks the `main` branch.

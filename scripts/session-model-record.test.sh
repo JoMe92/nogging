@@ -7,7 +7,7 @@
 #     `reasoning_effort` for `--model` (launch), a profile model (profile)
 #     and a legacy profile (runtime-default, null model — never an invented
 #     effective model);
-#   - `session list` shows MODEL / MODEL_SOURCE, `runtime-default` for a
+#   - `session list` shows MODEL / MODEL_SOURCE / BACKEND, `runtime-default` for a
 #     legacy launch, and `-` for a record written before these keys existed;
 #   - a per-launch `--model` override leaves the profile file, the user-global
 #     Claude/Codex/Pi settings and the Claude effective-settings copy untouched
@@ -36,12 +36,14 @@ cat >"$work/bin/tmux" <<'STUB'
 cmd="${1:-}"; shift || true
 d="${TMUX_STUB_DIR:?}"; mkdir -p "$d"
 printf '%s %s\n' "$cmd" "$*" >>"$d/calls.log"
+if [[ "$cmd" == new-session ]]; then a=("$@"); for i in "${!a[@]}"; do [[ "${a[i]}" == -s ]] && : >"$d/live-${a[i+1]}"; done; fi
 case "$cmd" in
-  has-session) exit 1 ;;
+  has-session) [[ -e "$d/live-${2:-}" ]] || exit 1 ;;
   *) : ;;
 esac
 STUB
 chmod +x "$work/bin/bd" "$work/bin/tmux"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-agents.sh"; stub_agent_binaries "$work/bin"
 export PATH="$work/bin:$PATH"
 
 # A fake user-global runtime configuration that a launch must never touch.
@@ -164,7 +166,7 @@ record "legacy-codex: record has source runtime-default" \
   'r["requested_model"] is None and r["model_source"] == "runtime-default"'
 
 # --- a record from before model selection was recorded ----------------------
-listing "list has MODEL and MODEL_SOURCE columns" "MODEL +MODEL_SOURCE +WORKING_DIR"
+listing "list has MODEL, MODEL_SOURCE, BACKEND and AGENT_STATUS columns" "MODEL +MODEL_SOURCE +BACKEND +AGENT_STATUS +WORKING_DIR"
 python3 - "$root/.nogging/state/sessions" <<'PY'
 import json, pathlib, sys
 for p in pathlib.Path(sys.argv[1]).glob("*.json"):
@@ -174,7 +176,7 @@ for p in pathlib.Path(sys.argv[1]).glob("*.json"):
     p.write_text(json.dumps(r))
 PY
 NOGGING_ROOT="$root" "$nogg" session list >"$out" 2>&1
-grep "sf-\|nogg-" "$out" | grep -qE -- " codex +[^ ]+ +- +- +/" \
+grep "sf-\|nogg-" "$out" | grep -qE -- " codex +[^ ]+ +- +- +tmux +- +/" \
   && ok "pre-existing record: list shows - for model and source" || bad "pre-existing record display"
 
 exit "$fail"

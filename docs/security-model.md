@@ -62,6 +62,33 @@ requests a single planning or code takeover.
   OpenSpec boundary. Supervised Pi explicitly loads the extension with run-scoped approval; no standing trust change is required. Treat Pi
   restricted mode as materially weaker than Claude or Codex restricted mode.
 
+Antigravity's guard treats `search_web` as guarded, read-only network access,
+alongside `read_url_content`: trusted permits a non-empty query, while
+restricted requires approval. Malformed queries and unsupported tools are
+denied with sanitized reasons that do not echo argument values.
+
+### Session backends: tmux and herdr
+
+Supervised agent sessions run on either `tmux` (default) or `herdr` (experimental;
+see [using-with-herdr](using-with-herdr.md)).
+
+- **Socket isolation:** Both backends communicate over same-user local Unix
+  domain sockets (`0600` permissions) without opening network listeners, remote
+  endpoints, or web interfaces.
+- **Identical wrapper and floor:** The Nogging launch wrapper, command floor,
+  OpenSpec write boundary, and authority profiles apply identically regardless
+  of whether tmux or herdr hosts the session.
+- **Herdr security posture:** Nogging disables native auto-restore
+  (`resume_agents_on_restore = false`) to prevent agents from being restarted
+  outside the launch wrapper after a server restart. It disables herdr
+  auto-updates, remote access, plugins, and pane history
+  (`pane_history = false`) to avoid persisting secrets from console output to
+  unrotated history files. Nogging never installs herdr agent integration hooks
+  globally.
+- **Orchestration Agent:** The Orchestration Agent always runs on tmux
+  (`orchestrator run`), even if herdr is configured as the default session
+  backend.
+
 The ordinary command floor rejects a short list of high-risk command classes,
 including privilege escalation and destructive host operations. It cannot
 prevent equivalent actions through another executable, language runtime, API,

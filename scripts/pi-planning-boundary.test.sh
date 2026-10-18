@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+source "$root/scripts/lib/test-env.sh"
 if ! command -v node >/dev/null || ! node -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit(a>22 || (a===22 && b>=19)?0:1)'; then
   printf 'SKIP: Pi planning guard needs supported Node type stripping\n'
   exit 0

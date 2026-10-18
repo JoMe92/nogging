@@ -5,6 +5,9 @@ const path = require('path');
 
 const manifest = require('./manifest');
 const { GUARD_MARKER } = require('./merge');
+const { MANIFEST_REL_PATH } = require('./manifest-store');
+
+const ARTIFACT_SUFFIXES = ['.nogging-new', '.orig'];
 
 function sourceFiles(root, rel, prefix = rel) {
   const full = path.join(root, rel);
@@ -28,6 +31,13 @@ function removeFile(ctx, rel) {
   }
   fs.rmSync(full, { force: true });
   ctx.log.add('remove', rel);
+}
+
+// A managed file is removed together with the `.nogging-new` / `.orig`
+// artifacts the installer may have left beside it.
+function removeManagedFile(ctx, rel) {
+  removeFile(ctx, rel);
+  for (const suffix of ARTIFACT_SUFFIXES) removeFile(ctx, rel + suffix);
 }
 
 function removeMarkerBlock(ctx, rel) {
@@ -84,18 +94,32 @@ function removeAntigravityHooks(ctx) {
 }
 
 function removeInstallation(ctx) {
-  for (const rel of manifest.verbatim) removeFile(ctx, rel);
+  ctx.log.setClass('tools');
+  for (const rel of manifest.verbatim) removeManagedFile(ctx, rel);
+  ctx.log.setClass('agents');
   for (const dir of manifest.verbatimDirs) {
-    for (const rel of sourceFiles(ctx.pkgRoot, dir.from, dir.to)) removeFile(ctx, rel);
+    for (const rel of sourceFiles(ctx.pkgRoot, dir.from, dir.to)) removeManagedFile(ctx, rel);
   }
-  for (const doc of manifest.docs) removeFile(ctx, doc.to);
-  for (const unit of manifest.systemd) removeFile(ctx, unit.to.replace('{slug}', ctx.slug));
+  ctx.log.setClass('docs');
+  for (const doc of manifest.docs) removeManagedFile(ctx, doc.to);
+  ctx.log.setClass('merge');
+  removeFile(ctx, MANIFEST_REL_PATH);
+  ctx.log.setClass('units');
+  for (const unit of manifest.systemd) {
+    const rel = unit.to.replace('{slug}', ctx.slug);
+    // Enable-able units, named by the next steps so they can be disabled first.
+    if (fs.existsSync(path.join(ctx.targetRoot, rel))) {
+      if (rel.endsWith('.timer')) ctx.units.push({ kind: 'timer', rel });
+      else if (rel.includes('orchestrator')) ctx.units.push({ kind: 'orchestrator', rel });
+    }
+    removeFile(ctx, rel);
+  }
+  ctx.log.setClass('merge');
   removeMarkerBlock(ctx, 'CLAUDE.md');
   removeMarkerBlock(ctx, 'AGENTS.md');
   removeClaudeGuard(ctx);
   removeAntigravityHooks(ctx);
   ctx.notes.push('Target-owned OpenSpec, Beads, .nogging configuration/state, and unrelated settings were preserved.');
-  ctx.notes.push('Review shared .gitignore entries and Git hooks manually; ownership cannot be inferred safely.');
 }
 
 module.exports = { removeInstallation };

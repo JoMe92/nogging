@@ -93,14 +93,49 @@ for model, name in (('gemini-3.8-flash-medium', 'Gemini Models'), ('gemini-3.1-p
                     ('claude-opus-4-6-thinking', 'Claude and GPT models'),
                     ('gpt-oss-120b-medium', 'Claude and GPT models')):
     assert u.agy_select_group(g, model)[0]['name'] == name, model
-for model in (None, '', 'mystery-9', 'gemini-ultra', 'claude-haiku-9'):
+for model in ('mystery-9', 'gemini-ultra', 'claude-haiku-9'):
     assert u.agy_select_group(g, model) == (None, 'unknown model mapping'), model
+for model in (None, '', '   '):
+    assert u.agy_select_group(g, model) == (None, 'unknown model mapping (no model selected; pass --model <id>)'), model
 ambiguous = copy.deepcopy(g)
 ambiguous[1]['description'] += ', Gemini Flash'
 assert u.agy_select_group(ambiguous, 'gemini-3.8-flash-low') == (None, 'ambiguous model mapping')
 nodesc = copy.deepcopy(g)
 nodesc[0]['description'] = ''
 assert u.agy_select_group(nodesc, 'gemini-3.8-flash-low')[1] == 'unknown model mapping'
+
+# Drift guard: every Antigravity model in the model-selection table maps to
+# exactly one group with both short and weekly buckets known.
+probe_groups = [
+    {
+        'name': 'Gemini Models',
+        'description': 'Models within this group: Gemini Flash, Gemini Pro',
+        'buckets': [{'window': '5h'}, {'window': 'weekly'}],
+    },
+    {
+        'name': 'Claude and GPT models',
+        'description': 'Models within this group: Claude Opus, Claude Sonnet, GPT-OSS',
+        'buckets': [{'window': '5h'}, {'window': 'weekly'}],
+    },
+]
+table_paths = [Path(sys.argv[1]) / '.nogging/model-selection.json',
+               Path(sys.argv[1]) / 'templates/model-selection.json']
+checked_models = set()
+for tpath in table_paths:
+    if not tpath.is_file():
+        continue
+    tbl = json.loads(tpath.read_text())
+    for tier_info in tbl.get('agents', {}).get('antigravity', {}).values():
+        m_id = tier_info.get('model')
+        if m_id:
+            checked_models.add(m_id)
+assert checked_models, 'drift guard found no antigravity models in table'
+for m_id in checked_models:
+    grp, err = u.agy_select_group(probe_groups, m_id)
+    assert err is None, (m_id, err)
+    assert grp is not None, m_id
+    windows = {b['window'] for b in grp['buckets']}
+    assert {'5h', 'weekly'}.issubset(windows), (m_id, windows)
 
 def report(d, model, at=now, stale=600):
     cache = tmp / 'c.json'
@@ -340,7 +375,8 @@ cat >"$work/bin/tmux" <<'STUB'
 cmd="${1:-}"; shift || true
 d="${TMUX_STUB_DIR:?}"; mkdir -p "$d"
 printf '%s %s\n' "$cmd" "$*" >>"$d/calls.log"
-case "$cmd" in has-session) exit 1 ;; *) : ;; esac
+if [[ "$cmd" == new-session ]]; then a=("$@"); for i in "${!a[@]}"; do [[ "${a[i]}" == -s ]] && : >"$d/live-${a[i+1]}"; done; fi
+case "$cmd" in has-session) [[ -e "$d/live-${2:-}" ]] || exit 1 ;; *) : ;; esac
 STUB
 cat >"$work/bin/agy" <<'STUB'
 #!/usr/bin/env bash
@@ -352,6 +388,7 @@ fi
 echo "stub agy: unexpected $*" >&2; exit 1
 STUB
 chmod +x "$work/bin/bd" "$work/bin/tmux" "$work/bin/agy"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-agents.sh"; stub_agent_binaries "$work/bin"
 export PATH="$work/bin:$PATH"
 export HOME="$work/home" XDG_CACHE_HOME="$work/cache" CODEX_HOME="$work/codex"
 export AGY_NOGG_USAGE_PROBE=1 AGY_STUB_LOG="$work/agy.log"
@@ -447,6 +484,16 @@ run_launch --model claude-sonnet-4-6
    && "$(record_field usage_gate.start_observation.model_group)" == "Claude and GPT models" ]] \
   && ok "other model group is admitted from its own buckets" || bad "claude-group admission (rc=$rc)"
 grep -qF "$root" "$settings" && ok "admitted launch trusted only its worktree" || bad "trust not prepared after admission"
+
+# A launch through --tier reaches the gate with the table model (selected_model)
+# and produces a known gate for a fixture cache.
+new_root; make_usage "$work/u2_tier.json" 0.6 0.5; export AGY_STUB_USAGE="$work/u2_tier.json"
+run_launch --tier routine
+[[ $rc -eq 0 && "$(record_field usage_gate.decision)" == admitted \
+   && "$(record_field usage_gate.start_observation.status)" == "known" \
+   && "$(record_field usage_gate.start_observation.model_group)" == "Gemini Models" \
+   && "$(record_field usage_gate.model)" == "gemini-3.8-flash-low" ]] \
+  && ok "tier launch evaluates gate with selected table model" || bad "tier launch gate (rc=$rc)"
 
 # Weekly exhausted while the 5h bucket fits.
 new_root; make_usage "$work/u3.json" 0.0 0.9; export AGY_STUB_USAGE="$work/u3.json"

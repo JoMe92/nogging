@@ -74,7 +74,7 @@ reimplement the planning lock, discovery sorting, or sync.
 
 | Command | May do | May **not** do |
 | --- | --- | --- |
-| `/plan` (`plan.md`) | Allocate `plan/<planning-id>/<description>` from updated `origin/develop`, then in that isolated worktree run `plan-begin` → discovery review → conditional archive (if `doctor` reports a change ready — `openspec archive <change>`, review the merged `specs/`, `validate`, commit as `planning`) → design dialogue → author/revise → `validate` → commit `openspec/` as the `planning` writer → `materialize <change>` → wire Beads dependencies explicitly → fast-forward integrate into `develop` → safe cleanup → `plan-end` from a surviving canonical checkout. A supervised planner (`session launch --role planning --planning-id <id> --description <desc>`) gets its worktree at launch, stays idle until kickoff and acquires the canonical, session-owned planning lock itself. The commit precedes `materialize`, so a crash between them never leaves Beads without a committed spec (`materialize` is idempotent). Consult the `architect` specialist for architecture questions. | Write planning artifacts in the shared checkout; force or release a planning lock another session holds; pre-acquire the lock for a child planner; claim an associated Bead; clean a dirty or unintegrated planning worktree; do execution work; or auto-delete an orphaned Bead. |
+| `/plan` (`plan.md`) | Allocate `plan/<planning-id>/<description>` from updated `origin/develop`, then in that isolated worktree run `plan-begin` → discovery review → conditional archive (if `doctor` reports a change ready — `openspec archive <change>`, review the merged `specs/`, `validate`, commit as `planning`) → design dialogue → author/revise → `validate` → commit `openspec/` as the `planning` writer → `materialize <change>` → wire Beads dependencies explicitly → fast-forward integrate into `develop` → `plan-end` from the planning worktree → `worktree cleanup` from the surviving canonical checkout (`plan-end` always precedes worktree retirement; validation is `./scripts/nogg validate` plus `openspec validate <change> --strict --no-interactive`). If cleanup refuses, the planner reports the hand-off — `./scripts/nogg session stop <name>`, then `./scripts/nogg worktree cleanup <record>` from the canonical checkout — and stops, which is the normal end for a Codex planner. A supervised planner (`session launch --role planning --planning-id <id> --description <desc>`) gets its worktree at launch, stays idle until kickoff and acquires the canonical, session-owned planning lock itself. The commit precedes `materialize`, so a crash between them never leaves Beads without a committed spec (`materialize` is idempotent). Consult the `architect` specialist for architecture questions. | Write planning artifacts in the shared checkout; force or release a planning lock another session holds; pre-acquire the lock for a child planner; claim an associated Bead; clean a dirty or unintegrated planning worktree; do execution work; or auto-delete an orphaned Bead. |
 | `/discovery-review` (`discovery-review.md`) | Run `scripts/nogg discoveries` and render it unchanged (blocking first). Per discovery, offer: carry into a `/plan` session, acknowledge via `scripts/nogg discoveries --ack <id>`, or leave pending. | Acquire the planning lock. Create or modify any file under `openspec/`. |
 | `/sync-now` (`sync-now.md`) | Run `scripts/nogg sync --now`: signal a resident sync daemon if one exists, else run one reconciliation pass directly. | Retry, loop, or `--force` when the 30-second timer holds the sync lock — report the contention and stop. |
 
@@ -95,12 +95,22 @@ sandbox).
 
 The **Orchestration Agent** is a third session persona, above the Planning Agent
 and the Main Worker. It runs always-on as a supervised
-`nogg-orchestrator-<slug>` tmux session that a rendered systemd **user service**
+`nogg-orchestrator-<slug>` tmux session (the Orchestration Agent is pinned to
+tmux and always runs on tmux, even if herdr is configured as the default backend) that a rendered systemd **user service**
 keeps alive across a crash or a host reboot, resuming its own conversation with
 `claude --continue`. The launched session registers with Remote Control, so the
 Product Owner can read and drive it from a phone with no SSH. Exactly one runs
-at a time, guarded by `.nogging/locks/orchestrator.lock` (the planning-lock
-shape and staleness rule, independent of the planning lock).
+at a time, guarded by `.nogging/locks/orchestrator.lock` (which records
+`{pid, host, created_at, pid_start, pid_ns}`; staleness is bound to holder
+process liveness across PID namespaces rather than age alone, independent of
+the planning lock). The lock path `<main>/.nogging/locks/orchestrator.lock`, the
+repository slug `<slug>`, the singleton session name `nogg-orchestrator-<slug>`,
+the unit name `nogg-orchestrator-<slug>.service` and live session lookup are
+resolved canonically from the repository's main checkout, whichever worktree runs
+the command. `orchestrator run` in a linked worktree refuses before taking any
+lock, naming the main checkout; `status`, `stop` and `restart` act on the
+canonical unit from any checkout. A checkout-local `orchestrator.lock` in a linked
+worktree is never read as the lock and is reported as a note.
 
 **Default scope is orchestrate-only.** The Orchestration Agent reads the whole
 state (Beads, OpenSpec, session records and logs, `git`) and drives the loop by
@@ -127,7 +137,12 @@ launches with `--tier <tier>`. Model and effort come from the shipped table
 higher tier; a relaunch after a failed or stalled attempt escalates one tier;
 quota never lowers a tier — a usage-limit denial is handled by waiting for the
 limiting reset or by launching the same tier on another agent. An explicit
-`--model` is used only on Product Owner instruction. Nothing mechanical checks
+`--model` or `--effort` is used only on Product Owner instruction, and passed
+together with the honest `--tier` so attribution stays correct. Under the
+Product Owner's Codex cost policy, Codex defaults to `gpt-6-luna` (launch with
+`--tier <tier> --model gpt-6-luna --effort <level>`), and `gpt-6.1-sol` is used
+only with effort `low` and only for extremely hard tasks (launch with
+`--tier <tier> --model gpt-6.1-sol --effort low`). Nothing mechanical checks
 the classification; the safeguard is visibility — `tier=` in `session list` and
 the reason in the notes. A Lead Agent launching an out-of-process specialist
 may pass `--tier` too, but is not required to.
@@ -135,7 +150,7 @@ may pass `--tier` too, but is not required to.
 **Explicit takeover.** Only on an explicit in-session operator instruction of
 the form `/orchestrate takeover {plan|code} <description>` does it perform one
 task directly — a planning task run as a full `plan-begin` … `plan-end`
-sequence committed with the `Nogging-Writer: planning` trailer, or a code task
+sequence committed with the `Nogging-Writer: planning` trailer (`plan-end` from the planning worktree, then `worktree cleanup` from the surviving canonical checkout), or a code task
 claimed, implemented, committed with the `[<bead-id>]` token, evidence-noted and
 closed. After the one task it returns to orchestrate-only. Nothing mechanical
 enforces the return: the orchestrator profile is god-mode (see *Launch
@@ -153,7 +168,18 @@ the Product Owner's one reserved act.
 phone" requirement — is a Claude feature; a Codex/Pi orchestrator is a recorded
 follow-up. The `/orchestrate` command file documents how the operator reaches
 and scopes the session; `scripts/nogg orchestrator {run,status,stop,restart}`
-drives the service.
+drives the service. `scripts/nogg orchestrator restart` terminates the live
+orchestrator tmux session gracefully (sending Ctrl+C, waiting the grace period,
+and falling back to kill) and bounces the supervisor service, so the next
+supervisor run starts a fresh Claude session with the current launch prompt and
+settings while resuming conversation transcript history. Passing
+`--supervisor-only` restarts only the systemd supervisor service without
+terminating the tmux session, adopting the live session without relaunching.
+`orchestrator restart` (even with `--supervisor-only`) is refused when called
+from within the orchestrator session itself (for example, if an operator asks
+the orchestrator via Remote Control to restart itself) and must be run from an
+external shell.
+
 
 ## Resuming an interrupted run
 
@@ -266,20 +292,31 @@ and the audit stays clean.
 ## Session supervision
 
 Every agent session Nogging starts for Lead Agent or specialist work runs
-inside a **named tmux session on the Pi**, under a dedicated tmux server socket
-(`tmux -L nogg`) that is isolated from the operator's own tmux. The session
+inside a **named supervised session on the host**, using the switchable session
+backend (`tmux` by default, or `herdr`; see `using-with-herdr.md`). For tmux, a
+dedicated tmux server socket (`tmux -L nogging`) is isolated from the operator's
+own tmux; for herdr, a dedicated local herdr session namespace
+(`session_herdr_session`, default `nogging`) is used. Both backends enforce a
+host-only server birth rule: the shared server must only be started outside the
+OpenSpec execution sandbox in the host namespace. Fenced callers
+(`NOGG_OPENSPEC_FENCED=1`, such as a sandboxed Lead) run all tmux commands with
+tmux's global `-N` flag ("do not start server") and refuse `session launch`
+before side effects if the server is down, directing the operator or
+Orchestration Agent to launch from the host. The session
 is started with `scripts/nogg session launch --role <lead |
 specialist:<type>> --bead <id> [--cwd <path>] [--read-only]
-[--agent <claude|codex|pi|antigravity|agy>] [--profile <name-or-path>] [--prompt <name-or-path>]
+[--agent <claude|codex|pi|antigravity|agy>] [--backend <tmux|herdr>] [--profile <name-or-path>] [--prompt <name-or-path>]
 [--full-access]`, which:
 
 - generates a collision-free name `sf-<role>-<bead>-<nonce>`;
 - writes a durable JSON record to `.nogging/state/sessions/<name>.json`
   (Bead ID, role, host, start time, working directory, redacted launch
-  command, owner, lifecycle state, log path) **before** the Claude process
+  command, owner, lifecycle state, log path, backend) **before** the agent process
   starts, so the association survives an SSH drop or a restart of the launcher;
 - streams all console output to an append-only `<name>.log` beside the record
-  (`tmux pipe-pane` → `scripts/session-log-writer`, size-rotated);
+  (`tmux pipe-pane` or herdr `scripts/session-pty-recorder` →
+  `scripts/session-log-writer`, streaming binary chunks via `O_APPEND` without waiting
+  for newlines, size-rotated to strictly bounded generations);
 - starts the selected agent through `scripts/session-launch` under a
   **selectable authority level**, defaulting to `restricted` (no `git push`, no
   remote Dolt sync, no destructive shell, scoped to the working directory)
@@ -307,6 +344,11 @@ A Codex session has no per-session `permissions` file; its command floor is the
 repo's `.codex/rules/` execpolicy directory (shipped by `codex-onboarding`),
 and `session launch` warns when that floor file is missing but still starts.
 `--full-access` maps to `trusted` + `autonomous` for whichever agent is in use.
+Codex and Antigravity planning launches require an explicit `--profile` or
+`--full-access`; otherwise launch is refused before side effects. Every
+successful launch prints `profile=<label>` and `prompt=<prompt name>`. A
+restricted Codex launch also notes that its network-off sandbox cannot reach
+the shared Dolt-server-backed Beads database, even on loopback.
 
 ### Antigravity sessions
 
@@ -376,15 +418,15 @@ From any plain SSH shell (no `TERM`, no tmux client needed):
 
 | Command | What it does |
 | --- | --- |
-| `session list` | every managed session with Bead, role, age, working dir, owner, state, the launch profile it runs under (`restricted` renders as `-`, a floor-lifted orchestrator as `FULL-ACCESS`), and the requested model with its source (`launch`, `profile`, or `runtime-default` when none was set) plus `tier=<tier>` for a `--tier` launch; reconciles each record against live tmux and reports a vanished `running` session as `failed`. Read-only, never attaches. |
-| `session attach <name> [--read-only]` | attach the terminal to a session (`-r` blocks input). The only command that attaches. |
+| `session list` | every managed session with Bead, role, age, working dir, owner, state, backend (`BACKEND` column), agent status (`AGENT_STATUS` column for herdr), the launch profile it runs under (`restricted` renders as `-`, a floor-lifted orchestrator as `FULL-ACCESS`), and the requested model with its source (`launch`, `profile`, or `runtime-default` when none was set) plus `tier=<tier>` for a `--tier` launch; reconciles each record against live backend sessions (tmux or herdr) and reports a vanished `running` session as `failed` (or with unknown liveness if the backend tool fails). Read-only, never attaches. |
+| `session attach <name> [--read-only]` | attach the terminal to a session (`-r` blocks input; on herdr, read-only attach is refused with a pointer to `session log --follow`). The only command that attaches. |
 | `session log <name> [--follow]` | print or tail the append-only log without attaching. |
-| `session stop <name> [--reason <text>]` | interrupt Claude, terminate the pane after the grace period, record `stopped` with `ended_at`/`exit_reason`. Idempotent. |
-| `session reap` | move every active-state record whose tmux session is gone to `failed` (a live one is untouched), so `cleanup` can retire it. |
-| `session cleanup [<name>] [--reap]` | remove a lingering tmux session, archive-rotate the log, retire the record. **Refuses** a `starting`/`running`/`idle` record — stop or `--reap` it first. |
-| `orchestrator run` | the idempotent supervisor the systemd unit runs: acquire the orchestrator lock, adopt or start the `nogg-orchestrator-<slug>` session (`claude --continue` when a prior conversation exists), block until it exits, release the lock, exit non-zero. Takes `--force` to reclaim a stale lock. |
+| `session stop <name> [--reason <text>]` | interrupt the agent, terminate the backend session after the grace period, record `stopped` with `ended_at`/`exit_reason`. Idempotent. |
+| `session reap` | move every active-state record whose backend session is gone to `failed` (a live one is untouched), so `cleanup` can retire it. |
+| `session cleanup [<name>] [--reap]` | remove a lingering backend session, archive-rotate the log (including rotated `.1..N` files), retire the record. **Refuses** a `starting`/`running`/`idle` record — stop or `--reap` it first. Stops the shared tmux server only when its own listing succeeds and is empty. |
+| `orchestrator run` | the idempotent supervisor the systemd unit runs: acquire the orchestrator lock, adopt or start the `nogg-orchestrator-<slug>` session (pinned to tmux; `claude --continue` when a prior conversation exists), block until it exits, release the lock, exit non-zero. Takes `--force` to reclaim a stale lock. |
 | `orchestrator status` | the unit's enabled/active state, whether user lingering is on, the lock holder, and the live `FULL-ACCESS` session with its last log lines. Read-only. |
-| `orchestrator stop` \| `restart` | stop-and-disable the unit (ending the session and releasing the lock; idempotent), or restart it. |
+| `orchestrator stop` \| `restart [--supervisor-only]` | stop-and-disable the unit (ending the session and releasing the lock; idempotent), or restart it (terminating the live session to relaunch Claude with updated prompt/settings while resuming transcript; `--supervisor-only` restarts the supervisor without ending the tmux session). |
 
 ### Relationship to Task-tool specialists
 
@@ -392,11 +434,11 @@ The specialist roster (`specialist-agents-and-skills`) defines the six
 specialists as **Task-tool subagents of the Lead Agent's session**. That is
 still the default: when the Lead Agent delegates an isolated implementation or
 review pass, it does so **in process** with the Task tool. Those calls do not
-get their own tmux session or metadata record — they run inside the Lead
+get their own backend session or metadata record — they run inside the Lead
 Agent's supervised session, share its launch profile, and are visible in
 that session's own log.
 
-A specialist run gets **its own observable tmux session** when it must run as a
+A specialist run gets **its own observable session** when it must run as a
 separate, long-lived process — a large self-contained chunk of work the operator
 wants to watch, attach to, or stop independently. The operator (or the Lead
 Agent on operator direction) then runs `session launch --role specialist:<type>

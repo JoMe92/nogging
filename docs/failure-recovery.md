@@ -16,7 +16,7 @@ from an older package that omitted the wrappers does not fix the installation.
 Use the same distribution for the CLI and both helpers; do not patch wrapper
 flags by hand. Existing worktrees need the repaired payload as well.
 
-Contract refusal happens before tmux or session files, so it requires no session
+Contract refusal happens before backend or session files, so it requires no session
 cleanup. If a runtime starts and then exits, its record becomes `failed` and
 its stderr is redacted and saved even if the pane disappears before logging
 can attach. Run `./scripts/nogg session list`, then
@@ -26,9 +26,94 @@ the terminal session with `session cleanup <name>`, and launch again. A quick
 failure can occur just after the launcher returns; check the record and log
 before assuming the agent is running.
 
+- **Startup readiness timeouts and hook diagnosis:** `session kickoff` and plain
+  `session send` wait boundedly up to `session_startup_timeout_seconds` (default 120s)
+  for a session to become ready for input. If startup readiness times out:
+  - For Claude, check if the session is still connecting to Remote Control or
+    blocked on an interactive prompt;
+  - For Codex, inspect the session for trust or approval dialogs;
+  - For Antigravity, check if the startup turn finished but failed to emit a `Stop`
+    hook event (verify `.agents/hooks.json` and `scripts/hooks/agy-guard` with
+    `./scripts/nogg doctor`), or if a feedback survey is active in the pane;
+  - Do not blindly resend or type speculative keys; inspect the pane with
+    `nogg session attach <name>` or check `nogg session log <name>` and `watch`.
+- **Unverified delivery and deliberate recovery:** When `session send`, `nudge`,
+  or `kickoff` reports an **unverified** outcome (for instance, a message accepted
+  by `codex queue` without a matching transcript receipt or confirmed composer
+  transition within `session_delivery_timeout_seconds`):
+  - Do not immediately reissue the send command; automated re-sending or blind
+    pane typing is refused to prevent duplicate instructions.
+  - Inspect the session log (`nogg session log <name> --follow`) or attach to the
+    pane to observe whether the agent received and is working on the instruction.
+  - If the instruction remained pending in the composer, use deliberate recovery
+    with `./scripts/nogg session nudge <name> --message "<instruction>"` to
+    cleanly replace and resubmit it with bounded verification.
+
 Normal `update` replaces managed helpers while preserving OpenSpec, Beads,
 custom profiles and unrelated agent settings. It does not upgrade the agent
 CLI itself or grant additional authority.
+
+### Older vendored session helpers
+
+If a vendored Nogging copy shows older session symptoms, update the copy to
+3.0.0 or later. The reliable-session-input fixes from #207, #216 and #218
+shipped in 3.0.0: #207 recognizes Claude's `[Pasted text #N]` as this
+operation's pending paste only when its composer was verified empty first;
+#216 waits for Claude and Antigravity startup readiness before sending input;
+and #218 delivers and verifies kickoff, requiring fresh receipt evidence after
+a Codex queue accepts a message. An unconfirmed outcome is unverified, not
+delivered. The launch-name and Codex delivery safeguards also require a Nogging
+update containing the launch-name/Codex-delivery change; changing only the
+agent CLI does not install them. Use the repository's pinned Nogging `update`
+procedure, then inspect any `.nogging-new` files and reconcile them as
+described above.
+
+Generated session names replace `.` and `:` with `_` so tmux and herdr address
+the same safe name as the session record. When launch fails before `running`,
+Nogging cleans up the session it created and records the cleanup result. If a
+Codex planner's pane PID is invisible from the launcher's PID namespace, the
+wrapper receipt supplies the identity; a missing or mismatched receipt makes
+the planner launch fail and clean up rather than leave an unusable planning
+session. See the running-work-in-sessions and using-with-codex guides in the
+repository's `docs/` directory for the operator procedures.
+
+## Locally modified files and pending `.nogging-new` updates
+
+When updating a repository where verbatim managed files (such as
+`.codex/rules/nogging.rules` or `.nogging/launch-prompts/orchestrator.md`) were
+customized locally, Nogging preserves the local modifications and writes the
+upstream release content to `<file>.nogging-new`.
+
+- **Doctor warning:**
+  `./scripts/nogg doctor` reports any pending files as:
+  ```text
+  WARN  locally modified file has pending upstream update: <path> (review <path>.nogging-new and reconcile)
+  ```
+  The warning is advisory and does not cause `doctor` to exit with an error. If
+  `<file>.orig` backup files are present from a previous `--force` update, `doctor`
+  also notes them:
+  ```text
+  NOTE  --force backup of a locally modified file: <path>.orig (delete it once reviewed)
+  ```
+- **Reconciliation workflow:**
+  1. Inspect the differences between your customized file and the incoming release:
+     ```bash
+     diff -u <file> <file>.nogging-new
+     ```
+  2. Merge the desired upstream changes into `<file>`.
+  3. Delete `<file>.nogging-new` once reconciled:
+     ```bash
+     rm <file>.nogging-new
+     ```
+- **Overwriting local modifications (`--force`):**
+  If you prefer to accept upstream changes unconditionally and discard local edits,
+  re-run update with `--force`:
+  ```bash
+  npx github:JoMe92/nogging#<tag> update --force
+  ```
+  Nogging creates a backup of your local file at `<file>.orig` and overwrites
+  `<file>` with the upstream version. Once verified, remove `<file>.orig`.
+
 
 ## Resuming an interrupted run
 
@@ -40,8 +125,9 @@ next start — fresh, resumed, or after a tool switch — every agent runs
 
 | `recover` reports | Action |
 | --- | --- |
-| Stale `planning.lock` | Confirm no planning session is actually running, then `./scripts/nogg plan-end --force`. A lock that names a supervised session is refused while that owner is alive; `recover` names the owner. Never release another session's lock by stopping or cleaning up your own. |
+| Stale `planning.lock` | Confirm no planning session is actually running, then `./scripts/nogg plan-end --force`. A lock that names a supervised session is refused while that owner is alive; `recover` names the owner. Never release another session's lock by stopping or cleaning up your own. To release a stopped planner's own lock, run `./scripts/nogg session stop <name>` (see *A planning worktree whose cleanup is refused*). |
 | Fresh `planning.lock`, not yours | A planning session is active elsewhere. Do not start execution that depends on unmaterialized work — wait or coordinate. |
+| Stale `orchestrator.lock` | The lock holder's process is verified dead or start time mismatched (or expired on a remote host). Reclaim with `./scripts/nogg orchestrator run --force` or restart the supervisor. An unverifiable holder (fenced caller or foreign PID namespace) is never reported stale. |
 | `LIMBO: <id> committed … but status=<status>` | The work is **done**. `git show` the commit, run `scripts/test`, add the evidence note (`bd update <id> --append-notes "commit <sha>; <evidence>"`), `bd close <id>`. **Do not re-implement it** — that produces a duplicate commit. |
 | `in_progress` Bead, `resumable` | Same as `LIMBO`: it has a commit, so the work is done — verify, note, close. Never re-implement. |
 | `in_progress` Bead, `stale`, with a diff | Decide: finish the uncommitted diff, or `git stash` it and re-claim clean. Record the decision in the Bead note. |
@@ -162,37 +248,188 @@ acts on one, record it with `./scripts/nogg discoveries --ack <id>...` so
 it stops resurfacing. The ledger
 (`.nogging/state/acknowledged-discoveries.json`) is local and safe to delete.
 
+## A planning worktree whose cleanup is refused
+
+`plan-end` always precedes worktree retirement, so a planner that has run
+`plan-end` has already released its lock; only the worktree remains.
+`./scripts/nogg worktree cleanup <record>` refuses, before removing anything,
+when the worktree, a path under it or its Git directory appears in
+`/proc/self/mountinfo` (a Codex planner's sandbox mounts its own worktree),
+when the caller's working directory is inside it, when another active session
+record works there, or when the mount table cannot be read. A refusal changes
+no file, branch or record. Do not retry it, force it or delete files by hand.
+
+1. Hand off: `./scripts/nogg session stop <name>`, then
+   `./scripts/nogg worktree cleanup <record>` from the canonical checkout. The
+   operator or the Orchestration Agent runs both. For a Codex planner this is
+   the normal end.
+2. `session stop` of the owning planner waits within its grace period for the
+   owner to exit and then releases that session's planning lock without
+   `plan-end --force`. If the owner is still live afterwards the lock is kept,
+   and the message names `session stop <name>` to rerun once it has exited.
+   `recover` names the same step for an interrupted owner that still has a
+   session record.
+3. If an older build's partial `git worktree remove` already deleted tracked
+   files from the worktree, restore them with
+   `git -C <worktree> restore --source=HEAD --worktree -- .`, then run the
+   cleanup again.
+
 ## A crashed or stuck supervised session
 
 `scripts/nogg session list` shows every Nogging-managed session and
-reconciles each record against live tmux — a record still in an active state
-whose tmux session is gone is shown as `failed`.
+reconciles each record against its live backend session (tmux or herdr) — a record
+still in an active state whose backend session is gone is shown as `failed` (or with
+unknown liveness if the backend tool fails).
 
 Start with **`scripts/nogg session reap`**: it moves every such vanished
 record to the terminal `failed` state (a still-live session is left untouched),
 which is what lets `session cleanup` retire it. `session cleanup --reap` does
 the reap and the cleanup in one step.
 
-- **Reported `failed`** — the metadata record is still active but the tmux
-  session is gone (the process crashed or was killed outside Nogging). Read
-  `session log <name>` for the last output, then `session reap` followed by
-  `session cleanup` (or `session cleanup --reap`) to archive the log and retire
-  the record.
+- **Reported `failed`** — the metadata record is still active but the backend
+  session is gone (the process crashed, the herdr server restarted, or the
+  session was killed outside Nogging). Read `session log <name>` for the last
+  output, then `session reap` followed by `session cleanup` (or
+  `session cleanup --reap`) to archive the log and retire the record.
 - **Stuck / hung** — `session log <name> --follow` to see what it is doing,
   `session attach <name>` to intervene, or `session stop <name> --reason
-  "<why>"` to interrupt Claude and terminate the tmux session. `stop` is
+  "<why>"` to interrupt the agent and terminate the backend session. `stop` is
   idempotent and records `ended_at`/`exit_reason`.
 - **`cleanup` refuses** — the record is still `starting`, `running` or `idle`.
   Run `session stop <name>` first; cleanup never acts on a live session.
-- **Lingering tmux server** — the dedicated `-L nogg` server persists
-  after its last session. `session cleanup` kills it once no non-retired
-  record remains; otherwise `tmux -L nogg kill-server` by hand is safe
-  when `session list` shows nothing active.
+- **Lingering session servers** — on tmux, the dedicated `-L nogging` server persists
+  after its last session. `session cleanup` calls `idle_shutdown()` (`kill-server`)
+  **only** when its `list-sessions` query succeeds and reports no sessions on the
+  dedicated server. It never kills a server that still hosts foreign checkouts' sessions
+  or the always-on Orchestration Agent (`nogg-orchestrator-*`), even if all records of the
+  local checkout are retired. On herdr, Nogging starts a dedicated headless herdr server
+  on demand and never kills it during cleanup. Note that a herdr server restart terminates
+  all Nogging herdr sessions; restored panes matching a retired record of this checkout
+  are closed by `session cleanup` (while foreign panes matching no local record are left
+  untouched).
 - **Lost metadata** — the records under `.nogging/state/sessions/` are local
   and safe to delete; deleting one only drops history for an already-finished
-  session. A live tmux session with no record can be inspected directly with
-  `tmux -L nogg attach -t <name>` and killed with `tmux -L nogg
+  session. An orphaned live tmux session with no record can be inspected directly
+  with `tmux -L nogging attach -t <name>` and killed with `tmux -L nogging
   kill-session -t <name>`.
+
+## Tmux server born in a sandbox
+
+If a shared tmux server was started inside an OpenSpec execution sandbox (for
+example, if an agent ran `tmux -L nogging new-session` directly without `-N`
+prior to the fenced server refusal), that server lives inside the sandboxed
+caller's PID and mount namespaces:
+
+- **Symptom:** Every session hosted on that tmux server terminates abruptly
+  together when the hosting sandboxed Lead exits or its container/namespace is
+  destroyed. The server also inherits the sandbox's read-only mount of
+  `openspec/`.
+- **Diagnosis:**
+  - `doctor` reports an advisory WARN naming the server PID:
+    `WARN  dedicated tmux server (-L nogging) runs inside sandbox PID <pid>; all hosted sessions terminate when that namespace exits`
+    (the WARN does not change `doctor`'s exit code).
+  - `session list` prints one `NOTE` advisory when the server is sandboxed.
+  - `orchestrator status` reports the server classification under `tmux server: sandboxed`
+    (instead of `host`, `outside`, `down`, or `unknown`).
+  - `orchestrator run` and unsandboxed `session launch` print a warning when
+    they start or adopt a session on a sandboxed server, and then continue.
+- **Operator choices:** Nogging never kills, restarts, or signals the server
+  automatically. The operator can choose:
+  1. *Let the Lead finish:* If active work on the server is progressing well,
+     let the hosting session run to completion; sessions continue until that
+     sandbox exits.
+  2. *Stop the server deliberately:* If long-term stability is needed, stop the
+     server explicitly from an unsandboxed shell with `tmux -L nogging kill-server`
+     (knowing that every session hosted on it ends), and then start a fresh
+     session or the Orchestration Agent from the host so the new server is born
+     in the host namespace.
+
+## Herdr server down and recovery
+
+If the dedicated herdr server stops, crashes, or is killed:
+1. **Definite down state:** Nogging checks two independent sources:
+   - `herdr --session <ns> status` reports `server: status: not running`.
+   - `herdr session list --json` reports `running: false`.
+   When both answers agree, Nogging concludes with certainty that the server is down.
+   Its session records are classified as `vanished` (rendered as `failed` in `session list`),
+   which allows `session reap` to mark them failed and `session cleanup` to retire them.
+   A subsequent launch for the same Bead is no longer blocked by false "a live lead session
+   already covers" errors.
+2. **Restarting the server:** Run the idempotent host-side command:
+   ```bash
+   ./scripts/nogg session herdr-server start
+   ```
+   This command starts the headless server with Nogging's scrubbed environment, immutable
+   config, and ownership receipt.
+   - **Fenced callers cannot start the server:** If a sandboxed Lead (or any process
+     with `NOGG_OPENSPEC_FENCED=1`) attempts to launch while the server is down, launch
+     is refused before any side effect. The Lead must ask the operator or Orchestration
+     Agent to start the server host-side via `session herdr-server start`.
+   - **Unowned running servers:** If a running server fails ownership checks (differing
+     config or mismatched socket identity), `session herdr-server start` refuses and names
+     the failed check. Stop the unowned server manually with `herdr --session <ns> server stop`;
+     Nogging never stops or kills an unowned herdr server itself.
+
+## Orchestrator lock states and holder liveness
+
+The Orchestration Agent is protected by `.nogging/locks/orchestrator.lock`, which records
+`{pid, host, created_at, pid_start, pid_ns}`. A single shared classifier evaluates lock
+staleness for `orchestrator run`, `orchestrator status`, `recover`, and `doctor`.
+
+Rather than relying purely on a timestamp timeout, staleness is strictly bound to holder
+liveness across PID namespaces:
+
+| Holder as seen by caller | State | Stale? | Action in `recover` |
+| --- | --- | --- | --- |
+| Same host & same PID namespace; PID alive with matching `pid_start` | `held (verified)` | **No** (never stale at any age) | Valid live lock. No attention item. |
+| Same host & same namespace; PID gone or start time mismatch | `dead` | **Yes** | Attention item: stale lock. Reclaim with `orchestrator run --force` or restart service. |
+| Legacy lock (no `pid_start`); PID alive running `nogg … orchestrator run` | `held (verified)` | **No** (never stale) | Valid live legacy holder. No attention item. |
+| Legacy lock; PID alive but running another command (reused PID) | `dead` | **Yes** | Attention item: PID reused. Reclaim with `orchestrator run --force`. |
+| Same host, but foreign or unobservable PID namespace, or fenced caller (`NOGG_OPENSPEC_FENCED=1`) | `held (unverifiable)` | **No** | Displayed as held (unverifiable). **No attention item**, exits 0 (fenced callers cannot verify host PIDs). |
+| Another host | `held (unverifiable)` / `stale` | Only if age ≥ `orchestrator_lock_ttl_seconds` | Stale only when older than TTL (default 86400s). Reclaim if host is gone. |
+
+Consequently:
+- An actively running Orchestration Agent on the host is **never** considered stale, even if its lock is months old.
+- A sandboxed Lead running `recover` cannot observe host PIDs, so it treats the lock as `held (unverifiable)` rather than falsely reporting it dead.
+- `recover` raises an attention item and exits non-zero only when a lock is genuinely stale (dead holder or expired cross-host).
+
+### Orchestrator lock in linked worktrees
+
+The orchestrator lock and identity are strictly canonical:
+- **Canonical resolution:** The orchestrator lock path `<main>/.nogging/locks/orchestrator.lock`,
+  the repository slug `<slug>`, the systemd user service `nogg-orchestrator-<slug>.service`,
+  and live session lookup are always resolved from the repository's **main checkout**
+  (`canonical_repository_state(ROOT)`), regardless of which linked worktree runs the command.
+- **Worktree visibility:** Running `orchestrator status`, `doctor`, or `recover` inside a linked
+  worktree inspects the main checkout's lock and live session, correctly reporting the
+  orchestrator as held or stale. It never falsely reports the lock as free.
+- **Run refusal:** `scripts/nogg orchestrator run` invoked from a linked worktree refuses
+  before taking any lock and names the main checkout, preventing duplicate orchestrators.
+  `orchestrator status`, `stop` and `restart` act on the canonical unit from any checkout.
+- **Leftover worktree locks:** Any checkout-local `orchestrator.lock` file in a linked
+  worktree is ignored and never read as the true lock. `recover` and `doctor` report it
+  as an advisory NOTE with its path.
+
+## `task-done` asking for a relaunch
+
+When running `./scripts/nogg task-done <bead-id>` inside a sandboxed session whose
+host-side broker predates checkout-aware requests:
+
+- **Symptom:** `task-done` fails and prints:
+  ```text
+  task-done: this session's sandbox broker predates checkout-aware ticks; relaunch the session and run task-done again; nothing was ticked
+  ```
+- **Cause:** To ensure checkbox ticks land in the exact implementation worktree
+  where the Bead was executed, `task-done` transmits `{"bead_id", "checkout"}` to
+  `NOGG_TASK_DONE_SOCKET`. An older broker daemon rejects requests containing the
+  checkout field with `only one closed Bead identifier`.
+- **Behavior:** The client sends exactly one request. Upon receiving the pre-update
+  refusal, it exits non-zero without retrying (a retry omitting `checkout` would
+  erroneously tick the launch checkout) and never falls back to a local tick
+  (because `openspec/` is read-only inside the execution sandbox).
+- **Recovery:** Relaunch the supervised session under the updated host-side broker,
+  then re-run `task-done <bead-id>`. Alternatively, the tick will be mirrored
+  automatically by the sync timer or an unsandboxed sync run once the Bead is closed.
 
 ## A session hit its usage limit
 
@@ -209,6 +446,55 @@ does not bypass it (confirmed twice in production, GitHub issue #20).
 current model, never by switching to one. If a session is stuck on a usage
 limit, wait it out (or run `resume-when-ready`) — do not spend a session-cycle
 retrying with a different model.
+
+## Usage reservation ledger recovery and rollback
+
+The host-wide reservation ledger (`$XDG_CACHE_HOME/nogging/usage/reservations/ledger.json`)
+manages shared quota headroom across repositories.
+
+- **Malformed ledger diagnostic:** If the ledger file contains invalid JSON,
+  malformed top-level entries, or broken accounting core fields (missing scope,
+  non-finite/negative estimate, invalid reset timestamps, or unsafe owner filenames),
+  any admission attempt halts with:
+  ```text
+  usage reservation ledger is malformed (<detail>); admission refused
+  ```
+  Admission exits non-zero before launching side effects or rewriting the file.
+  Inspect `ledger.json`. Correct or remove invalid accounting entries; never
+  hand-edit reservations while other sessions are actively admitting or launching.
+- **Opaque reservations:** When an entry has an unrecognized version
+  (`schema_version > 1`) or malformed session metadata but a valid accounting
+  core, readers log:
+  ```text
+  warning: reservation <token>: <reason>; retained without probing
+  ```
+  Opaque entries are retained without executing probes or reaping them, which
+  conservatively preserves headroom. If opaque entries hold quota longer than
+  necessary, update the host tools to a version that understands their schema.
+  Do not delete entries of live sessions.
+- **Rollback to an earlier version:** Safe rollback requires rolling back only
+  to a release that satisfies the **tolerant reader floor** (supporting the
+  shared accounting core and tolerant decoding). Downgrading directly to
+  unpatched v2.2.0 while newer sessions or version-1 entries exist is unsupported
+  because v2.2.0 crashes with `KeyError: 'tmux'`. To roll back, wait for active
+  sessions to complete and ensure all entries are released, or rollback to a
+  patched tolerant release. Never split the ledger or delete live reservations.
+
+## Direct test execution isolation and setup diagnostics
+
+Direct test scripts (`scripts/**/*.test.sh`) source `scripts/lib/test-env.sh` to
+strip `NOGG_*` and `NOGGING_ROOT` from the calling environment.
+
+- **Preventing task-done broker contamination:** In a supervised session,
+  `NOGG_TASK_DONE_SOCKET` points to the active session's task broker. By clearing
+  this variable before tests run, test fixtures (such as those in `nogg.test.sh`)
+  are prevented from accidentally connecting to the live broker and ticking real
+  tasks.
+- **Named setup failures:** Direct planning setup steps (such as `plan-begin`
+  fixtures in `scripts/nogg.test.sh`) report named failures (`FAIL - <scenario>: plan-begin setup failed`)
+  and print captured error output rather than silently aborting or ignoring errors
+  under `set -e`. Dependent assertions are skipped on setup failure, and the test
+  exits non-zero.
 
 ## `openspec/` stuck read-only or stuck writable
 

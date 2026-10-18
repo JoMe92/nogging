@@ -167,7 +167,10 @@ sys.exit(1)
 
     os.environ["PATH"] = str(binaries) + os.pathsep + os.environ["PATH"]
     env.update(PATH=str(binaries) + os.pathsep + env["PATH"],
-               NOGGING_ROOT=str(consumer))
+               NOGGING_ROOT=str(consumer),
+               # The fixture runtime is a legacy stub: it paints a prompt but
+               # does not redraw it as an interactive Claude CLI would.
+               NOGG_TEST_ARGS_DIR=str(scratch))
 
     change_dir = consumer / "openspec/changes/test-change"
     change_dir.mkdir(parents=True)
@@ -205,6 +208,17 @@ sys.exit(1)
                       and json.loads(p.read_text()).get("state") == "running"]
         assert len(ready_recs) == 1
         ready_name = ready_recs[0]["name"]
+
+        # The launcher records the session before the runtime has painted its
+        # first prompt. Wait for the fixture runtime before exercising kickoff.
+        startup_deadline = time.monotonic() + 5
+        while time.monotonic() < startup_deadline:
+            pane = subprocess.run(["tmux", "-L", sock, "capture-pane", "-t", ready_name, "-p"],
+                                  text=True, capture_output=True).stdout
+            if "stub agent started" in pane and "❯" in pane:
+                break
+            time.sleep(0.05)
+        assert "stub agent started" in pane and "❯" in pane, f"runtime prompt did not appear: {pane!r}"
 
         # 1.3 Kickoff execution (#39)
         r_kick = run_nogg("session", "kickoff", ready_name, "--change", "test-change")

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Planning-flow documentation agrees across every surface (TASK-SSP-005):
-# the supervised planning role, commit-before-materialize, cleanup before
-# plan-end from a surviving canonical checkout, and the canonical,
-# session-owned planning lock. Then a fresh install must carry the same text.
+# the supervised planning role, commit-before-materialize, plan-end from the
+# planning worktree before worktree retirement from a surviving canonical
+# checkout (with the refused-cleanup hand-off), the named non-interactive
+# OpenSpec validation, and the canonical, session-owned planning lock. Then a fresh install must carry the same text.
 set -euo pipefail
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 python3 - "$root" <<'PY'
@@ -16,6 +17,9 @@ COMMIT = r"(as the `planning` writer|NOGGING_WRITER=planning|Nogging-Writer: pla
 MATERIALIZE = r"\bmaterialize\b"
 SURVIVING = "surviving canonical checkout"
 ROLE = "--role planning"
+PHRASE = "`plan-end` always precedes worktree retirement"
+HANDOFF = "`./scripts/nogg session stop <name>`, then `./scripts/nogg worktree cleanup <record>`"
+VALIDATE = "openspec validate <change> --strict --no-interactive"
 bad = []
 
 def ordered(rel, t, *patterns):
@@ -26,15 +30,19 @@ def ordered(rel, t, *patterns):
             bad.append(f"{rel}: '{pat}' missing or out of order"); return
         pos += m.end()
 
-commands = [".claude/commands/plan.md", ".codex/prompts/plan.md", ".pi/prompts/plan.md"]
+commands = [".claude/commands/plan.md", ".codex/prompts/plan.md", ".pi/prompts/plan.md",
+            "templates/antigravity/skills/nogging-plan/SKILL.md"]
 for rel in commands:
     t = text(rel)
-    for phrase in (ROLE, SURVIVING, "bd dep add", "canonical", "Nobody acquires the planning lock for you",
-                   "never claim it", "Cleanup always precedes `plan-end`", "never releases its lock"):
+    required = [SURVIVING, "bd dep add", PHRASE, HANDOFF, VALIDATE]
+    if "antigravity" not in rel:
+        required += [ROLE, "canonical", "Nobody acquires the planning lock for you",
+                     "never claim it", "never releases its lock"]
+    for phrase in required:
         if phrase not in t:
             bad.append(f"{rel}: missing '{phrase}'")
     ordered(rel, t, "plan-begin", COMMIT, MATERIALIZE, "bd dep add", "fast-forward merge",
-            "remove that worktree", "Release the planning lock", SURVIVING)
+            "plan-end", "worktree cleanup", SURVIVING)
 
 # Each surface that states the flow: commit before materialize, then cleanup,
 # then plan-end from a surviving canonical checkout.
@@ -44,7 +52,30 @@ flow = ["AGENTS.md", "templates/agents-block.md", "docs/operating-model.md", "RE
         ".claude/commands/orchestrate.md"]
 for rel in flow:
     t = text(rel)
-    ordered(rel, t, COMMIT, MATERIALIZE, r"(cleanup|clean, integrated|remove the clean)", SURVIVING)
+    ordered(rel, t, COMMIT, MATERIALIZE, "plan-end", "worktree cleanup", SURVIVING)
+
+# The close order, the refused-cleanup hand-off and the named validation step
+# appear on every surface that states the planning flow.
+surfaces = commands + flow + [".nogging/launch-prompts/planning.md", "docs/failure-recovery.md",
+                              "docs/using-with-antigravity.md"]
+orchestrator = (".nogging/launch-prompts/orchestrator.md", ".claude/commands/orchestrate.md")
+for rel in surfaces:
+    t = text(rel)
+    if "Cleanup always precedes" in t:
+        bad.append(f"{rel}: still says cleanup precedes plan-end")
+    if "openspec validate --strict" in t:
+        bad.append(f"{rel}: carries a bare 'openspec validate --strict'")
+    if rel not in ("README.md", "docs/failure-recovery.md") and PHRASE not in t:
+        bad.append(f"{rel}: missing '{PHRASE}'")
+    if rel not in orchestrator + ("README.md",) and HANDOFF not in t:
+        bad.append(f"{rel}: missing the refused-cleanup hand-off")
+for rel in orchestrator:
+    if not re.search(r"session stop <name>`\), then run `(scripts/nogg )?worktree cleanup <record>`", text(rel)):
+        bad.append(f"{rel}: does not stop the planner, then run worktree cleanup from the canonical checkout")
+for rel in commands + [".nogging/launch-prompts/planning.md", "AGENTS.md", "templates/agents-block.md",
+                       ".nogging/launch-prompts/orchestrator.md"]:
+    if VALIDATE not in text(rel):
+        bad.append(f"{rel}: does not name the change in '{VALIDATE}'")
 
 # The supervised planning role and the session-owned canonical lock.
 for rel in ["AGENTS.md", "templates/agents-block.md", "docs/operating-model.md", "README.md",
@@ -64,7 +95,7 @@ for rel in ["AGENTS.md", "templates/agents-block.md", "docs/security-model.md"]:
 # The supervised planning launch prompt states the same order.
 ordered(".nogging/launch-prompts/planning.md", text(".nogging/launch-prompts/planning.md"),
         "plan-begin", "planning writer", "Materialize", "dependencies", "Fast-forward",
-        "retire", "plan-end", SURVIVING)
+        "plan-end", "retire", SURVIVING)
 
 for line in bad:
     print("FAIL -", line)

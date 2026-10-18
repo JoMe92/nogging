@@ -84,14 +84,16 @@ Precedence, per field (highest first):
 | --- | --- |
 | Model | explicit `--model` > tier > profile `model` > runtime default |
 | Claude effort | explicit `--effort` > tier > profile `effort` > runtime default |
-| Codex effort | tier > profile `model_reasoning_effort` > runtime default |
+| Codex effort | explicit `--effort` > tier > profile `model_reasoning_effort` > runtime default |
 
-An explicit `--model` over a tier is the orchestrator's documented exception,
-used only on Product Owner instruction, not routine use.
+An explicit `--model` or `--effort` over a tier is the orchestrator's documented
+exception, used only on Product Owner instruction, not routine use.
 
-- **Codex** receives the tier effort through the wrapper's existing
-  `--reasoning-effort` transport, which becomes its `model_reasoning_effort`.
-  There is no public Codex `--effort` flag.
+- **Codex** receives the reasoning effort through `--effort <level>` (or from the
+  tier table, falling back to the profile's `model_reasoning_effort`), forwarded
+  via the wrapper's `--reasoning-effort` transport. Launch `--effort` validated
+  against `CODEX_REASONING_EFFORTS` overrides the tier effort, and the explicit
+  effort is recorded with `reasoning_effort_source` `launch`.
 - **Antigravity** receives the tier model, whose name carries the thinking
   level, through the existing model forwarding.
 - **Claude** receives the tier model through `--model` and the tier effort
@@ -111,11 +113,12 @@ used only on Product Owner instruction, not routine use.
   that differs from the recorded one refuses.
 
 **Provenance.** A new session record stores `selection_tier` (the tier, or
-null). A tier-derived model or effort has source `launch`, because it is a
-launch-time selection; `selection_tier` says why. `session list` appends
-`tier=<tier>` to the `MODEL` cell, for example
-`gpt-6-luna effort=medium tier=standard`. Legacy records and records without a
-tier show nothing extra and are never rewritten.
+null). When `--tier X --model M --effort E` are passed together, the record keeps
+`selection_tier` X and `selection_tier_effort` (the table's effort, for usage
+attribution), while `requested_model` is M and `reasoning_effort` is E, each with
+source `launch`. `session list` appends `tier=<tier>` to the `MODEL` cell, for
+example `gpt-6-luna effort=medium tier=standard`. Legacy records and records
+without a tier show nothing extra and are never rewritten.
 
 ## The orchestrator procedure
 
@@ -135,6 +138,18 @@ stated in `.nogging/launch-prompts/orchestrator.md`, the `/orchestrate` command
 and `docs/operating-model.md` *Orchestration*, so a fresh orchestrator applies
 it without memory of earlier conversations. A Lead Agent that launches an
 out-of-process specialist may pass `--tier` too, but is not required to.
+
+### Product Owner Codex cost policy
+
+Under the Product Owner's Codex cost policy:
+- Codex defaults to `gpt-6-luna` across tiers;
+- `gpt-6.1-sol` is used only with effort `low` and only for extremely hard tasks,
+  on explicit Product Owner instruction.
+
+When overriding model or effort under this policy, the orchestrator passes the
+overrides together with the honest `--tier` so attribution is preserved:
+- Default Luna spelling: `scripts/nogg session launch --tier <tier> --model gpt-6-luna --effort <level>`
+- Sol exception for extremely hard tasks: `scripts/nogg session launch --tier <tier> --model gpt-6.1-sol --effort low`
 
 Nothing mechanical can verify a classification, so the safeguard is
 visibility: `tier=` in `session list` and the reason in the notes.

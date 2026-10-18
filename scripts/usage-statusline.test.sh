@@ -109,6 +109,7 @@ setup_test_env() {
   local base="$work/env$num"
   mkdir -p "$base/repo/.nogging/state" "$base/repo/scripts/hooks" "$base/repo/openspec" "$base/repo/.agents"
   cp "$repo_root/scripts/nogg" "$repo_root/scripts/nogg_usage.py" "$base/repo/scripts/"
+  cp -r "$repo_root/scripts/lib" "$base/repo/scripts/"
   cp -r "$repo_root/.nogging/launch-profiles" "$repo_root/.nogging/launch-prompts" "$base/repo/.nogging/"
   cp "$repo_root/templates/model-selection.json" "$base/repo/.nogging/model-selection.json"
   git init -q -b develop "$base/repo"

@@ -6,12 +6,17 @@
 # tables, classified via fixture pane captures — no live agent required.
 # Covers the `Auto-update failed` false-positive regression explicitly.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-agents.sh"; use_agent_stubs
+
+while IFS= read -r inherited; do
+  case "$inherited" in
+    NOGG_*|NOGGING_*|HERDR_*|TMUX|TMUX_*) unset "$inherited" ;;
+  esac
+done < <(compgen -e)
 
 # Fixture roots and explicit emit tests own these variables. Inheriting the
 # supervising agent's identity would write events to the wrong session and
 # make the missing-identity assertion depend on how this suite was launched.
-unset NOGG_SESSION_NAME NOGGING_ROOT
-
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 nogg="$here/nogg"
 
@@ -228,6 +233,8 @@ rm -f "$logf"
 work=$(mktemp -d)
 repo_root="$(cd "$here/.." && pwd)"
 trap 'rm -rf "$work"; rm -f "$out"' EXIT
+export HOME="$work/home"
+mkdir -p "$HOME"
 
 mkdir -p "$work/bin"
 cat >"$work/bin/bd" <<'STUB'
@@ -265,7 +272,9 @@ printf '%s %s\n' "$cmd" "$*" >>"$d/calls.log"
 arg_after() { local flag="$1"; shift; while [[ $# -gt 0 ]]; do [[ "$1" == "$flag" ]] && { printf '%s' "$2"; return; }; shift; done; }
 case "$cmd" in
   new-session)
-    name="$(arg_after -s "$@")"; touch "$d/sess-$name" ;;
+    name="$(arg_after -s "$@")"; touch "$d/sess-$name"
+    printf '%s\n❯ \n%s\n' '────────────────────' '────────────────────' >"$d/pane-$name.txt"
+    printf '%s\n❯ \n%s\n' '────────────────────' '────────────────────' >"$d/pane-$name.after" ;;
   has-session)
     name="$(arg_after -t "$@")"; [[ -f "$d/sess-$name" ]] ;;
   list-sessions)
@@ -277,9 +286,22 @@ case "$cmd" in
     name="$(arg_after -t "$@")"; rm -f "$d/sess-$name" ;;
   kill-server) rm -f "$d"/sess-* ;;
   send-keys)
-    # A pane-<name>.after fixture models the pane once Enter submitted input.
+    # Stateful composer behavior for delivery regressions.
     name="$(arg_after -t "$@")"
-    if [[ " $* " == *" Enter "* && -f "$d/pane-$name.after" ]]; then mv "$d/pane-$name.after" "$d/pane-$name.txt"; fi ;;
+    if [[ " $* " == *" C-u "* ]]; then
+      marker='❯'; grep -q '^›' "$d/pane-$name.txt" 2>/dev/null && marker='›'
+      printf '%s\n%s \n%s\n' '────────────────────' "$marker" '────────────────────' >"$d/pane-$name.txt"
+    elif [[ " $* " == *" Enter "* && -f "$d/pane-$name.after" ]]; then
+      mv "$d/pane-$name.after" "$d/pane-$name.txt"
+    fi ;;
+  load-buffer)
+    buffer="$(arg_after -b "$@")"
+    cat >"$d/buffer-$buffer.txt" ;;
+  paste-buffer)
+    name="$(arg_after -t "$@")"; buffer="$(arg_after -b "$@")"
+    marker='❯'; grep -q '^›' "$d/pane-$name.txt" 2>/dev/null && marker='›'
+    { printf '%s\n%s ' '────────────────────' "$marker"; cat "$d/buffer-$buffer.txt"; printf '\n%s\n' '────────────────────'; } >"$d/pane-$name.txt" ;;
+  delete-buffer) : ;;
   pipe-pane|attach|display-message) : ;;
   *) : ;;
 esac
@@ -303,7 +325,8 @@ root="$work/watch-working"; make_obs_root "$root"
 export NOGGING_ROOT="$root"
 export TMUX_STUB_DIR="$work/watch-working-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-w01"
-"$nogg" session launch --role lead --bead SPEC-w01 >/dev/null 2>&1
+"$nogg" session launch --role lead --bead SPEC-w01 >"$work/launch.log" 2>&1 \
+  || { cat "$work/launch.log"; exit 1; }
 name="$(sess_name "$root")"
 printf 'some prior output\nesc to interrupt\n' >"$TMUX_STUB_DIR/pane-$name.txt"
 out_w=$(mktemp)
@@ -375,8 +398,8 @@ docgrep "$repo_root/docs/failure-recovery.md"
 docgrep "$repo_root/docs/using-with-codex.md"
 
 # ===========================================================================
-# TASK-SOB-005: session send — literal paste + the claude second-Enter
-# quirk, and --verify retrying the submit step once before failing loudly
+# TASK-RSI-003: session send — literal paste, one Enter, and automatic
+# verification with one retry only while this operation's exact input is pending.
 # ===========================================================================
 root="$work/send-claude"; make_obs_root "$root"
 export NOGGING_ROOT="$root"
@@ -384,17 +407,20 @@ export TMUX_STUB_DIR="$work/send-claude-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-s01"
 "$nogg" session launch --role lead --bead SPEC-s01 >/dev/null 2>&1
 name="$(sess_name "$root")"
+printf '%s\n❯ \n%s\n' '────────────────────' '────────────────────' >"$TMUX_STUB_DIR/pane-$name.txt"
+printf '%s\n❯ \n%s\n' '────────────────────' '────────────────────' >"$TMUX_STUB_DIR/pane-$name.after"
 : >"$TMUX_STUB_DIR/calls.log"
 out_s=$(mktemp)
 "$nogg" session send "$name" "continue please" >"$out_s" 2>&1 \
   || { echo "FAIL - send: errored"; cat "$out_s"; fail=1; }
-grep -qF -- "send-keys -t $name -l continue please" "$TMUX_STUB_DIR/calls.log" \
-  && ok "send: the literal message is pasted via send-keys -l" \
+grep -qE -- "load-buffer -b nogg-[^ ]+ -$" "$TMUX_STUB_DIR/calls.log" \
+  && grep -qE -- "paste-buffer -p -r -d -b nogg-[^ ]+ -t $name$" "$TMUX_STUB_DIR/calls.log" \
+  && ok "send: the literal message uses an isolated bracketed paste buffer" \
   || { echo "FAIL - send: literal paste not sent"; cat "$TMUX_STUB_DIR/calls.log"; fail=1; }
 enter_count=$(grep -cF -- "send-keys -t $name Enter" "$TMUX_STUB_DIR/calls.log")
-[[ "$enter_count" == "2" ]] \
-  && ok "send: claude gets the second-bare-Enter quirk (2 Enters)" \
-  || { echo "FAIL - send: expected 2 Enters for claude, got $enter_count"; fail=1; }
+[[ "$enter_count" == "1" ]] \
+  && ok "send: Claude receives one verified submit Enter" \
+  || { echo "FAIL - send: expected one Enter for Claude, got $enter_count"; fail=1; }
 unset NOGGING_ROOT
 
 root="$work/send-codex"; make_obs_root "$root"
@@ -403,18 +429,19 @@ export TMUX_STUB_DIR="$work/send-codex-tmux"; mkdir -p "$TMUX_STUB_DIR"
 export BD_KNOWN="SPEC-s02"
 "$nogg" session launch --role lead --bead SPEC-s02 --agent codex --profile restricted >/dev/null 2>&1
 name="$(sess_name "$root")"
-printf '[Pasted Content]\n> Ask Codex to do anything\n' >"$TMUX_STUB_DIR/pane-$name.txt"
+printf '› \n' >"$TMUX_STUB_DIR/pane-$name.txt"
+rm -f "$TMUX_STUB_DIR/pane-$name.after"
 : >"$TMUX_STUB_DIR/calls.log"
 "$nogg" session send "$name" "continue please" --verify >"$out_s" 2>&1 \
-  && { echo "FAIL - send --verify: should have failed (message stays stuck)"; cat "$out_s"; fail=1; } \
-  || ok "send --verify: raises when the message is still unsubmitted after a retry"
-grep -qF "still unsubmitted after a retry" "$out_s" \
-  && ok "send --verify: the error names the retry" \
-  || { echo "FAIL - send --verify: unexpected error text"; cat "$out_s"; fail=1; }
+  && { echo "FAIL - send: should have failed (exact message remains pending after one retry)"; cat "$out_s"; fail=1; } \
+  || ok "send: raises when the message remains pending after one retry"
+grep -qF "still unsubmitted after one retry" "$out_s" \
+  && ok "send: the error names the bounded retry" \
+  || { echo "FAIL - send: unexpected error text"; cat "$out_s"; fail=1; }
 submit_enters=$(grep -cF -- "send-keys -t $name Enter" "$TMUX_STUB_DIR/calls.log")
 [[ "$submit_enters" == "2" ]] \
-  && ok "send --verify: the submit step was retried exactly once" \
-  || { echo "FAIL - send --verify: expected 2 submit attempts, got $submit_enters"; fail=1; }
+  && ok "send: retry occurs once for positively pending text" \
+  || { echo "FAIL - send: expected 2 submit attempts, got $submit_enters"; fail=1; }
 rm -f "$out_s"
 unset NOGGING_ROOT
 
@@ -446,6 +473,8 @@ cat >"$work/bin/codex" <<STUB
 set -euo pipefail
 printf '%s\n' "\$*" >>"$work/codex-queue-calls.log"
 if [[ "\${1:-}" == "queue" ]]; then
+  # A real Codex writes the submitted user message to its rollout file.
+  python3 -c 'import json,sys; open(sys.argv[1],"a").write(json.dumps({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":sys.argv[2]}]}})+"\n")' "$rollout_dir/rollout-2026-10-02T00-00-00-$thread_id.jsonl" "\${5:-}"
   echo "Queued message fake-msg-id for thread \${3:-}."
   exit 0
 fi
@@ -498,9 +527,12 @@ JSON
   --profile "$work/preexisting-hooks-profile.json" >/dev/null 2>&1
 name="$(sess_name "$root")"
 settings="$root/.nogging/state/sessions/$name.settings.json"
-hook_check=$(python3 - "$settings" <<'PY'
-import json, sys
+hook_check=$(python3 - "$settings" "$root" <<'PY'
+import json, os, shlex, sys
 d = json.load(open(sys.argv[1]))
+root = sys.argv[2]
+expected_stop = f"{shlex.quote(os.path.join(root, 'scripts/nogg'))} session emit turn_end"
+expected_notif = f"{shlex.quote(os.path.join(root, 'scripts/nogg'))} session emit needs_input"
 hooks = d.get("hooks", {})
 stop = hooks.get("Stop", [])
 notif = hooks.get("Notification", [])
@@ -508,9 +540,9 @@ pretool = hooks.get("PreToolUse", [])
 ok = (
     len(stop) == 2
     and stop[0]["hooks"][0]["command"] == "echo pre-existing-stop"
-    and stop[1]["hooks"][0]["command"] == "scripts/nogg session emit turn_end"
+    and stop[1]["hooks"][0]["command"] == expected_stop
     and len(notif) == 1
-    and notif[0]["hooks"][0]["command"] == "scripts/nogg session emit needs_input"
+    and notif[0]["hooks"][0]["command"] == expected_notif
     and len(pretool) == 1
     and pretool[0]["hooks"][0]["command"] == "echo guard"
 )
@@ -691,7 +723,7 @@ grep -qF "nudged $name" "$out_n" \
   && ok "nudge: reports success" \
   || { echo "FAIL - nudge: missing success message"; cat "$out_n"; fail=1; }
 cu_line=$(grep -nF -- "send-keys -t $name C-u" "$TMUX_STUB_DIR/calls.log" | head -1 | cut -d: -f1)
-resend_line=$(grep -nF -- "send-keys -t $name -l draft a reply and send it" "$TMUX_STUB_DIR/calls.log" | head -1 | cut -d: -f1)
+resend_line=$(grep -nE -- "load-buffer -b nogg-[^ ]+ -$" "$TMUX_STUB_DIR/calls.log" | head -1 | cut -d: -f1)
 [[ -n "$cu_line" && -n "$resend_line" && "$cu_line" -lt "$resend_line" ]] \
   && ok "nudge: clears the pane (C-u) before resending the pending text" \
   || { echo "FAIL - nudge: C-u/resend ordering wrong"; cat "$TMUX_STUB_DIR/calls.log"; fail=1; }
@@ -715,7 +747,7 @@ printf '────────────────────\n❯ \n─�
 : >"$TMUX_STUB_DIR/calls.log"
 "$nogg" session nudge "$name" --message "explicit override" >"$out_n" 2>&1 \
   || { echo "FAIL - nudge --message: errored"; cat "$out_n"; fail=1; }
-grep -qF -- "send-keys -t $name -l explicit override" "$TMUX_STUB_DIR/calls.log" \
+grep -qE -- "paste-buffer -p -r -d -b nogg-[^ ]+ -t $name$" "$TMUX_STUB_DIR/calls.log" \
   && ok "nudge --message: overrides stale pane content" \
   || { echo "FAIL - nudge --message: expected message not sent"; cat "$TMUX_STUB_DIR/calls.log"; fail=1; }
 ! grep -qF -- "unrelated stale text" "$TMUX_STUB_DIR/calls.log" \
@@ -761,18 +793,19 @@ out_k=$(mktemp)
 : >"$TMUX_STUB_DIR/calls.log"
 "$nogg" session kickoff "$name" --message "custom kickoff text" >"$out_k" 2>&1 \
   || { echo "FAIL - kickoff --message: errored"; cat "$out_k"; fail=1; }
-grep -qF -- "send-keys -t $name -l custom kickoff text" "$TMUX_STUB_DIR/calls.log" \
+grep -qE -- "paste-buffer -p -r -d -b nogg-[^ ]+ -t $name$" "$TMUX_STUB_DIR/calls.log" \
   && ok "kickoff --message: sent verbatim" \
   || { echo "FAIL - kickoff --message: expected text not sent"; cat "$TMUX_STUB_DIR/calls.log"; fail=1; }
 
+printf '%s\n❯ \n%s\n' '────────────────────' '────────────────────' >"$TMUX_STUB_DIR/pane-$name.after"
 : >"$TMUX_STUB_DIR/calls.log"
 "$nogg" session kickoff "$name" >"$out_k" 2>&1 \
   || { echo "FAIL - kickoff: errored"; cat "$out_k"; fail=1; }
-grep -qF "SPEC-k01" "$TMUX_STUB_DIR/calls.log" \
-  && grep -qF "session-liveness-and-kickoff" "$TMUX_STUB_DIR/calls.log" \
+grep -qF "SPEC-k01" "$TMUX_STUB_DIR"/buffer-* \
+  && grep -qF "session-liveness-and-kickoff" "$TMUX_STUB_DIR"/buffer-* \
   && ok "kickoff: the composed message names the Bead and its change" \
   || { echo "FAIL - kickoff: composed message missing Bead/change"; cat "$TMUX_STUB_DIR/calls.log"; fail=1; }
-grep -qF "tasks.md order" "$TMUX_STUB_DIR/calls.log" \
+grep -qF "tasks.md order" "$TMUX_STUB_DIR"/buffer-* \
   && ok "kickoff: the composed message directs working tasks.md in order" \
   || { echo "FAIL - kickoff: composed message missing the tasks.md-order instruction"; fail=1; }
 

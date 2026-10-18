@@ -1,0 +1,1 @@
+{"id":"spike","result":{"type":"layout_apply","layout":{"workspace_id":"w2","tab_id":"w2:t2","zoomed":false,"focused_pane_id":"w2:p2","root":{"type":"pane","pane_id":"w2:p2","label":"sf-fixture-1","cwd":"/tmp","command":["bash","-c","printf 'line one\\n\\033[2mdim placeholder\\033[0m plain input\\n'; exec sleep 300"]}}}}

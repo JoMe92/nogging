@@ -60,6 +60,20 @@ closed sentinels take precedence. Linked worktrees share canonical lock state.
 An execution session remains read-only even while another planner has a lock.
 Multi-edit tool payloads remain unsupported until validated live.
 
+### Web search and denial reasons
+
+The guard accepts `search_web` only when `query` is a non-empty string without
+a NUL character. Trusted sessions may run that search; restricted sessions
+must approve it, just like `read_url_content`. An empty, missing or wrongly
+typed query is denied as `invalid search query`. Other denials name their
+cause; an unsupported tool denial includes its sanitized tool name (or
+`<invalid>`). Denials never repeat command, path, URL or query argument values.
+
+Codex and Antigravity planning launches must explicitly select authority with
+`--profile <name>` or `--full-access`. Without either flag, Nogging refuses the
+launch before creating a session or worktree. Successful launches show the
+effective `profile=` and `prompt=` values.
+
 **Sandbox operation is unsupported.** A profile requesting `sandbox = true`
 or the wrapper receiving `--sandbox true` refuses explicitly. No linked-worktree
 sandbox lifecycle has passed acceptance. Neither authority level promises
@@ -73,7 +87,12 @@ include `scripts/hooks/agy-guard`, `scripts/nogg session emit turn_end`, and the
 session/boundary helpers. Workflow skills install under `.agents/skills/`:
 `nogging-plan`, `nogging-discovery-review`, and `nogging-sync-now`. They run the
 same `scripts/nogg` steps as other runtimes. Planning commits precede
-materialization, and safe integrated-worktree cleanup precedes `plan-end`.
+materialization, and `plan-end` always precedes worktree retirement: run
+`plan-end` from the planning worktree, then `worktree cleanup <record>` from
+the surviving canonical checkout. If cleanup refuses, hand off with
+`./scripts/nogg session stop <name>`, then `./scripts/nogg worktree cleanup <record>` from the canonical checkout. Validation is
+`./scripts/nogg validate` plus `openspec validate <change> --strict
+--no-interactive`.
 
 Each supervised process sets `AGY_CLI_DISABLE_AUTO_UPDATE=true`. Stop events
 capture the actual conversationId and append lifecycle events. Resume uses an
@@ -85,8 +104,20 @@ scripts/nogg session launch --agent agy --role lead --bead <claimed-bead> \
 ```
 
 Use `session list`, `session log <name>`, `session send <name> <message>` and
-`session stop <name>` for supervision. The initial interactive turn must finish
-and emit Stop before kickoff/send proceeds; kickoff is delivered once.
+`session stop <name>` for supervision. Kickoff and plain `send` wait boundedly
+up to `session_startup_timeout_seconds` (default 120s) for the runtime to be
+positively ready for input:
+- **Stop hook readiness and fallback:** Readiness is ideally established by a
+  validated `fullyIdle` Stop hook event matching the current launch. If the Stop
+  hook is delayed or absent, readiness can also be confirmed by two consecutive
+  backend idle or done samples (with an empty composer, at least one polling
+  interval apart) from the exact recorded process.
+- **Hook diagnosis and surveys:** If startup readiness times out without evidence,
+  Nogging fails without typing or queueing speculative input, pointing the operator
+  to `session log`, `session watch`, and `.agents/hooks.json` diagnostics
+  (`nogg doctor`). Antigravity's post-launch feedback survey ("How's the CLI
+  experience so far?") replaces the composer and is refused with a prompt to
+  dismiss it (key 0) before retrying. Kickoff is delivered once and serialized.
 A bare launch grants no claim or implementation permission.
 
 Antigravity specialists run as separate supervised sessions, each on exactly
@@ -134,6 +165,8 @@ non-`SUCCESS` probe is unknown as well; exit status zero is not trusted.
 ```bash
 scripts/nogg usage --agent agy --model gemini-3.8-flash-medium --json
 ```
+
+A bare `nogg usage --agent antigravity` needs `--model` to select a group; without one, usage reports unknown.
 
 The probe runs `agy --print /usage` from a private directory with runtime
 auto-update disabled and caches only sanitized buckets (owner-only) under

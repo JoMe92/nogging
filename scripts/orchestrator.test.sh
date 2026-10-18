@@ -18,6 +18,8 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/lib/test-env.sh
+source "$here/lib/test-env.sh"
 nogg="$here/nogg"
 repo_root="$(cd "$here/.." && pwd)"
 work=$(mktemp -d)
@@ -43,9 +45,12 @@ case "$cmd" in
   new-session)  touch "$d/sess-$(arg_after -s "$@")" ;;
   has-session)  [[ -f "$d/sess-$(arg_after -t "$@")" ]] ;;
   list-sessions) for f in "$d"/sess-*; do [[ -e "$f" ]] || continue; echo "${f##*/sess-}"; done ;;
-  kill-session|send-keys)
+  kill-session)
     n="$(arg_after -t "$@")"
-    [[ "$cmd" == kill-session ]] && rm -f "$d/sess-$n" ;;
+    rm -f "$d/sess-$n" ;;
+  send-keys)
+    n="$(arg_after -t "$@")"
+    [[ -z "${TMUX_STUB_IGNORE_SIGINT:-}" ]] && rm -f "$d/sess-$n" ;;
   pipe-pane|kill-server|attach) : ;;
   *) : ;;
 esac
@@ -64,13 +69,23 @@ STUB
 
 cat >"$work/bin/systemctl" <<'STUB'
 #!/usr/bin/env bash
-# is-enabled / is-active <unit>  -> read from $SYSTEMCTL_STATE_DIR
-sub="${2:-}"; unit="${3:-}"
+set -euo pipefail
+d="${SYSTEMCTL_STATE_DIR:-}"
+if [[ -n "$d" ]]; then
+  mkdir -p "$d"
+  printf '%s\n' "$*" >>"$d/calls.log"
+fi
+[[ "${1:-}" == "--user" ]] && shift || true
+sub="${1:-}"; unit="${2:-}"
 case "$sub" in
-  is-enabled) cat "${SYSTEMCTL_STATE_DIR}/enabled" 2>/dev/null || { echo "not-found"; exit 1; } ;;
-  is-active)  cat "${SYSTEMCTL_STATE_DIR}/active"  2>/dev/null || { echo "inactive"; exit 3; } ;;
-  stop|disable) echo "disabled" >"${SYSTEMCTL_STATE_DIR}/enabled"; echo "inactive" >"${SYSTEMCTL_STATE_DIR}/active" ;;
-  restart) echo "active" >"${SYSTEMCTL_STATE_DIR}/active" ;;
+  is-enabled) cat "${d}/enabled" 2>/dev/null || { echo "not-found"; exit 1; } ;;
+  is-active)  cat "${d}/active"  2>/dev/null || { echo "inactive"; exit 3; } ;;
+  stop|disable)
+    [[ -n "$d" ]] && { echo "disabled" >"${d}/enabled"; echo "inactive" >"${d}/active"; } ;;
+  start)
+    [[ -n "$d" ]] && { echo "enabled" >"${d}/enabled"; echo "active" >"${d}/active"; } ;;
+  restart)
+    [[ -n "$d" ]] && { echo "enabled" >"${d}/enabled"; echo "active" >"${d}/active"; } ;;
   *) : ;;
 esac
 STUB
@@ -97,6 +112,7 @@ import json, sys
 cfg = json.load(open(sys.argv[1]))
 cfg["orchestrator_poll_seconds"] = 0.2
 cfg["orchestrator_lock_ttl_seconds"] = 3600
+cfg["session_stop_grace_seconds"] = 0.5
 json.dump(cfg, open(sys.argv[2], "w"), indent=2)
 PY
   # `orchestrator run` sets its own commit identity on the shared checkout
@@ -160,6 +176,8 @@ for _ in $(seq 1 80); do [[ -f "$TMUX_STUB_DIR/sess-$name" ]] && break; sleep 0.
 [[ "$(git -C "$root" config --worktree --get user.email)" == "orchestrator@nogging.bot" ]] \
   && echo "ok   - run: sets the orchestrator@nogging.bot identity email" \
   || { echo "FAIL - run: user.email is $(git -C "$root" config --get user.email 2>/dev/null || echo unset)"; fail=1; }
+# the launch settle window must pass (the record turns running) before the session ends
+for _ in $(seq 1 100); do grep -q '^launched ' "$work/run.out" 2>/dev/null && break; sleep 0.1; done
 rm -f "$TMUX_STUB_DIR/sess-$name"     # the session ends
 for _ in $(seq 1 80); do [[ -f "$work/run.rc" ]] && break; sleep 0.1; done
 [[ "$(cat "$work/run.rc" 2>/dev/null)" == "1" ]] \
@@ -234,6 +252,115 @@ check "stop: reports stopped and disabled" "stopped and disabled"
 [[ "$(cat "$SYSTEMCTL_STATE_DIR/enabled")" == "disabled" ]] \
   && echo "ok   - stop: the unit stays disabled" \
   || { echo "FAIL - stop: unit not disabled"; fail=1; }
+
+# ===========================================================================
+# restart: refused when invoked from within the orchestrator session itself
+# ===========================================================================
+NOGG_SESSION_NAME="nogg-orchestrator-status" "$nogg" orchestrator restart >"$out" 2>&1 \
+  && { echo "FAIL - restart: inside-session restart should be refused"; cat "$out"; fail=1; } \
+  || echo "ok   - restart: inside-session restart is refused"
+check "restart: names refusal reason" "refusing to restart orchestrator from within its own session"
+check "restart: hints at external shell" "external shell"
+
+NOGG_SESSION_ROLE="orchestrator" "$nogg" orchestrator restart >"$out" 2>&1 \
+  && { echo "FAIL - restart: inside-session role restart should be refused"; cat "$out"; fail=1; } \
+  || echo "ok   - restart: inside-session role restart is refused"
+check "restart: role names refusal reason" "refusing to restart orchestrator from within its own session"
+unset NOGGING_ROOT
+
+# ===========================================================================
+# restart: terminates live session, stops/starts unit, records exit reason
+# ===========================================================================
+root="$work/restart"; make_root "$root"
+export NOGGING_ROOT="$root"
+export TMUX_STUB_DIR="$work/restart-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export SYSTEMCTL_STATE_DIR="$work/restart-sysd"; mkdir -p "$SYSTEMCTL_STATE_DIR"
+echo "enabled" >"$SYSTEMCTL_STATE_DIR/enabled"
+echo "active"  >"$SYSTEMCTL_STATE_DIR/active"
+name="nogg-orchestrator-restart"
+unit="$name.service"
+
+mkdir -p "$root/.nogging/state/sessions"
+touch "$TMUX_STUB_DIR/sess-$name"     # live orchestrator tmux session exists
+cat >"$root/.nogging/state/sessions/$name.json" <<JSON
+{"name":"$name","role":"orchestrator","bead_id":null,"state":"running","floor_lifted":true,"backend_ref":"$name"}
+JSON
+
+"$nogg" orchestrator restart >"$out" 2>&1 \
+  || { echo "FAIL - restart: errored"; cat "$out"; fail=1; }
+check "restart: reports restarted" "restarted ($unit)"
+
+grep -qF " stop $unit" "$SYSTEMCTL_STATE_DIR/calls.log" \
+  && echo "ok   - restart: calls systemctl stop" \
+  || { echo "FAIL - restart: systemctl stop not called"; cat "$SYSTEMCTL_STATE_DIR/calls.log"; fail=1; }
+grep -qF " start $unit" "$SYSTEMCTL_STATE_DIR/calls.log" \
+  && echo "ok   - restart: calls systemctl start" \
+  || { echo "FAIL - restart: systemctl start not called"; cat "$SYSTEMCTL_STATE_DIR/calls.log"; fail=1; }
+grep -qF " restart $unit" "$SYSTEMCTL_STATE_DIR/calls.log" \
+  && { echo "FAIL - restart: systemctl restart called unexpectedly"; fail=1; } \
+  || echo "ok   - restart: does not call systemctl restart"
+
+python3 -c '
+import sys
+calls = open(sys.argv[1]).read()
+stop_pos = calls.find(" stop ")
+start_pos = calls.find(" start ")
+assert stop_pos != -1 and start_pos != -1 and stop_pos < start_pos, f"expected stop before start in {calls}"
+' "$SYSTEMCTL_STATE_DIR/calls.log" \
+  && echo "ok   - restart: stop precedes start" \
+  || { echo "FAIL - restart: stop did not precede start"; fail=1; }
+
+[[ ! -f "$TMUX_STUB_DIR/sess-$name" ]] \
+  && echo "ok   - restart: live tmux session terminated" \
+  || { echo "FAIL - restart: tmux session still exists"; fail=1; }
+
+[[ "$(record "$root/.nogging/state/sessions/$name.json" state)" == "stopped" ]] \
+  && echo "ok   - restart: session record transitioned to stopped" \
+  || { echo "FAIL - restart: record state is $(record "$root/.nogging/state/sessions/$name.json" state)"; fail=1; }
+[[ "$(record "$root/.nogging/state/sessions/$name.json" exit_reason)" == "restarted by operator" ]] \
+  && echo "ok   - restart: session record exit_reason is 'restarted by operator'" \
+  || { echo "FAIL - restart: record exit_reason is $(record "$root/.nogging/state/sessions/$name.json" exit_reason)"; fail=1; }
+unset NOGGING_ROOT
+
+# ===========================================================================
+# restart: --supervisor-only preserves live session and calls systemctl restart
+# ===========================================================================
+root="$work/restart-sup"; make_root "$root"
+export NOGGING_ROOT="$root"
+export TMUX_STUB_DIR="$work/restart-sup-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export SYSTEMCTL_STATE_DIR="$work/restart-sup-sysd"; mkdir -p "$SYSTEMCTL_STATE_DIR"
+echo "enabled" >"$SYSTEMCTL_STATE_DIR/enabled"
+echo "active"  >"$SYSTEMCTL_STATE_DIR/active"
+name="nogg-orchestrator-restart-sup"
+unit="$name.service"
+
+mkdir -p "$root/.nogging/state/sessions"
+touch "$TMUX_STUB_DIR/sess-$name"     # live orchestrator tmux session exists
+cat >"$root/.nogging/state/sessions/$name.json" <<JSON
+{"name":"$name","role":"orchestrator","bead_id":null,"state":"running","floor_lifted":true,"backend_ref":"$name"}
+JSON
+
+"$nogg" orchestrator restart --supervisor-only >"$out" 2>&1 \
+  || { echo "FAIL - restart --supervisor-only: errored"; cat "$out"; fail=1; }
+check "restart --supervisor-only: reports restarted" "restarted ($unit)"
+
+grep -qF " restart $unit" "$SYSTEMCTL_STATE_DIR/calls.log" \
+  && echo "ok   - restart --supervisor-only: calls systemctl restart" \
+  || { echo "FAIL - restart --supervisor-only: systemctl restart not called"; cat "$SYSTEMCTL_STATE_DIR/calls.log"; fail=1; }
+grep -qF " stop $unit" "$SYSTEMCTL_STATE_DIR/calls.log" \
+  && { echo "FAIL - restart --supervisor-only: systemctl stop was called"; fail=1; } \
+  || echo "ok   - restart --supervisor-only: does not call systemctl stop"
+grep -qF " start $unit" "$SYSTEMCTL_STATE_DIR/calls.log" \
+  && { echo "FAIL - restart --supervisor-only: systemctl start was called"; fail=1; } \
+  || echo "ok   - restart --supervisor-only: does not call systemctl start"
+
+[[ -f "$TMUX_STUB_DIR/sess-$name" ]] \
+  && echo "ok   - restart --supervisor-only: preserves live tmux session" \
+  || { echo "FAIL - restart --supervisor-only: tmux session was removed"; fail=1; }
+
+[[ "$(record "$root/.nogging/state/sessions/$name.json" state)" == "running" ]] \
+  && echo "ok   - restart --supervisor-only: session record remains running" \
+  || { echo "FAIL - restart --supervisor-only: record state is $(record "$root/.nogging/state/sessions/$name.json" state)"; fail=1; }
 unset NOGGING_ROOT
 
 if [[ $fail -ne 0 ]]; then echo "orchestrator checks failed" >&2; exit 1; fi

@@ -33,9 +33,12 @@ cat >"$work/bin/tmux" <<'STUB'
 #!/usr/bin/env bash
 [[ "${1:-}" == "-L" ]] && shift 2
 cmd="${1:-}"; shift || true
-case "$cmd" in has-session) exit 1 ;; *) : ;; esac
+d="${TMUX_STUB_DIR:-$(dirname "$0")/tmux-state}"; mkdir -p "$d"
+if [[ "$cmd" == new-session ]]; then a=("$@"); for i in "${!a[@]}"; do [[ "${a[i]}" == -s ]] && : >"$d/live-${a[i+1]}"; done; fi
+case "$cmd" in has-session) [[ -e "$d/live-${2:-}" ]] || exit 1 ;; *) : ;; esac
 STUB
 chmod +x "$work/bin/bd" "$work/bin/tmux"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-agents.sh"; stub_agent_binaries "$work/bin"
 export PATH="$work/bin:$PATH" HOME="$work/home"
 # This suite may itself run inside a supervised session; start as a plain operator shell.
 unset NOGG_SESSION_NAME NOGG_SESSION_ROLE NOGG_SESSION_AGENT NOGG_SESSION_ROOT NOGG_OPENSPEC_FENCE

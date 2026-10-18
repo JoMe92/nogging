@@ -43,7 +43,7 @@ grep -q '"name": "Nogging"' templates/nogging-config.json || fail "generated con
 grep -q 'scfg("session_tmux_socket", "nogging")' scripts/nogg || fail "tmux socket changed identity"
 grep -q '^# Nogging$' README.md || fail "README display name is stale"
 grep -q '^## Project status and audience$' README.md || fail "README maturity and audience section is missing"
-grep -q 'pre-public release candidate' README.md || fail "README maturity status is missing"
+! grep -qi 'pre-public\|release candidate' README.md || fail "README still calls Nogging a pre-public release candidate"
 grep -q '^## Supported environments$' README.md || fail "README support summary is missing"
 grep -q '^## Safety warning$' README.md || fail "README safety warning is missing"
 grep -q '^## Documentation$' README.md || fail "README documentation index is missing"
@@ -54,7 +54,7 @@ grep -q 'independent$' README.md && grep -q '^implementation and is not affiliat
   || fail "README independence statement is missing"
 grep -q 'only Gas Town' README.md || fail "README Beads-only adoption boundary is missing"
 grep -q 'optional sibling' README.md || fail "README does not keep Agent Console optional"
-grep -q 'npx github:JoMe92/nogging#v2.2.0 init --no-systemd' README.md \
+grep -q "npx github:JoMe92/nogging#v$(node -p "require('./package.json').version") init --no-systemd" README.md \
   || fail "README quick start is not pinned to the supported GitHub tag"
 ! grep -q 'git@github.com' README.md || fail "README assumes private SSH repository access"
 grep -q 'Nogging validation' .github/workflows/nogging-validate.yml || fail "workflow display name is stale"

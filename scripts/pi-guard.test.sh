@@ -15,6 +15,7 @@
 set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+source "$root/scripts/lib/test-env.sh"
 guard="$root/.pi/extensions/nogging-guard.ts"
 
 if ! command -v node >/dev/null 2>&1; then

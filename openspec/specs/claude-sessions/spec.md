@@ -8,43 +8,57 @@ Defines supervised agent sessions, inspectable lifecycle records and deliberate 
 
 ### Requirement: Launched Claude sessions run in a named tmux session on the Pi
 
-Every Claude Code session that SpecForge starts for Lead Agent or specialist
-work SHALL run inside a tmux session on the Pi host, managed under a dedicated
-tmux server socket reserved for SpecForge. Each such session SHALL have a
-deterministic name that encodes its role and its mapped Bead. SpecForge SHALL
-NOT create a session whose name collides with an existing managed session; on a
-name collision it SHALL either fail or generate a new distinct name, and SHALL
-never reuse or overwrite the existing session.
+Every agent session that Nogging starts for Planning, Lead Agent or
+specialist work SHALL run on the delivery host inside a session of its
+selected session backend (see the `session-backends` capability). That is:
 
-The **Orchestration Agent** session is the one exception: it is not anchored to
-a Bead, its name is the fixed singleton `sf-orchestrator-<slug>`, and
-`scripts/specforge orchestrator run` SHALL **adopt** an existing live session
-of that name (re-attach its log pipe and refresh its record) rather than fail
-or rename — this is what makes the supervisor idempotent and the role
-single-instance.
+- on the `tmux` backend (the default), a tmux session managed under a
+  dedicated tmux server socket reserved for Nogging;
+- on the `herdr` backend, a pane labelled with the session name inside a herdr
+  session namespace reserved for Nogging.
+
+Each such session SHALL have a deterministic name that encodes its role and
+its mapped Bead (or planning identifier). Nogging SHALL NOT create a session
+whose name collides with an existing managed record, a leftover log, or a live
+session on any available backend. On a name collision it SHALL either fail or
+generate a new distinct name, and SHALL never reuse or overwrite the existing
+session.
+
+The **Orchestration Agent** session is the one exception. It always runs on
+tmux. It is not anchored to a Bead, and its name is the fixed singleton
+`nogg-orchestrator-<slug>`. `scripts/nogg orchestrator run` SHALL **adopt** an
+existing live session of that name (re-attach its log pipe and refresh its
+record) rather than fail or rename. This is what makes the supervisor
+idempotent and the role single-instance.
 
 #### Scenario: A launched session is a named tmux session
 
-- **WHEN** SpecForge launches a Claude session for a role and a Bead
-- **THEN** a tmux session exists on the Pi under the SpecForge tmux server socket
+- **WHEN** Nogging launches a session for a role and a Bead on the default backend
+- **THEN** a tmux session exists on the delivery host under the Nogging tmux server socket
 - **AND** its name encodes the role and the Bead ID
-- **AND** the Claude process runs inside that tmux session
+- **AND** the agent process runs inside that tmux session
+
+#### Scenario: A herdr launch is a named herdr pane
+
+- **WHEN** Nogging launches a session with `--backend herdr`
+- **THEN** a pane labelled with the session name exists in the Nogging herdr session
+- **AND** the agent process runs inside that pane
 
 #### Scenario: Session names do not collide
 
-- **WHEN** SpecForge launches a session and the generated name already belongs to a managed session
-- **THEN** SpecForge does not attach to, reuse, or overwrite the existing session
+- **WHEN** Nogging launches a session and the generated name already belongs to a managed session
+- **THEN** Nogging does not attach to, reuse, or overwrite the existing session
 - **AND** it either fails with a clear message or creates a session under a different distinct name
 
 #### Scenario: Managed sessions are isolated from the operator's own tmux
 
 - **WHEN** an operator runs `tmux list-sessions` against their default tmux server
-- **THEN** SpecForge-managed sessions are not listed there
-- **AND** they are listed only under the dedicated SpecForge tmux server socket
+- **THEN** Nogging-managed sessions are not listed there
+- **AND** they are listed only under the dedicated Nogging tmux server socket
 
 #### Scenario: The orchestrator session is adopted, not duplicated
 
-- **WHEN** `orchestrator run` is invoked and a live `sf-orchestrator-<slug>` session already exists
+- **WHEN** `orchestrator run` is invoked and a live `nogg-orchestrator-<slug>` session already exists
 - **THEN** it adopts that session and refreshes its record
 - **AND** it does not create a second orchestrator session
 
@@ -85,28 +99,33 @@ readable after the process that launched the session has exited or restarted.
 
 ### Requirement: Sessions are listable and attachable remotely over SSH
 
-SpecForge SHALL provide a command, runnable from an ordinary SSH shell, that
-lists every managed session together with its runtime metadata without
-attaching to any session. SpecForge SHALL provide a separate command to attach
-to a named session, including a read-only attach option. Listing SHALL
-reconcile each metadata record against live tmux state and report a record
-whose tmux session is gone as failed rather than running.
+Nogging SHALL provide a command, runnable from an ordinary SSH shell, that
+lists every managed session with its runtime metadata — including its session
+backend — without attaching to any session. Nogging SHALL provide a separate
+command to attach to a named session, including a read-only attach option
+where the session's backend supports one. Where it does not, the read-only
+attach SHALL be refused rather than granting input.
+
+Listing SHALL reconcile each metadata record against the live state of that
+record's own backend. A record whose backend session is gone SHALL be reported
+as failed rather than running. A record whose backend's liveness cannot be
+determined SHALL be reported as unknown, never as failed.
 
 #### Scenario: An operator lists sessions over SSH
 
-- **WHEN** an operator connects to the Pi over SSH and runs the session list command
-- **THEN** every managed session is shown with its Bead ID, role, start time, working directory, owner, and state
+- **WHEN** an operator connects to the delivery host over SSH and runs the session list command
+- **THEN** every managed session is shown with its Bead ID, role, start time, working directory, owner, state and backend
 - **AND** the command does not attach to any session
 
 #### Scenario: An operator attaches to a chosen session
 
 - **WHEN** an operator runs the attach command with a managed session name
-- **THEN** their terminal is attached to that tmux session
-- **AND** a read-only option is available that prevents sending input to the session
+- **THEN** their terminal is attached to that session through its backend
+- **AND** a read-only option is available that prevents sending input, or, on a backend without read-only attach, is refused with a pointer to the log
 
 #### Scenario: A dead session is reported as failed
 
-- **WHEN** a metadata record is in the running state but its tmux session no longer exists
+- **WHEN** a metadata record is in the running state but its backend session no longer exists
 - **THEN** the list command reports that session as failed
 - **AND** it does not report it as running
 
@@ -114,12 +133,19 @@ whose tmux session is gone as failed rather than running.
 
 Each launched session SHALL stream its console output to an append-only log
 file whose path is recorded in the session metadata. The log SHALL be readable
-without attaching to the tmux session. Log file growth SHALL be bounded by a
-configured size limit with rotation. A Claude Code session MAY additionally
-have a structured events file (`<name>.events.jsonl`) written by its own
-hooks; where present, this file supplements the console log and SHALL NOT
-replace it — the console log remains the complete record regardless of
-whether the events file exists.
+without attaching to the backend session.
+
+Output SHALL reach the log as it arrives, without waiting for a line break, so
+the log of a full-screen agent that emits few line feeds grows while the
+session runs. The log writer SHALL hold at most a bounded chunk of output in
+memory. Log growth SHALL be bounded by the configured size limit with
+rotation, and no log generation SHALL exceed that limit. The writer SHALL
+preserve the output bytes exactly.
+
+A Claude Code session MAY additionally have a structured events file
+(`<name>.events.jsonl`) written by its own hooks; where present, this file
+supplements the console log and SHALL NOT replace it — the console log remains
+the complete record regardless of whether the events file exists.
 
 #### Scenario: Session output is captured to a log
 
@@ -131,13 +157,18 @@ whether the events file exists.
 
 - **WHEN** an operator reads or follows a session's log from an SSH shell
 - **THEN** they see the session's output
-- **AND** they do not attach to or disturb the tmux session
+- **AND** they do not attach to or disturb the backend session
+
+#### Scenario: A full-screen agent's log grows live
+
+- **WHEN** a running session emits output that contains no line feed
+- **THEN** that output appears in the log before the session ends
 
 #### Scenario: Log size is bounded
 
-- **WHEN** a session's log file reaches the configured size limit
-- **THEN** it is rotated
-- **AND** the active log file does not grow without bound
+- **WHEN** a session's output, with or without line feeds, exceeds the configured size limit
+- **THEN** the log is rotated
+- **AND** no log generation exceeds the configured size limit
 
 #### Scenario: An events file supplements, never replaces, the console log
 
@@ -148,36 +179,56 @@ whether the events file exists.
 
 ### Requirement: Attach, stop and cleanup are deliberate operations
 
-Attaching to, stopping, and cleaning up a session SHALL each be an explicit
+Attaching to, stopping and cleaning up a session SHALL each be an explicit
 operator command and SHALL NOT occur as a side effect of another operation.
-Stopping a session SHALL terminate its Claude process and its tmux session and
-SHALL record a final state with the time and reason. Cleanup SHALL remove the
-tmux session and retire its metadata, and SHALL run only for a session that has
-completed its task or been stopped. Cleanup SHALL refuse to act on a session
-that is still starting, running or idle.
+
+Stopping a session SHALL terminate its agent process and its backend session,
+and SHALL record a final state with the time and reason.
+
+Cleanup SHALL remove the backend session and retire its metadata. It SHALL run
+only for a session that has completed its task or been stopped, and SHALL
+refuse to act on a session that is still starting, running or idle.
+
+Cleanup SHALL archive the session's log together with every rotated
+generation of it. Cleanup SHALL stop the dedicated Nogging tmux server only
+when that server's own session listing succeeds and reports no session. That
+the current checkout has no remaining record SHALL NOT be a reason to stop a
+server that still hosts the Orchestration Agent or another checkout's session.
+Cleanup SHALL never stop the herdr server.
 
 #### Scenario: Stopping a session records a final state
 
 - **WHEN** an operator stops a running session
-- **THEN** the Claude process and the tmux session are terminated
+- **THEN** the agent process and the backend session are terminated
 - **AND** the metadata record shows a terminal state with the end time and the stop reason
 
 #### Scenario: Cleanup refuses a running session
 
 - **WHEN** an operator runs cleanup against a session whose state is starting, running or idle
-- **THEN** cleanup does not remove the tmux session or the metadata
+- **THEN** cleanup does not remove the backend session or the metadata
 - **AND** it reports that the session must be stopped first
 
 #### Scenario: Cleanup runs after completion or stop
 
 - **WHEN** a session has completed its task or been stopped and an operator runs cleanup for it
-- **THEN** the tmux session is removed
+- **THEN** the backend session is removed
 - **AND** the metadata record is retired
+
+#### Scenario: Cleanup in a quiet checkout keeps the shared tmux server
+
+- **WHEN** cleanup retires the last record of a checkout while the Orchestration Agent runs on the shared tmux server
+- **THEN** the tmux server and the Orchestration Agent session keep running
+
+#### Scenario: Cleanup archives every log generation
+
+- **WHEN** cleanup retires a session whose log has rotated generations
+- **THEN** the active log and every rotated generation are archived
+- **AND** no generation of that log is left in place
 
 #### Scenario: Attach never happens automatically
 
-- **WHEN** SpecForge launches, lists, logs, stops or cleans up a session
-- **THEN** no tmux attach is performed as part of that operation
+- **WHEN** Nogging launches, lists, logs, stops or cleans up a session
+- **THEN** no attach is performed as part of that operation
 
 ### Requirement: A launched session never claims a task autonomously
 
@@ -306,15 +357,18 @@ its exit code, and SHALL print nothing when not running in a cloud session.
 
 For `--role lead` or `--role specialist:*`, `session launch` SHALL consult
 the target Bead's recorded dependencies and SHALL refuse to create any
-tmux session or metadata record when one or more of them has a status other
-than `closed`, naming every such blocking Bead ID in its failure message.
-`--role orchestrator` SHALL be unaffected, and a Bead with no recorded
+tmux session or metadata record when one or more of its **blocking**
+dependencies has a status other than `closed`, naming every such blocking
+Bead ID in its failure message. A dependency blocks only when its edge type is
+`blocks` or no edge type is recorded; `parent-child` links (for example to an
+open epic) and every other non-blocking edge type SHALL NOT count.
+`--role orchestrator` SHALL be unaffected, and a Bead with no blocking recorded
 dependency SHALL be unaffected.
 
 #### Scenario: A blocked Bead is refused
 
 - **WHEN** `session launch --role lead --bead <id>` runs
-- **AND** `<id>` has a recorded dependency on a Bead that is not `closed`
+- **AND** `<id>` has a recorded blocking dependency on a Bead that is not `closed`
 - **THEN** the command exits non-zero, names the blocking Bead ID in its
   message
 - **AND** no tmux session and no session metadata record are created
@@ -322,9 +376,20 @@ dependency SHALL be unaffected.
 #### Scenario: A ready Bead is unaffected
 
 - **WHEN** `session launch --role lead --bead <id>` runs
-- **AND** `<id>` has no recorded dependency, or every recorded dependency is
-  `closed`
+- **AND** `<id>` has no recorded blocking dependency, or every recorded
+  blocking dependency is `closed`
 - **THEN** the session launches exactly as before this requirement existed
+
+#### Scenario: An open parent epic does not block its child
+
+- **WHEN** `session launch --role lead --bead <id>` runs
+- **AND** the only non-closed recorded dependency of `<id>` is a `parent-child` link to an open epic
+- **THEN** the session launches
+
+#### Scenario: A real blocker is named alongside an open epic parent
+
+- **WHEN** `<id>` has an open `parent-child` epic and an open `blocks` dependency
+- **THEN** the launch is refused and the message names the blocker but not the epic
 
 #### Scenario: The orchestrator role is unaffected
 
@@ -338,15 +403,16 @@ A `PreToolUse` hook on the `Bash` tool SHALL detect a `scripts/nogg session
 launch` command carrying `--role lead` or a `--role specialist:` value
 together with a `--bead <id>` argument, and SHALL exit with a blocking
 status and a stderr message naming the blocking Bead ID(s) when that Bead
-has an unmet recorded dependency, before the underlying `Bash` tool call
-runs. A non-matching `Bash` command, or a matching one for a ready Bead,
-SHALL proceed unaffected.
+has an unmet **blocking** recorded dependency (the same edge-type rule as
+`session launch`: type `blocks` or none recorded, status not `closed`),
+before the underlying `Bash` tool call runs. A non-matching `Bash` command,
+or a matching one for a ready Bead, SHALL proceed unaffected.
 
 #### Scenario: The hook blocks before the tool call runs
 
 - **WHEN** a Claude Code session attempts a `Bash` tool call whose command is
   `scripts/nogg session launch --role lead --bead <id>` for a Bead with an
-  unmet recorded dependency
+  unmet blocking recorded dependency
 - **THEN** the tool call is blocked with a message naming the blocking Bead
   ID
 - **AND** `scripts/nogg` itself is never invoked
@@ -355,6 +421,11 @@ SHALL proceed unaffected.
 
 - **WHEN** a Claude Code session attempts any `Bash` tool call that is not a
   matching `session launch` invocation
+- **THEN** the hook exits without blocking it
+
+#### Scenario: The hook ignores a parent-child epic
+
+- **WHEN** the matching launch targets a Bead whose only open recorded dependency is a `parent-child` link
 - **THEN** the hook exits without blocking it
 
 ### Requirement: `doctor` flags a running session whose Bead became blocked after launch
@@ -413,3 +484,32 @@ A planning session SHALL own its lock acquisition and release. Stop, cleanup and
 
 - **WHEN** the owning planner dies before plan-end
 - **THEN** recovery names the owner and provides a safe closed-boundary recovery path
+
+### Requirement: Launch fails fast when the agent cannot start
+
+`session launch` SHALL verify before any side effect that the selected agent's
+executable resolves on the launcher's `PATH`, and on a miss SHALL refuse with a
+message naming the binary (`agent binary '<name>' not found on PATH`) and exit
+non-zero, creating no session record, log, usage reservation or backend
+session. After a successful start it SHALL confirm the session is still alive
+after a short bounded settle window; if the session already ended, the launch
+SHALL record it `failed`, show the redacted startup-log tail, and exit
+non-zero without printing the launch summary's kickoff hint and without
+chaining `--kickoff`.
+
+#### Scenario: A missing binary is refused before side effects
+
+- **WHEN** `session launch` selects an agent whose executable is not on `PATH`
+- **THEN** it exits non-zero naming the binary
+- **AND** no record, log, reservation or backend session was created
+
+#### Scenario: An agent that dies at once is reported
+
+- **WHEN** the backend session ends inside the settle window after start
+- **THEN** the command exits non-zero, shows the startup-log tail, and the record is `failed`
+- **AND** no kickoff hint is printed and no `--kickoff` message is sent
+
+#### Scenario: A healthy launch is unchanged
+
+- **WHEN** the agent binary resolves and the session survives the settle window
+- **THEN** the launch prints its normal summary and kickoff guidance

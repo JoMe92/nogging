@@ -192,16 +192,18 @@ assert "{check}" in models_help, "models check"
 doc = (root / "docs/model-selection.md").read_text()
 for snippet in ["scripts/nogg models check", "--agent agy", "--json", "session launch",
                 "--tier standard", "explicit `--model` > tier > profile `model` > runtime default",
-                "tier > profile `model_reasoning_effort` > runtime default", "selection_tier",
-                "tier=<tier>", "--agent pi", "claude-effort-forwarding",
-                "quota never lowers a tier", "## Drift"]:
+                "explicit `--effort` > tier > profile `model_reasoning_effort` > runtime default",
+                "selection_tier", "tier=<tier>", "--agent pi", "claude-effort-forwarding",
+                "quota never lowers a tier", "## Drift", "Product Owner Codex cost policy",
+                "--model gpt-6-luna", "--model gpt-6.1-sol --effort low"]:
     assert snippet in doc, f"docs/model-selection.md lacks {snippet!r}"
 for rel in [".nogging/launch-prompts/orchestrator.md", ".claude/commands/orchestrate.md",
             "docs/operating-model.md"]:
     text = re.sub(r"\s+", " ", (root / rel).read_text()).lower()
     for snippet in ["--tier <tier>", "scripts/nogg models --agent <agent> --tier <tier>",
                     "routine", "standard", "complex", "higher tier", "escalates one tier",
-                    "quota never lowers a tier", "one-line reason", "product owner instruction"]:
+                    "quota never lowers a tier", "one-line reason", "product owner instruction",
+                    "--model gpt-6-luna", "--model gpt-6.1-sol --effort low", "honest `--tier`"]:
         assert snippet in text, f"{rel} lacks {snippet!r}"
 PY
 then ok "docs match the CLI help; orchestrator procedure stated in prompt, command and operating model"

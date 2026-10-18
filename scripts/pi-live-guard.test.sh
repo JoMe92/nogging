@@ -2,6 +2,7 @@
 # Optional offline integration with the actual installed Pi loader and wrapper.
 set -euo pipefail
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+source "$root/scripts/lib/test-env.sh"
 if ! command -v pi >/dev/null; then
   echo 'SKIP: actual Pi guard activation (Pi CLI unavailable)'
   exit 0

@@ -37,13 +37,23 @@ with tempfile.TemporaryDirectory() as tmp:
     refused(lambda: m.antigravity_stop_event(name,{}))
     refused(lambda: m.antigravity_stop_event(name,{'cwd':str(workdir/'.agents'),'payload':fixture}))
     assert not m.session_events_path(name).exists()
-    with patch.object(m,'tmux_sessions',return_value={name}), patch.object(m,'tmux_has_session',return_value=True):
+    # Startup readiness reads the pane: serve a captured idle agy 1.4.0 pane
+    # (mode hint, `? for shortcuts`) and record every other tmux call.
+    idle = (root/'scripts/fixtures/antigravity/1.4.0/panes/accept-edits-hint.txt').read_text()
+    calls = []
+    def fake_tmux(*a, **kw):
+        if a and a[0] == 'capture-pane':
+            return subprocess.CompletedProcess(a, 0, idle, '')
+        calls.append(a)
+    with patch.object(m,'tmux_sessions',return_value={name}), patch.object(m,'tmux_has_session',return_value=True), \
+         patch.object(m,'tmux',side_effect=fake_tmux):
+        # An idle pane alone is not the first turn's end without a Stop or a verified process.
         refused(lambda: m.await_antigravity_first_turn(name,timeout=0))
         busy = copy.deepcopy(fixture); busy['fullyIdle'] = False
         m.antigravity_stop_event(name,busy)
         refused(lambda: m.await_antigravity_first_turn(name,timeout=0))
-        calls = []
-        with patch.object(m,'tmux',side_effect=lambda *a,**kw: calls.append(a)), patch.object(m,'bead_change',return_value='support-antigravity-runtime'):
+        assert not calls
+        with patch.object(m,'bead_change',return_value='support-antigravity-runtime'):
             with patch.dict(os.environ,{'NOGG_SESSION_NAME':name,'NOGG_SESSION_AGENT':'antigravity'}), patch.object(sys,'stdin',io.StringIO(json.dumps(fixture))):
                 m.session_emit('turn_end')
             # Capture survives the launcher's older in-memory lifecycle record.
@@ -57,11 +67,16 @@ with tempfile.TemporaryDirectory() as tmp:
             with ThreadPoolExecutor(max_workers=2) as pool:
                 list(pool.map(m.session_kickoff, [name, name]))
             m.session_kickoff(name)
-            assert len([a for a in calls if '-l' in a]) == 1
+            assert len([a for a in calls if a and a[0] == 'paste-buffer']) == 1
             assert len([a for a in calls if a[-1] == 'Enter']) == 1
             assert json.loads(path.read_text())['kickoff_sent_at']
             m.session_send(name,'Follow-up')
-            assert calls[-2:] == [('send-keys','-t',name,'-l','Follow-up'),('send-keys','-t',name,'Enter')]
+            buffer = calls[-4][-2]
+            assert calls[-4:] == [
+                ('load-buffer','-b',buffer,'-'),
+                ('paste-buffer','-p','-r','-d','-b',buffer,'-t',name),
+                ('delete-buffer','-b',buffer),
+                ('send-keys','-t',name,'Enter')]
             with patch.object(m.time,'sleep'):
                 m.session_stop(name,'test complete')
             assert json.loads(path.read_text())['state'] == 'stopped'

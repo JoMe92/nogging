@@ -2,15 +2,23 @@
 
 const fs = require('fs');
 const path = require('path');
+const manifestStore = require('./manifest-store');
 
 // A running log of what an install run did (or would do, under --dry-run).
 class ChangeLog {
   constructor() {
     this.entries = [];
+    this.cls = null;
+  }
+
+  // Tag the entries added from here on with the file class of the manifest
+  // entry that produces them (see report.js CLASSES).
+  setClass(cls) {
+    this.cls = cls;
   }
 
   add(action, relPath, note) {
-    this.entries.push({ action, path: relPath, note });
+    this.entries.push({ action, path: relPath, note, cls: this.cls });
   }
 
   // action counts, ignoring 'unchanged'
@@ -34,23 +42,42 @@ function ensureDir(absDir, ctx) {
   if (!ctx.dryRun) fs.mkdirSync(absDir, { recursive: true });
 }
 
-// Copy a single file, recording create/overwrite/unchanged.
+// Copy managed content using its last accepted upstream digest as the baseline.
 function copyFile(srcAbs, destRel, ctx, { mode } = {}) {
   const destAbs = path.join(ctx.targetRoot, destRel);
   const next = fs.readFileSync(srcAbs);
-  let action = 'create';
-  if (fs.existsSync(destAbs)) {
-    const cur = fs.readFileSync(destAbs);
-    action = cur.equals(next) ? 'unchanged' : 'overwrite';
-  }
+  const nextDigest = manifestStore.sha256(next);
+  const curDigest = fs.existsSync(destAbs)
+    ? manifestStore.sha256(fs.readFileSync(destAbs)) : null;
+  // Without a recorded digest (legacy install, no manifest), fall back to the
+  // bundled release baselines: a file matching one is an unmodified old release.
+  const recordedDigest = manifestStore.getRecordedDigest(ctx.installedManifest, destRel)
+    || (curDigest ? manifestStore.resolveRecordedDigest({
+      manifestObj: ctx.installedManifest || { files: {} },
+      relPath: destRel,
+      recordedVersion: ctx.recordedVersion,
+      curDigest,
+    }) : null);
+  const state = manifestStore.evaluateFileState({ curDigest, nextDigest, recordedDigest });
+  const action = state === 'preserve' && ctx.force ? 'force-overwrite' : state;
+  const outputAbs = action === 'preserve' ? `${destAbs}.nogging-new` : destAbs;
   if (action !== 'unchanged' && !ctx.dryRun) {
-    ensureDir(path.dirname(destAbs), ctx);
-    fs.writeFileSync(destAbs, next);
+    ensureDir(path.dirname(outputAbs), ctx);
+    if (action === 'force-overwrite') fs.copyFileSync(destAbs, `${destAbs}.orig`);
+    fs.writeFileSync(outputAbs, next);
   }
-  if (mode != null && !ctx.dryRun && fs.existsSync(destAbs)) {
-    fs.chmodSync(destAbs, mode);
+  if (mode != null && action !== 'unchanged' && !ctx.dryRun) {
+    fs.chmodSync(outputAbs, mode);
   }
-  ctx.log.add(action, destRel);
+  if (ctx.nextInstalledManifest && action !== 'preserve') {
+    ctx.nextInstalledManifest.files[destRel] = nextDigest;
+  }
+  if (action === 'preserve' || action === 'force-overwrite') {
+    (ctx.review ||= []).push({ kind: action === 'preserve' ? 'preserve' : 'force', path: destRel });
+  }
+  const note = action === 'preserve' ? `upstream: ${destRel}.nogging-new`
+    : action === 'force-overwrite' ? `backup: ${destRel}.orig` : undefined;
+  ctx.log.add(action, destRel, note);
   return action;
 }
 

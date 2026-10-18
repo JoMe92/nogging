@@ -119,9 +119,13 @@ boundary is actually enforced (the guard extension for Pi, versus a
 `PreToolUse` hook for Claude or the filesystem write guard for Codex) differ.
 Each is a thin wrapper over `scripts/nogg` — the mechanical steps
 (`plan-begin` → discovery review → author → `validate` → commit as the
-`planning` writer → `materialize` → wire dependencies → integrate → safe
-cleanup → `plan-end` from a surviving canonical checkout; `discoveries` /
-`--ack`; `sync --now`) are agent-neutral.
+`planning` writer → `materialize` → wire dependencies → integrate →
+`plan-end` from the planning worktree → `worktree cleanup` from the surviving
+canonical checkout; `discoveries` /
+`--ack`; `sync --now`) are agent-neutral. `plan-end` always precedes worktree
+retirement: run it from the planning worktree, then retire the worktree with
+`worktree cleanup <record>` from the surviving canonical checkout. If cleanup
+refuses, hand off with `./scripts/nogg session stop <name>`, then `./scripts/nogg worktree cleanup <record>` from the canonical checkout.
 
 ## Resuming a run after a tool switch
 
