@@ -55,6 +55,23 @@ the Claude trusted path: it pushes the feature branch, fast-forward-merges into
 session has no network, so `git push`, `bd sync`, and `dolt push|pull` all fail;
 it stops and reports instead.
 
+### Model and reasoning effort selection
+
+Codex sessions support launch-time model and reasoning effort selection:
+
+- `--effort <level>`: Validated against `CODEX_REASONING_EFFORTS` (`none`,
+  `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`). Forwarded to
+  Codex as `--reasoning-effort <level>`. Precedence is launch `--effort` >
+  `--tier` table effort > profile `model_reasoning_effort` > runtime default.
+- `--tier <tier>`: Resolves model and effort from the model-selection table.
+  When passed together with `--model` and `--effort`, the tier remains recorded
+  for usage attribution while the explicit flags override the requested values.
+- **Product Owner cost policy:** Under the Product Owner policy, Codex defaults
+  to `gpt-6-luna`; `gpt-6.1-sol` is used only with effort `low` and only for
+  extremely hard tasks, on explicit Product Owner instruction:
+  - Standard/routine: `scripts/nogg session launch --agent codex --tier <tier> --model gpt-6-luna --effort <level>`
+  - Sol exception: `scripts/nogg session launch --agent codex --tier <tier> --model gpt-6.1-sol --effort low`
+
 #### Shared Dolt and planning launches
 
 The shared Beads database uses a host-owned Dolt server over loopback TCP.
