@@ -5,8 +5,7 @@
 #   - only Keep a Changelog subsection names;
 #   - a released section that marks a change **BREAKING** has a higher major
 #     than the next older released section;
-#   - every **BREAKING** entry in Unreleased or in a 3.x+ section names a
-#     **Migration:** step.
+#   - every **BREAKING** entry in a 3.x+ section names a **Migration:** step.
 # The real file is checked first; the same checker then runs against bad
 # fixtures to prove each rule fails. Offline: bash and coreutils only.
 set -euo pipefail
@@ -83,7 +82,7 @@ for i, (heading, k, body) in enumerate(released):
 
 for heading, no, body in sections:
     m = SEMVER.match(heading)
-    if heading != "## [Unreleased]" and not (m and int(m.group(1)) >= 3):
+    if not (m and int(m.group(1)) >= 3):
         continue
     for entry in breaking(body):
         if "**Migration:**" not in entry:
@@ -96,20 +95,16 @@ PY
 out=$(check_changelog "$root/CHANGELOG.md")
 if [[ -z "$out" ]]; then pass "CHANGELOG.md is structurally valid"; else fail_ "CHANGELOG.md: $out"; fi
 
-# The backfilled Unreleased section carries the three documented breaking
-# changes and an upgrade-notes paragraph, and no version heading yet.
-unrel=$(awk '/^## \[Unreleased\]/{f=1;next} /^## \[/{f=0} f' "$root/CHANGELOG.md")
-# Once a release is cut, [Unreleased] is empty: check the newest released
-# section instead, with the same assertions.
-if ! grep -q '[^[:space:]]' <<<"$unrel"; then
-  unrel=$(awk '/^## \[[0-9]/{if(f)exit; f=1; next} f' "$root/CHANGELOG.md")
-fi
-n=$(grep -c '^- \*\*BREAKING\*\*' <<<"$unrel" || true)
-if [[ "$n" == 3 ]]; then pass "Unreleased lists three BREAKING bullets"; else fail_ "Unreleased lists $n BREAKING bullets, expected 3"; fi
-grep -q '^Upgrade notes:' <<<"$unrel" && pass "Unreleased has an Upgrade notes paragraph" || fail_ "Unreleased lacks an Upgrade notes paragraph"
+# Release migration assertions belong to the newest release section. An
+# Unreleased entry can be any well-formed change and must not duplicate them.
+release=$(awk '/^## \[[0-9]/{if(f)exit; f=1; next} f' "$root/CHANGELOG.md")
+n=$(grep -c '^- \*\*BREAKING\*\*' <<<"$release" || true)
+if [[ "$n" == 3 ]]; then pass "newest release lists three BREAKING bullets"; else fail_ "newest release lists $n BREAKING bullets, expected 3"; fi
+grep -q '^Upgrade notes:' <<<"$release" && pass "newest release has an Upgrade notes paragraph" || fail_ "newest release lacks an Upgrade notes paragraph"
 for needle in '--force' '--profile trusted' '--full-access' 'KeyError' 'release every reservation'; do
-  grep -qF -- "$needle" <<<"$unrel" && pass "Unreleased names migration detail: $needle" || fail_ "Unreleased lacks: $needle"
+  grep -qF -- "$needle" <<<"$release" && pass "newest release names migration detail: $needle" || fail_ "newest release lacks: $needle"
 done
+unrel=$(awk '/^## \[Unreleased\]/{f=1;next} /^## \[/{f=0} f' "$root/CHANGELOG.md")
 if grep -n '^## \[[0-9]' <<<"$unrel" >/dev/null; then fail_ "Unreleased contains a version heading"; else pass "Unreleased contains no version heading"; fi
 
 # Negative fixtures: each rule must trip.
@@ -123,6 +118,10 @@ good=$'# Changelog\n\n## [Unreleased]\n\n## [1.1.0] - 2026-01-02\n\n### Added\n\
 printf '%s\n' "$good" >"$tmp/good.md"
 [[ -z "$(check_changelog "$tmp/good.md")" ]] && pass "accepts a minimal valid changelog" || fail_ "rejects a minimal valid changelog"
 
+unreleased_bullet=$'# Changelog\n\n## [Unreleased]\n\n### Added\n\n- A new unreleased change.\n\n## [3.0.0] - 2026-01-02\n\n### Changed\n\n- **BREAKING**: x **Migration:** y\n\n## [2.0.0] - 2026-01-01'
+printf '%s\n' "$unreleased_bullet" >"$tmp/unreleased-bullet.md"
+[[ -z "$(check_changelog "$tmp/unreleased-bullet.md")" ]] && pass "accepts an Unreleased bullet without release migration notes" || fail_ "rejects an Unreleased bullet without release migration notes"
+
 expect_fail "missing Unreleased" "exactly one" $'# C\n\n## [1.0.0] - 2026-01-01'
 expect_fail "duplicate Unreleased" "exactly one" $'# C\n\n## [Unreleased]\n\n## [Unreleased]'
 expect_fail "Unreleased not first" "not the first" $'# C\n\n## [1.0.0] - 2026-01-01\n\n## [Unreleased]'
@@ -131,7 +130,7 @@ expect_fail "non-descending versions" "higher version" $'# C\n\n## [Unreleased]\
 expect_fail "rc after its final release" "higher version" $'# C\n\n## [Unreleased]\n\n## [1.0.0] - 2026-01-02\n\n## [1.0.0-rc.1] - 2026-01-01\n\n## [1.0.0-rc.2] - 2026-01-01'
 expect_fail "unknown subsection" "Keep a Changelog" $'# C\n\n## [Unreleased]\n\n### Misc\n\n- x'
 expect_fail "BREAKING in a minor release" "does not raise the major" $'# C\n\n## [Unreleased]\n\n## [1.1.0] - 2026-01-02\n\n### Changed\n\n- **BREAKING**: x\n\n## [1.0.0] - 2026-01-01'
-expect_fail "BREAKING without a migration" "Migration" $'# C\n\n## [Unreleased]\n\n### Changed\n\n- **BREAKING**: x'
+expect_fail "3.x BREAKING without a migration" "Migration" $'# C\n\n## [Unreleased]\n\n## [3.0.0] - 2026-01-02\n\n### Changed\n\n- **BREAKING**: x'
 printf '%s\n' $'# C\n\n## [Unreleased]\n\n## [2.0.0] - 2026-01-02\n\n### Changed\n\n- **BREAKING**: x **Migration:** y\n\n## [1.0.0] - 2026-01-01' >"$tmp/major.md"
 [[ -z "$(check_changelog "$tmp/major.md")" ]] && pass "accepts BREAKING in a major release" || fail_ "rejects BREAKING in a major release"
 
