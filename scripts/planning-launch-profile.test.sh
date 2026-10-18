@@ -146,6 +146,7 @@ python3 - "$main" << 'PY'
 import contextlib
 from importlib.machinery import SourceFileLoader
 import io
+import os
 from pathlib import Path
 import sys
 from unittest.mock import patch
@@ -233,7 +234,10 @@ assert n5 == [], f"expected empty notes, got: {n5}"
 
 # 4. Launch output integration in _session_launch
 calls = []
+m.session_backend_module()
+from session_backend_tmux import TmuxBackend
 with patch.object(m, 'tmux', side_effect=lambda *a, **kw: calls.append(a)), \
+     patch.object(TmuxBackend, 'pid', return_value=os.getpid()), \
      patch.object(m, 'tmux_sessions', return_value=set()), \
      patch.object(m, 'tmux_has_session', return_value=False), \
      patch.object(m, 'bead_records', return_value=[]):
