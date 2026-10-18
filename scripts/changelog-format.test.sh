@@ -99,6 +99,11 @@ if [[ -z "$out" ]]; then pass "CHANGELOG.md is structurally valid"; else fail_ "
 # The backfilled Unreleased section carries the three documented breaking
 # changes and an upgrade-notes paragraph, and no version heading yet.
 unrel=$(awk '/^## \[Unreleased\]/{f=1;next} /^## \[/{f=0} f' "$root/CHANGELOG.md")
+# Once a release is cut, [Unreleased] is empty: check the newest released
+# section instead, with the same assertions.
+if ! grep -q '[^[:space:]]' <<<"$unrel"; then
+  unrel=$(awk '/^## \[[0-9]/{if(f)exit; f=1; next} f' "$root/CHANGELOG.md")
+fi
 n=$(grep -c '^- \*\*BREAKING\*\*' <<<"$unrel" || true)
 if [[ "$n" == 3 ]]; then pass "Unreleased lists three BREAKING bullets"; else fail_ "Unreleased lists $n BREAKING bullets, expected 3"; fi
 grep -q '^Upgrade notes:' <<<"$unrel" && pass "Unreleased has an Upgrade notes paragraph" || fail_ "Unreleased lacks an Upgrade notes paragraph"

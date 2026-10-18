@@ -272,7 +272,8 @@ STUB
 chmod +x "$all_present_bin"/*
 
 plan_out=$(run_plan_fn "$all_present_bin" print_plan "/target/repo" 0)
-echo "$plan_out" | grep -q 'Plan for /target/repo (Nogging v2.2.0)' \
+pkg_version=$(node -p "require('$root/package.json').version")
+echo "$plan_out" | grep -qF "Plan for /target/repo (Nogging v$pkg_version)" \
   || fail "print_plan missing header (got: $plan_out)"
 echo "$plan_out" | grep -E 'node\s+present' >/dev/null || fail "print_plan missing node line"
 echo "$plan_out" | grep -E 'claude\s+present' >/dev/null || fail "print_plan missing claude line"
