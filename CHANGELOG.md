@@ -9,6 +9,8 @@ and GitHub Releases for that history.
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-10-18
+
 Upgrade notes: run `npx github:JoMe92/nogging#<new-tag> update` from each
 installed repository. Since `update` now keeps locally modified managed files,
 look for `<file>.nogging-new` files afterwards (`./scripts/nogg doctor` lists
@@ -22,6 +24,10 @@ sessions), because `v2.2.0` cannot read the new reservation entries; see
 
 ### Added
 
+- **Codex `--effort` and the tier/model/effort combination.** `session launch --effort <level>` now works for Codex sessions, validated against Codex's reasoning-effort set and forwarded to the CLI. `--tier`, `--model` and `--effort` combine with a documented precedence (explicit flag over tier over profile), and `docs/model-selection.md` records the Product Owner cost policy: `gpt-6-luna` by default, `gpt-6.1-sol` only at low effort for extremely hard tasks.
+- **Installer preflight.** `init` and `update` run an advisory host preflight that reports missing prerequisites before changing anything, without blocking the install.
+- **Grouped installer output and numbered next steps.** `init`, `update` and `remove` group their output by file class with per-class counts, show each path once, collect preserved and forced files into a single review block and deduplicate warnings (`--verbose` lists every file). They end with a numbered next-steps block (required before optional) and a normalized readiness verdict that points to `/plan` when ready; `npx ... doctor` prints the report once, then the same verdict.
+- **A rewritten README.** It leads newcomers from purpose to daily use and presents `v3.0.0` as the first public release, with every install command pinned to it.
 - **A switchable, experimental session backend with herdr.** `session_backend: tmux|herdr` in `.nogging/config.json` and `session launch --backend` choose where a supervised session runs; `tmux` stays the default and recommended backend, and the Orchestration Agent stays on it. The herdr backend adds a PTY-recorded, size-rotated session log, a live `AGENT_STATUS` column in `session list`, `session herdr-server start` to start or verify the dedicated server, conditional `doctor` herdr checks and a setup guide (`docs/using-with-herdr.md`). Mixed backends run side by side, and `list`, `reap`, `stop`, `cleanup`, `attach` and `send` follow each record's own backend.
 - **Codex exact resume.** `session launch --resume <thread-id>` now works for Codex sessions, through `codex resume <id>` inside the normal launch wrapper.
 - **Reliable session input.** `session send`, `nudge` and `kickoff` paste with explicit bracketed paste (multiline text arrives intact), wait `session_submit_delay_seconds` before one Enter, and verify the submission by default for Claude, Codex and Antigravity. Codex queue delivery is checked against fresh receipts from the exact thread; a message that cannot be positively verified fails as unverified instead of reporting success, and is never silently re-queued. Kickoff waits for startup readiness (`session_startup_timeout_seconds`); the new `session_submit_delay_seconds`, `session_submit_verify_delay_seconds` and `session_delivery_timeout_seconds` keys are validated.
