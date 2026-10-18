@@ -53,6 +53,30 @@ Normal `update` replaces managed helpers while preserving OpenSpec, Beads,
 custom profiles and unrelated agent settings. It does not upgrade the agent
 CLI itself or grant additional authority.
 
+### Older vendored session helpers
+
+If a vendored Nogging copy shows older session symptoms, update the copy to
+3.0.0 or later. The reliable-session-input fixes from #207, #216 and #218
+shipped in 3.0.0: #207 recognizes Claude's `[Pasted text #N]` as this
+operation's pending paste only when its composer was verified empty first;
+#216 waits for Claude and Antigravity startup readiness before sending input;
+and #218 delivers and verifies kickoff, requiring fresh receipt evidence after
+a Codex queue accepts a message. An unconfirmed outcome is unverified, not
+delivered. The launch-name and Codex delivery safeguards also require a Nogging
+update containing the launch-name/Codex-delivery change; changing only the
+agent CLI does not install them. Use the repository's pinned Nogging `update`
+procedure, then inspect any `.nogging-new` files and reconcile them as
+described above.
+
+Generated session names replace `.` and `:` with `_` so tmux and herdr address
+the same safe name as the session record. When launch fails before `running`,
+Nogging cleans up the session it created and records the cleanup result. If a
+Codex planner's pane PID is invisible from the launcher's PID namespace, the
+wrapper receipt supplies the identity; a missing or mismatched receipt makes
+the planner launch fail and clean up rather than leave an unusable planning
+session. See the running-work-in-sessions and using-with-codex guides in the
+repository's `docs/` directory for the operator procedures.
+
 ## Locally modified files and pending `.nogging-new` updates
 
 When updating a repository where verbatim managed files (such as

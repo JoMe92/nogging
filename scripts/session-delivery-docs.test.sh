@@ -50,4 +50,29 @@ grep -Fq "session_startup_timeout_seconds" "$rec_doc" || fail "$rec_doc omits st
 grep -Fq "unverified" "$rec_doc" || fail "$rec_doc omits unverified recovery guidance"
 grep -Fq "session nudge" "$rec_doc" || fail "$rec_doc omits deliberate nudge recovery"
 
+# 5. Launch-name and Codex safeguards from TASK-LCD-007
+for term in 'periods (`.`)' 'colons (`:`)' 'underscores' 'cleanup' 'older copy'; do
+  grep -Fqi "$term" "$guide" || fail "$guide omits launch guidance: $term"
+done
+for term in \
+  "[Pasted Content N chars]" \
+  "startup turn" \
+  "session_delivery_timeout_seconds" \
+  "not busy" \
+  "provable process identity" \
+  "3.0.0"
+do
+  grep -Fqi "$term" "$codex_doc" || fail "$codex_doc omits Codex safeguard: $term"
+done
+for term in "#207, #216" "update the copy" "mismatched receipt" "older vendored"; do
+  grep -Fqi "$term" "$rec_doc" || fail "$rec_doc omits recovery guidance: $term"
+done
+unreleased=$(awk '/^## \[Unreleased\]/{f=1;next} /^## \[/{f=0} f' "$root/CHANGELOG.md")
+if grep -q '[^[:space:]]' <<<"$unreleased"; then
+  fail "$root/CHANGELOG.md Unreleased section must stay empty while v3.0.0 is untagged"
+fi
+release=$(awk '/^## \[3\.0\.0\]/{f=1;next} /^## \[/{f=0} f' "$root/CHANGELOG.md")
+grep -Fq "Safe session launch and Codex delivery guidance" <<<"$release" \
+  || fail "$root/CHANGELOG.md omits the release guidance from [3.0.0]"
+
 printf 'ok   - session delivery documentation contract passes\n'
