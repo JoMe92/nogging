@@ -24,6 +24,10 @@ sessions), because `v2.2.0` cannot read the new reservation entries; see
 
 ### Added
 
+- **Safe session launch and Codex delivery guidance.** Document backend-safe
+  session names, cleanup after failed launches, Codex paste-placeholder and
+  startup-turn handling, busy-queue refusal, planner process identity recovery,
+  and updating older vendored Nogging copies.
 - **Codex `--effort` and the tier/model/effort combination.** `session launch --effort <level>` now works for Codex sessions, validated against Codex's reasoning-effort set and forwarded to the CLI. `--tier`, `--model` and `--effort` combine with a documented precedence (explicit flag over tier over profile), and `docs/model-selection.md` records the Product Owner cost policy: `gpt-6-luna` by default, `gpt-6.1-sol` only at low effort for extremely hard tasks.
 - **Installer preflight.** `init` and `update` run an advisory host preflight that reports missing prerequisites before changing anything, without blocking the install.
 - **Grouped installer output and numbered next steps.** `init`, `update` and `remove` group their output by file class with per-class counts, show each path once, collect preserved and forced files into a single review block and deduplicate warnings (`--verbose` lists every file). They end with a numbered next-steps block (required before optional) and a normalized readiness verdict that points to `/plan` when ready; `npx ... doctor` prints the report once, then the same verdict.
