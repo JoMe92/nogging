@@ -349,6 +349,8 @@ class HerdrBackend:
         return matches[0] if matches else None
 
     def start(self, name, cwd, env, argv, log):
+        if safe_session_name(name) != name:
+            raise BackendError("herdr session name is not backend-safe")
         try:
             return self._start(name, cwd, env, argv, log)
         except Exception:
