@@ -2942,6 +2942,11 @@ def validate_claude_effort(value, origin):
         raise RuntimeError(
             f"{origin}: effort {value!r} must be one of {', '.join(CLAUDE_EFFORTS)}; launch refused")
     return value
+def validate_codex_effort(value, origin):
+    if not isinstance(value, str) or value not in CODEX_REASONING_EFFORTS:
+        raise RuntimeError(
+            f"{origin}: effort {value!r} must be one of {', '.join(CODEX_REASONING_EFFORTS)}; launch refused")
+    return value
 def reject_reasoning_effort(spec, origin):
     if "model_reasoning_effort" in spec:
         raise RuntimeError(
@@ -4181,9 +4186,12 @@ def _session_launch(role, bead, cwd, read_only, owner,
     if os.environ.get("NOGG_CODEX_EXTRA_WRITABLE_ROOTS"):
         session_state_grants(None)
     if effort is not None:
-        if agent != "claude":
-            raise RuntimeError("--effort is Claude-only; launch refused")
-        validate_claude_effort(effort, "--effort")
+        if agent == "claude":
+            validate_claude_effort(effort, "--effort")
+        elif agent == "codex":
+            validate_codex_effort(effort, "--effort")
+        else:
+            raise RuntimeError("--effort is Claude- and Codex-only; launch refused")
     # `--tier` resolves the model-selection table right after the agent and
     # before anything else, so every refusal precedes all side effects.
     tier_selection = resolve_launch_tier(tier, agent, resume) if tier is not None else None
@@ -4240,17 +4248,23 @@ def _session_launch(role, bead, cwd, read_only, owner,
     selected_model, model_source = select_session_model(
         model, source_settings or codex_spec or pi_spec or agy_spec,
         tier_selection and tier_selection["model"])
-    selected_effort, effort_source = select_session_effort(effort, source_settings, agent)
+    selected_effort, effort_source = select_session_effort(
+        effort if agent == "claude" else None, source_settings, agent)
     reasoning_effort = (codex_spec or {}).get("model_reasoning_effort")
     reasoning_effort_source = "profile" if reasoning_effort is not None else "runtime-default"
-    # Codex effort: tier over profile `model_reasoning_effort` over runtime
-    # default; it travels through the wrapper's existing --reasoning-effort.
+    # Codex effort: explicit `--effort` over tier over profile
+    # `model_reasoning_effort` over runtime default; it travels through the
+    # wrapper's existing --reasoning-effort (a `-c` override, which the exact
+    # resume path already requires, so a resume carries it too).
     # Claude effort: explicit `--effort` over tier over profile `effort` over
     # runtime default; it travels as the wrapper's `--effort` under the
     # `claude-effort-forwarding` contract check. Antigravity's effort is part
     # of its model name.
     tier_effort = tier_selection and tier_selection["effort"]
-    if agent == "codex" and tier_effort is not None:
+    if agent == "codex" and effort is not None:
+        reasoning_effort = effort
+        reasoning_effort_source = "launch"
+    elif agent == "codex" and tier_effort is not None:
         reasoning_effort = tier_effort
         reasoning_effort_source = "launch"
     elif agent == "claude":
@@ -8000,8 +8014,10 @@ def main():
                                     "which overrides the runtime default")
     sl.add_argument("--tier", help="model-selection tier (routine, standard, complex): take the model "
                     "and effort from the table; --model still wins (see `nogg models`)")
-    sl.add_argument("--effort", help="reasoning effort for Claude (low, medium, high, xhigh, max); "
-                                     "overrides profile effort, which overrides the runtime default")
+    sl.add_argument("--effort", help="reasoning effort for Claude (low, medium, high, xhigh, max) or Codex "
+                                     "(none, minimal, low, medium, high, xhigh, max, ultra); overrides the "
+                                     "--tier effort, which overrides the profile effort, which overrides the "
+                                     "runtime default")
     sl.add_argument("--complexity", choices=("routine", "standard", "complex"),
                     help="task complexity recorded for usage attribution only (never selects a "
                          "model); must match --tier when both are given")
