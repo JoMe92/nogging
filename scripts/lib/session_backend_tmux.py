@@ -114,9 +114,16 @@ class TmuxBackend:
         args = ["new-session", "-d", "-s", name, "-c", cwd]
         for key, value in env.items():
             args.extend(["-e", f"{key}={value}"])
-        self._invoke(*args, "--", *argv)
         ref = {"name": name, "socket": self.socket}
-        self.wire_log(ref, log)
+        self._invoke(*args, "--", *argv)
+        try:
+            self.wire_log(ref, log)
+        except Exception:
+            try:
+                self.kill(ref)
+            except Exception:
+                pass
+            raise
         return ref
 
     def wire_log(self, ref, log, *, check=True):

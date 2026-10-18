@@ -4525,33 +4525,41 @@ def _session_launch(role, bead, cwd, read_only, owner,
             "NOGG_STARTUP_LOG": str(log_path),
         }, inner, session_log_capture(log_path))
         write_session(rec_path, record)
-    except (ToolError, session_backend_module().BackendError) as exc:
+        pid = (record["backend_ref"].get("session_pid")
+               if backend_name == "herdr" else selected_backend.pid(record["backend_ref"]))
+        if pid is not None:
+            record["session_pid"] = pid
+            if backend_name == "herdr":
+                record["session_pid_start"] = record["backend_ref"].get("session_pid_start")
+                record["session_pid_ns"] = record["backend_ref"]["session_pid_ns"]
+            else:
+                record["session_pid_start"] = process_start(pid)
+                record["session_pid_ns"] = pid_namespace(pid)
+        transition(rec_path, record, "running")
+        if record.get("state") == "failed":
+            raise ToolError(record.get("exit_reason") or "agent startup failed")
+        settle_launch(selected_backend, rec_path, record)
+    except Exception as exc:
+        cleanup_ref = record.get("backend_ref") or prepared_ref or {
+            "name": name, **({"socket": selected_backend.socket} if backend_name == "tmux" else {})}
+        cleanup_ok = True
+        try:
+            selected_backend.kill(cleanup_ref)
+        except Exception:
+            cleanup_ok = False
         # stderr was attached in the wrapper before exec, so even a child that
         # vanished before pipe-pane has a durable underlying diagnostic.
         detail = log_path.read_text(errors="replace")[-4096:].strip()
-        reason = f"launch failed: {redact(str(exc))}"
+        reason = f"launch failed: {redact(str(exc))}; cleanup {'succeeded' if cleanup_ok else 'failed'}"
         if detail:
             reason += f"\nstartup log: {redact(detail)}"
         with log_path.open("a") as fh:
             fh.write(f"# {reason}\n")
-        transition(rec_path, record, "failed", exit_reason=reason)
+        if record.get("state") not in SESSION_TERMINAL_STATES:
+            transition(rec_path, record, "failed", exit_reason=reason)
+        if token:
+            _USAGE_PENDING.pop(token, None)
         raise ToolError(reason) from exc
-    pid = (record["backend_ref"].get("session_pid")
-           if backend_name == "herdr" else selected_backend.pid(record["backend_ref"]))
-    if pid is not None:
-        record["session_pid"] = pid
-        if backend_name == "herdr":
-            # These identities belong to the server's namespace, which the
-            # launching agent need not share. Never inspect that PID locally.
-            record["session_pid_start"] = record["backend_ref"].get("session_pid_start")
-            record["session_pid_ns"] = record["backend_ref"]["session_pid_ns"]
-        else:
-            record["session_pid_start"] = process_start(pid)
-            record["session_pid_ns"] = pid_namespace(pid)
-    transition(rec_path, record, "running")
-    if record.get("state") == "failed":
-        raise ToolError(record.get("exit_reason") or "agent startup failed")
-    settle_launch(selected_backend, rec_path, record)
     if token:
         _USAGE_PENDING.pop(token).finish(token)
     print(f"launched {name}")

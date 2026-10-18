@@ -93,6 +93,9 @@ case "$cmd" in
     name="$(arg_after -t "$@")"; rm -f "$d/sess-$name" ;;
   kill-server) rm -f "$d"/sess-* ;;
   pipe-pane)
+    if [[ -n "${TMUX_STUB_FAIL_PIPE:-}" ]]; then
+      echo 'injected pipe-pane failure' >&2; exit 42
+    fi
     if [[ -n "${TMUX_STUB_FAST_EXIT:-}" ]]; then
       echo 'cannot find pane' >&2; exit 1
     fi ;;
@@ -181,6 +184,39 @@ PY
   && { echo "FAIL - launch: a bd mutation was attempted"; cat "$BD_MUTATION_LOG"; fail=1; } \
   || echo "ok   - launch: no bd mutation (only the read-only bd show)"
 unset NOGGING_ROOT
+
+# --- 1b. a failure after new-session rolls back and records failure --------
+root="$work/launch-pipe-failure"; make_root "$root"
+export NOGGING_ROOT="$root"
+export TMUX_STUB_DIR="$work/launch-pipe-failure-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-pipe-failure"
+export TMUX_STUB_FAIL_PIPE=1
+if "$nogg" session launch --role lead --bead SPEC-pipe-failure >"$out" 2>&1; then
+  echo 'FAIL - pipe failure: launch should fail'; fail=1
+else
+  grep -qF 'cleanup succeeded' "$out" \
+    && echo 'ok   - pipe failure: launch reports successful rollback' \
+    || { echo 'FAIL - pipe failure: rollback outcome missing'; cat "$out"; fail=1; }
+  record_path=$(find "$root/.nogging/state/sessions" -maxdepth 1 -name '*.json' ! -name '*.settings.json' -print -quit)
+  python3 - "$record_path" <<'PY' \
+    && echo 'ok   - pipe failure: record is failed' \
+    || { echo 'FAIL - pipe failure: record not failed'; fail=1; }
+import json, sys
+r = json.load(open(sys.argv[1]))
+assert r['state'] == 'failed', r
+assert 'cleanup succeeded' in r['exit_reason'], r
+PY
+  grep -qF 'kill-session -t ' "$TMUX_STUB_DIR/calls.log" \
+    && echo 'ok   - pipe failure: only the created session was killed' \
+    || { echo 'FAIL - pipe failure: session-specific cleanup missing'; cat "$TMUX_STUB_DIR/calls.log"; fail=1; }
+  ! grep -qF 'kill-server' "$TMUX_STUB_DIR/calls.log" \
+    && echo 'ok   - pipe failure: shared server was preserved' \
+    || { echo 'FAIL - pipe failure: kill-server was used'; fail=1; }
+  [[ ! -e "$TMUX_STUB_DIR"/sess-* ]] \
+    && echo 'ok   - pipe failure: no orphan session remains' \
+    || { echo 'FAIL - pipe failure: orphan marker remains'; fail=1; }
+fi
+unset TMUX_STUB_FAIL_PIPE NOGGING_ROOT
 
 # ===========================================================================
 # Scenario: a name collision is rejected without overwriting anything
