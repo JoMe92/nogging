@@ -38,7 +38,12 @@ a one-line reason in the Bead note or operator update, optionally checks
 `scripts/nogg models --agent <agent> --tier <tier>`, and launches with
 `--tier <tier>`. When unsure it picks the higher tier, a relaunch after a
 failed or stalled attempt escalates one tier, and quota never lowers a tier.
-An explicit `--model` is used only on Product Owner instruction. The full
+An explicit `--model` or `--effort` is used only on Product Owner
+instruction, and passed together with the honest `--tier` so attribution stays
+correct. Under the Product Owner's Codex cost policy, Codex defaults to
+`gpt-6-luna` (launch with `--tier <tier> --model gpt-6-luna --effort <level>`),
+and `gpt-6.1-sol` is used only with effort `low` and only for extremely hard
+tasks (launch with `--tier <tier> --model gpt-6.1-sol --effort low`). The full
 procedure is in `.nogging/launch-prompts/orchestrator.md` and
 `docs/operating-model.md` *Orchestration*; the table and its rationale are in
 `docs/model-selection.md`.

@@ -137,7 +137,12 @@ launches with `--tier <tier>`. Model and effort come from the shipped table
 higher tier; a relaunch after a failed or stalled attempt escalates one tier;
 quota never lowers a tier — a usage-limit denial is handled by waiting for the
 limiting reset or by launching the same tier on another agent. An explicit
-`--model` is used only on Product Owner instruction. Nothing mechanical checks
+`--model` or `--effort` is used only on Product Owner instruction, and passed
+together with the honest `--tier` so attribution stays correct. Under the
+Product Owner's Codex cost policy, Codex defaults to `gpt-6-luna` (launch with
+`--tier <tier> --model gpt-6-luna --effort <level>`), and `gpt-6.1-sol` is used
+only with effort `low` and only for extremely hard tasks (launch with
+`--tier <tier> --model gpt-6.1-sol --effort low`). Nothing mechanical checks
 the classification; the safeguard is visibility — `tier=` in `session list` and
 the reason in the notes. A Lead Agent launching an out-of-process specialist
 may pass `--tier` too, but is not required to.
