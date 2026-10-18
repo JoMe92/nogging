@@ -18,9 +18,9 @@ acceptance or readiness for review.
 | Install path exercised | `npm pack --cache /tmp/hps007-npm-cache --pack-destination /tmp`, extract, then packed `node bin/cli.js init --no-beads --no-systemd` |
 | Backend | Real tmux client; empty tracker stub for scratch diagnostics, no scratch Dolt server |
 | Scratch consumer | `/tmp/hps007-20261018/consumer`, local bare origin `/tmp/hps007-20261018/origin.git` |
-| Private tmux socket | `hps007-20261018`; no server was started |
+| Private tmux socket | `hps007-20261018`; operator-owned server kept alive with only `keepalive` after the probes |
 | Node / Git / tmux | 22.23.2 / 2.47.3 / 3.5a |
-| Codex / Claude Code / Antigravity | 0.163.0 / 2.1.302 / 1.4.1 (version checks only; no child agent started) |
+| Codex / Claude Code / Antigravity | 0.163.0 / 2.1.302 / 1.4.1; Codex and Claude child sessions launched and stopped, Antigravity version only (quota prevented a launch) |
 | OpenSpec | 1.11.0 |
 
 All six prerequisite merges (#185, #189, #194, #196, #202, #209) were present
