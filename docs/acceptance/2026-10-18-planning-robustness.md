@@ -35,11 +35,11 @@ commands; the actual `NOGG_OPENSPEC_FENCED=1` boundary was retained.
 | --- | --- | --- | --- | --- |
 | 1 | [M] | Install packed toolkit in a scratch consumer | pass | Packed installer exited 0. Consumer uses its own local bare origin and private socket; install readiness correctly reported no initialized tracker. |
 | 2 | [M] | Codex planning launch without explicit authority | pass | Exit 1 with the explicit-authority diagnostic. Consumer status stayed clean, only the main worktree existed, no session/worktree record or planning lock was created. |
-| 3 | [A] | Trusted Codex planner through plan-end, own cleanup refusal without deletion, operator stop then cleanup without force | fail | The private socket was available and launch created a running session, but kickoff returned `Codex's composer is holding input`; the pane showed Codex's repository workspace-trust dialog. No consent was supplied, so plan-begin, plan-end and self-cleanup did not run. Operator stop succeeded; cleanup without `--force` then retired the clean, unchanged worktree. |
-| 4 | [A] | Claude plan-end followed by self-retirement | fail | Launch created a running session on the private socket, but kickoff returned `Claude's composer is not identifiable yet`; the pane showed Claude's workspace-trust question. No consent was supplied, so plan-begin, plan-end and self-retirement did not run. Operator stop succeeded; cleanup without `--force` retired the clean, unchanged worktree. |
+| 3 | [A] | Trusted Codex planner through plan-end, own cleanup refusal without deletion, operator stop then cleanup without force | fail | Latest rerun launched on the private socket with the consumer trusted. No sibling-worktree trust prompt appeared, but supervised kickoff failed with `the composer did not hold exactly the message`; subsequent kickoff/send attempts did not submit input. The session stayed idle, so no plan-begin, plan-end, or self-cleanup refusal ran. Operator stop succeeded; canonical cleanup retired the unchanged worktree without `--force`. |
+| 4 | [A] | Claude plan-end followed by self-retirement | fail | Latest rerun launched and accepted kickoff with no sibling-worktree trust prompt. Its session record had `session_pid_start: null` and `session_pid_ns: null`; Claude stopped before acquiring the planning lock. No plan-end or self-retirement ran. Operator stop succeeded; canonical cleanup retired the clean worktree without `--force`. |
 | 5 | [A] | Trusted Antigravity search_web with captured query key | skipped | Antigravity quota is exhausted until `2026-10-23T22:00Z`; no launch or search was attempted, and no query key was inferred. |
 | 6 | [A] | Restricted Antigravity search_web approval prompt | skipped | Antigravity quota is exhausted until `2026-10-23T22:00Z`; no restricted launch was attempted and no approval was emulated. |
-| 7 | [M] | Named strict OpenSpec validation without an interactive prompt | fail | `openspec validate hps007-live-claude-probe --strict --no-interactive` returned without prompting but exited 1 with `Unknown item 'hps007-live-claude-probe'`. Neither planner passed the workspace-trust prompt, so no named scratch change existed to validate. |
+| 7 | [M] | Named strict OpenSpec validation without an interactive prompt | pass | Created the disposable, complete `hps007-live-probe` change in the scratch consumer with `skip_specs: true` (no product behavior delta), then ran `openspec validate hps007-live-probe --strict --no-interactive`; exit 0, `Change 'hps007-live-probe' is valid`. No prompt appeared. |
 | 8 | [M] | scripts/test | pending | No full suite was started in this worktree. A full run already active for a different Bead was not duplicated and is not evidence for this acceptance. |
 | 9 | [A] | Product Owner sign-off | skipped | Reserved for the Product Owner. |
 
@@ -109,6 +109,41 @@ consumer with `--no-interactive`; it exited 1 because the expected disposable
 change did not exist. This confirms that no prompt appeared, but does not pass
 the named-change validation check.
 
+## Re-attempt after the Product Owner trusted the scratch consumer
+
+The consumer root was added to Codex and Claude trust lists. All launches and
+checks remained in `/tmp/hps007-20261018/consumer` and used only its configured
+private tmux socket `hps007-20261018`; the fleet socket was not used.
+
+The trusted Codex rerun allocated
+`plan/hps007-codex-rerun/hps007-live-codex-probe` and launched session
+`sf-planning-hps007-codex-rerun-20261018t071410-e006`. No trust prompt for the
+sibling worktree appeared. The first supervised kickoff returned
+`the composer did not hold exactly the message; nothing was submitted`. A
+subsequent kickoff and two `session send` attempts also failed to submit input
+and reported an ambiguous queue result. The agent remained idle; no planning
+command ran. The operator stopped the session at 2026-10-18T07:15:52Z and
+retired the unchanged worktree with canonical `worktree cleanup` without
+`--force`. Thus this rerun did not exercise plan-end or the expected in-sandbox
+self-cleanup refusal.
+
+The Claude rerun allocated
+`plan/hps007-claude-rerun/hps007-live-claude-probe` and launched session
+`sf-planning-hps007-claude-rerun-20261018t071728-759b`. Kickoff succeeded and
+the child explicitly reported that no workspace-trust prompt appeared. Its
+scratch session record contained a PID but had `session_pid_start: null`,
+`session_pid_ns: null`, and no owned planning lock. Claude stopped before
+running plan-begin, so plan-end and self-retirement were not exercised. The
+operator stopped the session and retired its clean worktree from the canonical
+scratch consumer without `--force`.
+
+For the named validation check, created `hps007-live-probe` in the canonical
+scratch consumer. Its `.openspec.yaml` sets `skip_specs: true` because it is a
+validation fixture with no product behavior delta; it has proposal, design,
+and task artifacts. The exact command
+`openspec validate hps007-live-probe --strict --no-interactive` exited 0 with
+`Change 'hps007-live-probe' is valid` and did not prompt.
+
 ## Deviations
 
 - This is the short Decision 9 re-acceptance, not the full acceptance runbook.
@@ -121,9 +156,15 @@ the named-change validation check.
   operator later started the owned socket. No permission settings, fence flags,
   services, or fleet resources were changed to bypass the initial refusal. No
   direct agent process was used as a fallback.
-- With the operator-owned private socket available, both agents launched but
-  stopped at their explicit workspace-trust prompts. No consent was emulated;
+- In the first re-attempt with the operator-owned private socket, both agents
+  launched but stopped at their explicit workspace-trust prompts. No consent was emulated;
   the supervised sessions were stopped and their clean worktrees retired.
+- After the Product Owner trusted the scratch consumer, no sibling-worktree
+  trust prompt appeared. The new Codex session could not accept supervised
+  kickoff/send input, while Claude lacked session PID start-token metadata and
+  did not acquire the planning lock. Both sessions were stopped and their
+  clean worktrees retired by the operator. The named strict-validation probe
+  passed after its disposable change was created.
 - `./scripts/nogg doctor` was invoked in the scratch consumer; the preserved
   output contains no `FAIL` lines. It reports the Codex sandbox write probe as
   unavailable because the nested sandbox could not create its app-server
@@ -145,12 +186,14 @@ the named-change validation check.
 
 - **Overall:** fail (blocked, incomplete).
 - **Summary:** Packed installation and authority-free Codex launch refusal
-  were observed. The private socket allowed both trusted planner processes to
-  launch, but Codex and Claude each stopped at an explicit workspace-trust
-  prompt before any planning lifecycle command. Antigravity search remains
-  skipped until its quota reset; strict validation returned without a prompt
-  but failed because no named scratch change existed. PR #233 contains this
-  report update; `SPEC-22a8` remains blocked, unsigned, and unclosed.
+  were observed. On the trusted-scratch rerun, Codex launched without a trust
+  prompt but the supervised input path did not submit its kickoff; Claude
+  launched without a trust prompt but its session record lacked PID start
+  metadata, so it acquired no planning lock. Neither lifecycle completed.
+  The named strict-validation probe passed after a valid disposable change was
+  created. Antigravity search remains skipped until its quota reset. PR #233
+  contains this report update; `SPEC-22a8` remains blocked, unsigned, and
+  unclosed.
 
 ## Sign-off
 
