@@ -277,6 +277,40 @@ Steering a Codex session (`session send` and `session nudge`) uses queue-first d
   pending after submit, it is retried once. If the composer cannot be positively identified,
   the command fails as **unverified** and never falsely reports success.
 
+### Codex launch and delivery safeguards
+
+For a Codex launch with a startup prompt, kickoff waits until that launch's
+startup turn has completed. An empty composer alone is not enough: Nogging
+requires rollout evidence that the turn started and is now idle. If the thread
+or completion evidence cannot be established before
+`session_startup_timeout_seconds`, kickoff fails with a diagnostic instead of
+typing into a turn that may still be running. A launch without a startup prompt
+and an exact resume do not require this startup-turn evidence.
+
+When Codex shows a single `[Pasted Content N chars]` token after Nogging pasted
+a long (200 or more characters) or multiline message, Nogging treats that as
+its pending message only when the composer was verified empty before the paste.
+The displayed `N` is not compared with the source length. Extra text, multiple
+tokens, an image token, or a token already present before the operation remains
+unverified and is not submitted.
+
+Before using `codex queue`, Nogging checks that the pane, agent status and—when
+the thread resolves—the rollout turn state are not busy. It waits up to
+`session_delivery_timeout_seconds` for a busy session to become idle, then
+refuses without queueing, typing or pressing keys. On idle sessions queue
+acceptance still needs fresh receipt evidence; ambiguous outcomes remain
+unverified and are never requeued. A Codex planning launch also needs a
+provable process identity: when the launcher's `/proc` cannot see the pane PID,
+Nogging accepts a matching identity receipt from the launch wrapper. If neither
+source proves the identity, a planning launch fails before kickoff and cleans
+up the created session; launch it from an unsandboxed shell.
+
+The reliable-input fixes described in `docs/running-work-in-sessions.md`
+shipped in Nogging 3.0.0. The safeguards in this section, together with the
+session-name and failed-launch cleanup fixes, require a Nogging update that
+contains the launch-name and Codex-delivery change. If your repository vendors
+an older copy, update it before relying on them.
+
 ## A Codex session hit its usage limit
 
 `scripts/nogg session watch` and `scripts/nogg session resume-when-ready` work
