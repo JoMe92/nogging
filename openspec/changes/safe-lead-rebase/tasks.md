@@ -10,7 +10,7 @@
 
 ## 3. Detection and repair
 
-- [ ] TASK-SLR-004 [standard] Per design Decision 7: add the pure read-only classifier (clean, operation-in-progress, half-applied, mixed, dirty) by byte equality with origin/develop blobs; reuse it in the rebase refusal text and in doctor (NOTE) and recover (attention) with stale-journal reporting; hint is path-scoped restore/clean, never reset --hard. Branch feat/. Check: new scripts/worktree-integrity.test.sh synthesising the #241 state plus mixed and dirty cases (red first); scripts/test.
+- [x] TASK-SLR-004 [standard] Per design Decision 7: add the pure read-only classifier (clean, operation-in-progress, half-applied, mixed, dirty) by byte equality with origin/develop blobs; reuse it in the rebase refusal text and in doctor (NOTE) and recover (attention) with stale-journal reporting; hint is path-scoped restore/clean, never reset --hard. Branch feat/. Check: new scripts/worktree-integrity.test.sh synthesising the #241 state plus mixed and dirty cases (red first); scripts/test.
 
 - [ ] TASK-SLR-005 [standard] Per design Decision 8: add `nogg worktree repair <record> [--apply]`, dry-run by default; --apply snapshots the whole dirty state to refs/nogg/repair-backup via a temporary index, restores only proven-reproducible paths, refuses an operation in progress or a live foreign session; fenced --apply refuses openspec/ paths. Branch perf/. Depends on SLR-004. Check: new scripts/worktree-repair.test.sh proving own edits survive byte for byte (red first); scripts/test.
 
