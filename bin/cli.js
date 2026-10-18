@@ -8,7 +8,7 @@ const install = require('./lib/install');
 const { applyMerges } = require('./lib/merge');
 const { renderSystemd } = require('./lib/systemd');
 const { removeInstallation } = require('./lib/remove');
-const { runPreflight } = require('./lib/preflight');
+const { runPreflight, bootstrapHint } = require('./lib/preflight');
 const reporter = require('./lib/report');
 const nextsteps = require('./lib/nextsteps');
 const { version: VERSION } = require('../package.json');
@@ -16,21 +16,18 @@ const { version: VERSION } = require('../package.json');
 const USAGE = `nogg — install the Nogging operating structure into a repo
 
 Usage:
-  npx github:JoMe92/nogging <command> [options]
+  npx github:JoMe92/nogging#v${VERSION} <command> [options]
 
 Commands:
   version   Print the Nogging package version
   init      Install Nogging into the current git repository
-  update    Refresh Nogging tool files and re-apply merges (keeps your
-            openspec/changes, openspec/project.md and config name)
+  update    Refresh tool files and re-apply merges; project-owned state is kept
   remove    Remove managed payload while preserving project-owned state
-  doctor    Run the installed ./scripts/nogg doctor
+  doctor    Run the installed ./scripts/nogg doctor and print the readiness verdict
 
 Options:
   --dry-run      Show what would change, write nothing
-  --force        Overwrite locally modified verbatim files on init/update
-                 (backs up each to <file>.orig; default keeps them and
-                 writes upstream to <file>.nogging-new)
+  --force        Overwrite locally modified verbatim files on init/update, keeping a <file>.orig backup
   --no-beads     Skip initializing the Beads issue tracker
   --no-hooks     Skip installing the git hooks
   --no-systemd   Skip rendering the systemd sync unit
@@ -39,6 +36,8 @@ Options:
   -h, --help     Show this help
 
 init is idempotent and safe to re-run; use update for routine refreshes.
+Guide: docs/installation.md (https://github.com/JoMe92/nogging/blob/v${VERSION}/docs/installation.md)
+Fresh machine: ${bootstrapHint(VERSION)}
 `;
 
 function parseArgs(argv) {
