@@ -38,6 +38,37 @@ def enter(boundary, argv):
                           f"--map-group={boundary['gid']}", '--', *argv])
 
 
+def handle_task_done_request(bridge, request, repository):
+    """Apply one closed-Bead tick to a registered checkout in this repository."""
+    if (not isinstance(request, dict) or set(request) != {'bead_id', 'checkout'}
+            or not isinstance(request.get('bead_id'), str)
+            or not bridge.re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,127}', request['bead_id'])):
+        return {'ok': False, 'error': 'broker requires exactly a Bead identifier and checkout'}
+    if not isinstance(request.get('checkout'), str) or not Path(request['checkout']).is_absolute():
+        return {'ok': False, 'error': 'checkout must be an absolute registered worktree path'}
+    try:
+        requested = Path(request['checkout']).resolve(strict=True)
+        state = bridge.canonical_repository_state(requested)
+    except (OSError, RuntimeError) as exc:
+        return {'ok': False, 'error': f"checkout is not a registered worktree: {exc}"}
+    if state['common_dir'] != repository['common_dir']:
+        return {'ok': False, 'error': 'checkout belongs to a different repository'}
+    if str(requested) not in state['checkout_roots'] or state['checkout_root'] != str(requested):
+        return {'ok': False, 'error': 'checkout is not a registered worktree root'}
+
+    previous_root = bridge.ROOT
+    output = io.StringIO()
+    try:
+        bridge.ROOT = requested
+        with contextlib.redirect_stdout(output):
+            bridge.task_done(request['bead_id'])
+        return {'ok': True, 'output': output.getvalue()}
+    except Exception as exc:
+        return {'ok': False, 'error': str(exc)}
+    finally:
+        bridge.ROOT = previous_root
+
+
 def supervise(argv):
     helper = Path(__file__).resolve().with_name('nogg')
     original_root = os.environ.get('NOGGING_ROOT')
@@ -50,6 +81,7 @@ def supervise(argv):
         else:
             os.environ['NOGGING_ROOT'] = original_root
     roots = bridge.canonical_repository_state(os.getcwd())['checkout_roots']
+    repository = bridge.canonical_repository_state(os.getcwd())
     # A private host-side broker exposes only the already-closed Bead tick.
     # No shell command, pathname, replacement text or general writer is accepted.
     with tempfile.TemporaryDirectory(prefix='nogg-tick-') as directory:
@@ -74,14 +106,7 @@ def supervise(argv):
                             if len(raw) > 4096:
                                 raise RuntimeError("mechanical tick request is too large")
                         request = json.loads(raw)
-                        if (not isinstance(request, dict) or set(request) != {'bead_id'}
-                                or not isinstance(request['bead_id'], str)
-                                or not bridge.re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,127}', request['bead_id'])):
-                            raise RuntimeError('broker accepts only one closed Bead identifier')
-                        output = io.StringIO()
-                        with contextlib.redirect_stdout(output):
-                            bridge.task_done(request['bead_id'])
-                        response = {'ok': True, 'output': output.getvalue()}
+                        response = handle_task_done_request(bridge, request, repository)
                     except Exception as exc:
                         response = {'ok': False, 'error': str(exc)}
                     try:
@@ -108,7 +133,7 @@ def supervise(argv):
 if __name__ == '__main__':
     try:
         if sys.argv[1:] == ['--contract']:
-            print(json.dumps({'version': 1, 'features': ['readonly-mounts', 'closed-task-broker']}))
+            print(json.dumps({'version': 1, 'features': ['readonly-mounts', 'closed-task-broker', 'checkout-task-broker']}))
             sys.exit(0)
         if sys.argv[1:2] == ['--enter']:
             enter(json.loads(sys.argv[2]), sys.argv[4:])

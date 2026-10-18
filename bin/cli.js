@@ -8,42 +8,50 @@ const install = require('./lib/install');
 const { applyMerges } = require('./lib/merge');
 const { renderSystemd } = require('./lib/systemd');
 const { removeInstallation } = require('./lib/remove');
+const { runPreflight, bootstrapHint } = require('./lib/preflight');
+const reporter = require('./lib/report');
+const nextsteps = require('./lib/nextsteps');
 const { version: VERSION } = require('../package.json');
 
 const USAGE = `nogg — install the Nogging operating structure into a repo
 
 Usage:
-  npx github:JoMe92/nogging <command> [options]
+  npx github:JoMe92/nogging#v${VERSION} <command> [options]
 
 Commands:
   version   Print the Nogging package version
   init      Install Nogging into the current git repository
-  update    Refresh Nogging tool files and re-apply merges (keeps your
-            openspec/changes, openspec/project.md and config name)
+  update    Refresh tool files and re-apply merges; project-owned state is kept
   remove    Remove managed payload while preserving project-owned state
-  doctor    Run the installed ./scripts/nogg doctor
+  doctor    Run the installed ./scripts/nogg doctor and print the readiness verdict
 
 Options:
   --dry-run      Show what would change, write nothing
+  --force        Overwrite locally modified verbatim files on init/update, keeping a <file>.orig backup
   --no-beads     Skip initializing the Beads issue tracker
   --no-hooks     Skip installing the git hooks
   --no-systemd   Skip rendering the systemd sync unit
+  --verbose      List every file under its class (default: counts only)
   -v, --version  Print the Nogging package version
   -h, --help     Show this help
 
 init is idempotent and safe to re-run; use update for routine refreshes.
+Guide: docs/installation.md (https://github.com/JoMe92/nogging/blob/v${VERSION}/docs/installation.md)
+Fresh machine: ${bootstrapHint(VERSION)}
 `;
 
 function parseArgs(argv) {
-  const args = { command: null, dryRun: false, noBeads: false, noHooks: false, noSystemd: false, help: false, version: false };
+  const args = { command: null, dryRun: false, force: false, noBeads: false, noHooks: false, noSystemd: false, verbose: false, help: false, version: false };
   for (const a of argv) {
     switch (a) {
       case '-h':
       case '--help': args.help = true; break;
       case '--dry-run': args.dryRun = true; break;
+      case '--force': args.force = true; break;
       case '--no-beads': args.noBeads = true; break;
       case '--no-hooks': args.noHooks = true; break;
       case '--no-systemd': args.noSystemd = true; break;
+      case '--verbose': args.verbose = true; break;
       case '-v':
       case '--version': args.version = true; break;
       default:
@@ -54,25 +62,23 @@ function parseArgs(argv) {
         else throw Object.assign(new Error(`unexpected argument: ${a}`), { userFacing: true });
     }
   }
+  if (args.force && args.command && args.command !== 'init' && args.command !== 'update') {
+    throw Object.assign(new Error('--force only applies to init and update'), { userFacing: true });
+  }
   return args;
 }
 
-function report(ctx) {
-  const verb = ctx.dryRun ? 'Would change' : 'Changed';
-  process.stdout.write(`\n${verb}:\n${ctx.log.render()}\n`);
-  if (ctx.warnings.length) {
-    process.stdout.write('\nWarnings:\n');
-    for (const w of ctx.warnings) process.stdout.write(`  - ${w}\n`);
-  }
-  if (ctx.notes.length && !ctx.dryRun) {
-    process.stdout.write('\nNext steps:\n');
-    for (const n of ctx.notes) process.stdout.write(`  - ${n}\n`);
-  }
-  if (ctx.dryRun) process.stdout.write('\n(dry run — nothing written)\n');
+// Ends init, update and remove: the numbered next steps (not on a dry run).
+function printNextSteps(ctx, command, gaps) {
+  if (ctx.dryRun) return;
+  const lines = nextsteps.nextStepsLines(nextsteps.nextStepItems(ctx, command, gaps));
+  if (lines.length) process.stdout.write(`\n${lines.join('\n')}\n`);
 }
 
 function cmdInit(args) {
   const ctx = install.makeContext(args);
+  process.stdout.write(`${reporter.header(ctx, 'init')}\n\n`);
+  runPreflight(ctx);
   install.migrateLegacyStateRoot(ctx);
   const reinstall = fs.existsSync(path.join(ctx.targetRoot, '.nogging/config.json'));
   if (reinstall && !ctx.dryRun) {
@@ -89,13 +95,16 @@ function cmdInit(args) {
   renderSystemd(ctx);
   install.recordVersion(ctx);
   install.installGitHooks(ctx);
-  install.beadsHint(ctx);
-  report(ctx);
-  install.readinessVerdict(ctx);
+  process.stdout.write(reporter.render(ctx));
+  const gaps = install.readinessVerdict(ctx);
+  printNextSteps(ctx, 'init', gaps);
 }
 
 function cmdUpdate(args) {
   const ctx = install.makeContext(args);
+  const previousVersion = install.readRecordedVersion(ctx);
+  process.stdout.write(`${reporter.header(ctx, 'update', { previousVersion })}\n\n`);
+  runPreflight(ctx);
   install.migrateLegacyStateRoot(ctx);
   if (!fs.existsSync(path.join(ctx.targetRoot, '.nogging/config.json'))) {
     throw Object.assign(new Error('no .nogging/config.json — run `init` first'), { userFacing: true });
@@ -107,23 +116,32 @@ function cmdUpdate(args) {
   renderSystemd(ctx);
   install.recordVersion(ctx);
   install.installGitHooks(ctx);
-  report(ctx);
-  install.readinessVerdict(ctx);
+  process.stdout.write(reporter.render(ctx));
+  const gaps = install.readinessVerdict(ctx);
+  printNextSteps(ctx, 'update', gaps);
 }
 
 function cmdRemove(args) {
   const ctx = install.makeContext(args);
+  process.stdout.write(`${reporter.header(ctx, 'remove')}\n\n`);
   removeInstallation(ctx);
-  report(ctx);
+  process.stdout.write(reporter.render(ctx));
+  printNextSteps(ctx, 'remove', []);
 }
 
+// Runs `scripts/nogg doctor` once, prints its report unchanged, then the same
+// readiness verdict and the init next steps; exits with doctor's status.
 function cmdDoctor() {
-  const { spawnSync } = require('child_process');
   if (!fs.existsSync('scripts/nogg')) {
     throw Object.assign(new Error('scripts/nogg not found — run `init` first'), { userFacing: true });
   }
-  const r = spawnSync('scripts/nogg', ['doctor'], { stdio: 'inherit' });
-  process.exit(r.status == null ? 1 : r.status);
+  const ctx = { targetRoot: process.cwd(), version: VERSION, units: [], review: [], dryRun: false };
+  const doctor = nextsteps.runDoctor(ctx.targetRoot);
+  process.stdout.write(doctor.stdout);
+  process.stderr.write(doctor.stderr);
+  const gaps = install.readinessVerdict(ctx, doctor);
+  printNextSteps(ctx, 'init', gaps);
+  process.exit(doctor.status == null ? 1 : doctor.status);
 }
 
 function main() {

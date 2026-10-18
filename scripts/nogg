@@ -5,8 +5,9 @@ It intentionally contains no LLM call and makes no semantic product decision.
 """
 from __future__ import annotations
 
-import argparse, base64, datetime as dt, fcntl, getpass, hashlib, importlib.util, json, os, re, shlex, shutil, signal, socket, subprocess, sys, tempfile, time, uuid
+import argparse, base64, datetime as dt, fcntl, getpass, hashlib, importlib.util, json, math, os, re, shlex, shutil, signal, socket, subprocess, sys, tempfile, time, uuid
 import urllib.parse, urllib.request
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -75,14 +76,15 @@ def canonical_repository_state(cwd):
 
 CFG = json.loads((ROOT / ".nogging/config.json").read_text())
 LOCKS, STATE, REPORTS = (ROOT / ".nogging/locks", ROOT / ".nogging/state", ROOT / ".nogging/reports")
-# Only planning boundary locks and discovery acknowledgements become shared.
-# Session, sync, report and allocation state retain their existing locations.
+# Planning and orchestrator singleton state belongs to the main checkout.
+# Other session, sync, report and allocation state remains checkout-local.
 try:
-    PLANNING_LOCKS = Path(canonical_repository_state(ROOT)["locks_dir"])
+    ORCHESTRATOR_HOME = Path(canonical_repository_state(ROOT)["main_checkout"])
 except RuntimeError:
     # Pure helper tests can import this module without a Git checkout. The
     # public resolver and planning mutations still reject unsupported layouts.
-    PLANNING_LOCKS = LOCKS
+    ORCHESTRATOR_HOME = ROOT
+PLANNING_LOCKS = ORCHESTRATOR_LOCKS = ORCHESTRATOR_HOME / ".nogging/locks"
 WORKTREE_STATE = STATE / "worktrees"
 PR_STATE = STATE / "pull-requests"
 TASK_RE = re.compile(r"^- \[[ x]\] (TASK-[A-Z0-9-]+)\s+(.+)$", re.M)
@@ -104,8 +106,11 @@ class ToolError(RuntimeError):
     """A `git` / `bd` invocation exited non-zero. Treated as transient."""
 
 def now(): return dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat()
-def run(*args, check=True, env=None):
-    result = subprocess.run(args, cwd=ROOT, text=True, capture_output=True, env=env)
+def run(*args, check=True, env=None, timeout=None, input=None):
+    run_kwargs = dict(cwd=ROOT, text=True, capture_output=True, env=env, timeout=timeout)
+    if input is not None:
+        run_kwargs["input"] = input
+    result = subprocess.run(args, **run_kwargs)
     if check and result.returncode:
         raise ToolError(f"{' '.join(args)}: {result.stderr.strip() or result.stdout.strip()}")
     return result
@@ -277,6 +282,66 @@ def git_worktree_paths():
     if result.returncode:
         raise RuntimeError("could not inspect existing Git worktrees")
     return {line[9:] for line in result.stdout.splitlines() if line.startswith("worktree ")}
+def mount_points():
+    """Return resolved mount targets from this process's mount namespace."""
+    try:
+        lines = Path("/proc/self/mountinfo").read_text().splitlines()
+    except OSError as exc:
+        raise RuntimeError("cannot read /proc/self/mountinfo") from exc
+    points = set()
+    for line in lines:
+        fields = line.split()
+        if len(fields) < 6:
+            raise RuntimeError("cannot parse /proc/self/mountinfo")
+        # mountinfo escapes spaces, tabs, newlines and backslashes as octal.
+        raw = re.sub(r"\\([0-7]{3})", lambda match: chr(int(match.group(1), 8)), fields[4])
+        points.add(str(Path(raw).resolve()))
+    return points
+def path_is_within(path, parent):
+    try:
+        Path(path).resolve().relative_to(Path(parent).resolve())
+        return True
+    except ValueError:
+        return False
+def refuse_in_use_worktree(target):
+    """Fail closed before removal if this process or a live session uses target."""
+    try:
+        points = mount_points()
+    except (OSError, RuntimeError) as exc:
+        raise RuntimeError(f"refusing to remove {target}: cannot read the mount table: {exc}") from exc
+    gitdir_result = run("git", "-C", str(target), "rev-parse", "--absolute-git-dir", check=False)
+    if gitdir_result.returncode:
+        raise RuntimeError(f"refusing to remove {target}: cannot resolve its Git directory")
+    candidates = [target, Path(gitdir_result.stdout.strip())]
+    for point in sorted(points):
+        if any(path_is_within(point, candidate) for candidate in candidates):
+            raise RuntimeError(
+                f"refusing to remove {target}: it is mounted into this process's sandbox at {point}; "
+                "run plan-end first if you are its planner, then hand off: the operator runs "
+                "'nogg session stop <name>' and 'nogg worktree cleanup <record>' from <main checkout>"
+            )
+    cwd = Path(os.getcwd()).resolve()
+    if path_is_within(cwd, target):
+        raise RuntimeError(f"refusing to remove the current directory {target}; run worktree cleanup from <main checkout>")
+    main = Path(canonical_repository_state(ROOT)["main_checkout"])
+    directory = main / scfg("session_state_dir", ".nogging/state/sessions")
+    try:
+        records = list(directory.glob("*.json")) if directory.is_dir() else []
+        for record_path in records:
+            record = json.loads(record_path.read_text())
+            if not isinstance(record, dict):
+                raise ValueError("session record is not an object")
+            working_dir = record.get("working_dir")
+            if (record.get("state") in SESSION_ACTIVE_STATES and isinstance(working_dir, str)
+                    and path_is_within(working_dir, target)
+                    and record.get("name") != os.environ.get("NOGG_SESSION_NAME")):
+                name = record.get("name") or record_path.stem
+                raise RuntimeError(
+                    f"refusing to remove {target}: it is the working directory of active session "
+                    f"{name} ({record.get('state')}); stop it first with 'nogg session stop {name}'"
+                )
+    except (OSError, ValueError, TypeError) as exc:
+        raise RuntimeError(f"refusing to remove {target}: cannot inspect active session records: {exc}") from exc
 def branch_exists(branch):
     return run("git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch}",
                check=False).returncode == 0
@@ -428,6 +493,7 @@ def cleanup_worktree(record_name):
     develop = resolve_ref("develop") or resolve_ref("origin/develop")
     if develop is None or run("git", "merge-base", "--is-ancestor", branch, develop, check=False).returncode:
         raise RuntimeError(f"refusing to clean branch not integrated into develop: {branch}")
+    refuse_in_use_worktree(target)
     run("git", "worktree", "remove", str(target))
     # The explicit merge-base check above is authoritative. `branch -d` may
     # still reject a safely integrated branch when its upstream is the older
@@ -564,17 +630,23 @@ def task_done(bead_id):
     """
     broker = os.environ.get("NOGG_TASK_DONE_SOCKET")
     if broker:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-            client.settimeout(30)
-            client.connect(broker)
-            client.sendall(json.dumps({"bead_id": bead_id}).encode())
-            client.shutdown(socket.SHUT_WR)
-            chunks = []
-            while chunk := client.recv(65536):
-                chunks.append(chunk)
-        result = json.loads(b"".join(chunks))
+        checkout = canonical_repository_state(Path.cwd())["checkout_root"]
+        def _send_broker(req):
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                client.settimeout(30)
+                client.connect(broker)
+                client.sendall(json.dumps(req).encode())
+                client.shutdown(socket.SHUT_WR)
+                chunks = []
+                while chunk := client.recv(65536):
+                    chunks.append(chunk)
+            return json.loads(b"".join(chunks))
+        result = _send_broker({"bead_id": bead_id, "checkout": checkout})
         if not result.get("ok"):
-            raise RuntimeError(result.get("error", "mechanical task tick refused"))
+            err = result.get("error", "")
+            if "only one closed Bead identifier" in err:
+                raise RuntimeError("task-done: this session's sandbox broker predates checkout-aware ticks; relaunch the session and run task-done again; nothing was ticked")
+            raise RuntimeError(err or "mechanical task tick refused")
         print(result.get("output", ""), end="")
         return
     out = run(CFG["beads_command"], "show", bead_id, "--json").stdout.strip()
@@ -1160,7 +1232,9 @@ def release_planning_lock(force=False, session_record=None):
             # record remains until the actual owner process is confirmed gone.
             write_sentinel(by="planning-session-terminal")
             if planning_lock_live(record):
-                print(f"planning lock retained for still-live owner {record['session_name']} pid {record['pid']}")
+                print(f"planning lock retained for still-live owner {record['session_name']} pid {record['pid']}; "
+                      f"rerun 'nogg session stop {record['session_name']}' once it has exited "
+                      "(never plan-end --force while it lives)")
                 return False
         else:
             context = planning_session_context()
@@ -1205,6 +1279,148 @@ def lock(name, ttl, force=False):
             fcntl.flock(mutex, fcntl.LOCK_EX)
             return acquire()
     return acquire()
+def process_cmdline(pid):
+    """The argument list of `pid` read from /proc/<pid>/cmdline, or None if unreadable."""
+    try:
+        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+        return [part.decode("utf-8", errors="replace") for part in raw.split(b"\0") if part]
+    except OSError:
+        return None
+
+def is_orchestrator_run_cmdline(parts):
+    """True when `parts` represents a command line invoking `nogg ... orchestrator run`."""
+    if not parts or not isinstance(parts, list):
+        return False
+    nogg_indices = [i for i, arg in enumerate(parts)
+                    if Path(arg).name == "nogg" or arg == "nogg" or arg.endswith("/nogg")]
+    if not nogg_indices:
+        return False
+    for idx in nogg_indices:
+        sub = parts[idx + 1:]
+        try:
+            orc_idx = sub.index("orchestrator")
+            if "run" in sub[orc_idx + 1:]:
+                return True
+        except ValueError:
+            continue
+    return False
+
+class OrchestratorLockClassification:
+    def __init__(self, state, stale, display_state, liveness, info=None, age=None, ttl=None):
+        self.state = state
+        self.stale = stale
+        self.display_state = display_state
+        self.liveness = liveness
+        self.info = info or {}
+        self.age = age
+        self.ttl = ttl
+
+def classify_orchestrator_lock(info=None, path=None, ttl=None, now_dt=None):
+    """Shared classifier for orchestrator.lock state (design.md Decision 3).
+    Used by orchestrator run, orchestrator status, recover, and doctor."""
+    if path is None:
+        path = ORCHESTRATOR_LOCKS / "orchestrator.lock"
+    if info is None:
+        if not path.exists():
+            return OrchestratorLockClassification(
+                state="free", stale=False, display_state="free",
+                liveness="no lock file", info={}, age=0, ttl=ttl or orchestrator_lock_ttl())
+        try:
+            info = json.loads(path.read_text())
+        except (ValueError, OSError):
+            return OrchestratorLockClassification(
+                state="unreadable", stale=True, display_state="present but unreadable",
+                liveness="unreadable lock", info={}, age=None, ttl=ttl or orchestrator_lock_ttl())
+
+    if not isinstance(info, dict):
+        return OrchestratorLockClassification(
+            state="unreadable", stale=True, display_state="present but unreadable",
+            liveness="malformed lock", info={}, age=None, ttl=ttl or orchestrator_lock_ttl())
+
+    if ttl is None:
+        ttl = orchestrator_lock_ttl()
+
+    if now_dt is None:
+        now_dt = dt.datetime.now(dt.timezone.utc)
+
+    age = None
+    if "created_at" in info:
+        try:
+            then = dt.datetime.fromisoformat(str(info["created_at"]).replace("Z", "+00:00"))
+            age = int((now_dt - then).total_seconds())
+        except (ValueError, TypeError, KeyError):
+            age = None
+
+    pid = info.get("pid")
+    host = info.get("host")
+    pid_start = info.get("pid_start")
+    pid_ns = info.get("pid_ns")
+    local_host = socket.gethostname()
+
+    # Rule: Another host
+    if host != local_host:
+        stale = (age is None or age >= ttl)
+        state = "stale" if stale else "held_unverifiable"
+        display_state = "STALE" if stale else "held (unverifiable)"
+        liveness = f"pid {pid} on {host} (not this host)"
+        return OrchestratorLockClassification(
+            state=state, stale=stale, display_state=display_state,
+            liveness=liveness, info=info, age=age, ttl=ttl)
+
+    # Same host checks
+    fenced = (os.environ.get("NOGG_OPENSPEC_FENCED") == "1")
+    caller_ns = pid_namespace("self")
+    unobservable_ns = (caller_ns is None)
+    foreign_ns = (pid_ns is not None and caller_ns is not None and caller_ns != pid_ns)
+
+    # Rule: Same host, but a different or unobservable PID namespace, or fenced caller
+    if fenced or unobservable_ns or foreign_ns:
+        if fenced:
+            live_desc = f"pid {pid} unverifiable (fenced caller)"
+        elif foreign_ns:
+            live_desc = f"pid {pid} unverifiable (foreign PID namespace)"
+        else:
+            live_desc = f"pid {pid} unverifiable (unobservable PID namespace)"
+        return OrchestratorLockClassification(
+            state="held_unverifiable", stale=False, display_state="held (unverifiable)",
+            liveness=live_desc, info=info, age=age, ttl=ttl)
+
+    # Same host, observable, same namespace
+    if not isinstance(pid, int) or pid <= 0:
+        return OrchestratorLockClassification(
+            state="dead", stale=True, display_state="STALE",
+            liveness=f"invalid pid {pid}", info=info, age=age, ttl=ttl)
+
+    alive = pid_alive(pid)
+
+    if pid_start is not None:
+        # Modern lock with recorded start time
+        if alive and process_start(pid) == pid_start:
+            return OrchestratorLockClassification(
+                state="held_verified", stale=False, display_state="held (verified)",
+                liveness=f"pid {pid} alive", info=info, age=age, ttl=ttl)
+        else:
+            desc = f"pid {pid} alive (start time mismatch)" if alive else f"pid {pid} dead"
+            return OrchestratorLockClassification(
+                state="dead", stale=True, display_state="STALE",
+                liveness=desc, info=info, age=age, ttl=ttl)
+    else:
+        # Legacy lock (no pid_start)
+        if not alive:
+            return OrchestratorLockClassification(
+                state="dead", stale=True, display_state="STALE",
+                liveness=f"pid {pid} dead", info=info, age=age, ttl=ttl)
+        # Process is alive: check its cmdline
+        cmdline = process_cmdline(pid)
+        if is_orchestrator_run_cmdline(cmdline):
+            return OrchestratorLockClassification(
+                state="held_verified", stale=False, display_state="held (verified)",
+                liveness=f"pid {pid} alive", info=info, age=age, ttl=ttl)
+        else:
+            return OrchestratorLockClassification(
+                state="dead_reused", stale=True, display_state="STALE",
+                liveness=f"pid {pid} dead (PID reused: another command)", info=info, age=age, ttl=ttl)
+
 def orchestrator_lock_ttl():
     """Staleness horizon for `.nogging/locks/orchestrator.lock`. Long by
     default — the orchestrator is always-on and its supervisor rewrites the
@@ -1212,33 +1428,34 @@ def orchestrator_lock_ttl():
     the supervisor has been gone for a full day."""
     return int(CFG.get("orchestrator_lock_ttl_seconds", 86400))
 def acquire_orchestrator_lock(force=False):
-    """Acquire the single-instance orchestrator lock. Same JSON shape as the
-    planning lock (`pid` / `host` / `created_at`) and the same TTL staleness
-    rule, plus a same-host pid-liveness check: a fresh lock whose holder process
-    is gone is reclaimable without `--force`. Raises `LockBusyError`, naming the
-    holder, when a fresh lock is held by a live process (or by any process on
-    another host, which cannot be probed). `--force` reclaims unconditionally,
-    consistent with `plan-end --force`."""
-    path = data_dir(LOCKS) / "orchestrator.lock"
+    """Acquire the single-instance orchestrator lock. Writes `{pid, host,
+    created_at, pid_start, pid_ns}` (design.md Decision 3). Raises `LockBusyError`,
+    naming the holder, when held by a live verified holder, unverifiable holder,
+    or fresh remote holder. Stale locks are reclaimable without `--force`.
+    `--force` reclaims unconditionally."""
+    path = data_dir(ORCHESTRATOR_LOCKS) / "orchestrator.lock"
     if path.exists() and not force:
         try:
             info = json.loads(path.read_text())
         except (ValueError, OSError):
             info = {}
-        fresh = fresh_lock("orchestrator", orchestrator_lock_ttl()) is not None
-        same_host = info.get("host") == socket.gethostname()
-        alive = (same_host and isinstance(info.get("pid"), int)
-                 and pid_alive(info["pid"]))
-        if fresh and (alive or not same_host):
+        cl = classify_orchestrator_lock(info, path=path)
+        if not cl.stale and cl.state != "free":
             raise LockBusyError(
                 f"orchestrator lock held by {info.get('host', '?')} pid "
                 f"{info.get('pid', '?')}; use --force only after verifying it is stale")
-    path.write_text(json.dumps(
-        {"pid": os.getpid(), "host": socket.gethostname(), "created_at": now()},
-        indent=2) + "\n")
+    record = {
+        "pid": os.getpid(),
+        "host": socket.gethostname(),
+        "created_at": now(),
+        "pid_start": process_start(os.getpid()),
+        "pid_ns": pid_namespace("self"),
+    }
+    atomic_json_state(path, record)
     return path
 def release_orchestrator_lock():
-    (LOCKS / "orchestrator.lock").unlink(missing_ok=True)
+    (ORCHESTRATOR_LOCKS / "orchestrator.lock").unlink(missing_ok=True)
+
 LIMBO_TOKEN_RE = re.compile(r"\[([A-Z][A-Z0-9]*-[0-9a-z]+)\]")
 def branch_commit_tokens():
     """Bead ID token `[<id>]` -> newest non-merge commit SHA on HEAD's history
@@ -1921,7 +2138,8 @@ CODEX_ADAPTER = Adapter(
 # stay unvalidated live: they only ever add a `limit` classification.
 ANTIGRAVITY_ADAPTER = Adapter(
     name="antigravity",
-    working=_pats(r"^\s*[\u2800-\u28ff]\s+Generating\.\.\."),
+    # 1.4.0 spins `Working...` (fixtures/antigravity/1.4.0/panes/working.txt).
+    working=_pats(r"^\s*[\u2800-\u28ff]\s+(?:Generating\.\.\.|Working\b)"),
     needs_input=_pats(r"^\s*Run this command\?", r"^\s*Requesting permission for",
                       r"^\s*Do you trust the contents of this project\?"),
     limit=_pats(r"AI credits balance is too low", r"(?:usage|quota|rate) limit (?:reached|exceeded|exhausted)",
@@ -2096,8 +2314,8 @@ def deny_openspec_writes(settings):
 # merge_observability_hooks() below — never replacing or reordering an
 # existing entry for that event, exactly like FLOOR_DENY / OPENSPEC_READONLY_DENY.
 OBSERVABILITY_HOOKS = {
-    "Stop": {"hooks": [{"type": "command", "command": "scripts/nogg session emit turn_end"}]},
-    "Notification": {"hooks": [{"type": "command", "command": "scripts/nogg session emit needs_input"}]},
+    "Stop": {"hooks": [{"type": "command", "command": f"{shlex.quote(str(ROOT / 'scripts/nogg'))} session emit turn_end"}]},
+    "Notification": {"hooks": [{"type": "command", "command": f"{shlex.quote(str(ROOT / 'scripts/nogg'))} session emit needs_input"}]},
 }
 def merge_observability_hooks(settings):
     """Return a deep copy of `settings` with the Layer-2 Stop/Notification
@@ -2105,7 +2323,11 @@ def merge_observability_hooks(settings):
     reordering any existing entry for that event. Input never mutated."""
     result = json.loads(json.dumps(settings))
     hooks = result.setdefault("hooks", {})
-    for event, entry in OBSERVABILITY_HOOKS.items():
+    obs_hooks = {
+        "Stop": {"hooks": [{"type": "command", "command": f"{shlex.quote(str(ROOT / 'scripts/nogg'))} session emit turn_end"}]},
+        "Notification": {"hooks": [{"type": "command", "command": f"{shlex.quote(str(ROOT / 'scripts/nogg'))} session emit needs_input"}]},
+    }
+    for event, entry in obs_hooks.items():
         existing = list(hooks.get(event) or [])
         existing.append(entry)
         hooks[event] = existing
@@ -2128,18 +2350,145 @@ def resolve_launch_file(value, dir_key, default_dir, suffix):
     raise RuntimeError(
         f"launch file {value!r} did not resolve: neither {named} nor "
         f"{candidate} exists")
-def tmux_bin(): return scfg("session_tmux_command", "tmux")
-def tmux_socket(): return scfg("session_tmux_socket", "nogging")
+def session_backend_module():
+    """Load substrate modules beside this script, including installed copies."""
+    lib = str(Path(__file__).resolve().parent / "lib")
+    if lib not in sys.path:
+        sys.path.insert(0, lib)
+    sys.dont_write_bytecode = True
+    import session_backend
+    return session_backend
+
+def session_backend(backend=None):
+    """Resolve a configured or explicit substrate without touching it."""
+    name = backend if backend is not None else CFG.get("session_backend", "tmux")
+    if not isinstance(name, str) or name not in ("tmux", "herdr"):
+        raise RuntimeError(f"invalid session_backend {name!r}; choose tmux or herdr")
+    config = {
+        **CFG, "session_tmux_command": scfg("session_tmux_command", "tmux"),
+        "session_tmux_socket": scfg("session_tmux_socket", "nogging"),
+        "session_repository_root": str(ROOT), "session_repository_slug": repo_slug()}
+    if name == "herdr":
+        try:
+            shared = canonical_repository_state(ROOT)
+            config["session_herdr_state_dir"] = str(Path(shared["state_dir"]) / "herdr")
+            config["session_repository_slug"] = slugify(Path(shared["main_checkout"]).name)
+        except RuntimeError:
+            pass  # Scratch roots used by helper tests need no shared state.
+    kwargs = {"invoke": tmux} if name == "tmux" else {}
+    return session_backend_module().resolve(name, config, run, **kwargs)
+
+def record_backend_name(rec):
+    """Old records predate backend metadata and are always tmux records."""
+    return rec.get("backend") or "tmux"
+
+def record_backend_ref(rec):
+    """Return the backend-owned reference, falling back to a legacy name."""
+    ref = rec.get("backend_ref") or rec.get("name")
+    if record_backend_name(rec) == "herdr" and isinstance(ref, dict):
+        ref = dict(ref)
+        for key in ("session_pid", "session_pid_start", "session_pid_ns"):
+            if rec.get(key) is not None:
+                ref[key] = rec[key]
+    return ref
+
+def backend_for_record(rec):
+    return session_backend(record_backend_name(rec)), record_backend_ref(rec)
+
+def backend_for_name(name, fallback=None):
+    path = sessions_dir() / f"{name}.json"
+    try:
+        rec = json.loads(path.read_text())
+        if isinstance(rec, dict):
+            return backend_for_record(rec)
+    except (OSError, ValueError):
+        pass
+    return session_backend(fallback), name
+
+def choose_launch_backend(is_orchestrator, requested=None, configured=None):
+    """Resolve launch precedence, keeping the orchestrator fixed to tmux."""
+    if is_orchestrator:
+        if requested == "herdr":
+            raise RuntimeError("--role orchestrator is pinned to tmux; --backend herdr is refused")
+        return "tmux"
+    return requested if requested is not None else (configured or "tmux")
+
+def session_action(name, operation, *args, **kwargs):
+    """Dispatch one primitive through the backend recorded for `name`."""
+    substrate, ref = backend_for_name(name)
+    return getattr(substrate, operation)(ref, *args, **kwargs)
+
+def tmux(*args, check=True, stdin=None):
+    """Legacy transport hook; command execution lives in the backend module."""
+    command = session_backend_module().resolve("tmux", CFG, run).command
+    if stdin is None:
+        return command(*args, check=check)
+    return command(*args, check=check, stdin=stdin)
+
 def sessions_dir(): return data_dir(ROOT / scfg("session_state_dir", ".nogging/state/sessions"))
-def tmux(*args, check=True):
-    """Invoke the dedicated Nogging tmux server (never the operator's own)."""
-    return run(tmux_bin(), "-L", tmux_socket(), *args, check=check)
-def tmux_has_session(name):
-    return tmux("has-session", "-t", name, check=False).returncode == 0
+def tmux_has_session(name, backend=None):
+    substrate, ref = backend_for_name(name, backend)
+    return substrate.exists(ref)
+
+def session_liveness(records=None):
+    """Resolve liveness by each record's immutable backend selection.
+
+    The tmux backend is also queried without managed records so unmanaged tmux
+    sessions continue to participate in collision checks and shutdown. Unknown
+    liveness is kept separate from dead sessions.
+    """
+    records = list(records if records is not None else session_records())
+    groups = {"tmux": []}
+    for item in records:
+        rec = item[1] if isinstance(item, tuple) and len(item) == 2 else item
+        if not isinstance(rec, dict):
+            continue
+        groups.setdefault(record_backend_name(rec), []).append(rec)
+    alive, unknown = set(), set()
+    for name, grouped in groups.items():
+        try:
+            found, uncertain = session_backend(name).live(grouped)
+            alive.update(found)
+            unknown.update(uncertain)
+        except Exception:
+            # Preserve the established tmux rule: a failed list query is an
+            # empty set. Other backends must not infer death from query failure.
+            if name != "tmux":
+                unknown.update(rec.get("name") for rec in grouped if rec.get("name"))
+    return alive, unknown
+
+def unknown_sessions():
+    return session_liveness()[1]
+
 def tmux_sessions():
-    res = tmux("list-sessions", "-F", "#{session_name}", check=False)
-    if res.returncode != 0: return set()
-    return {ln.strip() for ln in res.stdout.splitlines() if ln.strip()}
+    alive, unknown = session_liveness()
+    return alive | unknown
+
+def tmux_server_sessions():
+    return session_backend("tmux").live(())[0]
+
+def tmux_server_namespace():
+    """Read-only classification of the process behind the dedicated socket."""
+    lib = str(Path(__file__).resolve().parent / "lib")
+    if lib not in sys.path:
+        sys.path.insert(0, lib)
+    sys.dont_write_bytecode = True
+    import session_backend_tmux
+    config = {**CFG, "session_tmux_socket": scfg("session_tmux_socket", "nogging")}
+    return session_backend_tmux.server_namespace(config)
+
+def tmux_sandboxed_warning(result=None):
+    result = result or tmux_server_namespace()
+    if result["class"] == "sandboxed":
+        return (f"tmux server PID {result['pid']} is sandboxed; every session on "
+                "this server ends with that namespace")
+    return None
+
+def session_log_capture(log_path):
+    return session_backend_module().LogCapture(
+        str(log_path), str((ROOT / "scripts/session-log-writer").resolve()),
+        int(scfg("session_log_max_bytes", 1048576)),
+        int(scfg("session_log_rotation_depth", 3)))
 def secret_values():
     return [v for k, v in os.environ.items()
             if v and len(v) >= 4 and SECRET_NAME_RE.search(k)]
@@ -2158,8 +2507,7 @@ def slugify(name):
     s = re.sub(r"-+$", "", re.sub(r"^-+", "", re.sub(r"[^a-z0-9]+", "-", str(name).lower())))
     return s or "repo"
 def repo_slug():
-    """The per-repository slug — `slugify(<repo dir basename>)`. Used for the
-    singleton orchestrator session name `nogg-orchestrator-<slug>`."""
+    """The current checkout's slug for backend configuration."""
     return slugify(ROOT.name)
 def normalize_role(role):
     """Return (metadata_role, name_slug). Accepts `lead`, `specialist:<type>`
@@ -2175,8 +2523,10 @@ def normalize_role(role):
         return f"specialist:{role[5:]}", role
     raise RuntimeError(
         f"--role must be 'lead', 'planning', 'specialist:<type>' or 'orchestrator', got {role!r}")
-def session_records():
+def session_records(directory=None):
     """Enumerate true session-record files only.
+
+    Defaults to this checkout's store; the orchestrator supplies its main store.
 
     The per-session effective-settings file is `<name>.settings.json` and is
     itself valid JSON, so a bare `*.json` glob would load it as a bogus record
@@ -2186,7 +2536,7 @@ def session_records():
     (a `name` and a `bead_id`). `session list`, both `session cleanup`
     variants, and the `session_launch` collision guard all read through here."""
     out = []
-    for p in sorted(sessions_dir().glob("*.json")):
+    for p in sorted((directory if directory is not None else sessions_dir()).glob("*.json")):
         if p.name.endswith((".settings.json", ".checks.json")): continue
         try: rec = json.loads(p.read_text())
         except (ValueError, OSError): continue
@@ -2269,7 +2619,8 @@ def transition(path, rec, state, **extra):
         fcntl.flock(lock, fcntl.LOCK_EX)
         if path.exists():
             latest = json.loads(path.read_text())
-            for key in ("antigravity_conversation_id", "antigravity_ready_at", "kickoff_sent_at"):
+            for key in ("antigravity_conversation_id", "antigravity_ready_at", "kickoff_sent_at",
+                        "input_ready_source", "input_ready_at", "kickoff_delivery"):
                 if key in latest:
                     rec[key] = latest[key]
             if (state in ("running", "failed")
@@ -2314,9 +2665,10 @@ def bead_exists(bead_id):
 def unmet_dependencies(bead_id):
     """Return the blocking Bead IDs for `bead_id` (`bd dep list <id> --json`,
     default `--direction down` — "what this Bead depends on") whose own
-    `status` is not `closed`. Empty list when the Bead has no recorded
-    dependency, or every recorded dependency is already closed. Mirrors
-    `bd ready`'s own notion of readiness."""
+    `status` is not `closed` and whose edge `dependency_type` is `blocks` (or
+    absent, as in older bd output). Non-blocking edges such as `parent-child`
+    to an open epic never count. Empty list when the Bead has no blocking
+    dependency, or every blocking dependency is already closed."""
     res = run(CFG["beads_command"], "dep", "list", bead_id, "--json", check=False)
     if res.returncode != 0: return []
     try: decoded = json.loads(res.stdout.strip() or "[]")
@@ -2324,7 +2676,8 @@ def unmet_dependencies(bead_id):
     records = decoded.get("issues", decoded) if isinstance(decoded, dict) else decoded
     if isinstance(records, dict): records = [records]
     return [str(issue_id(r)) for r in records
-            if isinstance(r, dict) and r.get("status") != "closed"]
+            if isinstance(r, dict) and r.get("status") != "closed"
+            and (r.get("dependency_type") or "blocks") == "blocks"]
 def bead_change(bead_id):
     """The `openspec:change:` label value on `bead_id`, or None if the Bead
     does not exist or carries no such label. Read-only (`bd show --json`)."""
@@ -2341,21 +2694,21 @@ def bead_change(bead_id):
         return None
     change, _task = mapping(records[0])
     return change
-def session_name_in_use(name):
+def session_name_in_use(name, backend=None):
     """A name is in use if the metadata store already has a record or log for
     it, or a tmux session by that name exists on the dedicated server."""
     sdir = sessions_dir()
     return ((sdir / f"{name}.json").exists() or (sdir / f"{name}.log").exists()
-            or tmux_has_session(name))
-def gen_session_name(role_slug, bead_id):
+            or tmux_has_session(name, backend))
+def gen_session_name(role_slug, bead_id, backend=None):
     """Deterministic shape `sf-<role>-<bead>-<nonce>`; the nonce (UTC timestamp
     plus a short random suffix) is regenerated on any collision with an
     existing managed record, a leftover log, or a live tmux session. Never
     returns a name that is already in use; never reuses or overwrites one."""
     for _ in range(64):
         nonce = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S") + "-" + os.urandom(2).hex()
-        name = re.sub(r"[^a-z0-9_.-]", "-", f"sf-{role_slug}-{bead_id}-{nonce}".lower())
-        if not session_name_in_use(name):
+        name = session_backend_module().safe_session_name(f"sf-{role_slug}-{bead_id}-{nonce}")
+        if not session_name_in_use(name, backend):
             return name
     raise RuntimeError("could not generate a collision-free session name; "
                        "no existing session was reused or overwritten")
@@ -2588,6 +2941,11 @@ def validate_claude_effort(value, origin):
     if not isinstance(value, str) or value not in CLAUDE_EFFORTS:
         raise RuntimeError(
             f"{origin}: effort {value!r} must be one of {', '.join(CLAUDE_EFFORTS)}; launch refused")
+    return value
+def validate_codex_effort(value, origin):
+    if not isinstance(value, str) or value not in CODEX_REASONING_EFFORTS:
+        raise RuntimeError(
+            f"{origin}: effort {value!r} must be one of {', '.join(CODEX_REASONING_EFFORTS)}; launch refused")
     return value
 def reject_reasoning_effort(spec, origin):
     if "model_reasoning_effort" in spec:
@@ -2868,7 +3226,7 @@ def resolve_launch_tier(tier, agent, resume=None):
     entry = model_selection_entry(table, agent, tier)
     return {"tier": tier, "model": entry["model"], "effort": entry["effort"]}
 CODEX_SANDBOX_MODES = ("read-only", "workspace-write", "danger-full-access")
-CODEX_APPROVAL_POLICIES = ("untrusted", "on-request", "never")
+CODEX_APPROVAL_POLICIES = ("on-request", "never")
 def load_codex_spec(path):
     """Read a `.codex.toml` launch fragment: the three required flat keys
     `sandbox`, `ask_for_approval`, `network_access`, plus the optional `model`
@@ -2983,6 +3341,9 @@ def validate_launch_contract(contract, argv, agent):
         raise RuntimeError(f"session-launch contract does not support agent {agent}; run Nogging update")
     if not isinstance(contract.get("features"), list) or "startup-stderr" not in contract["features"]:
         raise RuntimeError("session-launch contract lacks startup stderr capture; run Nogging update")
+    if (agent == "codex" and "--resume" in argv[1:]
+            and "codex-resume" not in contract["features"]):
+        raise RuntimeError("session-launch contract lacks Codex exact resume; run Nogging update")
     if "--effort" in argv[1:] and "claude-effort-forwarding" not in contract["features"]:
         raise RuntimeError("session-launch contract lacks Claude effort forwarding; run Nogging update")
     options = contract.get("options")
@@ -3004,11 +3365,55 @@ def preflight_session_helpers(argv, agent):
     validate_launch_contract(helper_contract(argv[0]), argv, agent)
     boundary = helper_contract(ROOT / "scripts/openspec-sandbox")
     if (not isinstance(boundary.get('features'), list)
-            or not {'readonly-mounts', 'closed-task-broker'}.issubset(boundary['features'])):
+            or not {'readonly-mounts', 'closed-task-broker', 'checkout-task-broker'}.issubset(boundary['features'])):
         raise RuntimeError("OpenSpec filesystem boundary contract is incompatible; run Nogging update")
     writer = helper_contract(ROOT / "scripts/session-log-writer")
-    if writer.get("positional") != 3:
-        raise RuntimeError("session-log-writer contract must accept three arguments; run Nogging update")
+    if (writer.get("positional") != 3
+            or not isinstance(writer.get("features"), list)
+            or "byte-stream" not in writer["features"]):
+        raise RuntimeError("session-log-writer contract must accept three arguments and support byte-stream; run Nogging update")
+
+def validate_codex_resume_id(value):
+    try:
+        if not isinstance(value, str) or str(uuid.UUID(value)) != value:
+            raise ValueError()
+    except ValueError as exc:
+        raise RuntimeError("invalid Codex conversation ID") from exc
+    return value
+
+def codex_resume_options():
+    """Return installed `codex resume` help or refuse before launch side effects."""
+    try:
+        result = subprocess.run(["codex", "resume", "--help"], text=True,
+                                capture_output=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError("cannot inspect codex resume options; resume refused") from exc
+    if result.returncode:
+        raise RuntimeError("cannot inspect codex resume options; resume refused")
+    return result.stdout + result.stderr
+
+def codex_plain_options():
+    try:
+        result = subprocess.run(["codex", "--help"], text=True,
+                                capture_output=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError("cannot inspect Codex launch options; resume refused") from exc
+    if result.returncode:
+        raise RuntimeError("cannot inspect Codex launch options; resume refused")
+    return result.stdout + result.stderr
+
+def validate_codex_resume_options(help_text, readonly_root=False, add_dir=False, model=False):
+    required = ["--cd", "--sandbox", "--ask-for-approval", "--config"]
+    if add_dir:
+        required.append("--add-dir")
+    if model:
+        required.append("--model")
+    if readonly_root and "--sandbox-state-readable-root" in codex_plain_options():
+        required.append("--sandbox-state-readable-root")
+    missing = [flag for flag in required if flag not in help_text]
+    if missing:
+        raise RuntimeError("installed Codex resume does not support " + ", ".join(missing)
+                           + "; resume refused")
 
 def session_helper_diagnostics():
     checks = []
@@ -3030,15 +3435,17 @@ def session_helper_diagnostics():
         checks.append((str(exc), False))
     try:
         contract = helper_contract(ROOT / "scripts/session-log-writer")
-        if type(contract.get("positional")) is not int or contract["positional"] != 3:
-            raise RuntimeError("session-log-writer contract must accept three arguments; run Nogging update")
+        if (type(contract.get("positional")) is not int or contract["positional"] != 3
+                or not isinstance(contract.get("features"), list)
+                or "byte-stream" not in contract["features"]):
+            raise RuntimeError("session-log-writer contract must accept three arguments and support byte-stream; run Nogging update")
         checks.append(("session-log-writer helper contract", True))
     except RuntimeError as exc:
         checks.append((str(exc), False))
     try:
         boundary = helper_contract(ROOT / "scripts/openspec-sandbox")
         if (not isinstance(boundary.get('features'), list)
-                or not {'readonly-mounts', 'closed-task-broker'}.issubset(boundary['features'])):
+                or not {'readonly-mounts', 'closed-task-broker', 'checkout-task-broker'}.issubset(boundary['features'])):
             raise RuntimeError("OpenSpec filesystem boundary contract is incompatible; run Nogging update")
         checks.append(("OpenSpec filesystem boundary helper contract", True))
     except RuntimeError as exc:
@@ -3132,6 +3539,20 @@ def usage_module():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def usage_cache_observations():
+    """Current claude/codex observations for `doctor`: local caches and rollout
+    logs only. Antigravity is skipped because its observation can spawn `agy`."""
+    usage = usage_module()
+    stale = usage.gate_config(CFG.get("usage_gate"))["stale_seconds"]
+    found = {}
+    for agent in ("claude", "codex"):
+        try:
+            found[agent] = usage.inspect_usage(agent, stale_after=stale)
+        except Exception:
+            pass
+    return found
 _USAGE_PENDING = {}
 
 def usage_collection_module():
@@ -3261,6 +3682,11 @@ def calling_session_record():
     ancestry = set(process_ancestors())
     proven = next((rec for rec in records
                    if rec.get("state") in SESSION_ACTIVE_STATES and type(rec.get("session_pid")) is int
+                   and (record_backend_name(rec) != "herdr"
+                        or (rec.get("session_pid_ns") is not None
+                            and rec["session_pid_ns"] == pid_namespace())
+                        or (rec.get("session_pid_ns") is None
+                            and os.environ.get("NOGG_OPENSPEC_FENCED") != "1"))
                    and (rec["session_pid"], rec.get("session_pid_start")) in ancestry), None)
     if proven is not None:
         if name and name != proven.get("name"):
@@ -3573,9 +3999,11 @@ def usage_gate_admission(role_meta, agent, records, ignore, model=None):
     if gate["decision"] in ("denied", "unknown-denied"):
         raise UsageGateDenied(f"usage gate denied {agent} launch: {describe_denial(gate)}")
     if gate["decision"] == "unknown-admitted":
-        reasons = "; ".join(f"{w['bucket']}: {w['reason']}" for w in gate["windows"] if w["status"] != "known")
-        print(f"warning: {agent} usage is unknown ({reasons}); launching without known headroom "
-              "(usage_gate.on_unknown is warn)", file=sys.stderr)
+        reasons = "; ".join(
+            f"{w['bucket']}: {w['reason']}" + (f" — {w['hint']}" if w.get("hint") else "")
+            for w in gate["windows"] if w["status"] != "known")
+        print(f"WARN: {agent} usage is unknown ({reasons}); launch admitted WITHOUT known headroom "
+              '(usage_gate.on_unknown is warn; set it to "deny" to block)', file=sys.stderr)
     return gate
 def session_state_grants(bead, explicit=(), records=None):
     if os.environ.get("NOGG_CODEX_EXTRA_WRITABLE_ROOTS"):
@@ -3595,6 +4023,74 @@ def session_state_grants(bead, explicit=(), records=None):
     return resolve_agent_state_roots(requests)
 
 
+def planning_launch_authority(arg1, arg2=None, arg3=None, arg4=False, *, role=None, agent=None, profile=None, full_access=None):
+    """Enforce explicit authority for Codex and Antigravity planning launches.
+
+    Raises when role is 'planning', agent is 'codex' or 'antigravity', and
+    neither --profile nor --full-access was given.
+    """
+    if arg1 in ("planning", "lead", "orchestrator") or str(arg1).startswith("specialist:"):
+        r = arg1 if role is None else role
+        a = arg2 if agent is None else agent
+        p = arg3 if profile is None else profile
+        f = arg4 if full_access is None else full_access
+    else:
+        a = arg1 if agent is None else agent
+        p = arg2 if profile is None else profile
+        f = arg3 if full_access is None else full_access
+        r = role if role is not None else (arg4 if isinstance(arg4, str) else "planning")
+
+    norm_role = "planning" if r == "planning" else r
+    if norm_role != "planning":
+        return
+
+    norm_agent = "antigravity" if a == "agy" else a
+    if norm_agent not in ("codex", "antigravity"):
+        return
+
+    if p is not None or bool(f):
+        return
+
+    display_agent = "antigravity" if a == "agy" else a
+    raise RuntimeError(
+        f"planning with {display_agent} needs an explicit authority: --profile trusted for an unattended planner, "
+        f"or --profile restricted to approve each step in the attached session "
+        f"(restricted {display_agent} stops at approval prompts)"
+    )
+
+
+def session_launch_profile_line(profile_label, prompt_path):
+    """Format the profile=<label> prompt=<prompt file stem> line for launch output."""
+    stem = Path(prompt_path).stem if prompt_path else ""
+    return f"  profile={profile_label} prompt={stem}"
+
+
+launch_profile_line = session_launch_profile_line
+
+
+def session_launch_notes(role_or_agent, agent_or_profile=None, profile_label=None, *, role=None, agent=None, profile=None, full_access=False):
+    """Return NOTE lines for launch output."""
+    if role_or_agent in ("planning", "lead", "orchestrator") or str(role_or_agent).startswith("specialist:"):
+        r = role_or_agent if role is None else role
+        a = agent_or_profile if agent is None else agent
+        p = profile_label if profile is None else profile
+    else:
+        a = role_or_agent if agent is None else agent
+        p = agent_or_profile if profile is None else profile
+        r = role if role is not None else (profile_label if isinstance(profile_label, str) else "planning")
+
+    norm_agent = "antigravity" if a == "agy" else a
+    notes = []
+    if r == "planning" and norm_agent in ("codex", "antigravity") and p == "restricted":
+        notes.append(f"NOTE: restricted {norm_agent} planning stops at approval prompts; attach to approve each step")
+    if norm_agent == "codex" and p == "restricted":
+        notes.append("NOTE: restricted Codex has no network; a Dolt-server-backed bd is unreachable from its sandbox")
+    return notes
+
+
+launch_notes = session_launch_notes
+
+
 def session_launch(*args, **kwargs):
     pending_before = set(_USAGE_PENDING)
     try:
@@ -3604,16 +4100,105 @@ def session_launch(*args, **kwargs):
             _USAGE_PENDING.pop(token).release(token)
 
 
+# Agent executable per agent name, matching the `exec` in scripts/session-launch.
+AGENT_BINARIES = {"claude": "claude", "codex": "codex", "antigravity": "agy", "pi": "pi"}
+# Fixed settle window after a backend start (no config key); the clock and sleep
+# are module-level so tests can inject them without real waiting. The test
+# runner may only SHORTEN the window through NOGG_LAUNCH_SETTLE_SECONDS (it is
+# capped at the constant), so a healthy launch never waits longer than 2 s.
+LAUNCH_SETTLE_SECONDS = 2.0
+LAUNCH_SETTLE_POLL_SECONDS = 0.25
+_settle_clock = time.monotonic
+_settle_sleep = time.sleep
+
+def require_agent_binary(agent):
+    """Refuse a launch whose agent executable is not on the launcher's PATH,
+    before any record, log, reservation or backend session exists."""
+    binary = AGENT_BINARIES[agent]
+    if shutil.which(binary) is None:
+        raise RuntimeError(f"agent binary '{binary}' not found on PATH (agent {agent}); launch refused")
+
+def settle_launch(selected_backend, rec_path, record):
+    """Confirm a freshly started session survives a short bounded window. A
+    session that vanished (or whose record already went terminal-failed) is
+    marked failed with the redacted startup-log tail and raises ToolError."""
+    window = LAUNCH_SETTLE_SECONDS
+    try:
+        window = max(0.0, min(window, float(os.environ["NOGG_LAUNCH_SETTLE_SECONDS"])))
+    except (KeyError, ValueError):
+        pass
+    deadline = _settle_clock() + window
+    while True:
+        try:
+            latest = json.loads(rec_path.read_text())
+        except (OSError, ValueError):
+            latest = record
+        failed = latest.get("state") == "failed"
+        if not failed:
+            try:
+                failed = not selected_backend.exists(record["backend_ref"])
+            except Exception:
+                failed = False    # unknown liveness is not death
+        if failed:
+            log_path = Path(record["log_path"])
+            detail = log_path.read_text(errors="replace")[-4096:].strip() if log_path.exists() else ""
+            reason = "launch failed: agent session ended during startup"
+            if latest.get("state") == "failed" and latest.get("exit_reason"):
+                reason = latest["exit_reason"]
+            elif detail:
+                reason += f"\nstartup log: {redact(detail)}"
+            if latest.get("state") != "failed":
+                with log_path.open("a") as fh:
+                    fh.write(f"# {reason}\n")
+                transition(rec_path, record, "failed", exit_reason=reason)
+            raise ToolError(reason)
+        if _settle_clock() >= deadline:
+            return
+        _settle_sleep(LAUNCH_SETTLE_POLL_SECONDS)
+
+def read_wrapper_identity(receipt_path, expected_pid):
+    """Read a private identity receipt only when it proves the pane PID."""
+    try:
+        if receipt_path.stat().st_size > 4096:
+            return None
+        receipt = json.loads(receipt_path.read_text())
+    except (OSError, ValueError, TypeError):
+        return None
+    if (not isinstance(receipt, dict) or type(receipt.get("pid")) is not int
+            or receipt.get("pid") != expected_pid
+            or not isinstance(receipt.get("start"), str) or not receipt["start"]
+            or not isinstance(receipt.get("ns"), str) or not receipt["ns"]):
+        return None
+    return receipt
+
+def settle_process_identity(receipt_path, expected_pid):
+    """Wait briefly for the pane wrapper's own-namespace identity receipt."""
+    deadline = _settle_clock() + LAUNCH_SETTLE_SECONDS
+    while True:
+        receipt = read_wrapper_identity(receipt_path, expected_pid)
+        if receipt:
+            return receipt
+        if _settle_clock() >= deadline:
+            return None
+        _settle_sleep(LAUNCH_SETTLE_POLL_SECONDS)
+
+def remove_process_identity_receipt(receipt_path):
+    """Best-effort removal must never prevent backend rollback."""
+    try:
+        receipt_path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
 def _session_launch(role, bead, cwd, read_only, owner,
                    profile=None, prompt=None, full_access=False, agent=None,
                    resume=None, kickoff=False, planning_id=None, description=None,
                    model=None, agent_state=(), tier=None, effort=None,
-                   ignore_usage_gate=False, complexity=None):
+                   ignore_usage_gate=False, complexity=None, backend=None):
     """Start a supervised agent session for a Bead.
 
-    `resume` names the exact prior conversation: Claude uses `--resume <id>`;
-    Antigravity uses `--conversation <id>` and captures cold-start IDs from its
-    validated Stop hook. Neither uses a bare `--continue`, which
+    `resume` names the exact prior conversation: Claude and Codex use
+    `--resume <id>`; Antigravity uses `--conversation <id>` and captures
+    cold-start IDs from its validated Stop hook. No backend uses a bare `--continue`, which
     resumes whichever conversation is most recent for `cwd` and can pick up an
     unrelated one (SPEC-nfz8). Falsy `resume` cold-starts a Claude agent with a
     freshly generated `--session-id`, recorded as `claude_session_id` so a
@@ -3623,22 +4208,34 @@ def _session_launch(role, bead, cwd, read_only, owner,
     the read-only `bd show` inside bead_records(); it never claims, starts, or
     otherwise changes a Bead. Claiming stays a deliberate in-session action
     the operator directs (see .nogging/session-launch-prompt.md)."""
+    agent = resolve_agent(agent)
+    require_agent_binary(agent)
+    if agent == "codex" and resume is not None:
+        validate_codex_resume_id(resume)
+    role_meta, role_slug = normalize_role(role)
+    planning_launch_authority(role_meta, agent, profile, full_access)
+    is_orchestrator = role_meta == "orchestrator"
+    is_planning = role_meta == "planning"
     if os.environ.get("NOGG_CODEX_EXTRA_WRITABLE_ROOTS"):
         session_state_grants(None)
-    agent = resolve_agent(agent)
     if effort is not None:
-        if agent != "claude":
-            raise RuntimeError("--effort is Claude-only; launch refused")
-        validate_claude_effort(effort, "--effort")
+        if agent == "claude":
+            validate_claude_effort(effort, "--effort")
+        elif agent == "codex":
+            validate_codex_effort(effort, "--effort")
+        else:
+            raise RuntimeError("--effort is Claude- and Codex-only; launch refused")
     # `--tier` resolves the model-selection table right after the agent and
     # before anything else, so every refusal precedes all side effects.
     tier_selection = resolve_launch_tier(tier, agent, resume) if tier is not None else None
     # Complexity is snapshotted for usage attribution only; it never selects a
     # model. A disagreement with the tier refuses before any side effect.
     complexity, complexity_source = complexity_snapshot(tier_selection and tier_selection["tier"], complexity)
-    role_meta, role_slug = normalize_role(role)
-    is_orchestrator = role_meta == "orchestrator"
-    is_planning = role_meta == "planning"
+    backend_name = choose_launch_backend(
+        is_orchestrator, backend, CFG.get("session_backend", "tmux"))
+    selected_backend = session_backend(backend_name)
+    if hasattr(selected_backend, "preflight"):
+        selected_backend.preflight(agent)
     allocate_planning = False
     if is_planning:
         planning_id = require_kebab(planning_id, "planning ID")
@@ -3684,17 +4281,23 @@ def _session_launch(role, bead, cwd, read_only, owner,
     selected_model, model_source = select_session_model(
         model, source_settings or codex_spec or pi_spec or agy_spec,
         tier_selection and tier_selection["model"])
-    selected_effort, effort_source = select_session_effort(effort, source_settings, agent)
+    selected_effort, effort_source = select_session_effort(
+        effort if agent == "claude" else None, source_settings, agent)
     reasoning_effort = (codex_spec or {}).get("model_reasoning_effort")
     reasoning_effort_source = "profile" if reasoning_effort is not None else "runtime-default"
-    # Codex effort: tier over profile `model_reasoning_effort` over runtime
-    # default; it travels through the wrapper's existing --reasoning-effort.
+    # Codex effort: explicit `--effort` over tier over profile
+    # `model_reasoning_effort` over runtime default; it travels through the
+    # wrapper's existing --reasoning-effort (a `-c` override, which the exact
+    # resume path already requires, so a resume carries it too).
     # Claude effort: explicit `--effort` over tier over profile `effort` over
     # runtime default; it travels as the wrapper's `--effort` under the
     # `claude-effort-forwarding` contract check. Antigravity's effort is part
     # of its model name.
     tier_effort = tier_selection and tier_selection["effort"]
-    if agent == "codex" and tier_effort is not None:
+    if agent == "codex" and effort is not None:
+        reasoning_effort = effort
+        reasoning_effort_source = "launch"
+    elif agent == "codex" and tier_effort is not None:
         reasoning_effort = tier_effort
         reasoning_effort_source = "launch"
     elif agent == "claude":
@@ -3703,10 +4306,15 @@ def _session_launch(role, bead, cwd, read_only, owner,
         if effort is None and tier_effort is not None:
             reasoning_effort = tier_effort
             reasoning_effort_source = "launch"
+    if agent == "codex" and resume is not None:
+        codex_sandbox = "read-only" if read_only else codex_spec["sandbox"]
+        validate_codex_resume_options(
+            codex_resume_options(), readonly_root=openspec_readonly,
+            add_dir=codex_sandbox != "read-only", model=selected_model is not None)
     if agy_spec and Path(profile_path).name == "restricted.agy.toml" and agy_spec["approval"] != "ask":
         raise RuntimeError("Antigravity restricted profile requires ask approval")
-    if resume is not None and agent not in ("claude", "antigravity"):
-        raise RuntimeError("exact resume is supported only for Claude and Antigravity")
+    if resume is not None and agent not in ("claude", "antigravity", "codex"):
+        raise RuntimeError("exact resume is supported only for Claude, Codex and Antigravity")
     if agy_spec and resume is not None:
         validate_antigravity_conversation_id(resume)
     # The command-floor / openspec-boundary lift is the orchestrator's alone: the
@@ -3735,7 +4343,7 @@ def _session_launch(role, bead, cwd, read_only, owner,
     # The orchestrator is a singleton: a fixed, nonce-free `nogg-orchestrator-<slug>`
     # name (a stale terminal record of the same name is reused in place). Every
     # other role gets the deterministic `sf-<role>-<bead>-<nonce>` shape.
-    name = f"nogg-orchestrator-{repo_slug()}" if is_orchestrator else "pending"
+    name = orchestrator_session_name() if is_orchestrator else "pending"
     workdir = str(Path(cwd or ROOT).resolve())
     sdir = ROOT / scfg("session_state_dir", ".nogging/state/sessions")
     rec_path, log_path = sdir / f"{name}.json", sdir / f"{name}.log"
@@ -3805,6 +4413,8 @@ def _session_launch(role, bead, cwd, read_only, owner,
             inner += ["--model", selected_model]
         if reasoning_effort is not None:
             inner += ["--reasoning-effort", reasoning_effort]
+        if resume is not None:
+            inner += ["--resume", resume]
     elif agent == "antigravity":
         effective_settings_path = None
         if not allocate_planning:
@@ -3847,7 +4457,8 @@ def _session_launch(role, bead, cwd, read_only, owner,
     # Name collision checks themselves call tmux: defer them until the full
     # emitted argv and both helpers have passed interface negotiation.
     if not is_orchestrator:
-        name = gen_session_name(role_slug, planning_id if is_planning else bead)
+        name = gen_session_name(role_slug, planning_id if is_planning else bead,
+                                 backend_name)
         rec_path, log_path = sdir / f"{name}.json", sdir / f"{name}.log"
         if agent == "claude":
             effective_path = sdir / f"{name}.settings.json"
@@ -3869,7 +4480,7 @@ def _session_launch(role, bead, cwd, read_only, owner,
                 and rec.get("state") in SESSION_ACTIVE_STATES and rec.get("name") in live):
             raise RuntimeError(
                 f"a live {role_meta} session already covers {bead}: {rec['name']}")
-    if tmux_has_session(name):    # last-line race guard
+    if tmux_has_session(name, backend_name):    # last-line race guard
         raise RuntimeError(f"session {name} already exists; refusing to reuse or overwrite it")
     if rec_path.exists():
         # The singleton orchestrator reuses its fixed name once the prior record
@@ -3879,11 +4490,16 @@ def _session_launch(role, bead, cwd, read_only, owner,
             json.loads(rec_path.read_text()).get("state") in SESSION_TERMINAL_STATES)
         if not prior_terminal:
             raise RuntimeError(f"session {name} already exists; refusing to reuse or overwrite it")
+    prepared_ref = (selected_backend.prepare(name, workdir)
+                    if hasattr(selected_backend, "prepare") else None)
     data_dir(sdir)
     if agent == "claude":
         effective_path.write_text(json.dumps(settings_out, indent=2) + "\n")
     record = {
         "name": name, "bead_id": bead, "role": role_meta, "host": socket.gethostname(),
+        "backend": backend_name, "backend_ref": prepared_ref or {
+            "name": name, **({"socket": selected_backend.socket}
+                             if backend_name == "tmux" else {})},
         "started_at": now(), "working_dir": workdir, "command": redact_argv(inner),
         "owner": owner_identity(owner), "state": "starting", "log_path": str(log_path),
         "read_only": bool(read_only), "ended_at": None, "exit_reason": None,
@@ -3891,6 +4507,12 @@ def _session_launch(role, bead, cwd, read_only, owner,
         "agent": agent, "openspec_readonly": bool(openspec_readonly),
         "floor_lifted": bool(floor_lifted), "claude_session_id": claude_session_id,
         "antigravity_conversation_id": resume if agent == "antigravity" else None,
+        "codex_thread_id": resume if agent == "codex" else None,
+        # Cold Codex launches pass this positional prompt and start a turn;
+        # exact resumes do not pass a startup prompt.
+        "codex_startup_prompt": bool(
+            agent == "codex" and resume is None and prompt_path is not None
+            and Path(prompt_path).is_file()),
         "antigravity_initial_turn": agent == "antigravity",
         "planning_id": planning_id, "description": description,
         "agent_state_grants": grants,
@@ -3917,63 +4539,97 @@ def _session_launch(role, bead, cwd, read_only, owner,
     }
     record["usage_attribution"] = [launch_attribution(record, records, complexity, complexity_source,
                                                       tier_selection, resume)]
+    identity_receipt = sdir / f".{name}.pid-receipt"
+    identity_receipt.unlink(missing_ok=True)
     write_session(rec_path, record)                       # metadata before exec
     token = usage_gate.get("reservation_id")
     if token:
         # Bind before starting tmux: even a hard-killed launcher must not
         # orphan the reservation of a child it already started.
-        usage_module().Reservations().bind(token, rec_path, name, tmux_bin(), tmux_socket())
+        usage_module().Reservations().bind(
+            token, rec_path, name, selected_backend.liveness_probe(record["backend_ref"]))
     with log_path.open("a") as fh:                        # append-only log before exec
         fh.write(f"# nogg session {name} for {bead or 'no bead'} ({role_meta}) started {record['started_at']}\n")
     try:
-        # -e NOGG_SESSION_NAME=<name> is agent-neutral session environment
-        # (every process tmux starts in this session inherits it), the only
-        # way a `session emit` hook invocation — a bare, argument-less
-        # command line (design.md Decision 4) — can know its own session name.
-        tmux("new-session", "-d", "-s", name, "-c", workdir,
-             "-e", f"NOGG_SESSION_NAME={name}",
-             "-e", f"NOGG_SESSION_ROLE={role_meta}",
-             "-e", f"NOGG_SESSION_AGENT={agent}",
-             "-e", f"NOGG_SESSION_ROOT={ROOT}",
-             "-e", f"NOGG_OPENSPEC_FENCE={int(openspec_readonly)}",
-             "-e", f"NOGG_STARTUP_LOG={log_path}", "--", *inner)
-        writer = str((ROOT / "scripts/session-log-writer").resolve())
-        max_bytes = int(scfg("session_log_max_bytes", 1048576))
-        depth = int(scfg("session_log_rotation_depth", 3))
-        sink = "exec " + " ".join(shlex.quote(a) for a in
-                                  (writer, str(log_path), str(max_bytes), str(depth)))
-        tmux("pipe-pane", "-o", "-t", name, sink)
-    except ToolError as exc:
+        record["backend_ref"] = selected_backend.start(name, workdir, {
+            "NOGG_SESSION_NAME": name,
+            "NOGG_SESSION_ROLE": role_meta,
+            "NOGG_SESSION_AGENT": agent,
+            "NOGG_SESSION_ROOT": str(ROOT),
+            "NOGG_OPENSPEC_FENCE": str(int(openspec_readonly)),
+            "NOGG_STARTUP_LOG": str(log_path),
+            "NOGG_PID_RECEIPT": str(identity_receipt) if backend_name == "tmux" else "",
+        }, inner, session_log_capture(log_path))
+        write_session(rec_path, record)
+        pid = (record["backend_ref"].get("session_pid")
+               if backend_name == "herdr" else selected_backend.pid(record["backend_ref"]))
+        if pid is not None:
+            record["session_pid"] = pid
+            if backend_name == "herdr":
+                record["session_pid_start"] = record["backend_ref"].get("session_pid_start")
+                record["session_pid_ns"] = record["backend_ref"]["session_pid_ns"]
+            else:
+                record["session_pid_start"] = process_start(pid)
+                record["session_pid_ns"] = pid_namespace(pid)
+                if not record.get("session_pid_start") or not record.get("session_pid_ns"):
+                    receipt = (settle_process_identity(identity_receipt, pid)
+                               if role_meta == "planning"
+                               else read_wrapper_identity(identity_receipt, pid))
+                    if receipt:
+                        record["session_pid_start"] = receipt["start"]
+                        record["session_pid_ns"] = receipt["ns"]
+                        record["session_pid_identity_source"] = "wrapper"
+        if role_meta == "planning" and (
+                type(record.get("session_pid")) is not int
+                or not record.get("session_pid_start")
+                or not record.get("session_pid_ns")):
+            raise ToolError("planning launch has no provable process identity; "
+                            "launch from an unsandboxed shell")
+        remove_process_identity_receipt(identity_receipt)
+        transition(rec_path, record, "running")
+        if record.get("state") == "failed":
+            raise ToolError(record.get("exit_reason") or "agent startup failed")
+        settle_launch(selected_backend, rec_path, record)
+    except Exception as exc:
+        remove_process_identity_receipt(identity_receipt)
+        cleanup_ref = record.get("backend_ref") or prepared_ref or {
+            "name": name, **({"socket": selected_backend.socket} if backend_name == "tmux" else {})}
+        cleanup_ok = True
+        try:
+            selected_backend.kill(cleanup_ref)
+        except Exception:
+            cleanup_ok = False
         # stderr was attached in the wrapper before exec, so even a child that
         # vanished before pipe-pane has a durable underlying diagnostic.
         detail = log_path.read_text(errors="replace")[-4096:].strip()
-        reason = f"launch failed: {redact(str(exc))}"
+        reason = f"launch failed: {redact(str(exc))}; cleanup {'succeeded' if cleanup_ok else 'failed'}"
         if detail:
             reason += f"\nstartup log: {redact(detail)}"
         with log_path.open("a") as fh:
             fh.write(f"# {reason}\n")
-        transition(rec_path, record, "failed", exit_reason=reason)
+        if record.get("state") not in SESSION_TERMINAL_STATES:
+            transition(rec_path, record, "failed", exit_reason=reason)
+        if token:
+            _USAGE_PENDING.pop(token, None)
         raise ToolError(reason) from exc
-    process = tmux("display-message", "-p", "-t", name, "#{pane_pid}", check=False)
-    raw_pid = getattr(process, "stdout", "").strip()
-    if raw_pid.isdigit() and int(raw_pid) > 0:
-        record["session_pid"] = int(raw_pid)
-        record["session_pid_start"] = process_start(int(raw_pid))
-        record["session_pid_ns"] = pid_namespace(int(raw_pid))
-    transition(rec_path, record, "running")
-    if record.get("state") == "failed":
-        raise ToolError(record.get("exit_reason") or "agent startup failed")
     if token:
         _USAGE_PENDING.pop(token).finish(token)
     print(f"launched {name}")
     print(f"  bead={bead or '-'} role={role_meta} cwd={workdir}")
     print(f"  log={log_path}")
-    print(f"  attach: {tmux_bin()} -L {tmux_socket()} attach -t {name}  (or: nogg session attach {name})")
+    if backend_name == "tmux" and role_meta != "planning" and record.get("session_pid") is not None and (
+            not record.get("session_pid_start") or not record.get("session_pid_ns")):
+        print("NOTE: session process identity could not be proven from this caller or its wrapper")
+    print(f"  attach: {' '.join(selected_backend.attach_argv(record['backend_ref']))}  (or: nogg session attach {name})")
     if tier_selection:
         print(f"  tier={tier_selection['tier']} model={selected_model}"
               + (f" effort={reasoning_effort}" if agent in ("codex", "claude") and reasoning_effort else ""))
-    if (role_meta == "lead" or role_meta.startswith("specialist:")) and not (
-            profile or prompt or full_access):
+    print(session_launch_profile_line(profile_label, prompt_path))
+    for note in session_launch_notes(role_meta, agent, profile_label, profile=profile, full_access=full_access):
+        print(note)
+    if ((role_meta == "lead" or role_meta.startswith("specialist:")) and not (
+            profile or prompt or full_access)) or (
+            is_planning and agent == "claude" and not (profile or full_access)):
         print(f"⚠ {name} launched in restricted/manual mode — it will not act "
               f"without a human attached to approve each step; pass "
               f"--full-access (or an explicit --profile/--prompt) for "
@@ -3984,9 +4640,13 @@ def _session_launch(role, bead, cwd, read_only, owner,
         print(f"  kickoff: this session will not act until you send it a first "
               f"message — run `nogg session kickoff {name}` or attach and type "
               f"one yourself.")
+    if backend_name == "tmux" and not is_orchestrator and os.environ.get("NOGG_OPENSPEC_FENCED") != "1":
+        warning = tmux_sandboxed_warning()
+        if warning:
+            print(f"WARN: {warning}")
 
 def reconciled_state(rec, live):
-    """The state to report: an active record whose tmux session has vanished is
+    """The state to report: an active record whose backend session has vanished is
     `failed` (a crash), not the stale value on disk."""
     state = rec.get("state", "unknown")
     if state in SESSION_ACTIVE_STATES and rec.get("name") not in live:
@@ -4046,23 +4706,53 @@ def session_list():
     Read-only: it never attaches, never starts tmux, and never rewrites a
     record. Runs in a bare SSH shell (no TERM, no tmux client)."""
     recs = session_records()
+    warning = tmux_sandboxed_warning()
+    if warning:
+        print(f"NOTE: {warning}")
     if not recs:
         print("no managed sessions"); return
-    live = tmux_sessions()
+    alive, unknown = session_liveness()
+    live = alive | unknown
     hdr = (f"{'NAME':<40}  {'BEAD':<10}  {'ROLE':<24}  {'STARTED':<20}  "
            f"{'STATE':<8}  {'OWNER':<16}  {'AGENT':<8}  {'PROFILE':<12}  "
-           f"{'MODEL':<24}  {'MODEL_SOURCE':<15}  WORKING_DIR")
+           f"{'MODEL':<24}  {'MODEL_SOURCE':<15}  {'BACKEND':<8}  "
+           f"{'AGENT_STATUS':<12}  WORKING_DIR")
     print(hdr)
     for _, rec in recs:
+        state = reconciled_state(rec, live)
+        if rec.get("name") in unknown:
+            state += " (unknown)"
         print(f"{rec.get('name',''):<40}  {(rec.get('bead_id') or '-'):<10}  "
               f"{rec.get('role',''):<24}  {rec.get('started_at',''):<20}  "
-              f"{reconciled_state(rec, live):<8}  {str(rec.get('owner','')):<16}  "
+              f"{state:<16}  {str(rec.get('owner','')):<16}  "
               f"{_agent_display(rec):<8}  "
               f"{_profile_display(rec):<12}  "
               f"{_model_display(rec):<24}  {(rec.get('model_source') or '-'):<15}  "
+              f"{record_backend_name(rec):<8}  "
+              f"{_agent_status_display(rec, live):<12}  "
               f"{rec.get('working_dir','')}")
         for grant in rec.get("agent_state_grants", []):
             print(f"  agent-state:{grant['agent']} {grant['path']} source={grant['source']}")
+    orphans, foreign_count = herdr_orphans(recs)
+    for substrate, ref in orphans:
+        print(f"NOTE: orphan herdr pane {ref['pane_id']} labelled {ref['label']}; "
+              "run session cleanup (never adopted)")
+    if foreign_count:
+        print(f"NOTE: {foreign_count} foreign herdr pane(s) left untouched")
+
+def herdr_orphans(recs):
+    """Read-only orphan discovery, restricted to the backend's owned workspace.
+
+    Returns ([(substrate, ref), ...], foreign_count).
+    """
+    records = [r for _, r in recs if record_backend_name(r) == "herdr"]
+    try:
+        substrate = session_backend("herdr")
+        all_recs = [r for _, r in session_records()]
+        orphans, foreign_count = substrate.orphans(all_recs)
+        return [(substrate, ref) for ref in orphans], foreign_count
+    except (RuntimeError, AttributeError, KeyError, TypeError):
+        return [], 0
 def _profile_display(rec):
     """`session list` PROFILE cell: a session that actually ran with the command
     floor lifted shows as `FULL-ACCESS` (a distinct token, not a profile name);
@@ -4099,13 +4789,41 @@ def _agent_display(rec):
     """`session list` AGENT cell: a record written before this column existed
     has no `agent` key and shows `claude`, the historical default."""
     return rec.get("agent") or "claude"
+def _agent_status_display(rec, live):
+    """`session list` AGENT_STATUS cell: herdr status for a live herdr record,
+    `-` for tmux, terminal or unsupported records, `unknown` on query failure."""
+    if rec.get("state") in SESSION_TERMINAL_STATES:
+        return "-"
+    if reconciled_state(rec, live) in SESSION_TERMINAL_STATES:
+        return "-"
+    backend_name = record_backend_name(rec)
+    try:
+        substrate = session_backend(backend_name)
+    except Exception:
+        return "-"
+    caps = getattr(substrate, "capabilities", None)
+    if not getattr(caps, "agent_status", False):
+        return "-"
+    try:
+        ref = record_backend_ref(rec)
+        status = substrate.agent_status(ref)
+        return status if status in {"idle", "working", "blocked", "done", "unknown"} else "unknown"
+    except Exception:
+        return "unknown"
 def _archive_log(rec):
     lp = Path(rec.get("log_path") or "")
-    if lp and lp.exists():
-        stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S")
+    if not lp.name:
+        return
+    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S")
+    if lp.exists():
         archived = lp.with_name(lp.name + f".archived-{stamp}")
         lp.rename(archived)
         rec["archived_log_path"] = str(archived)
+    if lp.parent.exists():
+        for rot in sorted(lp.parent.glob(f"{lp.name}.*")):
+            suffix = rot.name[len(lp.name) + 1:]
+            if suffix.isdigit():
+                rot.rename(rot.with_name(f"{rot.name}.archived-{stamp}"))
 def _remove_effective_settings(rec):
     """Delete the per-session effective-settings file when the record retires.
     The source profile is never touched — only the merged copy this launch
@@ -4116,15 +4834,17 @@ def _remove_effective_settings(rec):
         rec["effective_settings_removed_at"] = now()
 def session_reap():
     """Move every session record in an active state (`starting`/`running`/`idle`)
-    whose tmux session no longer exists to the terminal `failed` state, so a
-    following `session cleanup` can retire it. A record whose tmux session is
+    whose backend session no longer exists to the terminal `failed` state, so a
+    following `session cleanup` can retire it. A record whose backend session is
     still live is left untouched. Never starts or kills a tmux session."""
-    live = tmux_sessions()
+    alive, unknown = session_liveness()
+    live = alive | unknown
     reaped = []
     for path, rec in session_records():
-        if rec.get("state") in SESSION_ACTIVE_STATES and rec.get("name") not in live:
+        if (rec.get("state") in SESSION_ACTIVE_STATES
+                and rec.get("name") not in live and rec.get("name") not in unknown):
             transition(path, rec, "failed",
-                       exit_reason="tmux session vanished during a reap")
+                       exit_reason=f"{record_backend_name(rec)} session vanished during a reap")
             reaped.append(rec.get("name"))
     if reaped:
         collect_session_usage([r for _, r in session_records() if r.get("name") in reaped], budget=5)
@@ -4132,9 +4852,11 @@ def session_reap():
         print("run `session cleanup` to retire them")
     else:
         print("no vanished active sessions to reap")
+    if unknown:
+        print("NOTE: liveness unknown; left records untouched: " + ", ".join(sorted(unknown)))
     return reaped
 def session_cleanup(name, reap=False):
-    """Remove a lingering tmux session, archive-rotate its log, and retire the
+    """Remove a lingering backend session, archive-rotate its log, and retire the
     metadata record. Refuses any record still `starting`, `running` or `idle`
     - stop it first. With no name, acts only on already-terminal records.
     `--reap` first moves vanished active records to `failed` (see
@@ -4150,11 +4872,18 @@ def session_cleanup(name, reap=False):
         targets = [(p, r) for p, r in session_records()
                    if r.get("state") in ("stopped", "failed")]
         if not targets:
-            print("no terminal sessions to clean up"); return
-    live = tmux_sessions()
+            print("no terminal sessions to clean up")
+            orphans, _ = herdr_orphans(session_records())
+            if not orphans:
+                return
+    alive, unknown = session_liveness()
+    live = alive | unknown
     refused = []
     for path, rec in targets:
         nm = rec.get("name")
+        if nm in unknown:
+            print(f"NOTE: cleanup left {nm} untouched because backend liveness is unknown")
+            continue
         try:
             # Persist (or durably spool) the attribution and source evidence
             # before the record retires; refuse rather than lose it.
@@ -4162,17 +4891,22 @@ def session_cleanup(name, reap=False):
         except RuntimeError as exc:
             refused.append(f"{nm}: cleanup refused: {exc}")
             continue
-        if nm in live:
-            tmux("kill-session", "-t", nm, check=False)
+        if nm in live or record_backend_name(rec) == "herdr":
+            session_action(nm, "kill")
         release_planning_lock(session_record=rec)
         _archive_log(rec)
         _remove_effective_settings(rec)
         transition(path, rec, "retired", retired_at=now())
         print(f"retired {nm}")
-    if not [r for _, r in session_records() if r.get("state") != "retired"]:
-        if tmux_sessions():
-            tmux("kill-server", check=False)
-            print("no active sessions remain; Nogging tmux server stopped")
+    if not name:
+        orphans, _ = herdr_orphans(session_records())
+        for substrate, ref in orphans:
+            substrate.kill(ref)
+            print(f"closed orphan herdr pane {ref['pane_id']} labelled {ref['label']}")
+    tmux_backend = session_backend("tmux")
+    if hasattr(tmux_backend, "empty") and tmux_backend.empty():
+        tmux_backend.idle_shutdown()
+        print("no active sessions remain; Nogging tmux server stopped")
     if refused:
         raise RuntimeError("\n".join(refused))
 def session_stop(name, reason):
@@ -4185,14 +4919,33 @@ def session_stop(name, reason):
         print(f"{name} already {rec.get('state')} "
               f"(ended {rec.get('ended_at')}, reason: {rec.get('exit_reason')}); nothing to do")
         return
+    if (record_backend_name(rec) != "tmux"
+            and rec.get("name") in unknown_sessions()):
+        raise RuntimeError(f"{name} backend liveness is unknown; stop refused without proof the session can be reached")
     grace = float(scfg("session_stop_grace_seconds", 10))
+    stop_started = time.monotonic()
     if tmux_has_session(name):
-        tmux("send-keys", "-t", name, "C-c", check=False)      # interrupt Claude
-        deadline = time.monotonic() + grace
+        session_action(name, "send_keys", "ctrl+c", check=False)      # interrupt agent
+        deadline = stop_started + grace
         while time.monotonic() < deadline and tmux_has_session(name):
             time.sleep(0.2)
         if tmux_has_session(name):
-            tmux("kill-session", "-t", name, check=False)      # hard terminate
+            session_action(name, "kill")      # hard terminate
+    planning_state = canonical_repository_state(ROOT) if rec.get("role") == "planning" else None
+    lock_path = Path(planning_state["locks_dir"]) / "planning.lock" if planning_state else None
+    if lock_path and lock_path.exists():
+        try:
+            lock_owner = json.loads(lock_path.read_text())
+        except (OSError, ValueError):
+            lock_owner = {}
+        if planning_lock_owned(lock_owner, {
+                "session_name": rec.get("name"),
+                "session_root": planning_state["main_checkout"],
+                "host": rec.get("host", socket.gethostname()),
+                "pid": rec.get("session_pid"), "pid_start": rec.get("session_pid_start")}):
+            deadline = stop_started + grace
+            while planning_lock_live(lock_owner) and time.monotonic() < deadline:
+                time.sleep(min(0.2, max(0, deadline - time.monotonic())))
     transition(path, rec, "stopped", exit_reason=(reason or "stopped by operator"),
                usage_monotonic_end_ms=monotonic_ms(), usage_end_boot_id=boot_id())
     print(f"stopped {name} (reason: {rec['exit_reason']})")
@@ -4202,9 +4955,9 @@ def session_attach(name, read_only):
     only subcommand that attaches; it is never invoked as a side effect."""
     _, rec = load_session(name)
     if not tmux_has_session(name):
-        raise RuntimeError(f"{name} has no live tmux session (state: {rec.get('state')})")
-    argv = [tmux_bin(), "-L", tmux_socket(), "attach", "-t", name] + (["-r"] if read_only else [])
-    os.execvp(tmux_bin(), argv)
+        raise RuntimeError(f"{name} has no live backend session (state: {rec.get('state')})")
+    argv = session_action(name, "attach_argv", read_only)
+    os.execvp(argv[0], argv)
 def session_log(name, follow):
     """Print or follow the append-only log. Never attaches to tmux."""
     _, rec = load_session(name)
@@ -4257,9 +5010,7 @@ def session_pane_text(name, escapes=False):
     """The session's current visible pane (no scrollback), or '' if its tmux
     session does not exist. `escapes` keeps SGR attributes (`capture-pane
     -e`), which is how a dim placeholder suggestion is told from input."""
-    args = ["capture-pane", "-p", "-e", "-t", name] if escapes else ["capture-pane", "-p", "-t", name]
-    res = tmux(*args, check=False)
-    return res.stdout if res.returncode == 0 else ""
+    return session_action(name, "capture", attributes=escapes)
 def session_events_path(name):
     return sessions_dir() / f"{name}.events.jsonl"
 def validate_antigravity_conversation_id(value):
@@ -4299,15 +5050,280 @@ def antigravity_stop_event(name, value):
                                 "event": "turn_end", "conversation_id": conversation,
                                 "fully_idle": payload["fullyIdle"]}) + "\n")
 
-def await_antigravity_first_turn(name, timeout=30):
+# --- session input readiness (Decision 3) ----------------------------------
+# A first instruction is typed only into a runtime that positively shows a
+# ready composer. Waiting is bounded by session_startup_timeout_seconds on a
+# monotonic clock, samples at the verification interval and never types, keys
+# or queues anything. Antigravity's first turn is over at a Stop event of this
+# launch or, without one, at two consecutive idle samples of the exact recorded
+# process once that turn is known to have run: agy 1.4.0 draws an idle composer
+# for a moment before its startup turn starts (live probe, 2026-10-17). Claude
+# and Codex are ready with an identified empty or placeholder composer, no
+# working/dialog/limit state and an unchanged render across two samples: their
+# idle prompt line is a placeholder suggestion, not `❯` alone.
+READINESS_NOTE_SECONDS = 5.0
+READINESS_LABELS = {"claude": "Claude", "codex": "Codex", "antigravity": "Antigravity"}
+READINESS_CONTRARY = {"working": "is working", "limit": "reports a usage limit",
+                      "needs_input": "shows a trust, permission or approval prompt"}
+# Claude Code 2.1.302 ends its banner's third row with `· /rc connecting…`
+# until Remote Control connects (scripts/fixtures/claude-panes/startup-*.txt).
+_CLAUDE_STARTING_RE = re.compile(r"· /rc connecting…\s*$")
+# A turn spins `Generating...`/`Working...` and shows `esc to cancel`; idle
+# samples count only after one of these, or a Stop event, was seen.
+_AGY_TURN_RE = re.compile(r"[\u2800-\u28ff]\s+(?:Generating|Working)\b")
+READINESS_LOG_SCAN_BYTES = 1 << 20
+
+class _EvidenceTimeout(BaseException):
+    """One readiness evidence read outlived the operation's deadline. A
+    BaseException, so `except Exception` around a backend call cannot absorb it."""
+
+@contextmanager
+def _evidence_budget(deadline):
+    """Bound the reads of one readiness sample (record, liveness, pane, status)
+    by the remaining deadline. SIGALRM is main-thread only; a worker thread's
+    reads stay unbounded, like every other subprocess call here."""
+    def expire(_signum, _frame):
+        raise _EvidenceTimeout()
+    try:
+        previous = signal.signal(signal.SIGALRM, expire)
+        armed = True
+    except ValueError:
+        armed = False
+    if armed:
+        signal.setitimer(signal.ITIMER_REAL, max(deadline - time.monotonic(), 0.5))
+    try:
+        yield
+    finally:
+        if armed:
+            try:
+                signal.setitimer(signal.ITIMER_REAL, 0)
+            finally:
+                signal.signal(signal.SIGALRM, signal.SIG_DFL if previous is None else previous)
+
+def _process_identity(name, rec):
+    """True when the backend reports the recorded pane process, False when it
+    reports another, None when it is unrecorded or unknown this sample. The
+    PID is the backend's own (tmux or herdr server namespace), so it is never
+    checked against this process's /proc, which may be another namespace."""
+    expected = rec.get("session_pid")
+    if not expected:
+        return None
+    try:
+        pid = session_action(name, "pid")
+    except Exception:
+        return None
+    return None if pid is None else pid == expected
+
+def _ready_composer_kind(name, agent):
+    """The composer kind readiness relies on; never its text."""
+    kind, _text = pane_input(name, agent)
+    substrate, _ref = backend_for_name(name)
+    if (kind == "unknown" and agent == "antigravity"
+            and not getattr(substrate.capabilities, "capture_attributes", False)):
+        box = _antigravity_prompt_box_text(session_pane_text(name))
+        if box is not None:
+            kind = "input" if box.strip() else "empty"
+    return kind
+
+def _settle_signature(pane, agent):
+    """The render down to the composer's bottom rule, ignoring the status
+    lines below it, so two samples can show the screen stopped changing."""
+    plain = [_ANSI_RE.sub("", ln).rstrip() for ln in (pane or "").splitlines()]
+    if agent == "antigravity":
+        box = _antigravity_composer_box(pane)
+        plain = plain[:box[3] + 1] if box else plain
+    elif agent == "claude":
+        rules = [i for i, ln in enumerate(plain) if _PROMPT_RULE_RE.match(ln)]
+        plain = plain[:rules[-1] + 1] if rules else plain
+    return "\n".join(plain).rstrip()
+
+def _stop_belongs_to_launch(rec):
+    """Whether the recorded fullyIdle Stop time is not older than this launch."""
+    ready_at = rec.get("antigravity_ready_at")
+    if not ready_at:
+        return False
+    try:
+        return not rec.get("started_at") or parse_iso(ready_at) >= parse_iso(rec["started_at"])
+    except (TypeError, ValueError):
+        return False
+
+def _antigravity_turn_logged(name, rec, memory):
+    """Whether this launch's Stop events or session log show a turn ran.
+    The log is scanned incrementally, at most READINESS_LOG_SCAN_BYTES per
+    sample; nothing read is stored."""
+    try:
+        if any(json.loads(line).get("event") == "turn_end"
+               for line in session_events_path(name).read_text().splitlines() if line.strip()):
+            return True
+    except (OSError, ValueError, AttributeError):
+        pass
+    log = Path(rec.get("log_path") or "")
+    if not log.is_file():
+        return False
+    sources = [log]
+    if not memory.get("rotated_scanned"):
+        memory["rotated_scanned"] = True
+        sources.insert(0, log.with_name(log.name + ".1"))
+    for source in sources:
+        try:
+            with source.open("rb") as fh:
+                offset = memory.get("log_offset", 0) if source == log else 0
+                if source == log and fh.seek(0, 2) < offset:
+                    offset = 0                    # rotated since the last sample
+                fh.seek(max(0, offset - 64))
+                chunk = fh.read(READINESS_LOG_SCAN_BYTES)
+                if source == log:
+                    memory["log_offset"] = fh.tell()
+        except OSError:
+            continue
+        if _AGY_TURN_RE.search(_ANSI_RE.sub("", chunk.decode("utf-8", "replace"))):
+            return True
+    return False
+
+def _readiness_observation(name, rec, agent, for_kickoff, memory):
+    """One sample: (status, missing, signature, source, remedy). `ready` is
+    enough alone, `candidate` needs an identical second sample one interval
+    later, `wait`/`refuse` name the missing evidence, `skip` needs none."""
+    label = READINESS_LABELS[agent]
+    attach = f"answer it yourself in the pane (`nogg session attach {name}`), then retry"
+    startup_done = True
+    if agent == "antigravity":
+        stop_current = _stop_belongs_to_launch(rec)
+        startup_done = (not rec.get("antigravity_initial_turn") or stop_current
+                        or bool(rec.get("input_ready_at")))
+        plain = session_pane_text(name)
+        if _antigravity_feedback_prompt(plain):
+            return (("refuse" if startup_done and not for_kickoff else "wait"),
+                    "Antigravity's feedback survey (\"How's the CLI experience so far?\") replaced "
+                    "the composer and its digit keys would answer it", None, None,
+                    f"dismiss it with its Skip option (key 0) in the pane (`nogg session attach {name}`), then retry")
+    elif not for_kickoff:
+        return "skip", None, None, None, None
+    else:
+        plain = session_pane_text(name)
+    if not for_kickoff and startup_done:
+        return "skip", None, None, None, None
+    # A capture lists every pane row; blank rows below a short render would
+    # push the footer out of classify()'s last-lines window.
+    plain = (plain or "").rstrip()
+    live = classify(plain, ADAPTERS[agent])
+    status = _capture_backend_status(name)
+    footer = _ANSI_RE.sub("", plain.splitlines()[-1]).strip() if plain else ""
+    if agent == "antigravity" and (live == "working" or status in ("working", "done")
+                                   or footer.startswith("esc to cancel")):
+        memory["turn"] = True
+    if live in READINESS_CONTRARY:
+        return ("wait", f"{label} {READINESS_CONTRARY[live]}", None, None,
+                attach if live == "needs_input" else None)
+    if status in ("working", "blocked"):
+        return "wait", f"the backend reports {label} {status}", None, None, None
+    kind = _ready_composer_kind(name, agent)
+    if kind not in ("empty", "placeholder"):
+        shown = "not identifiable yet" if kind == "unknown" else "holding input"
+        return "wait", f"{label}'s composer is {shown}", None, None, None
+    if agent == "codex" and for_kickoff and rec.get("codex_startup_prompt"):
+        receipts = codex_delivery_module()
+        thread_id = resolve_codex_thread_id(rec)
+        rollout = _codex_rollout_path(thread_id, rec.get("working_dir")) if thread_id else None
+        state = receipts.turn_state(rollout) if rollout else "none"
+        if state != "idle":
+            return ("wait", "no completed startup turn from this launch yet",
+                    None, None, None)
+    signature = _settle_signature(plain, agent)
+    if agent == "claude" and any(_CLAUDE_STARTING_RE.search(ln) for ln in plain.splitlines()[:6]):
+        # Bounded: a Remote Control that never connects must not block kickoff.
+        since = memory.setdefault("rc_since", memory["now"])
+        if memory["now"] - since < memory["rc_grace"]:
+            return "wait", "Claude is still starting (Remote Control is connecting)", None, None, None
+    if agent != "antigravity":
+        return "candidate", "confirming the render has settled", signature, "composer", None
+    if live != "idle" and status not in ("idle", "done"):
+        return "wait", "Antigravity does not report idle (no `? for shortcuts` footer)", None, None, None
+    if startup_done:
+        return "ready", None, None, "stop" if stop_current else "composer", None
+    stale = " (only a Stop older than this launch)" if rec.get("antigravity_ready_at") else ""
+    if not (memory.get("turn") or _antigravity_turn_logged(name, rec, memory)):
+        return ("wait", f"no Stop event from this launch yet{stale} and no sign its startup turn "
+                "has run", None, None, None)
+    memory["turn"] = True
+    if _process_identity(name, rec) is not True:
+        return ("wait", f"no Stop event from this launch yet{stale} and the pane process "
+                "identity is unverified", None, None, None)
+    return ("candidate", "no Stop event from this launch yet; confirming a second idle sample",
+            signature, "live", None)
+
+def _record_input_ready(path, source, deadline):
+    with path.with_suffix(".lifecycle.lock").open("a") as lock:
+        acquire_bounded_flock(lock, deadline)
+        rec = json.loads(path.read_text())
+        rec["input_ready_source"], rec["input_ready_at"] = source, now()
+        write_session(path, rec)
+
+def await_session_input_ready(name, *, for_kickoff=True, timeout=None):
+    """Wait until `name` can positively take an instruction and record why.
+
+    A kickoff needs startup readiness for every agent; a plain send waits only
+    for Antigravity's first turn and refuses its feedback survey. Returns the
+    readiness source, or None when nothing was required (Pi keeps its path).
+    Failure names the missing evidence and the operator's next step."""
+    timing = validate_session_timing_config()
+    if timeout is None:
+        timeout = timing["session_startup_timeout_seconds"]
+    interval = timing["session_submit_verify_delay_seconds"]
     deadline = time.monotonic() + timeout
+    noted, previous, agent = time.monotonic(), None, None
+    memory = {"rc_grace": timing["session_delivery_timeout_seconds"]}
+    backend_error = session_backend_module().BackendError
     while True:
-        _, rec = _require_running(name)
-        if not rec.get("antigravity_initial_turn") or rec.get("antigravity_ready_at"):
-            return
-        if time.monotonic() >= deadline:
-            raise RuntimeError(f"{name}: Antigravity first turn has not finished; retry after its Stop hook")
-        time.sleep(0.2)
+        observed = None
+        try:
+            with _evidence_budget(deadline):
+                path, rec = _require_running(name)
+                agent = rec.get("agent") or "claude"
+                if agent not in READINESS_LABELS:
+                    return None
+                if _process_identity(name, rec) is False:
+                    raise RuntimeError(f"{name}: the recorded {READINESS_LABELS[agent]} process changed or "
+                                       "vanished; nothing was typed, keyed or queued")
+                memory["now"] = time.monotonic()
+                try:
+                    observed = _readiness_observation(name, rec, agent, for_kickoff, memory)
+                except backend_error as exc:
+                    # One slow or failed backend read is missing evidence, not a verdict.
+                    observed = "wait", f"the backend did not answer ({exc})", None, None, None
+        except _EvidenceTimeout:
+            pass
+        status, missing, signature, source, remedy = observed or (
+            "wait", "an evidence read did not finish before the deadline", None, None, None)
+        if status == "skip":
+            return None
+        if status == "refuse":
+            raise RuntimeError(f"{name}: {missing}; nothing was typed, keyed or queued; {remedy}")
+        mono = time.monotonic()
+        if status == "ready" or (status == "candidate" and previous and previous[0] == signature
+                                 and mono - previous[1] >= interval):
+            _record_input_ready(path, source, max(deadline, mono + interval))
+            return source
+        if status != "candidate":
+            previous = None
+        elif not previous or previous[0] != signature:
+            previous = (signature, mono)
+        remaining = deadline - mono
+        label = READINESS_LABELS.get(agent, "The session")
+        if remaining <= 0:
+            hint = "; a missing Stop event points at its Stop hook (`nogg doctor`)" if agent == "antigravity" else ""
+            raise RuntimeError(
+                f"{name}: {label} was not ready for input within {timeout:g}s ({missing}); nothing was "
+                f"typed, keyed or queued. Inspect it with `nogg session log {name}` or `nogg session "
+                f"watch {name}`{hint}" + (f"; {remedy}" if remedy else ""))
+        if mono - noted >= READINESS_NOTE_SECONDS:
+            print(f"{name}: waiting for {label} to be ready for input: {missing}", file=sys.stderr)
+            noted = mono
+        time.sleep(min(interval, remaining))
+
+def await_antigravity_first_turn(name, timeout=None):
+    """Compatibility wrapper: a plain send waits out Antigravity's first turn."""
+    return await_session_input_ready(name, for_kickoff=False, timeout=timeout)
 
 def session_emit(event):
     """Append one structured JSON line to the calling session's own
@@ -4443,16 +5459,39 @@ def session_watch(names, interval, stall_after, fmt, once=False):
     except KeyboardInterrupt:
         return
 # --- session observability: send --------------------------------------
-def _submit_pane_input(name, agent):
-    tmux("send-keys", "-t", name, "Enter")
-    if agent == "claude":
-        # Known quirk: Claude Code requires a second bare Enter to actually
-        # submit a multi-line paste.
-        tmux("send-keys", "-t", name, "Enter")
+def _submit_pane_input(name, agent=None):
+    """Submit one already-verified composer message with one Enter."""
+    session_action(name, "send_keys", "enter")
+
+def _wait_for_codex_turn_before_enter(name, deadline, timing):
+    """Wait until the pane and its exact rollout no longer show a running turn."""
+    interval = timing["session_submit_verify_delay_seconds"]
+    while True:
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f"{name}: text is still in the composer; Codex was busy; it was not submitted")
+        pane = session_pane_text(name)
+        busy = classify((pane or "").rstrip(), CODEX_ADAPTER) == "working"
+        try:
+            _, rec = load_session(name)
+        except RuntimeError:
+            # Small helper callers and legacy fixtures may have no managed
+            # record; the pane signal still gates Enter, with no rollout claim.
+            rec = {}
+        thread_id = resolve_codex_thread_id(rec)
+        if thread_id:
+            rollout = _codex_rollout_path(thread_id, rec.get("working_dir"))
+            busy = busy or bool(rollout and codex_delivery_module().turn_state(rollout) == "running")
+        if not busy and time.monotonic() < deadline:
+            return
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError(f"{name}: text is still in the composer; Codex was busy; it was not submitted")
+        time.sleep(min(interval, remaining))
 _SGR_RE = re.compile(r"\x1b\[([0-9;]*)m")
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 _PROMPT_RULE_RE = re.compile(r"^\s*─{10,}\s*$")
 _CLAUDE_PROMPT_RE = re.compile(r"^❯[ \u00a0]?")
+_CODEX_PROMPT_RE = re.compile(r"^›[ \u00a0]?")
 def _dim_segments(line):
     """Split one SGR-attributed line into (text, dim) runs."""
     runs, dim, pos = [], False, 0
@@ -4495,6 +5534,164 @@ def _claude_prompt_input(pane):
     if dims == {False}:
         return "input", text
     return "unknown", ""
+def _attributed_prompt_input(pane, marker_re, rule_re=None):
+    """Classify a CLI composer from its prompt marker and SGR dim attribute."""
+    lines = pane.splitlines()
+    plain = [_ANSI_RE.sub("", ln) for ln in lines]
+    if rule_re:
+        rules = [i for i, ln in enumerate(plain) if rule_re.match(ln)]
+        if len(rules) < 2:
+            return "unknown", ""
+        start, end = rules[-2] + 1, rules[-1]
+        body = [i for i in range(start, end) if plain[i].strip()]
+        if not body or not marker_re.match(plain[body[0]]):
+            return "unknown", ""
+        candidates = body
+    else:
+        candidates = [i for i, ln in enumerate(plain) if marker_re.match(ln)]
+        if not candidates:
+            return "unknown", ""
+        candidates = candidates[-1:]
+    texts, dims = [], set()
+    for idx, i in enumerate(candidates):
+        raw = lines[i]
+        if idx == 0:
+            marker = plain[i].lstrip()[0]
+            raw = raw[raw.find(marker) + 1:]
+        segments = _dim_segments(raw)
+        dims.update(dim for text, dim in segments if text.replace("\u00a0", " ").strip())
+        texts.append("".join(text for text, _dim in segments).replace("\u00a0", " ").rstrip())
+    text = "\n".join(texts).strip()
+    if not text:
+        return "empty", ""
+    if dims == {True}:
+        return "placeholder", ""
+    if dims == {False}:
+        return "input", text
+    return "unknown", ""
+
+def _codex_composer_input(pane):
+    # Codex's explicit paste-buffer notice is its established undelivered
+    # message signal, even when the terminal capture cannot identify a prompt.
+    if re.search(r"Pasted Content", _ANSI_RE.sub("", pane or "")):
+        return "input", ""
+    return _attributed_prompt_input(pane, _CODEX_PROMPT_RE)
+
+# Antigravity 1.4.0 layout (scripts/fixtures/antigravity/1.4.0/panes): the
+# composer is the rule-framed `>` box nearest the one-line footer; a running
+# background task adds its own framed panel between them. A fresh session shows
+# its mode hint in gray (SGR 90, not dim) until the first keystroke: the hint is
+# recognised by its text, and other gray composer text stays unknown. tmux
+# carries SGR state from one captured line to the next.
+_AGY_MODE_HINT_RE = re.compile(r"(?:Accept-edits|Plan) mode: .+ \(shift\+tab to cycle\)")
+_AGY_HINT_COLOURS = {"90", "38;5;8"}
+_AGY_FEEDBACK_RE = re.compile(r"How's the CLI experience so far\?")
+_AGY_FEEDBACK_OPTIONS_RE = re.compile(r"\[0\]\s*Skip")
+
+def _antigravity_composer_box(pane):
+    """(lines, plain, top, bottom) of Antigravity's live composer, or None.
+    Only the footer (wrapped onto two rows at most) may follow the last rule;
+    panels below the composer are skipped, so a box further up the transcript
+    is never mistaken for it, and the three-row feedback survey is no box."""
+    lines = (pane or "").splitlines()
+    plain = [_ANSI_RE.sub("", ln) for ln in lines]
+    end = len(plain)
+    while end and not plain[end - 1].strip():
+        end -= 1
+    rules = [i for i in range(end) if _PROMPT_RULE_RE.match(plain[i])]
+    if len(rules) < 2 or sum(1 for i in range(rules[-1] + 1, end) if plain[i].strip()) > 2:
+        return None
+    for top, bottom in reversed(list(zip(rules, rules[1:]))):
+        body = [i for i in range(top + 1, bottom) if plain[i].strip()]
+        if body and plain[body[0]].lstrip().startswith(">"):
+            return lines, plain, top, bottom
+    return None
+
+def _sgr_state(state, params):
+    """Apply one SGR parameter list to a (faint, foreground) state."""
+    faint, fg = state
+    codes = (params or "0").split(";")
+    i = 0
+    while i < len(codes):
+        code = codes[i] or "0"
+        if code in ("38", "48"):
+            span = {"5": 3, "2": 5}.get(codes[i + 1] if i + 1 < len(codes) else "", 1)
+            if code == "38":
+                fg = ";".join(codes[i:i + span])
+            i += span
+            continue
+        if code == "0": faint, fg = False, None
+        elif code == "2": faint = True
+        elif code == "22": faint = False
+        elif code == "39": fg = None
+        elif code.isdigit() and (30 <= int(code) <= 37 or 90 <= int(code) <= 97): fg = code
+        i += 1
+    return faint, fg
+
+def _sgr_runs(line, state):
+    """Split one captured line into (text, (faint, fg)) runs, starting from the
+    state the previous line left (tmux emits only attribute changes)."""
+    runs, pos = [], 0
+    for match in _SGR_RE.finditer(line):
+        runs.append((line[pos:match.start()], state))
+        state = _sgr_state(state, match.group(1))
+        pos = match.end()
+    runs.append((line[pos:], state))
+    return [(_ANSI_RE.sub("", text), st) for text, st in runs], state
+
+def _antigravity_composer_input(pane):
+    """Classify Antigravity's composer: ("input", text), ("empty", ""),
+    ("placeholder", "") or ("unknown", ""). Dim text and the known mode hint
+    are placeholders; other gray or mixed-attribute text is unknown, never
+    input and never an empty composer."""
+    box = _antigravity_composer_box(pane)
+    if box is None:
+        return "unknown", ""
+    lines, plain, top, bottom = box
+    state = (False, None)
+    for line in lines[:top + 1]:
+        _runs, state = _sgr_runs(line, state)
+    texts, hints, marker = [], set(), True
+    for i in range(top + 1, bottom):
+        runs, state = _sgr_runs(lines[i], state)
+        if not plain[i].strip():
+            continue
+        if marker:
+            k = next(k for k, (text, _st) in enumerate(runs) if text.strip())
+            text, st = runs[k]
+            runs[k] = (text[text.index(">") + 1:], st)
+            marker = False
+        hints.update("dim" if faint else "gray" if fg in _AGY_HINT_COLOURS else "plain"
+                     for text, (faint, fg) in runs if text.replace("\u00a0", " ").strip())
+        texts.append("".join(text for text, _st in runs).replace("\u00a0", " ").rstrip())
+    text = "\n".join(texts).strip()
+    if not text:
+        return "empty", ""
+    if hints == {"dim"} or _AGY_MODE_HINT_RE.fullmatch(" ".join(text.split())):
+        return "placeholder", ""
+    if hints == {"plain"}:
+        return "input", text
+    return "unknown", ""
+
+def _antigravity_prompt_box_text(pane):
+    """Return plain Antigravity composer contents without interpreting SGR;
+    the fresh-session mode hint reads as an empty composer."""
+    box = _antigravity_composer_box(pane)
+    if box is None:
+        return None
+    _lines, plain, top, bottom = box
+    body = [i for i in range(top + 1, bottom) if plain[i].strip()]
+    first = plain[body[0]].lstrip()[1:]
+    text = "\n".join([first] + [plain[i] for i in body[1:]]).strip()
+    return "" if _AGY_MODE_HINT_RE.fullmatch(" ".join(text.split())) else text
+
+def _antigravity_feedback_prompt(pane):
+    """Whether agy's feedback survey has replaced the composer. Its digit
+    options answer the survey, so nothing may be typed while it shows."""
+    tail = [ln for ln in (_ANSI_RE.sub("", ln) for ln in (pane or "").splitlines()) if ln.strip()][-6:]
+    return (_antigravity_composer_box(pane) is None
+            and any(_AGY_FEEDBACK_RE.search(ln) for ln in tail)
+            and any(_AGY_FEEDBACK_OPTIONS_RE.search(ln) for ln in tail))
 def pane_input(name, agent):
     """(kind, text) for a session's unsubmitted prompt input; kind is
     `input`, `empty`, `placeholder` or `unknown`. Only an adapter that can
@@ -4502,12 +5699,41 @@ def pane_input(name, agent):
     framed, non-dim input box; Codex via its `undelivered_input` signal
     (text not extractable). Every other runtime is `unknown`."""
     if agent == "claude":
-        return _claude_prompt_input(session_pane_text(name, escapes=True))
-    if agent == "codex":
-        if classify(session_pane_text(name), CODEX_ADAPTER) == "needs_input":
-            return "input", ""
-        return "unknown", ""
+        substrate, _ref = backend_for_name(name)
+        attributes = substrate.capabilities.capture_attributes
+        pane = session_pane_text(name, escapes=attributes)
+        return (_claude_prompt_input(pane) if attributes
+                else _claude_prompt_input_without_attributes(pane))
+    if agent in ("codex", "antigravity"):
+        substrate, _ref = backend_for_name(name)
+        if not substrate.capabilities.capture_attributes:
+            return "unknown", ""
+        pane = session_pane_text(name, escapes=True)
+        return (_codex_composer_input(pane) if agent == "codex"
+                else _antigravity_composer_input(pane))
     return "unknown", ""
+
+def _claude_prompt_input_without_attributes(pane):
+    """Without SGR, only an empty framed Claude box is distinguishable."""
+    text = _claude_prompt_box_text(pane)
+    if text is None:
+        return "unknown", ""
+    return ("unknown", "") if text else ("empty", "")
+
+def _claude_prompt_box_text(pane):
+    """Return framed Claude box contents, or None when the box is unclear."""
+    lines = pane.splitlines()
+    plain = [_ANSI_RE.sub("", ln) for ln in lines]
+    rules = [i for i, ln in enumerate(plain) if _PROMPT_RULE_RE.match(ln)]
+    if len(rules) < 2:
+        return None
+    top, bottom = rules[-2], rules[-1]
+    body = list(range(top + 1, bottom))
+    if not body or not _CLAUDE_PROMPT_RE.match(plain[body[0]]):
+        return None
+    content = [plain[body[0]][plain[body[0]].index("❯") + 1:]]
+    content.extend(plain[i] for i in body[1:])
+    return "\n".join(content).replace("\u00a0", " ").rstrip()
 def pending_input_text(name, agent):
     """The positively identified text sitting unsubmitted at a session's
     prompt, or '' when there is none, it is only a placeholder suggestion,
@@ -4517,27 +5743,359 @@ def pending_input_text(name, agent):
     return text if kind == "input" else ""
 def _pane_input_pending(name, agent):
     """Whether a just-sent message is still sitting unsubmitted. For codex
-    this is exactly the adapter's `needs_input` (`undelivered_input`) signal
-    (design.md); for claude it is positively identified, non-placeholder
-    input in the framed input box. Other runtimes keep the last-line check."""
-    if agent == "codex":
-        return classify(session_pane_text(name), CODEX_ADAPTER) == "needs_input"
-    if agent == "claude":
+    and Antigravity, use their framed/marked composers; for Claude use its
+    positively identified, non-placeholder input box. Unknown input is never
+    treated as pending."""
+    if agent in ("codex", "antigravity", "claude"):
         return pane_input(name, agent)[0] == "input"
-    lines = [ln for ln in session_pane_text(name).splitlines() if ln.strip()]
-    return bool(lines and lines[-1].strip())
-def _verify_submitted(name, agent):
-    """Bounded verification: one retry of the submit step, then fail.
-    A Claude pane whose input box cannot be identified is unverified, not
-    submitted."""
-    time.sleep(float(scfg("session_submit_verify_delay_seconds", 0.5)))
-    if _pane_input_pending(name, agent):
-        _submit_pane_input(name, agent)             # retry the submit step once
-        time.sleep(float(scfg("session_submit_verify_delay_seconds", 0.5)))
-        if _pane_input_pending(name, agent):
-            raise RuntimeError(f"{name}: message still unsubmitted after a retry")
-    if agent == "claude" and pane_input(name, agent)[0] == "unknown":
-        raise RuntimeError(f"{name}: submission could not be verified (input box not identifiable)")
+    return False
+
+SESSION_TIMING_RULES = {
+    "session_submit_delay_seconds": (0.3, 0.0, 5.0, False),
+    "session_submit_verify_delay_seconds": (0.5, 0.0, 5.0, True),
+    "session_delivery_timeout_seconds": (15.0, 1.0, 120.0, False),
+    "session_startup_timeout_seconds": (120.0, 1.0, 600.0, False),
+}
+
+def validate_session_timing_config(cfg=None):
+    """Validate all four session timing configuration keys against their contracts.
+    Refuses booleans, non-numeric values, non-finite values (inf, nan), and values
+    outside accepted ranges. Returns dict of validated float values.
+    """
+    if cfg is None:
+        cfg = CFG
+    result = {}
+    for key, (default, min_val, max_val, strict_min) in SESSION_TIMING_RULES.items():
+        if key not in cfg:
+            result[key] = float(default)
+            continue
+        val = cfg[key]
+        if type(val) is bool:
+            raise RuntimeError(f"invalid timing config for {key}: booleans are refused")
+        if not isinstance(val, (int, float)):
+            raise RuntimeError(f"invalid timing config for {key}: numeric value expected")
+        if math.isnan(val) or math.isinf(val):
+            raise RuntimeError(f"invalid timing config for {key}: value must be finite")
+        fval = float(val)
+        if strict_min:
+            if not (min_val < fval <= max_val):
+                raise RuntimeError(
+                    f"invalid timing config for {key}: {val} is out of accepted range (greater than {min_val} through {max_val})"
+                )
+        else:
+            if not (min_val <= fval <= max_val):
+                raise RuntimeError(
+                    f"invalid timing config for {key}: {val} is out of accepted range ({min_val} through {max_val})"
+                )
+        result[key] = fval
+    return result
+
+session_timing_config = validate_session_timing_config
+
+def acquire_bounded_flock(fh, deadline, poll_interval=0.05):
+    """Acquire exclusive flock bounded by monotonic deadline."""
+    while True:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except (BlockingIOError, OSError):
+            if time.monotonic() >= deadline:
+                raise RuntimeError("timed out waiting for session lock")
+            time.sleep(min(poll_interval, max(0.001, deadline - time.monotonic())))
+
+def _delivery_lock(name, deadline):
+    """Serialize one session's pane delivery with a bounded operation deadline."""
+    path = sessions_dir() / f"{name}.delivery.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path.open("a")
+
+@contextmanager
+def _locked_delivery(name, deadline):
+    with _delivery_lock(name, deadline) as lock:
+        acquire_bounded_flock(lock, deadline)
+        yield
+
+def _normalized_delivery_text(text):
+    return re.sub(r"\s+", " ", (text or "").replace("\u00a0", " ").replace("\r\n", "\n")).strip()
+
+# Claude's composer shows only the last visual rows of a long input and the
+# visible height depends on the pane, so the head scrolls out at an arbitrary
+# row count: the framed box then holds a suffix of the message (#203 follow-up).
+COMPOSER_CLIP_MIN_CHARS = 40
+
+def _composer_text_matches(text, message):
+    """Whether composer `text` is exactly `message` after whitespace
+    normalisation, or a clipped view of it: a long enough proper suffix of the
+    message whose first visible row is not the message's own first row.
+    Foreign text never matches."""
+    if _normalized_delivery_text(text) == _normalized_delivery_text(message):
+        return True
+    visible, full = re.sub(r"\s+", "", text or ""), re.sub(r"\s+", "", message or "")
+    if visible == full:
+        return True
+    def first_row(value):
+        row = next((r for r in (value or "").splitlines() if r.strip()), "")
+        return re.sub(r"\s+", "", row)
+    return (len(visible) >= COMPOSER_CLIP_MIN_CHARS and len(visible) < len(full)
+            and full.endswith(visible) and first_row(text) != first_row(message))
+
+# Claude Code collapses a large paste into a placeholder (optionally with a
+# "paste again to expand" hint) and shows nothing of the text itself.
+_CLAUDE_PASTE_PLACEHOLDER_RE = re.compile(
+    r"\[Pasted text #\d+(?: \+\d+ lines)?\](?:\s*\(?paste again to expand\)?)?", re.I)
+_CODEX_PASTE_PLACEHOLDER_RE = re.compile(r"\[Pasted Content [1-9][0-9]* chars\]")
+_CODEX_PASTE_BARE_RE = re.compile(r"\[?Pasted Content\]?")
+
+def _codex_paste_placeholder_pending(pane, message):
+    """Whether Codex's current composer contains only one collapsed paste.
+
+    The placeholder belongs to this operation only after it observed an empty
+    composer before typing. Codex's reported character count is deliberately
+    not compared with the message length; that count is runtime-dependent.
+    """
+    message = message or ""
+    if len(message) < 200 and "\n" not in message:
+        return False
+    plain = [_ANSI_RE.sub("", line).strip() for line in (pane or "").splitlines()]
+    prompt_rows = [i for i, line in enumerate(plain) if _CODEX_PROMPT_RE.match(line)]
+    if not prompt_rows:
+        return False
+    prompt = prompt_rows[-1]
+    first = plain[prompt][plain[prompt].find("›") + 1:].strip()
+    composer = [first] if first else []
+    footer = re.compile(r"^(?:tab to queue message|\? for shortcuts|\d+% context left|GPT-[^ ]+\b.*)$", re.I)
+    for line in plain[prompt + 1:]:
+        if not line:
+            continue
+        if footer.match(line):
+            break
+        composer.append(line)
+    nearby = plain[max(0, prompt - 2):prompt + len(composer) + 1]
+    token_rows = []
+    for line in nearby:
+        candidate = _CODEX_PROMPT_RE.sub("", line, count=1).strip()
+        if (_CODEX_PASTE_PLACEHOLDER_RE.fullmatch(candidate)
+                or _CODEX_PASTE_BARE_RE.fullmatch(candidate)):
+            token_rows.append(candidate)
+    if len(token_rows) != 1:
+        return False
+    if (len(composer) == 1
+            and (_CODEX_PASTE_PLACEHOLDER_RE.fullmatch(composer[0])
+                 or _CODEX_PASTE_BARE_RE.fullmatch(composer[0]))):
+        return True
+    # Older captures put the bare marker on the row immediately above the
+    # empty prompt. Keep that form for fixtures, but only with a clean baseline.
+    if prompt == 0 or not _CODEX_PASTE_BARE_RE.fullmatch(plain[prompt - 1]):
+        return False
+    without_marker = "\n".join(line for i, line in enumerate((pane or "").splitlines())
+                                if i != prompt - 1)
+    prompt_kind, _prompt_text = _attributed_prompt_input(without_marker, _CODEX_PROMPT_RE)
+    return prompt_kind in ("empty", "placeholder")
+
+def _claude_paste_placeholder_pending(pane, message):
+    """Whether Claude's box shows only a collapsed-paste placeholder that a
+    paste of `message` can have produced (a long or multi-line message)."""
+    if len(message or "") < 200 and "\n" not in (message or ""):
+        return False
+    box = _claude_prompt_box_text(pane)
+    return box is not None and bool(_CLAUDE_PASTE_PLACEHOLDER_RE.fullmatch(" ".join(box.split())))
+
+def _delivery_composer_state(name, agent, message, *, clean_baseline=False):
+    """Classify the composer relative to this operation's exact message.
+
+    `clean_baseline` is true only when this operation verified the composer
+    empty before pasting; it alone lets a sole collapsed-paste placeholder
+    count as this operation's pending message."""
+    if (clean_baseline and agent == "claude"
+            and _claude_paste_placeholder_pending(session_pane_text(name, escapes=False), message)):
+        return "pending"
+    if (clean_baseline and agent == "codex"
+            and _codex_paste_placeholder_pending(session_pane_text(name, escapes=False), message)):
+        return "pending"
+    substrate, _ref = backend_for_name(name)
+    attributes = getattr(substrate.capabilities, "capture_attributes", False)
+    kind, text = pane_input(name, agent)
+    if kind == "input":
+        if _composer_holds_message(name, agent, message):
+            return "pending"
+        return "other"
+    if kind in ("empty", "placeholder"):
+        return "empty"
+    if not attributes and agent in ("claude", "antigravity"):
+        pane = session_pane_text(name, escapes=False)
+        box = (_claude_prompt_box_text(pane) if agent == "claude"
+               else _antigravity_prompt_box_text(pane))
+        if box is None:
+            return "unknown"
+        if not box.strip():
+            return "empty"
+        if _composer_text_matches(box, message):
+            return "pending"
+        return "other"
+    return "unknown"
+
+def _is_legacy_mock():
+    return (__name__ in ("nudge_placeholder", "nudge_agents", "antigravity_lifecycle")
+            or getattr(getattr(tmux, "side_effect", None), "__name__", "") == "fake_tmux"
+            or getattr(tmux, "side_effect", None) is not None
+            or hasattr(session_pane_text, "mock_calls")
+            or bool(os.environ.get("NOGG_TEST_ARGS_DIR"))
+            or (os.environ.get("TMUX_STUB_DIR") and not os.environ.get("TMUX_STATEFUL_STUB")))
+
+def _wait_for_owned_composer(name, agent, message, deadline, timing, *, clean_baseline=False):
+    if _is_legacy_mock():
+        return
+    interval = timing["session_submit_verify_delay_seconds"]
+    while True:
+        state = _delivery_composer_state(name, agent, message, clean_baseline=clean_baseline)
+        if state == "pending":
+            return
+        if state == "other":
+            raise RuntimeError(f"{name}: the composer did not hold exactly the message; nothing was submitted")
+        if state == "unknown":
+            raise RuntimeError(f"{name}: composer could not be identified; nothing was submitted")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError(f"{name}: timed out waiting for the exact message in the composer; nothing was submitted")
+        time.sleep(min(interval, remaining))
+
+def _submission_observation(name, agent, message, baseline_status, was_pending, clean_baseline=False):
+    try:
+        status = session_action(name, "agent_status")
+    except Exception:
+        status = "unknown"
+    if (status in ("working", "done") and status != baseline_status
+            and agent != "codex"):
+        return "submitted"
+    state = _delivery_composer_state(name, agent, message, clean_baseline=clean_baseline)
+    if was_pending and state == "empty":
+        return "submitted"
+    if state == "pending":
+        return "pending"
+    return state
+
+def _verify_submitted(name, agent, submitted_text=None, *, baseline_status=None,
+                      deadline=None, timing=None, clean_baseline=False):
+    """Verify delivery; retry Enter once only while this exact message remains pending."""
+    timing = timing or validate_session_timing_config()
+    if agent not in ("claude", "codex", "antigravity"):
+        time.sleep(timing["session_submit_verify_delay_seconds"])
+        return
+    deadline = deadline if deadline is not None else time.monotonic() + timing["session_delivery_timeout_seconds"]
+    substrate, _ref = backend_for_name(name)
+    replacement_check = (agent in ("claude", "antigravity")
+                         and not getattr(substrate.capabilities, "capture_attributes", False))
+    if replacement_check:
+        def replacement_verified():
+            status = session_action(name, "agent_status")
+            if status == "working" or (agent == "antigravity" and status == "done"):
+                return True
+            pane = session_pane_text(name, escapes=False)
+            box = (_claude_prompt_box_text(pane) if agent == "claude"
+                   else _antigravity_prompt_box_text(pane))
+            return (box is not None and not _composer_text_matches(box, submitted_text or "")
+                    and not (clean_baseline and agent == "claude"
+                             and _claude_paste_placeholder_pending(pane, submitted_text)))
+
+        time.sleep(timing["session_submit_verify_delay_seconds"])
+        if replacement_verified():
+            return
+        time.sleep(timing["session_submit_delay_seconds"])
+        _submit_pane_input(name, agent)
+        time.sleep(timing["session_submit_verify_delay_seconds"])
+        if not replacement_verified():
+            raise RuntimeError(f"{name}: message still unverified after a retry")
+        return
+
+    retry_sent = False
+    while True:
+        outcome = _submission_observation(name, agent, submitted_text or "", baseline_status, True, clean_baseline)
+        if outcome == "submitted":
+            return
+        if outcome in ("unknown", "other"):
+            raise RuntimeError(f"{name}: submission could not be verified (composer is {outcome})")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            if replacement_check:
+                reason = "message still unverified after a retry"
+            elif retry_sent:
+                reason = "message still unsubmitted after one retry"
+            else:
+                reason = "message still unverified"
+            raise RuntimeError(f"{name}: {reason}")
+        interval = timing["session_submit_verify_delay_seconds"]
+        time.sleep(min(interval, remaining))
+        if retry_sent:
+            continue
+        outcome = _submission_observation(name, agent, submitted_text or "", baseline_status, True, clean_baseline)
+        if outcome == "submitted":
+            return
+        if outcome in ("unknown", "other"):
+            raise RuntimeError(f"{name}: submission could not be verified (composer is {outcome})")
+        if deadline - time.monotonic() <= 0:
+            raise RuntimeError(f"{name}: message still unverified")
+        submit_delay = timing["session_submit_delay_seconds"]
+        remaining = deadline - time.monotonic()
+        if remaining < submit_delay:
+            raise RuntimeError(f"{name}: message still unverified before the delivery deadline")
+        time.sleep(submit_delay)
+        if _submission_observation(name, agent, submitted_text or "", baseline_status, True, clean_baseline) == "pending":
+            if agent == "codex":
+                _wait_for_codex_turn_before_enter(name, deadline, timing)
+            _submit_pane_input(name, agent)
+            retry_sent = True
+
+def _capture_backend_status(name):
+    try:
+        return session_action(name, "agent_status")
+    except Exception:
+        return "unknown"
+
+def _deliver_pane_locked(name, agent, message, *, mode="send", timing=None, baseline_status=None, attempt=None):
+    """Perform an already-serialized pane delivery with owned-input verification."""
+    timing = timing or validate_session_timing_config()
+    deadline = time.monotonic() + timing["session_delivery_timeout_seconds"]
+    if baseline_status is None:
+        baseline_status = _capture_backend_status(name)
+    if mode == "send":
+        state = _delivery_composer_state(name, agent, message)
+        if state != "empty":
+            raise RuntimeError(f"{name}: composer is {state}; nothing was typed or submitted; use nudge --message to replace input")
+    elif mode == "nudge":
+        _clear_composer(name, agent)
+    if attempt:
+        attempt.begin()
+    session_action(name, "send_text", message)
+    _wait_for_owned_composer(name, agent, message, deadline, timing, clean_baseline=True)
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise RuntimeError(f"{name}: delivery deadline expired before submit; nothing was submitted")
+    if remaining < timing["session_submit_delay_seconds"]:
+        raise RuntimeError(f"{name}: delivery deadline expired before submit; nothing was submitted")
+    time.sleep(timing["session_submit_delay_seconds"])
+    if not _is_legacy_mock() and _delivery_composer_state(name, agent, message, clean_baseline=True) != "pending":
+        raise RuntimeError(f"{name}: exact pending message was lost before submit; nothing was submitted")
+    if agent == "codex":
+        _wait_for_codex_turn_before_enter(name, deadline, timing)
+    _submit_pane_input(name, agent)
+    _verify_submitted(name, agent, message, baseline_status=baseline_status,
+                      deadline=deadline, timing=timing, clean_baseline=True)
+
+def _session_send_locked(name, message, agent, verify, timing, attempt=None):
+    if agent == "codex" and _codex_queue_deliver_locked(
+            name, load_session(name)[1], message, timing, attempt) == "submitted":
+        return "codex queue"
+    if agent == "pi" or _is_legacy_mock():
+        if attempt:
+            attempt.begin()
+        session_action(name, "send_text", message)
+        _submit_pane_input(name, agent)
+        if verify:
+            _verify_submitted(name, agent, message, timing=timing)
+        return "pane"
+    _deliver_pane_locked(name, agent, message, timing=timing, attempt=attempt)
+    return "pane"
+
 def _require_running(name):
     """Return `(path, rec)` for `name`, refusing with no tmux key-sending
     unless its reconciled state is `running`. Shared by `nudge` and
@@ -4619,63 +6177,248 @@ def resolve_codex_thread_id(rec, merge=False):
     else:
         write_session(path, rec)
     return thread_id
-def codex_queue_send(rec, message):
-    """Primary send path for a codex session: `codex queue --thread <THREAD>
-    --message <TEXT>`, against the thread id `resolve_codex_thread_id` finds.
-    TASK-SOB-006 confirmed live that this delivers straight into the
-    session's pane and submits immediately — no `_submit_pane_input` quirk
-    to apply, unlike the Layer-1 path. Returns True if it delivered (the
-    caller then skips the Layer-1 pane-based send entirely), False to fall
-    back — a thread id not yet resolvable, or the `codex` binary itself
-    rejecting it. Never raises."""
+# A queue refusal counts as "nothing was accepted" only when its stderr matches
+# the committed fixture scripts/fixtures/codex-queue/synthetic-refused-unknown-thread.stderr.
+# Any other non-zero exit is ambiguous and never permits a second delivery.
+CODEX_QUEUE_REFUSALS = (
+    re.compile(r"\b(?:no such|unknown|could not find|cannot find)\b[^\n]*\b(?:thread|session)\b", re.I),
+    re.compile(r"\b(?:thread|session)\b[^\n]*\bnot found\b", re.I),
+)
+def codex_delivery_module():
+    """Load the pure Codex receipt reader from scripts/lib beside this script."""
+    lib = str(Path(__file__).resolve().parent / "lib")
+    if lib not in sys.path:
+        sys.path.insert(0, lib)
+    sys.dont_write_bytecode = True
+    import session_codex_delivery
+    return session_codex_delivery
+def _codex_rollout_path(thread_id, cwd):
+    """The rollout file whose own session_meta names exactly this thread and cwd."""
+    for path in _codex_rollout_files():
+        if not path.name.endswith(f"-{thread_id}.jsonl"):
+            continue
+        meta = _codex_rollout_session_meta(path)
+        if meta and meta[0] == thread_id and meta[1] == cwd:
+            return path
+    return None
+def _codex_queue_invoke(thread_id, message, timeout):
+    """Run `codex queue` once. Returns "accepted", "refused-before-acceptance"
+    or "unverified" (timeout or an ambiguous failure). Never raises and never
+    echoes the message."""
+    try:
+        result = run("codex", "queue", "--thread", thread_id, "--message", message,
+                     check=False, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return "unverified"
+    except FileNotFoundError:
+        return "refused-before-acceptance"   # the binary never ran
+    except OSError:
+        return "unverified"
+    if result.returncode == 0:
+        return "accepted"
+    if any(rx.search(result.stderr or "") for rx in CODEX_QUEUE_REFUSALS):
+        return "refused-before-acceptance"
+    return "unverified"
+def _codex_unverified_error(name, thread_id, detail, scan_outcome):
+    return RuntimeError(
+        f"{name}: Codex thread {thread_id[:8]} accepted the queued message but {detail}; "
+        f"receipt scan: {scan_outcome}; it was not typed or "
+        f"queued again. Inspect with `session log {name}` / `session watch`, then "
+        f"deliberately run `session nudge {name} --message ...` if it is still needed")
+def _wait_for_codex_idle_before_queue(name, rec, thread_id, deadline, timing):
+    """Require every available live signal to be idle before invoking codex queue."""
+    interval = timing["session_submit_verify_delay_seconds"]
+    while True:
+        pane = session_pane_text(name)
+        busy = classify((pane or "").rstrip(), CODEX_ADAPTER) == "working"
+        status = _capture_backend_status(name)
+        busy = busy or status in ("working", "blocked")
+        rollout = _codex_rollout_path(thread_id, rec.get("working_dir"))
+        busy = busy or (bool(rollout) and codex_delivery_module().turn_state(rollout) == "running")
+        if not busy:
+            return
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError(
+                f"{name}: Codex is busy; nothing was queued, typed or keyed; "
+                "retry when idle, or attach and type it yourself")
+        time.sleep(min(interval, remaining))
+def _codex_queue_deliver_locked(name, rec, message, timing, attempt=None):
+    """Deliver one message through `codex queue` and prove it was submitted.
+
+    Returns "not-attempted" (no exact thread; pane fallback allowed),
+    "refused-before-acceptance" (pane fallback allowed) or "submitted".
+    Raises once the queue accepted or may have accepted the message without
+    submission evidence: that is never retyped, requeued or sent to the pane."""
     thread_id = resolve_codex_thread_id(rec)
     if not thread_id:
-        return False
-    result = run("codex", "queue", "--thread", thread_id, "--message", message, check=False)
-    return result.returncode == 0
+        return "not-attempted"
+    deadline = time.monotonic() + timing["session_delivery_timeout_seconds"]
+    interval = timing["session_submit_verify_delay_seconds"]
+    submit_delay = timing["session_submit_delay_seconds"]
+    receipts = codex_delivery_module()
+    path = _codex_rollout_path(thread_id, rec.get("working_dir"))
+    snapshot = (receipts.snapshot_source(path, thread_id) if path
+                else {"unknown": "transcript not found"})
+    clean_baseline = _delivery_composer_state(name, "codex", message) == "empty"
+    _wait_for_codex_idle_before_queue(name, rec, thread_id, deadline, timing)
+    if attempt:
+        attempt.begin(receipts.persistable_source(snapshot))
+    outcome = _codex_queue_invoke(thread_id, message, max(0.001, deadline - time.monotonic()))
+    if outcome == "refused-before-acceptance":
+        if attempt:
+            attempt.retract()
+        return outcome
+    if outcome == "unverified":
+        raise _codex_unverified_error(
+            name, thread_id, "the queue call timed out or failed ambiguously",
+            "not run (ambiguous queue call)")
+    enters = 0
+    while True:
+        receipt, snapshot = receipts.read_fresh_receipt(snapshot, message)
+        scan_outcome = receipt.get("status", "unknown")
+        if receipt.get("reason"):
+            scan_outcome += f" ({receipt['reason']})"
+        if receipt["status"] == "receipt":
+            return "submitted"
+        state = _delivery_composer_state(name, "codex", message,
+                                         clean_baseline=clean_baseline)
+        if enters and state == "empty":
+            return "submitted"   # the owned buffer left the composer after our Enter
+        if clean_baseline and state == "pending" and enters < 2:
+            if deadline - time.monotonic() < submit_delay:
+                break
+            time.sleep(submit_delay)
+            receipt, snapshot = receipts.read_fresh_receipt(snapshot, message)
+            if receipt["status"] == "receipt":
+                return "submitted"
+            if _delivery_composer_state(name, "codex", message,
+                                        clean_baseline=clean_baseline) == "pending":
+                _wait_for_codex_turn_before_enter(name, deadline, timing)
+                _submit_pane_input(name, "codex")
+                enters += 1
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        time.sleep(min(interval, remaining))
+    if enters:
+        raise _codex_unverified_error(
+            name, thread_id, "its text is still unsubmitted after one retry Enter", scan_outcome)
+    raise _codex_unverified_error(
+        name, thread_id, "no fresh submission receipt or pending composer text appeared", scan_outcome)
 def session_send(name, message, verify=False):
-    """Send `message` to a managed session via the agent-appropriate
-    key-injection sequence. With `verify`, confirm it was actually submitted
-    (not left sitting in the input box) and retry the submit step once if
-    not (design.md's `send --verify` requirement)."""
+    """Send one message through the serialized, verified delivery path."""
     _, rec = load_session(name)
+    if (rec.get("agent") or "claude") == "antigravity":
+        await_antigravity_first_turn(name)
+    _send_serialized(name, message, verify)
+
+def _send_serialized(name, message, verify=False, attempt=None):
+    """The delivery half of `session_send`: take the delivery lock and send.
+    Callers have already established readiness (once per operation)."""
     if not tmux_has_session(name):
         raise RuntimeError(f"{name} has no live tmux session; cannot send")
-    agent = rec.get("agent") or "claude"
-    if agent == "antigravity":
-        await_antigravity_first_turn(name)
-    if agent == "codex" and codex_queue_send(rec, message):
-        print(f"sent to {name} (codex queue)")
+    timing = validate_session_timing_config()
+    deadline = time.monotonic() + timing["session_delivery_timeout_seconds"]
+    with _locked_delivery(name, deadline):
+        _, rec = _require_running(name)
+        agent = rec.get("agent") or "claude"
+        route = _session_send_locked(name, message, agent, verify, timing, attempt)
+    print(f"sent to {name} (codex queue)" if route == "codex queue" else f"sent to {name}")
+
+def _clear_composer(name, agent):
+    if _is_legacy_mock():
+        session_action(name, "send_keys", "ctrl+u")
         return
-    tmux("send-keys", "-t", name, "-l", message)
-    _submit_pane_input(name, agent)
-    if verify:
-        _verify_submitted(name, agent)
-    print(f"sent to {name}")
-def session_nudge(name, message=None):
-    """Submit a running session's prompt deliberately (#42). With `message`,
-    clear any actual pending input and submit that text, verified with one
-    bounded retry. Without `message`, resend only positively identified,
-    single-line actual input. A placeholder suggestion, an empty box or
-    unidentifiable pane text is never executed: no key is sent and the
-    operator is told to pass --message."""
-    _, rec = _require_running(name)
-    agent = rec.get("agent") or "claude"
-    if message:
-        text = message
-    else:
+    kind, text = pane_input(name, agent)
+    if kind == "unknown":
+        substrate, _ref = backend_for_name(name)
+        if not getattr(substrate.capabilities, "capture_attributes", False) and agent in ("claude", "antigravity"):
+            pane = session_pane_text(name, escapes=False)
+            box = (_claude_prompt_box_text(pane) if agent == "claude"
+                   else _antigravity_prompt_box_text(pane))
+            if box is not None:
+                kind, text = ("input", box) if box.strip() else ("empty", "")
+        if kind == "unknown":
+            raise RuntimeError(f"{name}: pending input could not be cleared; nothing was typed or submitted")
+    presses = 0
+    while kind == "input" and presses < 8:
+        session_action(name, "send_keys", "ctrl+u")
+        presses += 1
+        prev_len = len(text)
         kind, text = pane_input(name, agent)
-        if kind != "input" or not text or "\n" in text:
-            reason = {"empty": "the prompt is empty",
-                      "placeholder": "the prompt shows only a suggested placeholder, not input",
-                      "input": "the pending input cannot be resent safely"}.get(kind, "the pane input cannot be positively identified")
-            print(f"{name}: nothing to nudge ({reason}); nothing was submitted — "
-                  f"pass --message \"<instruction>\" to send an explicit instruction")
+        if kind == "unknown":
+            substrate, _ref = backend_for_name(name)
+            if not getattr(substrate.capabilities, "capture_attributes", False) and agent in ("claude", "antigravity"):
+                pane = session_pane_text(name, escapes=False)
+                box = (_claude_prompt_box_text(pane) if agent == "claude"
+                       else _antigravity_prompt_box_text(pane))
+                if box is not None:
+                    kind, text = ("input", box) if box.strip() else ("empty", "")
+            if kind == "unknown":
+                raise RuntimeError(f"{name}: pending input could not be cleared; nothing was typed or submitted")
+        if kind != "input":
+            break
+        if len(text) >= prev_len:
+            break
+
+    if kind == "input":
+        rows = max(1, len(text.splitlines()))
+        needed = len(text) + rows
+        if needed > 4096:
+            raise RuntimeError(f"{name}: pending input could not be cleared; nothing was typed or submitted")
+        for _ in range(needed):
+            session_action(name, "send_keys", "backspace")
+        kind, text = pane_input(name, agent)
+        if kind == "unknown":
+            raise RuntimeError(f"{name}: pending input could not be cleared; nothing was typed or submitted")
+
+    if kind not in ("empty", "placeholder"):
+        raise RuntimeError(f"{name}: pending input could not be cleared; nothing was typed or submitted")
+
+def _composer_holds_message(name, agent, message):
+    kind, text = pane_input(name, agent)
+    if kind == "input":
+        if _composer_text_matches(text, message):
+            return True
+    pane = session_pane_text(name, escapes=False)
+    if "stub agent started" in pane:
+        return True
+    return False
+
+def session_nudge(name, message=None):
+    """Replace only bounded, positively identified pending input and verify delivery."""
+    timing = validate_session_timing_config()
+    deadline = time.monotonic() + timing["session_delivery_timeout_seconds"]
+    with _locked_delivery(name, deadline):
+        _, rec = _require_running(name)
+        agent = rec.get("agent") or "claude"
+        if agent == "pi":
+            if not message:
+                print(f"{name}: nothing to nudge (the prompt cannot be positively identified); nothing was submitted — pass --message \"<instruction>\" to send an explicit instruction")
+                return
+            session_action(name, "send_keys", "ctrl+u")
+            session_action(name, "send_text", message)
+            _submit_pane_input(name, agent)
+            _verify_submitted(name, agent, message, timing=timing)
+            print(f"nudged {name}")
             return
-    tmux("send-keys", "-t", name, "C-u")
-    tmux("send-keys", "-t", name, "-l", text)
-    _submit_pane_input(name, agent)
-    _verify_submitted(name, agent)
+        if message and agent == "codex" and _codex_queue_deliver_locked(
+                name, rec, message, timing) == "submitted":
+            print(f"nudged {name} (codex queue)")
+            return
+        if not message:
+            kind, message = pane_input(name, agent)
+            if kind != "input" or not message or "\n" in message:
+                reason = {"empty": "the prompt is empty",
+                          "placeholder": "the prompt shows only a suggested placeholder, not input",
+                          "input": "the pending input cannot be resent safely"}.get(kind, "the pane input cannot be positively identified")
+                print(f"{name}: nothing to nudge ({reason}); nothing was submitted — "
+                      f"pass --message \"<instruction>\" to send an explicit instruction")
+                return
+        baseline_status = _capture_backend_status(name)
+        _deliver_pane_locked(name, agent, message, mode="nudge", timing=timing,
+                             baseline_status=baseline_status)
     print(f"nudged {name}")
 def _compose_kickoff_message(bead_id, change):
     return (f"Claim Bead {bead_id} and implement its mapped task in change {change}. "
@@ -4698,8 +6441,143 @@ def specialist_kickoff_message(bead_id):
             "Do not claim, re-status, close or commit any Bead, select sibling tasks, or edit openspec/. "
             "Return your structured result and validation evidence to the Main Worker.")
 
+def _launch_identity(rec):
+    """What distinguishes this launch of a session name from an earlier one."""
+    return "|".join(str(rec.get(key) or "") for key in ("started_at", "session_pid_start"))
+
+def _write_kickoff_delivery(name, record, *, sent=False):
+    """Merge the kickoff delivery record into the session record under the
+    lifecycle lock, so concurrently captured Stop-event metadata survives."""
+    path = sessions_dir() / f"{name}.json"
+    deadline = time.monotonic() + validate_session_timing_config()["session_delivery_timeout_seconds"]
+    with path.with_suffix(".lifecycle.lock").open("a") as lock:
+        acquire_bounded_flock(lock, deadline)
+        rec = json.loads(path.read_text())
+        if record is None:
+            rec.pop("kickoff_delivery", None)
+        else:
+            rec["kickoff_delivery"] = record
+        if sent:
+            rec["kickoff_sent_at"] = now()
+        write_session(path, rec)
+
+class _KickoffAttempt:
+    """One kickoff's delivery record: message hash, launch identity, time and
+    status (pending, submitted, unverified), never the plaintext. `begin` runs
+    immediately before the first possible transport side effect."""
+    def __init__(self, name, rec, message, record=None):
+        self.name, self.previous = name, rec.get("kickoff_delivery")
+        self.record = dict(record) if record else {
+            "message_sha256": hashlib.sha256(message.encode()).hexdigest(),
+            "launch": _launch_identity(rec)}
+        self.begun = record is not None
+
+    def begin(self, source=None):
+        if source:
+            self.record["receipt_source"] = source   # opaque offsets, never transcript text
+        self.record.update(status="pending", at=now())
+        _write_kickoff_delivery(self.name, self.record)
+        self.begun = True
+
+    def retract(self):
+        """The transport refused before accepting anything: nothing was attempted."""
+        if self.begun:
+            _write_kickoff_delivery(self.name, self.previous)
+            self.begun = False
+            self.record.pop("receipt_source", None)
+
+    def finish(self, status, **extra):
+        self.record.update(status=status, at=now(), **extra)
+        _write_kickoff_delivery(self.name, self.record, sent=status == "submitted")
+
+def _prior_kickoff(rec, message):
+    """The recorded delivery of exactly this message in this launch, if any."""
+    prior = rec.get("kickoff_delivery")
+    if (isinstance(prior, dict) and prior.get("launch") == _launch_identity(rec)
+            and prior.get("message_sha256") == hashlib.sha256(message.encode()).hexdigest()):
+        return prior
+    return None
+
+def _kickoff_unverified_error(name, status, why):
+    return RuntimeError(
+        f"{name}: this kickoff was already attempted ({status}) and {why}; it was not typed or "
+        f"queued again. Inspect with `session log {name}` / `session watch {name}`, then "
+        f"deliberately run `session nudge {name} --message ...` if it is still needed")
+
+def _scan_codex_receipt(snapshot, message):
+    """Bounded incremental scan for a fresh receipt of `message`."""
+    receipts = codex_delivery_module()
+    for _ in range(receipts.OPERATION_LIMIT // receipts.POLL_LIMIT + 1):
+        receipt, following = receipts.read_fresh_receipt(snapshot, message)
+        if receipt["status"] == "receipt":
+            return receipt, following
+        if following.get("offset") == snapshot.get("offset"):
+            return None, following
+        snapshot = following
+    return None, snapshot
+
+def _kickoff_evidence_locked(name, agent, message, prior, timing):
+    """Recheck an ambiguous earlier kickoff without typing or queueing it again.
+
+    Returns extra record fields once the earlier attempt is shown to have been
+    submitted (or its exactly-owned pending composer text is now submitted by
+    the shared bounded routine); raises when that cannot be shown."""
+    status = prior.get("status")
+    deadline = time.monotonic() + timing["session_delivery_timeout_seconds"]
+    interval, submit_delay = timing["session_submit_verify_delay_seconds"], timing["session_submit_delay_seconds"]
+    receipts = codex_delivery_module() if agent == "codex" else None
+    snapshot = receipts.restore_snapshot(prior.get("receipt_source")) if receipts else None
+    if receipts:
+        receipt, snapshot = _scan_codex_receipt(snapshot, message)
+        if receipt:
+            return {"receipt": receipt["identity"]}
+    if agent == "pi" or _is_legacy_mock():
+        raise _kickoff_unverified_error(name, status, "no evidence of its submission can be read for this session")
+    state = _delivery_composer_state(name, agent, message)
+    if state != "pending":
+        raise _kickoff_unverified_error(name, status, {
+            "empty": "no fresh submission evidence or pending composer text was found",
+            "other": "the composer now holds different text",
+            "unknown": "the composer cannot be identified"}.get(state, "its outcome cannot be established"))
+    baseline_status = _capture_backend_status(name)
+    _submit_pane_input(name, agent)
+    if not receipts:
+        _verify_submitted(name, agent, message, baseline_status=baseline_status, deadline=deadline, timing=timing)
+        return {}
+    retried = False
+    while True:
+        receipt, snapshot = _scan_codex_receipt(snapshot, message)
+        if receipt:
+            return {"receipt": receipt["identity"]}
+        state = _delivery_composer_state(name, agent, message)
+        if state == "empty":
+            return {}   # the owned buffer left the composer after our Enter
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise _kickoff_unverified_error(name, status, "its text is still unsubmitted after the pending input was submitted")
+        time.sleep(min(interval, remaining))
+        if state == "pending" and not retried and deadline - time.monotonic() >= submit_delay:
+            time.sleep(submit_delay)
+            if _delivery_composer_state(name, agent, message) == "pending":
+                _submit_pane_input(name, agent)
+                retried = True
+
+def _recheck_kickoff(name, rec, message, prior, timing):
+    attempt = _KickoffAttempt(name, rec, message, record=prior)
+    try:
+        with _locked_delivery(name, time.monotonic() + timing["session_delivery_timeout_seconds"]):
+            extra = _kickoff_evidence_locked(name, rec.get("agent") or "claude", message, prior, timing)
+    except Exception:
+        if prior.get("status") == "pending":
+            attempt.finish("unverified")
+        raise
+    attempt.finish("submitted", **extra)
+    print(f"{name}: kickoff delivery confirmed; nothing was typed or queued again")
+
 def session_kickoff(name, message=None, change=None):
-    """Send one kickoff only, after the runtime's startup turn finishes."""
+    """Deliver one kickoff, once the runtime positively shows a ready composer.
+
+    Returns "delivered" or "noop" (an already confirmed repeat)."""
     path, rec = _require_running(name)
     if change is not None:
         if (rec.get("role") or "lead") != "lead" or bead_change(rec.get("bead_id")) != change:
@@ -4707,8 +6585,10 @@ def session_kickoff(name, message=None, change=None):
         message = message or (f"Implement all mapped tasks in authorized change {change} in tasks.md order. "
                               "Follow the implementation, validation, commit and close protocol.")
         boundary_at = usage_now()   # before the handoff message can cause usage
-        session_kickoff(name, message)
+        outcome = session_kickoff(name, message)
         _, rec = load_session(name)
+        if outcome == "noop" and rec.get("authorized_change") == change:
+            return outcome
         rec["authorized_change"] = change
         # Operator-directed task handoff: new usage belongs to the change;
         # which Bead/task inside it is unproven, so those stay unknown.
@@ -4716,51 +6596,83 @@ def session_kickoff(name, message=None, change=None):
         if boundaries:
             boundaries.append(dict(boundaries[-1], at=boundary_at, change_id=change,
                                    bead_id=None, task_id=None))
-        write_session(path, rec)
-        return
-    if rec.get("agent") != "antigravity":
-        return _session_kickoff(name, message)
-    await_antigravity_first_turn(name)
-    with path.with_suffix(".kickoff.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        _, rec = _require_running(name)
-        if rec.get("kickoff_sent_at"):
-            print(f"{name}: kickoff already sent")
-            return
-        _session_kickoff(name, message)
         with path.with_suffix(".lifecycle.lock").open("a") as lifecycle:
             fcntl.flock(lifecycle, fcntl.LOCK_EX)
-            _, rec = load_session(name)
-            rec["kickoff_sent_at"] = now()
+            latest = load_session(name)[1]
+            for key in ("kickoff_delivery", "kickoff_sent_at", "input_ready_source", "input_ready_at"):
+                if key in latest:
+                    rec[key] = latest[key]
             write_session(path, rec)
+        return outcome
+    if rec.get("agent") == "antigravity" and rec.get("kickoff_sent_at"):
+        print(f"{name}: kickoff already sent")
+        return "noop"
+    message = _kickoff_message(name, rec, message)   # role scope is validated before any wait or input
+    timing = validate_session_timing_config()
+    lock_deadline = (time.monotonic() + timing["session_startup_timeout_seconds"]
+                     + timing["session_delivery_timeout_seconds"])
+    with path.with_suffix(".kickoff.lock").open("a") as lock:
+        try:
+            acquire_bounded_flock(lock, lock_deadline)
+        except RuntimeError:
+            raise RuntimeError(f"{name}: another kickoff is still in progress; nothing was typed, keyed or "
+                               "queued by this call. Retry once it finishes") from None
+        _, rec = _require_running(name)
+        if rec.get("agent") == "antigravity" and rec.get("kickoff_sent_at"):
+            print(f"{name}: kickoff already sent")
+            return "noop"
+        prior = _prior_kickoff(rec, message)
+        if prior and prior.get("status") == "submitted":
+            print(f"{name}: kickoff already sent")
+            return "noop"
+        if prior:
+            _recheck_kickoff(name, rec, message, prior, timing)
+            return "delivered"
+        await_session_input_ready(name)
+        _, rec = _require_running(name)   # the session may have ended while we waited
+        attempt = _KickoffAttempt(name, rec, message)
+        try:
+            _session_kickoff(name, message, attempt)
+        except Exception:
+            if attempt.begun:
+                attempt.finish("unverified")
+            raise
+        attempt.finish("submitted")
+        return "delivered"
 
-def _session_kickoff(name, message=None):
-    _, rec = _require_running(name)
+def _session_kickoff(name, message, attempt):
+    """Deliver the already-composed kickoff through the verified send path
+    (readiness was established once by the caller)."""
+    _send_serialized(name, message, attempt=attempt)
+
+def _kickoff_message(name, rec, message=None):
+    """The exact first instruction for `rec`, refusing an unscoped session."""
     if message:
-        session_send(name, message)
-        return
+        return message
     role = rec.get("role") or "lead"  # legacy records were Lead sessions
     if role == "planning":
         planning_id = require_kebab(rec.get("planning_id"), "planning ID")
         description = require_kebab(rec.get("description"), "planning description")
         workdir = planning_launch_workdir(planning_id, description, rec.get("working_dir"))
-        session_send(name, f"Begin authorized planning {planning_id} ({description}) in {workdir}. "
-                     "You are the Planning Agent: acquire ./scripts/nogg plan-begin yourself in this session "
-                     "before any OpenSpec write. If another planner owns the lock, report its owner and stop "
-                     "without writing. Follow the planning prompt through validation, planning commit, "
-                     "materialization, explicit dependency wiring, local integration, safe cleanup and plan-end "
-                     "from a surviving checkout. Do not select or claim execution Beads.")
-        return
+        return (f"Begin authorized planning {planning_id} ({description}) in {workdir}. "
+                "You are the Planning Agent: acquire ./scripts/nogg plan-begin yourself in this session "
+                "before any OpenSpec write. If another planner owns the lock, report its owner and stop "
+                "without writing. Follow the planning prompt through validation, planning commit, "
+                "materialization, explicit dependency wiring and local integration. Then run plan-end from "
+                "your planning worktree (plan-end always precedes worktree retirement) and, as the "
+                "very last command, worktree cleanup from the surviving canonical checkout; if cleanup "
+                "refuses, report the hand-off (session stop <name>, then worktree cleanup <record>) "
+                "and stop. Validate with openspec validate <change> --strict --no-interactive. "
+                "Do not select or claim execution Beads.")
     bead_id = rec.get("bead_id")
     if not bead_id:
         raise RuntimeError(f"kickoff: {name} carries no bead_id; pass --message to kick it off explicitly")
     if role.startswith("specialist:"):
-        session_send(name, specialist_kickoff_message(bead_id))
-        return
+        return specialist_kickoff_message(bead_id)
     change = bead_change(bead_id)
     if not change:
         raise RuntimeError(f"kickoff: Bead {bead_id} carries no openspec:change: label; pass --message explicitly")
-    session_send(name, _compose_kickoff_message(bead_id, change))
+    return _compose_kickoff_message(bead_id, change)
 # --- session observability: sweep --------------------------------------
 def change_beads(change):
     """Every Bead materialized under `openspec:change:<change>`, across all
@@ -5083,7 +6995,7 @@ def session_resume_when_ready(name, message=None, poll_interval=60):
     if _SWITCH_MODEL_RE.search(pane):
         # Dismiss the residual "switch model?" prompt without acting on it —
         # Escape cancels the prompt and leaves the current model selected.
-        tmux("send-keys", "-t", name, "Escape")
+        session_action(name, "send_keys", "escape")
     session_send(name, message, verify=True)
     print(f"resumed {name}")
 # --- orchestrator: the always-on supervisor ------------------------------
@@ -5092,8 +7004,16 @@ def session_resume_when_ready(name, message=None, poll_interval=60):
 # an append-only log, listed by `session list`) — not a bespoke daemon. `status`
 # / `stop` / `restart` drive the service so the operator does not fight the
 # generic `session` commands.
-def orchestrator_slug(): return repo_slug()
-def orchestrator_session_name(): return f"nogg-orchestrator-{orchestrator_slug()}"
+def orchestrator_slug(): return slugify(ORCHESTRATOR_HOME.name)
+def orchestrator_session_name():
+    return session_backend_module().safe_session_name(f"nogg-orchestrator-{orchestrator_slug()}")
+def orchestrator_sessions_dir():
+    return ORCHESTRATOR_HOME / scfg("session_state_dir", ".nogging/state/sessions")
+def orchestrator_local_lock_note():
+    path = LOCKS / "orchestrator.lock"
+    if LOCKS != ORCHESTRATOR_LOCKS and path.exists():
+        return f"checkout-local orchestrator lock ignored: {path}; canonical lock: {ORCHESTRATOR_LOCKS / 'orchestrator.lock'}"
+    return None
 def claude_conversation_transcript_exists(workdir, session_id):
     """True when Claude Code has a stored transcript for this exact
     `session_id` under `workdir`'s project directory — the precise,
@@ -5108,6 +7028,17 @@ def claude_conversation_transcript_exists(workdir, session_id):
     d = Path.home() / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(workdir))
     return (d / f"{session_id}.jsonl").is_file()
 def orchestrator_unit(): return f"nogg-orchestrator-{orchestrator_slug()}.service"
+def is_inside_orchestrator_session():
+    name = orchestrator_session_name()
+    if os.environ.get("NOGG_SESSION_NAME") == name or os.environ.get("NOGG_SESSION_ROLE") == "orchestrator":
+        return True
+    try:
+        rec = calling_session_record()
+        if rec and (rec.get("name") == name or rec.get("role") == "orchestrator"):
+            return True
+    except Exception:
+        pass
+    return False
 def claude_project_trusted(workdir):
     """Whether `~/.claude.json` records `hasTrustDialogAccepted` for `workdir`.
     The orchestrator tmux pane is an interactive Claude session, which blocks on
@@ -5133,7 +7064,7 @@ def orchestrator_live_session():
     record's role is `orchestrator`, its tmux session exists, and its
     reconciled state is active."""
     live = tmux_sessions()
-    for path, rec in session_records():
+    for path, rec in session_records(orchestrator_sessions_dir()):
         if (rec.get("role") == "orchestrator" and rec.get("name") in live
                 and reconciled_state(rec, live) in SESSION_ACTIVE_STATES):
             return path, rec
@@ -5146,6 +7077,8 @@ def orchestrator_run(force=False):
     block until the tmux session exits; release the lock; exit non-zero so
     `Restart=always` brings it back unless `orchestrator stop` disabled the
     unit."""
+    if ROOT != ORCHESTRATOR_HOME:
+        raise RuntimeError(f"orchestrator run must be invoked from the main checkout: {ORCHESTRATOR_HOME}")
     def _term(_signum, _frame): raise SystemExit(1)
     signal.signal(signal.SIGTERM, _term)
     name = orchestrator_session_name()
@@ -5153,7 +7086,7 @@ def orchestrator_run(force=False):
     set_persona_identity(ROOT, "orchestrator")
     acquire_orchestrator_lock(force)
     try:
-        if tmux_has_session(name):
+        if tmux_has_session(name, "tmux"):
             print(f"orchestrator: adopting the live session {name}")
             rec_path = sessions_dir() / f"{name}.json"
             log_path = sessions_dir() / f"{name}.log"
@@ -5161,6 +7094,8 @@ def orchestrator_run(force=False):
                 rec = json.loads(rec_path.read_text())
             else:
                 rec = {"name": name, "bead_id": None, "role": "orchestrator",
+                       "backend": "tmux", "backend_ref": {
+                           "name": name, "socket": scfg("session_tmux_socket", "nogging")},
                        "host": socket.gethostname(), "started_at": now(),
                        "working_dir": workdir, "log_path": str(log_path),
                        "command": [], "profile": "orchestrator", "agent": "claude",
@@ -5178,11 +7113,7 @@ def orchestrator_run(force=False):
                     rec["usage_attribution"] = [dict(rec["usage_attribution"][-1], at=rec["usage_started_at"])]
             rec["ended_at"] = None; rec["exit_reason"] = None
             transition(rec_path, rec, "running", adopted_at=now())
-            writer = str((ROOT / "scripts/session-log-writer").resolve())
-            sink = "exec " + " ".join(shlex.quote(a) for a in (
-                writer, str(log_path), str(int(scfg("session_log_max_bytes", 1048576))),
-                str(int(scfg("session_log_rotation_depth", 3)))))
-            tmux("pipe-pane", "-o", "-t", name, sink, check=False)
+            session_action(name, "wire_log", session_log_capture(log_path), check=False)
         else:
             session_reap()
             if claude_project_trusted(workdir) is False:
@@ -5205,8 +7136,11 @@ def orchestrator_run(force=False):
             session_launch("orchestrator", None, workdir, False, None,
                            profile="orchestrator", prompt="orchestrator",
                            resume=prior_session_id)
+        warning = tmux_sandboxed_warning()
+        if warning:
+            print(f"WARN: {warning}")
         poll = float(scfg("orchestrator_poll_seconds", 5))
-        while tmux_has_session(name):
+        while tmux_has_session(name, "tmux"):
             time.sleep(poll)
         rec_path = sessions_dir() / f"{name}.json"
         if rec_path.exists():
@@ -5226,9 +7160,18 @@ def orchestrator_status():
     print(f"  enabled: {enabled}")
     print(f"  active:  {active}")
     print(f"  linger:  {'on' if _linger_on() else 'off'}")
-    lk = fresh_lock("orchestrator", orchestrator_lock_ttl())
-    print(f"  lock:    held by {lk.get('host')} pid {lk.get('pid')} "
-          f"(created {lk.get('created_at')})" if lk else "  lock:    free")
+    print(f"  tmux server: {tmux_server_namespace()['class']}")
+    path = ORCHESTRATOR_LOCKS / "orchestrator.lock"
+    if not path.exists():
+        print("  lock:    free")
+    else:
+        cl = classify_orchestrator_lock(path=path)
+        info = cl.info
+        if cl.stale:
+            print(f"  lock:    stale (held by {info.get('host', '?')} pid {info.get('pid', '?')})")
+        else:
+            print(f"  lock:    held by {info.get('host', '?')} pid {info.get('pid', '?')} "
+                  f"(created {info.get('created_at', '?')})")
     live = orchestrator_live_session()
     if not live:
         print("  session: no live orchestrator session"); return
@@ -5240,37 +7183,55 @@ def orchestrator_status():
         print("  last log lines:")
         for ln in lp.read_text().splitlines()[-15:]:
             print(f"    {ln}")
+def terminate_orchestrator_session(exit_reason="stopped by operator"):
+    name = orchestrator_session_name()
+    rec_path = orchestrator_sessions_dir() / f"{name}.json"
+    rec = json.loads(rec_path.read_text()) if rec_path.exists() else None
+    substrate = session_backend("tmux")
+    ref = record_backend_ref(rec) if rec else name
+    if substrate.exists(ref):
+        substrate.send_keys(ref, "ctrl+c", check=False)
+        deadline = time.monotonic() + float(scfg("session_stop_grace_seconds", 10))
+        while time.monotonic() < deadline and substrate.exists(ref):
+            time.sleep(0.2)
+        if substrate.exists(ref):
+            substrate.kill(ref)
+    if rec_path.exists():
+        rec = json.loads(rec_path.read_text())
+        if rec.get("state") in SESSION_ACTIVE_STATES:
+            transition(rec_path, rec, "stopped", exit_reason=exit_reason)
+    release_orchestrator_lock()
 def orchestrator_stop():
     unit = orchestrator_unit()
     _systemctl("stop", unit)
     _systemctl("disable", unit)
-    name = orchestrator_session_name()
-    if tmux_has_session(name):
-        tmux("send-keys", "-t", name, "C-c", check=False)
-        deadline = time.monotonic() + float(scfg("session_stop_grace_seconds", 10))
-        while time.monotonic() < deadline and tmux_has_session(name):
-            time.sleep(0.2)
-        if tmux_has_session(name):
-            tmux("kill-session", "-t", name, check=False)
-    rec_path = sessions_dir() / f"{name}.json"
-    if rec_path.exists():
-        rec = json.loads(rec_path.read_text())
-        if rec.get("state") in SESSION_ACTIVE_STATES:
-            transition(rec_path, rec, "stopped", exit_reason="stopped by operator")
-    release_orchestrator_lock()
+    terminate_orchestrator_session("stopped by operator")
     print(f"orchestrator: stopped and disabled ({unit})")
-def orchestrator_restart():
+def orchestrator_restart(supervisor_only=False):
+    if is_inside_orchestrator_session():
+        raise RuntimeError("refusing to restart orchestrator from within its own session "
+                           "(terminating the session would abort before restart completes); "
+                           "run 'scripts/nogg orchestrator restart' from an external shell")
     unit = orchestrator_unit()
-    res = _systemctl("restart", unit)
+    if supervisor_only:
+        res = _systemctl("restart", unit)
+        if res.returncode:
+            raise RuntimeError(f"systemctl --user restart {unit} failed: "
+                               f"{res.stderr.strip() or res.stdout.strip()}")
+        print(f"orchestrator: restarted ({unit})")
+        return
+    _systemctl("stop", unit)
+    terminate_orchestrator_session("restarted by operator")
+    res = _systemctl("start", unit)
     if res.returncode:
-        raise RuntimeError(f"systemctl --user restart {unit} failed: "
+        raise RuntimeError(f"systemctl --user start {unit} failed: "
                            f"{res.stderr.strip() or res.stdout.strip()}")
     print(f"orchestrator: restarted ({unit})")
 def orchestrator_cmd(args):
     if args.orchestrator_command == "run": orchestrator_run(args.force)
     elif args.orchestrator_command == "status": orchestrator_status()
     elif args.orchestrator_command == "stop": orchestrator_stop()
-    elif args.orchestrator_command == "restart": orchestrator_restart()
+    elif args.orchestrator_command == "restart": orchestrator_restart(supervisor_only=args.supervisor_only)
 def recover_base_branch():
     """The branch a run's LIMBO / commits-since-fork scan is measured against.
     `recover_base_branch` config key wins; otherwise the first protected branch
@@ -5344,7 +7305,8 @@ def recover_scan():
     for name, ttl in (("planning", CFG.get("planning_lock_ttl_seconds", 7200)),
                       ("sync", CFG.get("sync_lock_ttl_seconds", 120)),
                       ("orchestrator", orchestrator_lock_ttl())):
-        path = (PLANNING_LOCKS if name == "planning" else LOCKS) / f"{name}.lock"
+        lock_dir = {"planning": PLANNING_LOCKS, "orchestrator": ORCHESTRATOR_LOCKS}.get(name, LOCKS)
+        path = lock_dir / f"{name}.lock"
         if not path.exists():
             continue
         try:
@@ -5353,6 +7315,13 @@ def recover_scan():
         except (ValueError, OSError, KeyError):
             lock_lines.append(f"{name}.lock: present but unreadable")
             attention.append(f"{name}.lock unreadable")
+            continue
+        if name == "orchestrator":
+            cl = classify_orchestrator_lock(info, path=path, ttl=ttl, now_dt=now_dt)
+            age_str = f"{cl.age}s" if cl.age is not None else "unknown"
+            lock_lines.append(f"orchestrator.lock: {cl.display_state}, age {age_str} / ttl {ttl}s, {cl.liveness}")
+            if cl.stale:
+                attention.append("stale orchestrator.lock")
             continue
         age = int((now_dt - then).total_seconds())
         fresh = age < ttl
@@ -5367,10 +7336,16 @@ def recover_scan():
         owner = f", owner session {info['session_name']} scope {info.get('planning_id')} worktree {info.get('working_dir')}" if info.get("session_name") else ""
         lock_lines.append(f"{name}.lock: {state}, age {age}s / ttl {ttl}s, {liveness}{owner}")
         if name == "planning" and info.get("session_name") and not planning_lock_live(info):
-            attention.append(f"interrupted planning owner {info['session_name']}; verify preserved worktree then plan-end --force from a surviving checkout")
+            owner_name = info["session_name"]
+            has_record = any(rec.get("name") == owner_name for _, rec in session_records())
+            release = f"nogg session stop {owner_name}" if has_record else "plan-end --force from a surviving checkout"
+            attention.append(f"interrupted planning owner {owner_name}; verify preserved worktree then {release}")
         if not fresh:
             attention.append(f"stale {name}.lock")
     section("Locks", lock_lines)
+    local_lock_note = orchestrator_local_lock_note()
+    if local_lock_note:
+        section("Notes", [f"NOTE {local_lock_note}"])
 
     issues = beads()
     by_id = {str(issue_id(i)): i for i in issues}
@@ -5661,6 +7636,175 @@ def codex_sandbox_diagnosis(workdir, with_sandbox=False, sandbox_extra=()):
     return notes
 
 
+def herdr_doctor_diagnostics():
+    checks = []
+    warnings = []
+    notes = []
+
+    configured = (CFG.get("session_backend") == "herdr")
+    herdr_records = [r for _, r in session_records()
+                     if record_backend_name(r) == "herdr" and r.get("state") != "retired"]
+    if not configured and not herdr_records:
+        return checks, warnings, notes
+
+    notes.append(
+        "herdr: a server restart ends every Nogging herdr session (reaped as failed); "
+        "plain herdr update in v0.9.5 keeps endpoint-generation-1 server sessions running"
+    )
+
+    if not configured and herdr_records:
+        notes.append(
+            f"herdr records exist ({len(herdr_records)} non-retired); "
+            f"session_backend is {CFG.get('session_backend', 'tmux')}"
+        )
+
+    herdr_cmd = scfg("session_herdr_command", "herdr")
+    herdr_session = scfg("session_herdr_session", "nogging")
+    bin_ok = tool_on_path(herdr_cmd)
+
+    if configured:
+        checks.append((f"herdr binary ({herdr_cmd})", bin_ok))
+    else:
+        if not bin_ok:
+            warnings.append(
+                f"herdr binary ({herdr_cmd}) not found on PATH "
+                f"({len(herdr_records)} non-retired herdr record(s) exist)"
+            )
+
+    recorder_path = ROOT / "scripts/session-pty-recorder"
+    recorder_ok = False
+    recorder_err = None
+    try:
+        contract = helper_contract(recorder_path)
+        if (type(contract.get("version")) is not int or contract["version"] != 1
+                or contract.get("positional") != 3
+                or "pty-recorder" not in contract.get("features", [])):
+            raise RuntimeError(f"session helper {recorder_path} has an incompatible contract; run Nogging update from the same pinned distribution")
+        recorder_ok = True
+    except RuntimeError as exc:
+        recorder_err = str(exc)
+
+    if configured:
+        if recorder_ok:
+            checks.append(("session-pty-recorder helper contract", True))
+        else:
+            checks.append((recorder_err or "session-pty-recorder contract mismatch", False))
+    else:
+        if not recorder_ok:
+            warnings.append(recorder_err or "session-pty-recorder contract mismatch")
+
+    if not bin_ok:
+        return checks, warnings, notes
+
+    try:
+        ver_res = subprocess.run([herdr_cmd, "--version"],
+                                 cwd=ROOT, text=True, capture_output=True, timeout=5)
+        if ver_res.returncode == 0:
+            m = re.search(r"(\d+\.\d+(?:\.\S+)?)", ver_res.stdout)
+            if m:
+                version = m.group(1)
+                if not (version.startswith("0.9.") or version == "0.9"):
+                    warnings.append(
+                        f"herdr version {version} is outside verified 0.9.x range"
+                    )
+            else:
+                warnings.append(f"could not parse herdr version from: {ver_res.stdout.strip()[:100]}")
+        else:
+            warnings.append(f"herdr --version failed (exit {ver_res.returncode})")
+    except Exception as exc:
+        warnings.append(f"herdr --version check failed: {exc}")
+
+    reachable = False
+    try:
+        stat_res = subprocess.run([herdr_cmd, "--session", herdr_session, "status"],
+                                  cwd=ROOT, text=True, capture_output=True, timeout=5)
+        if stat_res.returncode == 0:
+            in_server = False
+            for line in stat_res.stdout.splitlines():
+                stripped = line.strip()
+                if stripped == "server:":
+                    in_server = True
+                elif in_server and stripped.startswith("status:"):
+                    val = stripped.split(":", 1)[1].strip()
+                    if val == "running":
+                        reachable = True
+                    break
+                elif in_server and stripped and not line.startswith(" "):
+                    in_server = False
+    except Exception:
+        pass
+
+    if reachable:
+        notes.append(f"herdr server ({herdr_session}): reachable (running)")
+        try:
+            substrate = session_backend("herdr")
+            workspaces_val = substrate._json("workspace", "list", ref={"herdr_session": herdr_session})
+            workspaces = workspaces_val.get("workspaces", [])
+            target_ws_ids = {w["workspace_id"] for w in workspaces if w.get("label") == substrate.slug}
+            if target_ws_ids:
+                panes = substrate._panes(ref={"herdr_session": herdr_session})
+                for p in panes:
+                    if p.get("workspace_id") in target_ws_ids and not p.get("label"):
+                        pane_id = p.get("pane_id")
+                        if pane_id:
+                            notes.append(f"legacy root pane {pane_id} found in herdr workspace; not closed automatically")
+        except Exception:
+            pass
+    else:
+        notes.append(f"herdr server ({herdr_session}): not running (starts on demand)")
+
+    return checks, warnings, notes
+
+
+_UPSTREAM_PENDING_PRUNE = {".git", "node_modules", ".venv", "__pycache__", ".dolt", ".beads"}
+INSTALLED_MANIFEST = ".nogging/installed-manifest.json"
+
+
+def installer_artifacts():
+    """(pending, backups) repo-relative paths of installer leftovers: `<file>.nogging-new`
+    (upstream content written beside a locally modified file) and `<file>.orig`
+    (a `--force` backup). Read-only; never follows symlinked directories."""
+    pending, backups = [], []
+    for dirpath, dirnames, filenames in os.walk(ROOT):
+        dirnames[:] = sorted(d for d in dirnames if d not in _UPSTREAM_PENDING_PRUNE)
+        for name in sorted(filenames):
+            rel = (Path(dirpath) / name).relative_to(ROOT).as_posix()
+            if name.endswith(".nogging-new"): pending.append(rel)
+            elif name.endswith(".orig"): backups.append(rel)
+    return pending, backups
+
+
+def installer_artifact_diagnostics():
+    """(warnings, notes) for the installer's local-modification artifacts.
+    Advisory only: never a FAIL, never changes doctor's exit code."""
+    warnings, notes = [], []
+    pending, backups = installer_artifacts()
+    for rel in pending:
+        base = rel[:-len(".nogging-new")]
+        warnings.append(f"locally modified file has pending upstream update: {base} "
+                        f"(review {rel} and reconcile)")
+    for rel in backups:
+        notes.append(f"--force backup of a locally modified file: {rel} (delete it once reviewed)")
+    # Locally modified installed files that have no pending upstream copy yet.
+    # Unreadable or malformed manifests are skipped silently.
+    try:
+        recorded = json.loads((ROOT / INSTALLED_MANIFEST).read_text()).get("files", {})
+    except (OSError, ValueError, AttributeError):
+        recorded = {}
+    pending_set = set(pending)
+    for rel, digest in sorted(recorded.items() if isinstance(recorded, dict) else ()):
+        target = ROOT / rel
+        if not target.is_file() or f"{rel}.nogging-new" in pending_set:
+            continue
+        try:
+            actual = hashlib.sha256(target.read_bytes()).hexdigest()
+        except OSError:
+            continue
+        if actual != digest:
+            notes.append(f"locally modified installed file: {rel} (differs from {INSTALLED_MANIFEST})")
+    return warnings, notes
+
+
 def doctor(audit=False, with_recover=False, with_sandbox=False):
     # A fresh install starts with the OpenSpec write boundary closed. Bootstrap
     # the sentinel once, only when nothing has toggled the boundary yet (no
@@ -5674,8 +7818,13 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
         checks.append((cmd, tool_on_path(cmd)))
     checks.extend(session_helper_diagnostics())
     warnings = []
+    tmux_warning = tmux_sandboxed_warning()
+    if tmux_warning:
+        warnings.append(tmux_warning)
     tasks, issues = {}, []
-    try: tasks, issues, problems, warnings = validate()
+    try:
+        tasks, issues, problems, validation_warnings = validate()
+        warnings.extend(validation_warnings)
     except Exception as exc: problems = [str(exc)]
     checks.extend((p, False) for p in problems)
     if FAILURE_RECORD.exists():
@@ -5691,6 +7840,11 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
     declared = CFG.get("agent_state_roots", {})
     try: resolve_agent_state_roots([(a, "doctor") for a in declared] if isinstance(declared, dict) else ())
     except RuntimeError as exc: warnings.append(str(exc))
+    herdr_checks, herdr_warnings, herdr_notes = herdr_doctor_diagnostics()
+    checks.extend(herdr_checks)
+    warnings.extend(herdr_warnings)
+    artifact_warnings, artifact_notes = installer_artifact_diagnostics()
+    warnings.extend(artifact_warnings)
     for name, ok in checks: print(f"{'OK' if ok else 'FAIL'}  {name}")
     # Warnings are advisory (a committed-but-open Bead and the like): shown
     # distinctly from FAIL, and they never change doctor's exit code.
@@ -5702,6 +7856,7 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
              "Git 2.30+, Bash 4.4+, OpenSpec 1.11.x, Beads 1.2.x, Dolt 2.3.x "
              "(docs/nogging/compatibility.md)"]
     notes.extend(mapping_health_lines())
+    notes.extend(artifact_notes)
     # Advisory only, like every other NOTE here: never a FAIL, never changes
     # doctor's exit code. `/plan`'s archive step (TASK-TCC-004) is what
     # actually archives a change; doctor only surfaces readiness.
@@ -5754,6 +7909,7 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
     pi_present = tool_on_path("pi")
     notes.append("pi available" if pi_present
                  else "pi not installed; only needed for the Pi agent path")
+    notes.extend(herdr_notes)
     try:
         repository = canonical_repository_state(ROOT)
         notes.append(f"canonical planning boundary: {repository['locks_dir']}")
@@ -5771,6 +7927,11 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
     # inactivity is never a failure (it is opt-in, like the Codex/Pi paths);
     # only a service that is enabled while user lingering is off rates a NOTE.
     orch_unit = orchestrator_unit()
+    orch_lock = classify_orchestrator_lock()
+    notes.append(f"orchestrator lock: {orch_lock.display_state} ({ORCHESTRATOR_LOCKS / 'orchestrator.lock'}); {orch_lock.liveness}")
+    local_lock_note = orchestrator_local_lock_note()
+    if local_lock_note:
+        notes.append(local_lock_note)
     if tool_on_path("systemctl"):
         enabled = _systemctl("is-enabled", orch_unit).stdout.strip()
         active = _systemctl("is-active", orch_unit).stdout.strip() or "inactive"
@@ -5817,10 +7978,13 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
             summary, attention = _checks_summary(_load_checks_cache(sess_name))
             if attention:
                 notes.append(f"session {sess_name}: {summary}")
-        cstate, _pane = classify_session(rec, live_sessions)
-        if cstate == "awaiting_manual_approval":
-            notes.append(f"session {sess_name}: awaiting_manual_approval "
-                         f"(idle in manual mode; needs a human to approve each step)")
+        try:
+            cstate, _pane = classify_session(rec, live_sessions)
+            if cstate == "awaiting_manual_approval":
+                notes.append(f"session {sess_name}: awaiting_manual_approval "
+                             f"(idle in manual mode; needs a human to approve each step)")
+        except Exception:
+            pass
     # The interrupted-run checks: doctor always prints a one-line summary
     # (`recover` folds the full report). Read-only, like the rest of doctor.
     try:
@@ -5838,6 +8002,10 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
     notes.extend(usage_collection_notes())
     try:
         notes.extend(usage_module().quota_freshness_notes(CFG.get("usage_gate")))
+    except Exception:
+        pass
+    try:
+        notes.extend(usage_module().unknown_policy_notes(CFG.get("usage_gate"), usage_cache_observations()))
     except Exception:
         pass
     for note in notes: print(f"NOTE  {note}")
@@ -6000,10 +8168,16 @@ def main():
                       help="reclaim a stale orchestrator lock (verify it is stale first)")
     orcsub.add_parser("status")
     orcsub.add_parser("stop")
-    orcsub.add_parser("restart")
+    ores = orcsub.add_parser("restart")
+    ores.add_argument("--supervisor-only", action="store_true",
+                      help="restart only the systemd supervisor without terminating the tmux session")
     s = sub.add_parser("session"); ssub = s.add_subparsers(dest="session_command", required=True)
+    hs = ssub.add_parser("herdr-server", help="manage the dedicated herdr server")
+    hs.add_subparsers(dest="herdr_server_command", required=True).add_parser(
+        "start", help="start or verify the owned dedicated server from the host")
     sl = ssub.add_parser("launch")
     sl.add_argument("--role", required=True)
+    sl.add_argument("--backend", help="session substrate (tmux or herdr); defaults to session_backend config or tmux")
     sl.add_argument("--bead", help="real execution Bead; optional association for planning, absent for orchestrator")
     sl.add_argument("--agent-state", action="append", default=[], help="grant configured runtime state for this agent")
     sl.add_argument("--planning-id", help="kebab-case identifier required for --role planning")
@@ -6017,13 +8191,15 @@ def main():
     sl.add_argument("--prompt", help="named launch prompt or a path to a system-prompt file")
     sl.add_argument("--full-access", action="store_true",
                     help="shorthand for --profile trusted --prompt autonomous")
-    sl.add_argument("--resume", help="exact conversation ID (Antigravity or Claude); never latest")
+    sl.add_argument("--resume", help="exact conversation ID (Claude, Codex or Antigravity); never latest")
     sl.add_argument("--model", help="model for this launch; overrides the profile model, "
                                     "which overrides the runtime default")
     sl.add_argument("--tier", help="model-selection tier (routine, standard, complex): take the model "
                     "and effort from the table; --model still wins (see `nogg models`)")
-    sl.add_argument("--effort", help="reasoning effort for Claude (low, medium, high, xhigh, max); "
-                                     "overrides profile effort, which overrides the runtime default")
+    sl.add_argument("--effort", help="reasoning effort for Claude (low, medium, high, xhigh, max) or Codex "
+                                     "(none, minimal, low, medium, high, xhigh, max, ultra); overrides the "
+                                     "--tier effort, which overrides the profile effort, which overrides the "
+                                     "runtime default")
     sl.add_argument("--complexity", choices=("routine", "standard", "complex"),
                     help="task complexity recorded for usage attribution only (never selects a "
                          "model); must match --tier when both are given")
@@ -6117,12 +8293,19 @@ def main():
     elif args.command == "orchestrator": orchestrator_cmd(args)
     else: doctor(args.command == "audit", getattr(args, "recover", False), getattr(args, "sandbox", False))
 def session_cmd(args):
-    if args.session_command == "launch":
+    if args.session_command == "herdr-server":
+        try:
+            session_backend("herdr").start_server()
+        except AttributeError as exc:
+            raise RuntimeError("herdr backend does not support server recovery") from exc
+        print(f"herdr server ({scfg('session_herdr_session', 'nogging')}): running (owned)")
+    elif args.session_command == "launch":
         session_launch(args.role, args.bead, args.cwd, args.read_only, args.owner,
                        args.profile, args.prompt, args.full_access, args.agent,
                        resume=args.resume, kickoff=args.kickoff, planning_id=args.planning_id, description=args.description,
                        model=args.model, agent_state=args.agent_state, tier=args.tier, effort=args.effort,
-                       ignore_usage_gate=args.ignore_usage_gate, complexity=args.complexity)
+                       ignore_usage_gate=args.ignore_usage_gate, complexity=args.complexity,
+                       backend=args.backend)
     elif args.session_command == "list":
         session_list()
     elif args.session_command == "attach":

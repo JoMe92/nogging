@@ -9,8 +9,7 @@ set -euo pipefail
 # Tests construct their own repositories and supervised-session fixtures.
 # Keep the delivery session's identity, root and task-tick broker out of
 # those subprocesses; each fixture explicitly supplies the context it needs.
-unset NOGGING_ROOT NOGG_SESSION_NAME NOGG_SESSION_ROOT NOGG_SESSION_ROLE
-unset NOGG_SESSION_AGENT NOGG_TASK_DONE_SOCKET NOGG_OPENSPEC_FENCED NOGG_OPENSPEC_FENCE
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-env.sh"
 # The launch usage gate must not read the operator's live quota: every fixture
 # sees no usage source (unknown, warn) unless it supplies its own.
 usage_home=$(mktemp -d)
@@ -20,6 +19,9 @@ export CODEX_HOME="$usage_home/codex" XDG_CACHE_HOME="$usage_home/cache"
 # Antigravity quota comes from a runtime `/usage` probe; tests must never run the
 # developer's real agy. Fixtures that exercise the probe stub `agy` and opt in.
 export AGY_NOGG_USAGE_PROBE=0
+# Stub-backed launch fixtures need not wait out the full 2 s launch settle
+# window per launch; the override can only shorten it (see settle_launch).
+export NOGG_LAUNCH_SETTLE_SECONDS=0.25
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 

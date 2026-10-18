@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Test helper for controlling herdr fake stub off the CLI ($HERDR_STUB_DIR).
+set -euo pipefail
+
+stub_dir="${HERDR_STUB_DIR:-/tmp/herdr-stub-$(id -u)}"
+mkdir -p "$stub_dir"
+
+cmd="${1:-}"
+
+case "$cmd" in
+  seed-spike)
+    touch "$stub_dir/seed_spike"
+    ;;
+  simulate-restart)
+    touch "$stub_dir/simulate_restart"
+    ;;
+  opt-in-real-process)
+    touch "$stub_dir/real_process"
+    ;;
+  opt-out-real-process)
+    rm -f "$stub_dir/real_process"
+    ;;
+  fault)
+    fault_name="${2:-}"
+    if [[ -z "$fault_name" ]]; then
+      echo "usage: herdr-stub-control fault <fault_name>" >&2
+      exit 2
+    fi
+    touch "$stub_dir/$fault_name"
+    ;;
+  clear-fault)
+    fault_name="${2:-}"
+    if [[ -z "$fault_name" ]]; then
+      rm -f "$stub_dir"/fault_* "$stub_dir/server_down" "$stub_dir/server_stopped"
+    else
+      rm -f "$stub_dir/$fault_name"
+    fi
+    ;;
+  *)
+    echo "usage: herdr-stub-control {seed-spike|simulate-restart|opt-in-real-process|opt-out-real-process|fault <name>|clear-fault [<name>]}" >&2
+    exit 2
+    ;;
+esac

@@ -155,9 +155,10 @@ cat >"$bin_dir/tmux" <<STUB
 [[ "\${1:-}" == "-L" ]] && shift 2
 cmd="\${1:-}"; shift || true
 printf '%s %s\n' "\$cmd" "\$*" >>"$tmux_log"
+if [[ "\$cmd" == new-session ]]; then a=("\$@"); for i in "\${!a[@]}"; do [[ "\${a[i]}" == -s ]] && : >"${tmux_log}.live-\${a[i+1]}"; done; fi
 case "\$cmd" in
   has-session)
-    exit 1 ;;
+    [[ -e "${tmux_log}.live-\${2:-}" ]] || exit 1 ;;
   new-session)
     exit 0 ;;
   kill-session)
@@ -166,6 +167,7 @@ case "\$cmd" in
     exit 0 ;;
 esac
 STUB
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-agents.sh"; stub_agent_binaries "$bin_dir"
 chmod +x "$bin_dir/bd" "$bin_dir/tmux"
 
 run_launch() {
@@ -190,14 +192,16 @@ assert gate.get("fits") is True, gate
 assert "reservation_id" in gate, gate
 ' "$sess_json" || fail "session record usage_gate field mismatch"
 
-# Verify active reservation exists in the ledger.
+# Verify active reservation exists in the ledger and is stamped with schema_version 1.
 ledger_file="$cache_dir/nogging/usage/reservations/ledger.json"
 test -f "$ledger_file" || fail "ledger file not found at $ledger_file"
 python3 -c '
 import json, sys
 ledger = json.load(open(sys.argv[1]))
 assert len(ledger) >= 1, ledger
-' "$ledger_file" || fail "active reservation missing in ledger"
+for tok, entry in ledger.items():
+    assert entry.get("schema_version") == 1, f"reservation {tok} missing schema_version 1: {entry}"
+' "$ledger_file" || fail "active reservation missing in ledger or not stamped with schema_version 1"
 
 # Terminal session release: stop session and cleanup.
 sess_name=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["name"])' "$sess_json")
@@ -344,7 +348,78 @@ find "$consumer/.nogging/state/sessions" -name '*.json' ! -name '*.settings.json
 done
 rm -rf "$consumer/.nogging/state/sessions"/*
 
-# 12. Lifecycle: update and remove.
+# 12. Installed helper reads mixed entries without lost accounting.
+# Seed ledger with legacy unversioned entry, version 1 entry, and future version 2 entry.
+write_codex_rollout 80 30
+python3 - "$ledger_file" "$consumer" <<'PY'
+import json, sys
+ledger_path = sys.argv[1]
+consumer_dir = sys.argv[2]
+sess_path = consumer_dir + "/dummy_session.json"
+with open(sess_path, "w") as f:
+    json.dump({"state": "running"}, f)
+
+# Determine the exact scope generated for codex default report
+sys.path.insert(0, consumer_dir + "/scripts")
+import nogg_usage as u
+rep = u.inspect_usage("codex")
+scope = u.reservation_scope(rep)
+
+mixed = {
+    "tok-legacy": {
+        "scope": scope,
+        "estimate": 4,
+        "windows": {"short": None, "weekly": None},
+        "owner": "legacy.owner",
+        "session": {"path": sess_path, "name": "dummy-legacy", "tmux": "true", "socket": "nogg-test"}
+    },
+    "tok-v1": {
+        "schema_version": 1,
+        "scope": scope,
+        "estimate": 3,
+        "windows": {"short": None, "weekly": None},
+        "owner": "v1.owner",
+        "session": {"path": sess_path, "name": "dummy-v1", "probe": {"backend": "tmux", "argv": ["true"]}}
+    },
+    "tok-v2-future": {
+        "schema_version": 2,
+        "scope": scope,
+        "estimate": 5,
+        "windows": {"short": None, "weekly": None},
+        "owner": "v2.owner",
+        "future_field": "opaque"
+    }
+}
+with open(ledger_path, "w") as f:
+    json.dump(mixed, f)
+PY
+
+# Verify nogg usage via installed helper counts all mixed entries (4 + 3 + 5 = 12% reserved)
+# Base used is 80%, so projected short is 80 + 12 + 5 (estimate) = 97% > 92% (cap) -> fits is False!
+json_mixed=$(CODEX_HOME="$codex_dir" XDG_CACHE_HOME="$cache_dir" nogg usage --agent codex --json)
+python3 -c '
+import json, sys
+d = json.loads(sys.argv[1])
+gate = d["gate"]
+assert gate["reserved_percent"] == 12, gate
+windows = {w["bucket"]: w for w in gate["windows"]}
+assert windows["short"]["reserved_percent"] == 12, windows
+assert windows["short"]["used_percent"] == 80.0, windows
+# 80 used + 12 reserved + 5 estimate = 97 > 92 cap -> fits False
+assert windows["short"]["projected_percent"] == 97.0, windows
+assert windows["short"]["fits"] is False, windows
+assert gate["fits"] is False, gate
+' "$json_mixed" || fail "installed helper failed to read mixed entries without lost accounting: $json_mixed"
+
+# Launch must be denied with exit 75 because 80% used + 12% reserved + 5% estimate = 97% > 92% cap
+rc=0
+run_launch --agent codex || rc=$?
+test "$rc" -eq 75 || fail "launch with mixed reservations over cap did not exit 75 (rc=$rc): $(cat "$scratch/launch.out")"
+
+# Reset ledger file
+rm -f "$ledger_file"
+
+# 13. Lifecycle: update and remove.
 # Modify consumer config
 python3 -c '
 import json, sys
@@ -357,10 +432,11 @@ json.dump(c, open(p, "w"), indent=2)
 # Tamper with installed helper
 echo '# corrupted' > "$consumer/scripts/nogg_usage.py"
 
-# Update repairs helper and preserves user config
+# Update preserves the local helper, stages upstream, and preserves user config
 cli update
-cmp "$package/scripts/nogg_usage.py" "$consumer/scripts/nogg_usage.py" \
-  || fail "cli update failed to repair scripts/nogg_usage.py"
+grep -qx '# corrupted' "$consumer/scripts/nogg_usage.py" || fail "cli update overwrote the local helper"
+cmp "$package/scripts/nogg_usage.py" "$consumer/scripts/nogg_usage.py.nogging-new" \
+  || fail "cli update failed to stage the upstream helper"
 python3 -c '
 import json, sys
 c = json.load(open(sys.argv[1]))

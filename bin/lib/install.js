@@ -5,6 +5,8 @@ const path = require('path');
 
 const manifest = require('./manifest');
 const fsops = require('./fsops');
+const manifestStore = require('./manifest-store');
+const nextsteps = require('./nextsteps');
 
 const PKG_ROOT = path.resolve(__dirname, '..', '..');
 
@@ -43,12 +45,16 @@ function makeContext(opts) {
     slug: slugify(repoName),
     version: packageVersion(),
     dryRun: !!opts.dryRun,
+    force: !!opts.force,
     noBeads: !!opts.noBeads,
     noHooks: !!opts.noHooks,
     noSystemd: !!opts.noSystemd,
+    verbose: !!opts.verbose,
     log: new fsops.ChangeLog(),
     notes: [],
+    units: [],
     warnings: [],
+    review: [],
   };
 }
 
@@ -58,17 +64,52 @@ function src(ctx, rel) {
 
 // --- phases -----------------------------------------------------------------
 
+// The version recorded in the target's config, used to pick legacy baselines
+// when no installed manifest exists. Null when absent or unreadable.
+function readRecordedVersion(ctx) {
+  try {
+    const data = JSON.parse(fsops.readTarget('.nogging/config.json', ctx));
+    return typeof data.nogging_version === 'string' ? data.nogging_version : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function prepareInstalledManifest(ctx) {
+  if (ctx.nextInstalledManifest) return;
+  ctx.installedManifest = manifestStore.readManifest(ctx.targetRoot);
+  ctx.recordedVersion = readRecordedVersion(ctx);
+  ctx.nextInstalledManifest = {
+    manifest_version: manifestStore.CURRENT_MANIFEST_VERSION,
+    nogging_version: ctx.version,
+    // Preserved files keep their previous baseline, never the local digest or
+    // the unaccepted .nogging-new digest. Unknown baselines remain absent.
+    files: { ...(ctx.installedManifest ? ctx.installedManifest.files : {}) },
+  };
+}
+
+function recordInstalledManifest(ctx) {
+  if (!ctx.nextInstalledManifest) return;
+  const content = manifestStore.serializeManifest(ctx.nextInstalledManifest);
+  fsops.writeFile(manifestStore.MANIFEST_REL_PATH, content, ctx);
+}
+
 function copyVerbatim(ctx) {
+  prepareInstalledManifest(ctx);
+  ctx.log.setClass('tools');
   for (const rel of manifest.verbatim) {
     const mode = manifest.executable.includes(rel) ? 0o755 : undefined;
     fsops.copyFile(src(ctx, rel), rel, ctx, { mode });
   }
+  ctx.log.setClass('agents');
   for (const dir of manifest.verbatimDirs) {
     fsops.copyDir(src(ctx, dir.from), dir.to, ctx);
   }
 }
 
 function copyDocs(ctx) {
+  prepareInstalledManifest(ctx);
+  ctx.log.setClass('docs');
   for (const doc of manifest.docs) {
     fsops.copyFile(src(ctx, doc.from), doc.to, ctx);
   }
@@ -87,6 +128,7 @@ function renderScaffoldConfig(ctx, raw) {
 }
 
 function writeScaffold(ctx, { updating = false } = {}) {
+  ctx.log.setClass('scaffold');
   for (const item of manifest.scaffold) {
     if (updating && !item.onUpdate) continue;
     let content = fs.readFileSync(src(ctx, item.from), 'utf8');
@@ -109,6 +151,7 @@ function migrateLegacyStateRoot(ctx) {
   const legacyAbs = path.join(ctx.targetRoot, '.specforge');
   const currentAbs = path.join(ctx.targetRoot, '.nogging');
   if (fs.existsSync(currentAbs) || !fs.existsSync(legacyAbs)) return;
+  ctx.log.setClass('scaffold');
   fs.renameSync(legacyAbs, currentAbs);
   const configAbs = path.join(currentAbs, 'config.json');
   if (fs.existsSync(configAbs)) {
@@ -127,8 +170,10 @@ function migrateLegacyStateRoot(ctx) {
   ctx.log.add('migrate', '.nogging', 'from legacy .specforge/ (v1.x state root)');
 }
 
-// Bump the recorded Nogging version in an existing .nogging/config.json.
+// Record accepted managed-file baselines and bump the configured package version.
 function recordVersion(ctx) {
+  ctx.log.setClass('merge');
+  recordInstalledManifest(ctx);
   const rel = '.nogging/config.json';
   const cur = fsops.readTarget(rel, ctx);
   if (cur == null) return;
@@ -146,6 +191,7 @@ function recordVersion(ctx) {
 // Install the two git hooks, unless core.hooksPath diverts Git away from
 // .git/hooks (the known Beads collision) — in that case warn instead.
 function installGitHooks(ctx) {
+  ctx.log.setClass('tracker');
   if (ctx.noHooks) {
     ctx.log.add('skip', '.git/hooks', '--no-hooks');
     return;
@@ -175,51 +221,22 @@ function installGitHooks(ctx) {
   }
 }
 
-function beadsHint(ctx) {
-  if (!fs.existsSync(path.join(ctx.targetRoot, '.beads'))) {
-    ctx.notes.push('Initialize the issue tracker:\n    bd init');
-  }
-}
-
 // Run the installed `scripts/nogg doctor` checks plus a tracker check and
-// print a single readiness verdict. The installer never installs system tools;
-// this only tells the operator whether the repo is ready to plan.
-function readinessVerdict(ctx) {
-  if (ctx.dryRun) return;
-  const gaps = [];
-  if (!fs.existsSync(path.join(ctx.targetRoot, '.beads'))) {
-    gaps.push('uninitialized tracker (run `bd init`)');
-  }
-  if (fs.existsSync(path.join(ctx.targetRoot, 'scripts', 'nogg'))) {
-    const { spawnSync } = require('child_process');
-    const r = spawnSync('scripts/nogg', ['doctor'], {
-      cwd: ctx.targetRoot,
-      encoding: 'utf8',
-    });
-    if (r.error) {
-      gaps.push('scripts/nogg doctor could not run');
-    } else {
-      for (const line of `${r.stdout || ''}\n${r.stderr || ''}`.split('\n')) {
-        const m = line.match(/^FAIL\s+(.+)$/);
-        if (m) gaps.push(m[1].trim());
-      }
-    }
-  } else {
-    gaps.push('scripts/nogg missing');
-  }
-  const uniq = [...new Set(gaps)];
-  process.stdout.write('\n');
-  if (uniq.length === 0) {
-    process.stdout.write('Nogging is ready — run ./scripts/nogg plan-begin to start.\n');
-  } else {
-    process.stdout.write(`Nogging is installed but not ready: ${uniq.join('; ')}\n`);
-  }
+// print a single readiness verdict with a fix line per gap. The installer never
+// installs system tools; this only tells the operator whether the repo is ready
+// to plan. Returns the gaps (empty when ready); a dry run prints nothing.
+function readinessVerdict(ctx, doctor = nextsteps.runDoctor(ctx.targetRoot)) {
+  if (ctx.dryRun) return [];
+  const gaps = nextsteps.collectGaps(ctx, doctor);
+  process.stdout.write(`\n${nextsteps.verdictLines(gaps).join('\n')}\n`);
+  return gaps;
 }
 
 // Initialize the Beads tracker in the target repo as the first install step.
 // Idempotent, and never fatal: a missing `bd` or an unreachable backend is a
 // warning that the readiness verdict will also surface.
 function initBeads(ctx) {
+  ctx.log.setClass('tracker');
   const rel = '.beads';
   if (ctx.noBeads) {
     ctx.log.add('skip', rel, '--no-beads');
@@ -257,12 +274,12 @@ module.exports = {
   makeContext,
   src,
   migrateLegacyStateRoot,
+  readRecordedVersion,
   copyVerbatim,
   copyDocs,
   writeScaffold,
   recordVersion,
   installGitHooks,
-  beadsHint,
   initBeads,
   readinessVerdict,
 };

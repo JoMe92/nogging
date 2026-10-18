@@ -9,7 +9,7 @@ python3 - "$root" <<'PY'
 import json, os, pathlib, shutil, subprocess, sys, tempfile, time, uuid
 
 source = pathlib.Path(sys.argv[1])
-with tempfile.TemporaryDirectory(prefix="nogg startup ") as directory:
+with tempfile.TemporaryDirectory(prefix="nogg.", dir="/tmp") as directory:
     root = pathlib.Path(directory)
     for name in (".nogging", "scripts", "bin", "openspec"):
         (root / name).mkdir()
@@ -17,11 +17,17 @@ with tempfile.TemporaryDirectory(prefix="nogg startup ") as directory:
         shutil.copytree(source / ".nogging" / name, root / ".nogging" / name)
     config = json.loads((source / ".nogging/config.json").read_text())
     sock = "nogg-startup-test-" + uuid.uuid4().hex
+    tmux_tmpdir = root / "tmux"
+    tmux_tmpdir.mkdir()
+    socket_path = tmux_tmpdir / f"tmux-{os.getuid()}" / sock
+    assert len(str(socket_path).encode()) < 108, socket_path
     config["session_tmux_socket"] = sock
     config["beads_command"] = str(root / "bin/bd")
+    config["usage_gate"] = {"enabled": False}
     (root / ".nogging/config.json").write_text(json.dumps(config))
     for name in ("nogg", "nogg_usage.py", "session-launch", "session-log-writer", "openspec-sandbox"):
         shutil.copy2(source / "scripts" / name, root / "scripts" / name)
+    shutil.copytree(source / "scripts/lib", root / "scripts/lib")
     # Exercise real tmux/startup logging independently of host mount support.
     # Preserve helper contract checks; dedicated fence tests use the real helper.
     boundary = root / "scripts/openspec-sandbox"
@@ -43,9 +49,29 @@ NOGG_OPENSPEC_FENCED=1 exec "$@"
         path.write_text(body)
         path.chmod(0o755)
     env = os.environ.copy()
+    for key in list(env):
+        if key.startswith(("NOGG_", "HERDR_")) or key in {"TMUX", "TMUX_TMPDIR"}:
+            env.pop(key)
     env.update(NOGGING_ROOT=str(root), PATH=str(root / "bin") + os.pathsep + env["PATH"],
-               NOGG_TEST_API_TOKEN="private-startup-fixture")
+               NOGG_TEST_API_TOKEN="private-startup-fixture", TMUX_TMPDIR=str(tmux_tmpdir))
     try:
+        # Reproduce a fenced caller on an empty, test-owned tmux socket. The
+        # server-start guard must refuse before creating session artifacts.
+        fenced_env = dict(env, NOGG_OPENSPEC_FENCED="1")
+        refused = subprocess.run([str(root / "scripts/nogg"), "session", "launch",
+                                  "--role", "lead", "--bead", "SPEC-live"],
+                                 env=fenced_env, text=True, capture_output=True, timeout=10)
+        assert refused.returncode != 0, (refused.stdout, refused.stderr)
+        assert "sandboxed session cannot start it" in refused.stderr, refused.stderr
+        session_dir = root / ".nogging/state/sessions"
+        assert not (list(session_dir.glob("*")) if session_dir.exists() else []), \
+            list(session_dir.glob("*")) if session_dir.exists() else []
+        assert not socket_path.exists(), "fenced launch created its tmux server socket"
+
+        # This suite exercises runtime startup failure after backend prepare.
+        # Seed the shared server from the host before the fenced launch.
+        subprocess.run(["tmux", "-L", sock, "new-session", "-d", "-s", "host-anchor"],
+                       env=env, check=True, capture_output=True)
         result = subprocess.run([str(root / "scripts/nogg"), "session", "launch",
                                  "--role", "lead", "--bead", "SPEC-live"],
                                 env=env, text=True, capture_output=True, timeout=10)
@@ -53,7 +79,7 @@ NOGG_OPENSPEC_FENCED=1 exec "$@"
         deadline = time.monotonic() + 5
         while True:
             records = [p for p in sessions.glob("*.json") if not p.name.endswith(".settings.json")]
-            assert len(records) == 1
+            assert len(records) == 1, (result.stdout, result.stderr, list(sessions.glob("*")))
             try:
                 record = json.loads(records[0].read_text())
             except json.JSONDecodeError:

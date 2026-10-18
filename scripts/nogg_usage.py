@@ -272,6 +272,8 @@ def agy_select_group(groups, model):
     """(group, reason): the one group that lists the selected model's family.
     An unset model, an unrecognized family, or zero/several matches is an
     unknown mapping, never a guess and never another group's headroom."""
+    if not model or not str(model).strip():
+        return None, 'unknown model mapping (no model selected; pass --model <id>)'
     family = agy_model_family(model)
     if family is None:
         return None, 'unknown model mapping'
@@ -390,8 +392,11 @@ def inspect_usage(agent, *, source=None, now=None, stale_after=600, model=None):
         age = (now - observed).total_seconds()
         if age < 0:
             reason = 'observation is in the future'
-        elif age > stale_after:
+        elif age > stale_after and agent != 'codex':
             reason = 'stale observation'
+    # Codex logs a fresh sample every turn on this host, so its newest event
+    # stays the best knowledge until each window's own reset; age is reported.
+    stale = agent == 'codex' and observed is not None and (now - observed).total_seconds() > stale_after
     if not isinstance(limits, dict) and reason is None:
         reason = 'missing or unsupported usage windows'
     windows = []
@@ -415,12 +420,19 @@ def inspect_usage(agent, *, source=None, now=None, stale_after=600, model=None):
                     item['reason'] = 'reset precedes observation'
                 else:
                     item.update(status='known', reason=None, used_percent=used, resets_at=iso(reset))
+                    if stale:
+                        item.update(stale=True, age_seconds=int((now - observed).total_seconds()))
             except (KeyError, ValueError, TypeError, OverflowError, OSError):
                 item['reason'] = 'missing or malformed window'
+        if agent == 'claude' and item.get('reason') == 'missing usage source':
+            item['hint'] = 'run nogg usage install-statusline'
         windows.append(item)
-    return {'schema_version': 1, 'provider': agent, 'account': None,
-            'model_group': None, 'status': 'known' if all(w['status'] == 'known' for w in windows) else 'unknown',
-            'windows': windows}
+    report = {'schema_version': 1, 'provider': agent, 'account': None,
+              'model_group': None, 'status': 'known' if all(w['status'] == 'known' for w in windows) else 'unknown',
+              'windows': windows}
+    if any(w.get('stale') for w in windows):
+        report['stale'] = True
+    return report
 
 
 GATE_KEYS = ('enabled', 'cap_percent', 'estimate_percent', 'stale_seconds',
@@ -757,6 +769,8 @@ def evaluate_gate(report, config, estimate, reserved_percent=0):
         item = {'bucket': window['bucket'], 'reserved_percent': reserved, 'status': window['status'],
                 'reason': window['reason'], 'used_percent': window['used_percent'],
                 'resets_at': window['resets_at'], 'projected_percent': None, 'fits': None}
+        if 'hint' in window:
+            item['hint'] = window['hint']
         if window['status'] == 'known':
             projected = window['used_percent'] + reserved + estimate
             item.update(projected_percent=round(projected, 4), fits=projected <= config['cap_percent'])
@@ -834,6 +848,15 @@ def describe_denial(gate):
     return 'usage would exceed the cap: ' + '; '.join(parts) + f"; retry after {gate['retry_after']} (scheduling uses all limiting reset windows without model switching)"
 
 
+def format_age(seconds):
+    seconds = int(seconds)
+    if seconds < 3600:
+        return f'{max(seconds // 60, 1)}m'
+    if seconds < 86400:
+        return f'{seconds // 3600}h{seconds % 3600 // 60:02d}m'
+    return f'{seconds // 86400}d{seconds % 86400 // 3600:02d}h'
+
+
 def usage_command(agent, json_output=False, config=None, model=None):
     config = gate_config(config)
     report = observe(agent, config, model=model)
@@ -852,11 +875,13 @@ def usage_command(agent, json_output=False, config=None, model=None):
     print(f"{target_desc} usage ({identity})")
     for window, projection in zip(report['windows'], gate['windows']):
         if window['status'] == 'known':
+            stale = f"; stale (observed {format_age(window['age_seconds'])} ago)" if window.get('stale') else ''
             print(f"  {window['bucket']}: {window['used_percent']:g}% used; reset {window['resets_at']}; observed {window['observed_at']}; "
                   f"reserved {projection['reserved_percent']:g}%; projected {projection['projected_percent']:g}% of cap {gate['cap_percent']:g}% "
-                  f"({'fits' if projection['fits'] else 'does not fit'})")
+                  f"({'fits' if projection['fits'] else 'does not fit'}){stale}")
         else:
-            print(f"  {window['bucket']}: unknown ({window['reason']})")
+            hint_str = f" — {window['hint']}" if window.get('hint') else ""
+            print(f"  {window['bucket']}: unknown ({window['reason']}){hint_str}")
     print(f"  estimate {gate['estimate_percent']:g}% per launch; reserved {gate['reserved_percent']:g}%; "
           f"fits: {'unknown' if gate['fits'] is None else ('yes' if gate['fits'] else 'no')}"
           + ('' if config['enabled'] else ' (usage_gate disabled)'))
@@ -885,7 +910,7 @@ class Reservations:
     Lock files are stable inodes; the ledger is replaced atomically under the
     lock. Pending owners hold kernel file locks, which work across PID
     namespaces and are released on process death. Bound owners use durable
-    session state and tmux liveness, so a launcher
+    session state and a backend liveness probe, so a launcher
     exit does not release a still-running worker's estimate.
     """
     def __init__(self, root=None):
@@ -893,21 +918,106 @@ class Reservations:
             'XDG_CACHE_HOME', str(Path.home() / '.cache'))) / 'nogging/usage/reservations'
         self.pending = {}
 
+    @staticmethod
+    def _validate_accounting(entry):
+        if not isinstance(entry, dict):
+            raise ValueError('entry must be a dictionary')
+        scope = entry.get('scope')
+        if not isinstance(scope, str) or not scope.strip():
+            raise ValueError('missing or empty scope')
+        estimate = entry.get('estimate')
+        if isinstance(estimate, bool) or not isinstance(estimate, (int, float)) or not math.isfinite(estimate) or estimate < 0:
+            raise ValueError('missing or non-finite/negative estimate')
+        windows = entry.get('windows')
+        if not isinstance(windows, dict):
+            raise ValueError('missing or invalid windows mapping')
+        for bucket, reset in windows.items():
+            if not isinstance(bucket, str) or not bucket.strip():
+                raise ValueError('invalid window bucket')
+            if reset is not None:
+                try:
+                    timestamp(reset)
+                except Exception as exc:
+                    raise ValueError(f'invalid window reset timestamp: {reset!r}') from exc
+        owner = entry.get('owner')
+        if not isinstance(owner, str) or not owner.strip() or owner != owner.strip():
+            raise ValueError('missing or empty owner')
+        if os.path.basename(owner) != owner or owner in ('.', '..') or '/' in owner or '\\' in owner or '\0' in owner:
+            raise ValueError(f'unsafe owner filename: {owner!r}')
+
+    @staticmethod
+    def _classify(entry):
+        """Return (is_understood, reason_if_opaque)."""
+        if 'schema_version' not in entry:
+            pass  # legacy
+        else:
+            ver = entry['schema_version']
+            if isinstance(ver, bool) or not isinstance(ver, int):
+                return False, 'invalid explicit schema version'
+            if ver == 1:
+                pass  # version 1
+            elif ver > 1:
+                return False, f'unsupported schema version {ver}'
+            else:
+                return False, f'invalid schema version {ver}'
+
+        if 'session' not in entry:
+            return True, None
+
+        sess = entry['session']
+        if not isinstance(sess, dict):
+            return False, 'malformed session metadata'
+
+        path = sess.get('path')
+        name = sess.get('name')
+        if not isinstance(path, str) or not path or not isinstance(name, str) or not name:
+            return False, 'malformed session metadata'
+
+        if 'probe' in sess:
+            probe = sess['probe']
+            if (not isinstance(probe, dict)
+                    or not isinstance(probe.get('backend'), str) or not probe['backend']
+                    or not isinstance(probe.get('argv'), list) or not probe['argv']
+                    or not all(isinstance(a, str) and a for a in probe['argv'])):
+                return False, 'malformed probe metadata'
+            return True, None
+        elif 'tmux' in sess and 'socket' in sess:
+            tmux = sess['tmux']
+            socket = sess['socket']
+            if not isinstance(tmux, str) or not tmux or not isinstance(socket, str) or not socket:
+                return False, 'malformed legacy tmux session metadata'
+            return True, None
+        else:
+            return False, 'malformed session metadata'
+
+    def is_opaque(self, entry):
+        return not self._classify(entry)[0]
+
     def _alive(self, entry):
         import subprocess
+        understood, _ = self._classify(entry)
+        if not understood:
+            return True
         owner = entry.get('session')
         if owner:
             try:
                 record = json.loads(Path(owner['path']).read_text())
             except (OSError, ValueError):
                 record = None
-            if record and record.get('state') in ('stopped', 'failed', 'retired'):
+            if record and isinstance(record, dict) and record.get('state') in ('stopped', 'failed', 'retired'):
                 return False
             try:
-                result = subprocess.run([owner['tmux'], '-L', owner['socket'],
-                                         'has-session', '-t', owner['name']],
-                                        capture_output=True, timeout=5)
-                if result.returncode == 0:
+                probe = owner.get('probe')
+                if probe is None:
+                    # Reservations written before the backend seam.
+                    argv = [owner['tmux'], '-L', owner['socket'],
+                            'has-session', '-t', owner['name']]
+                else:
+                    argv = probe['argv']
+                result = subprocess.run(argv, capture_output=True, timeout=5)
+                if result.returncode != 1:
+                    # 0 is alive; unexpected failures are unknown. Only the
+                    # probe's explicit absent result (1) can release a worker.
                     return True
             except (OSError, subprocess.TimeoutExpired):
                 # Tool failure is not proof that a worker is dead.
@@ -937,26 +1047,46 @@ class Reservations:
 
     def _transaction(self, action, *, readonly=False):
         import fcntl
+        import sys
         import tempfile
-        if readonly and not (self.root / 'ledger.json').exists():
+        ledger_path = self.root / 'ledger.json'
+        lock_path = self.root / 'ledger.lock'
+        if readonly and not ledger_path.exists():
             return action({})
-        if not readonly:
+        if readonly:
+            target_lock = lock_path if lock_path.exists() else ledger_path
+            lock_fd = os.open(target_lock, os.O_RDONLY)
+        else:
             self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
             self.root.chmod(0o700)
-        lock_fd = os.open(self.root / 'ledger.lock', os.O_RDONLY if readonly else os.O_CREAT | os.O_RDWR, 0o600)
+            lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
         with os.fdopen(lock_fd, 'r' if readonly else 'a+') as lock:
             if not readonly:
                 os.fchmod(lock.fileno(), 0o600)
             fcntl.flock(lock, fcntl.LOCK_SH if readonly else fcntl.LOCK_EX)
-            path = self.root / 'ledger.json'
             try:
-                entries = json.loads(path.read_text())
+                content = ledger_path.read_text()
+                entries = json.loads(content)
                 if not isinstance(entries, dict):
                     raise ValueError('invalid ledger')
             except FileNotFoundError:
                 entries = {}
             except ValueError as exc:
                 raise RuntimeError('usage reservation ledger is malformed; admission refused') from exc
+
+            for token, entry in entries.items():
+                if not isinstance(token, str) or not token.strip():
+                    raise RuntimeError('usage reservation ledger is malformed; admission refused')
+                try:
+                    self._validate_accounting(entry)
+                except ValueError as exc:
+                    raise RuntimeError(f'usage reservation ledger is malformed ({exc}); admission refused') from exc
+
+            for token, entry in entries.items():
+                understood, reason = self._classify(entry)
+                if not understood:
+                    print(f"warning: reservation {token}: {reason}; retained without probing", file=sys.stderr)
+
             original = dict(entries)
             entries = {key: value for key, value in entries.items() if self._alive(value)}
             result = action(entries)
@@ -969,7 +1099,8 @@ class Reservations:
                     json.dump(entries, stream, allow_nan=False)
                     stream.flush()
                     os.fsync(stream.fileno())
-                os.replace(temporary, path)
+                os.chmod(temporary, 0o600)
+                os.replace(temporary, ledger_path)
                 for key in original.keys() - entries.keys():
                     (self.root / original[key]['owner']).unlink(missing_ok=True)
             finally:
@@ -991,16 +1122,26 @@ class Reservations:
     def admit(self, report, config, estimate):
         import uuid
         scope = reservation_scope(report)
+        allocated_token = None
         def action(entries):
+            nonlocal allocated_token
             gate = evaluate_gate(report, config, estimate, self._totals(entries, scope, report))
             if gate['decision'] not in ('denied', 'unknown-denied'):
                 token = uuid.uuid4().hex
                 import fcntl
                 owner = token + '.owner'
-                descriptor = os.open(self.root / owner, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
-                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                owner_path = self.root / owner
+                descriptor = os.open(owner_path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+                try:
+                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BaseException:
+                    os.close(descriptor)
+                    owner_path.unlink(missing_ok=True)
+                    raise
                 self.pending[token] = descriptor
-                entries[token] = {'scope': scope, 'estimate': estimate,
+                allocated_token = token
+                entries[token] = {'schema_version': 1,
+                                  'scope': scope, 'estimate': estimate,
                                   'windows': {w['bucket']: w['resets_at'] for w in report['windows']},
                                   'owner': owner}
                 gate['reservation_id'] = token
@@ -1009,22 +1150,45 @@ class Reservations:
             return self._transaction(action)
         except BaseException:
             # An atomic ledger write can fail after the owner lock was taken.
-            for token in list(self.pending):
-                self.finish(token)
-                (self.root / (token + '.owner')).unlink(missing_ok=True)
+            if allocated_token is not None:
+                self.finish(allocated_token)
+                (self.root / (allocated_token + '.owner')).unlink(missing_ok=True)
             raise
 
-    def bind(self, token, path, name, tmux, socket):
+    def bind(self, token, path, name, probe, socket=None):
+        """Bind before starting the child; accept the old tmux/socket API too.
+
+        New entries store only a backend-neutral {backend, argv} probe. Probe
+        exit codes are 0 alive, 1 absent, anything else unknown.
+        """
+        if socket is not None:
+            probe = {'backend': 'tmux', 'argv': [probe, '-L', socket,
+                                               'has-session', '-t', name]}
+        if (not isinstance(probe, dict) or not isinstance(probe.get('backend'), str)
+                or not probe['backend'] or not isinstance(probe.get('argv'), list)
+                or not probe['argv'] or not all(isinstance(a, str) and a for a in probe['argv'])):
+            raise ValueError('invalid session liveness probe')
         def action(entries):
             if token not in entries:
                 raise RuntimeError('usage admission reservation disappeared before launch completed')
-            entries[token]['session'] = {'path': str(Path(path).resolve()), 'name': name,
-                                          'tmux': tmux, 'socket': socket}
+            target = entries[token]
+            understood, reason = self._classify(target)
+            if not understood:
+                raise RuntimeError(f'cannot bind opaque reservation {token}: {reason}')
+            target.setdefault('schema_version', 1)
+            target['session'] = {'path': str(Path(path).resolve()), 'name': name,
+                                 'probe': probe}
         self._transaction(action)
 
     def release(self, token):
+        def action(entries):
+            if token in entries:
+                understood, reason = self._classify(entries[token])
+                if not understood:
+                    raise RuntimeError(f'cannot release opaque reservation {token}: {reason}')
+                del entries[token]
         try:
-            self._transaction(lambda entries: entries.pop(token, None))
+            self._transaction(action)
         finally:
             self.finish(token)
 
@@ -1272,16 +1436,38 @@ def quota_freshness_notes(config=None, now=None):
     try:
         obs = inspect_usage('codex', source=codex_sessions, now=now, stale_after=stale_sec)
         if obs['status'] == 'known':
-            notes.append("quota observation (codex): fresh observation metadata")
+            aged = [w['age_seconds'] for w in obs['windows'] if w.get('stale')]
+            if aged:
+                notes.append(f"quota observation (codex): observation is {format_age(max(aged))} old but windows have not reset — still used")
+            else:
+                notes.append("quota observation (codex): fresh observation metadata")
         else:
             reasons = '; '.join(w.get('reason') or 'unknown' for w in obs['windows'] if w.get('status') != 'known')
             if 'missing usage source' in reasons:
                 notes.append("quota observation (codex): missing usage source (no rollout session metadata)")
-            elif 'stale observation' in reasons:
-                notes.append(f"quota observation (codex): observation is stale (> {stale_sec}s old) — run Codex to refresh")
             else:
                 notes.append(f"quota observation (codex): observation unavailable ({reasons})")
     except Exception as exc:
         notes.append(f"quota observation (codex): unreadable metadata ({exc})")
 
     return notes
+
+
+def unknown_policy_notes(config=None, observations=None):
+    """Doctor notes for agents whose usage is unknown while launches are admitted.
+
+    `observations` maps agent -> usage report (as from `inspect_usage`). An agent
+    with a non-known report under `on_unknown == 'warn'` gets a NOTE; nothing is
+    printed when everything is known, the policy is `deny` or the gate is
+    disabled. Pure, never raises, never blocks.
+    """
+    try:
+        cfg = gate_config(config)
+        if not cfg['enabled'] or cfg['on_unknown'] != 'warn':
+            return []
+        return [f"usage gate: {agent} usage is unknown — launches are admitted without known headroom "
+                '(usage_gate.on_unknown=warn); set "deny" to block'
+                for agent, report in sorted((observations or {}).items())
+                if isinstance(report, dict) and report.get('status') != 'known']
+    except Exception:
+        return []

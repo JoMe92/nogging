@@ -5,10 +5,12 @@ you want to adopt the operating model.
 
 ```bash
 cd /path/to/your-repo
-npx github:JoMe92/nogging#v2.2.0 init
+npx github:JoMe92/nogging#v3.0.0 init --no-systemd
 ```
 
-Always pin a released tag; do not install an unpinned default branch. Until the
+`--no-systemd` skips the systemd units; leave it off only after reviewing the
+safety warning in the README. Always pin a released tag; do not install an
+unpinned default branch. Until the
 owner completes public-release acceptance, the repository remains private and
 the command requires GitHub access. Once public, the same pinned command needs
 no private-repository credential.
@@ -21,7 +23,7 @@ provisions the whole stack — pinned to the versions in the
 [compatibility matrix](compatibility.md) — and then runs `init` for you:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/JoMe92/nogging/v2.2.0/scripts/bootstrap | bash
+curl -fsSL https://raw.githubusercontent.com/JoMe92/nogging/v3.0.0/scripts/bootstrap | bash
 ```
 
 Always pin a tagged release in that URL, never `main`/`develop`, for the same
@@ -37,7 +39,7 @@ Download the script first, then run it, to get a guided, Nogging-styled
 terminal wizard instead:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/JoMe92/nogging/v2.2.0/scripts/bootstrap -o bootstrap
+curl -fsSL https://raw.githubusercontent.com/JoMe92/nogging/v3.0.0/scripts/bootstrap -o bootstrap
 bash bootstrap
 ```
 
@@ -67,6 +69,16 @@ regardless of what's detected. If `whiptail` is missing and can't be
 installed (no `apt`, no network, no `sudo`), `scripts/bootstrap` prints a
 NOTE and falls back to the fully-automated flow rather than failing the
 whole install over a cosmetic layer.
+
+Before it changes anything, `scripts/bootstrap` prints a **plan block**
+(`Plan for <repo> (Nogging <tag>):`) with one line per tool: `present`,
+`install` or `upgrade`, and the version. Printing the plan has no side effects.
+After `init` it runs `./scripts/nogg doctor` itself, once. The terminal shows
+only the `FAIL` and `WARN` lines; the full report is saved under
+`.nogging/state/bootstrap-doctor.log`. It ends with a plain-text **summary**
+that is identical in both modes: what was installed and skipped, a read-only
+login status for GitHub, Claude Code and Codex (it never asks for or handles a
+credential), and the next steps.
 
 What it does, in order (identically for both invocation shapes — the wizard
 only changes how the install target and options are chosen, never what
@@ -108,34 +120,75 @@ command above.
 
 | Class | Paths | Behaviour |
 | --- | --- | --- |
-| Tool files | `scripts/nogg`, `scripts/session-launch`, `scripts/session-log-writer`, `scripts/install-hooks`, `scripts/test`, shipped `scripts/*.test.sh`, `scripts/hooks/*`, `.agents/skills/**` | copied verbatim, overwritten on every `init` / `update`; runtime helpers installed executable |
-| Reference docs | `docs/nogging/{operating-model,architecture,compatibility,failure-recovery,security-model,using-with-codex,using-with-pi,worktree-workflow}.md` | copied verbatim |
+| Tool files | `scripts/nogg`, `scripts/session-launch`, `scripts/session-log-writer`, `scripts/install-hooks`, `scripts/test`, shipped `scripts/*.test.sh`, `scripts/hooks/*`, `.agents/skills/**` | copied verbatim; tracked in `.nogging/installed-manifest.json`; unmodified files update cleanly, locally modified files preserved as `<file>.nogging-new` (or overwritten to `<file>.orig` with `--force`); runtime helpers installed executable |
+| Reference docs | `docs/nogging/{operating-model,architecture,compatibility,failure-recovery,security-model,using-with-codex,using-with-pi,worktree-workflow}.md` | copied verbatim; tracked in manifest; locally modified files preserved as `<file>.nogging-new` |
 | Scaffold | `openspec/config.yaml`, `openspec/project.md`, `.nogging/config.json` | written **only when absent** — never overwritten |
 | Merged | `.claude/settings.json`, `.gitignore`, `CLAUDE.md`, `AGENTS.md`, `.codex/hooks.json` | edited idempotently; your other content is preserved (a `bd`-written `.codex/hooks.json` is never clobbered) |
-| Codex payload | `.codex/rules/nogging.rules`, `.codex/prompts/{plan,discovery-review,sync-now}.md` | copied verbatim; only relevant if you run the loop from Codex — see [`docs/using-with-codex.md`](using-with-codex.md) |
-| Pi payload | `.pi/prompts/{plan,discovery-review,sync-now}.md`, `.pi/extensions/nogging-guard.ts` | copied verbatim; only relevant if you run the loop from Pi — see [`docs/using-with-pi.md`](using-with-pi.md) |
+| Codex payload | `.codex/rules/nogging.rules`, `.codex/prompts/{plan,discovery-review,sync-now}.md` | copied verbatim; tracked in manifest; locally modified files preserved as `<file>.nogging-new` (or overwritten with `--force`); only relevant if you run the loop from Codex — see [`docs/using-with-codex.md`](using-with-codex.md) |
+| Pi payload | `.pi/prompts/{plan,discovery-review,sync-now}.md`, `.pi/extensions/nogging-guard.ts` | copied verbatim; tracked in manifest; locally modified files preserved as `<file>.nogging-new` (or overwritten with `--force`); only relevant if you run the loop from Pi — see [`docs/using-with-pi.md`](using-with-pi.md) |
 | Rendered | `systemd/nogg-sync-<slug>.service` and `.timer`, `systemd/nogg-orchestrator-<slug>.service` | generated with this repo's absolute path; `<slug>` is the sanitized repo directory name |
 
 `.nogging/config.json` records `name` (your repo's directory name) and
 `nogging_version`.
+`.nogging/installed-manifest.json` tracks SHA-256 digests of all installed verbatim
+and doc files for three-way comparison during updates.
 
 Never touched: `openspec/changes/**`, `.beads/**`,
 `.nogging/{state,locks,reports}`, your `README.md`, your `package.json`.
 
 ### Flags
 
-- `--dry-run` — print the change list, write nothing
-- `--no-beads` — skip the default `bd init`; use this only when the tracker is
-  intentionally provisioned separately
-- `--no-hooks` — do not install the Git hooks
-- `--no-systemd` — do not render the systemd unit
+- `--dry-run` — Show what would change, write nothing
+- `--force` — Overwrite locally modified verbatim files on init/update, keeping a
+  `<file>.orig` backup (default: keep the file and write upstream to
+  `<file>.nogging-new`)
+- `--no-beads` — Skip initializing the Beads issue tracker; use this only when
+  the tracker is intentionally provisioned separately
+- `--no-hooks` — Skip installing the git hooks
+- `--no-systemd` — Skip rendering the systemd sync unit
+- `--verbose` — List every file under its class (default: counts only)
+- `-v`, `--version` — Print the Nogging package version
+- `-h`, `--help` — Show this help
 
-All four flags apply to `init`. On `update`, `--dry-run`, `--no-hooks`, and
-`--no-systemd` suppress the corresponding writes; `remove` supports
-`--dry-run` for a non-mutating preview.
-`init` is idempotent; re-running it is safe.
+`init` and `update` accept all of these. On `update`, `--dry-run`, `--force`,
+`--no-hooks` and `--no-systemd` apply to the corresponding writes; `remove`
+supports `--dry-run` for a non-mutating preview. `init` is idempotent;
+re-running it is safe. `npx github:JoMe92/nogging#<tag> --help` prints the
+same list and ends with pointers to this guide and the pinned bootstrap.
+
+## What the installer prints
+
+`init` and `update` print the same blocks, in this order. The wording is the
+installer's; only the stable shapes are described here.
+
+1. **Preflight** — a short host check that runs first, also under `--dry-run`.
+   It checks the required tools in
+   [Prerequisites](#prerequisites-in-the-target-repo) and lists the optional
+   ones it found: `Preflight: 7/7 required tools OK; optional: tmux, claude`.
+   Each tool that is missing, too old or unreadable gets one line with a
+   `fix:` hint, and a missing optional tool gets a `WARN` line. Preflight is
+   **advisory**: it never changes the exit status, never blocks or alters a
+   write, installs nothing and uses no network. `doctor` stays authoritative.
+2. **Changes** — one line per file class with counts (`Tool scripts  34
+   created`). `--verbose` lists every file under its class.
+3. **Verdict** — the first line is either `Nogging is ready — …` or
+   `Nogging is installed but not ready: <gap>; <gap>`. Each gap gets one
+   `fix:` line.
+4. **Next steps** — a numbered list. After `init`: resolve any gaps, run
+   `./scripts/nogg doctor`, then start your first plan with `/plan` in Claude
+   Code or `./scripts/nogg worktree plan <planning-id> <description>`. After
+   `update`: review each `.nogging-new` file, then check the installation.
+   After `remove`: disable the units, review the shared entries left behind,
+   commit. Optional steps, such as enabling the sync timer, are marked
+   `(optional)`.
+
+`npx github:JoMe92/nogging#<tag> doctor` runs the installed
+`./scripts/nogg doctor`, prints its report unchanged, then the same verdict
+and next steps, and exits with doctor's status.
 
 ## After `init`
+
+Follow the numbered **Next steps** the installer printed. The usual sequence:
 
 ```bash
 ./scripts/nogg doctor
@@ -145,7 +198,8 @@ systemctl --user enable --now "$PWD/systemd/nogg-sync-<slug>.timer"
 
 `init` runs `bd init` automatically unless `--no-beads` was supplied. Replace
 `<slug>` with the filenames printed by the installer. Enabling the timer is an
-explicit opt-in; review the generated unit before doing so.
+explicit opt-in (marked `(optional)` in the next steps); review the generated
+unit before doing so.
 
 Confirm the pinned package version before changing an installation:
 
@@ -173,6 +227,34 @@ npx github:JoMe92/nogging#<new-tag> update
 `nogging_version`. It does **not** run the scaffold step, so
 `openspec/project.md`, the config `name`, and everything under
 `openspec/changes/` are left exactly as they are.
+
+### Preserving local modifications (`.nogging-new` and `--force`)
+
+When updating, Nogging uses `.nogging/installed-manifest.json` (or bundled release
+baselines for upgrades from legacy releases) to perform a three-way comparison
+between the currently installed file, the incoming release, and the baseline digest:
+
+- **Unmodified files** update cleanly to the incoming version.
+- **Locally customized files** (for example, edited rules in `.codex/rules/nogging.rules`
+  or tuned prompt instructions in `.nogging/launch-prompts/orchestrator.md`) are
+  **preserved** by default. Nogging retains your modified file, writes the upstream
+  version alongside it as `<file>.nogging-new`, and emits a warning in the update report.
+- **Doctor warnings**: `./scripts/nogg doctor` inspects the repository and prints a
+  warning for each pending update:
+  ```text
+  WARN  locally modified file has pending upstream update: <path> (review <path>.nogging-new and reconcile)
+  ```
+  This warning is advisory and does not fail doctor checks. To reconcile, compare
+  `<file>` and `<file>.nogging-new`, incorporate desired changes into `<file>`, and
+  delete `<file>.nogging-new`.
+- **Force overwrite (`--force`)**: If you intentionally wish to overwrite local edits
+  with upstream files, pass `--force`:
+  ```bash
+  npx github:JoMe92/nogging#<new-tag> update --force
+  ```
+  With `--force`, Nogging backs up your existing file to `<file>.orig` before
+  overwriting it with the upstream release file. Review the `<file>.orig` backup
+  and delete it when satisfied.
 
 ### Updating and rolling back
 
@@ -231,20 +313,34 @@ the installer cannot prove whether another tool now owns them.
 
 ## Prerequisites in the target repo
 
-- **Linux**, **Git**, and **Bash** — the supported host and script environment.
-- **Node.js ≥ 18** — to run the installer and package checks.
-- **Python ≥ 3.9**, **Git ≥ 2.30**, and **GNU Bash ≥ 4.4**.
-- **OpenSpec CLI 1.11.x** — required for planning-artifact validation.
-- **bd (Beads) 1.2.x** and a reachable **Dolt 2.3.x** — required for executable work and
-  synchronization. `init` initializes Beads by default.
-- **systemd user services** are optional; install with `--no-systemd` otherwise.
-- **tmux** is optional unless supervised sessions or the orchestrator are used.
-- For the **Claude Code path**: the `claude` CLI and authentication.
-- For the **Codex agent path only**: the `codex` CLI and a Codex login. See
-  [`docs/using-with-codex.md`](using-with-codex.md).
-- For the **Pi agent path only**: the `pi` CLI (needs Node.js ≥ 22.19.0 to
-  run, separate from the installer's own Node ≥ 18) and a configured model
-  provider. See [`docs/using-with-pi.md`](using-with-pi.md).
+The installer's preflight checks exactly these tools; the table is the same
+one it uses.
+
+| Tool | Minimum | Required |
+| --- | --- | --- |
+| Node.js | 18 | required |
+| Git | 2.30 | required |
+| Bash | 4.4 | required |
+| Python 3 | 3.9 | required |
+| OpenSpec CLI | 1.11 | required |
+| bd (Beads) | 1.2 | required |
+| Dolt | 2.3 | required |
+
+`bd` and a reachable Dolt are what executable work and synchronization need;
+`init` initializes Beads by default. The OpenSpec CLI validates planning
+artifacts. Linux is the supported host.
+
+Optional, reported by the preflight as `optional:` or `WARN`:
+
+- **tmux** (or herdr) — needed for supervised sessions and the orchestrator.
+- **systemd** user services — install with `--no-systemd` otherwise.
+- An agent CLI. For the **Claude Code path**: the `claude` CLI and
+  authentication. For the **Codex agent path only**: the `codex` CLI and a
+  Codex login; see [`docs/using-with-codex.md`](using-with-codex.md). For the
+  **Pi agent path only**: the `pi` CLI (needs Node.js ≥ 22.19.0 to run,
+  separate from the installer's own Node ≥ 18) and a configured model
+  provider; see [`docs/using-with-pi.md`](using-with-pi.md). Antigravity's
+  `agy` is also detected.
 
 The complete support classification and evidence links are in the
 [compatibility matrix](compatibility.md).

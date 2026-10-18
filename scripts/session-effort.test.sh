@@ -9,11 +9,14 @@
 #   - Invalid inputs (null, wrong type, empty, whitespace, case variants, unsupported)
 #     are refused before worktree/settings/record/tmux side effects, even when overridden;
 #   - Cross-agent rejections:
-#       * --effort refused for non-Claude agents (Codex, Pi, Antigravity),
+#       * --effort refused for Pi and Antigravity (Claude and Codex only),
 #         including implicit configured agent selection;
 #       * `effort` refused in non-Claude profiles (Codex, Pi, Antigravity);
 #       * `model_reasoning_effort` refused in Claude, Pi, and Antigravity profiles;
 #   - Codex model_reasoning_effort behavior is preserved for all 8 values;
+#   - `--effort` for Codex (TASK-CEF-001): all 8 levels validated and forwarded
+#     as `--reasoning-effort`, over `--tier` and the profile, recorded with
+#     source `launch`; unsupported levels refuse before side effects;
 #   - Effective Claude settings JSON copy strips the `effort` key while leaving
 #     the source profile untouched.
 set -euo pipefail
@@ -38,12 +41,14 @@ cat >"$work/bin/tmux" <<'STUB'
 cmd="${1:-}"; shift || true
 d="${TMUX_STUB_DIR:?}"; mkdir -p "$d"
 printf '%s %s\n' "$cmd" "$*" >>"$d/calls.log"
+if [[ "$cmd" == new-session ]]; then a=("$@"); for i in "${!a[@]}"; do [[ "${a[i]}" == -s ]] && : >"$d/live-${a[i+1]}"; done; fi
 case "$cmd" in
-  has-session) exit 1 ;;
+  has-session) [[ -e "$d/live-${2:-}" ]] || exit 1 ;;
   *) : ;;
 esac
 STUB
 chmod +x "$work/bin/bd" "$work/bin/tmux"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-agents.sh"; stub_agent_binaries "$work/bin"
 export PATH="$work/bin:$PATH"
 export HOME="$work/home"
 mkdir -p "$HOME/.gemini/antigravity-cli"
@@ -226,10 +231,9 @@ launch_refused "cli-effort-minimal" "must be one of low, medium, high, xhigh, ma
 launch_refused "cli-effort-flag" "must be one of low, medium, high, xhigh, max" --effort=--low
 
 # --- Cross-agent refusal: --effort for non-Claude agents ---
-launch_refused "codex-cli-effort" "--effort is Claude-only" --agent codex --effort low
-launch_refused "pi-cli-effort" "--effort is Claude-only" --agent pi --effort low
-launch_refused "antigravity-cli-effort" "--effort is Claude-only" --agent antigravity --effort low
-launch_refused "agy-alias-cli-effort" "--effort is Claude-only" --agent agy --effort low
+launch_refused "pi-cli-effort" "--effort is Claude- and Codex-only" --agent pi --effort low
+launch_refused "antigravity-cli-effort" "--effort is Claude- and Codex-only" --agent antigravity --effort low
+launch_refused "agy-alias-cli-effort" "--effort is Claude- and Codex-only" --agent agy --effort low
 
 # --- Cross-agent refusal: configured agent resolution in config.json ---
 new_root
@@ -239,10 +243,8 @@ cfg = json.load(open(sys.argv[1]))
 cfg["session_agent"] = "codex"
 json.dump(cfg, open(sys.argv[1], "w"), indent=2)
 PY
-run_launch --effort low >"$out" 2>&1 && bad "config-agent-codex: launch should refuse" || {
-  grep -qF -- "--effort is Claude-only" "$out" && ok "config-agent-codex: refused naming '--effort is Claude-only'" \
-    || bad "config-agent-codex: wrong refusal text"
-}
+run_launch --effort low >"$out" 2>&1 && ok "config-agent-codex: configured Codex accepts --effort" \
+  || bad "config-agent-codex: launch errored"
 
 new_root
 python3 - "$root/.nogging/config.json" <<'PY'
@@ -252,7 +254,7 @@ cfg["session_agent"] = "pi"
 json.dump(cfg, open(sys.argv[1], "w"), indent=2)
 PY
 run_launch --effort low >"$out" 2>&1 && bad "config-agent-pi: launch should refuse" || {
-  grep -qF -- "--effort is Claude-only" "$out" && ok "config-agent-pi: refused naming '--effort is Claude-only'" \
+  grep -qF -- "--effort is Claude- and Codex-only" "$out" && ok "config-agent-pi: refused naming Claude and Codex" \
     || bad "config-agent-pi: wrong refusal text"
 }
 
@@ -264,13 +266,13 @@ cfg["session_agent"] = "antigravity"
 json.dump(cfg, open(sys.argv[1], "w"), indent=2)
 PY
 run_launch --effort low >"$out" 2>&1 && bad "config-agent-agy: launch should refuse" || {
-  grep -qF -- "--effort is Claude-only" "$out" && ok "config-agent-agy: refused naming '--effort is Claude-only'" \
+  grep -qF -- "--effort is Claude- and Codex-only" "$out" && ok "config-agent-agy: refused naming Claude and Codex" \
     || bad "config-agent-agy: wrong refusal text"
 }
 
 # --- Cross-agent refusal: profiles with wrong effort keys ---
 codex_effort_bad='sandbox = "read-only"
-ask_for_approval = "untrusted"
+ask_for_approval = "on-request"
 network_access = false
 effort = "high"'
 PROFILE_NAME=bad.codex.toml PROFILE_BODY="$codex_effort_bad" \
@@ -304,7 +306,7 @@ PROFILE_NAME=bad-mre.agy.toml PROFILE_BODY="$agy_mre_bad" \
 # --- Preserve Codex: all 8 model_reasoning_effort levels still launch ok ---
 for e in none minimal low medium high xhigh max ultra; do
   codex_body="sandbox = \"read-only\"
-ask_for_approval = \"untrusted\"
+ask_for_approval = \"on-request\"
 network_access = false
 model_reasoning_effort = \"$e\""
   PROFILE_NAME="codex-$e.codex.toml" PROFILE_BODY="$codex_body" \
@@ -315,13 +317,83 @@ model_reasoning_effort = \"$e\""
     || { bad "codex-preserved-$e: wrong reasoning_effort in record"; }
 done
 
-# --- Provenance (TASK-CRE-003): reasoning_effort_source record + list rendering ---
 src_check() { # label expr (python over record r)
   python3 -c "import json, sys; r = json.loads(sys.argv[1]); assert $2, r" "$(session_rec)" \
     && ok "$1" || bad "$1"
 }
 list_has() { "$nogg" session list >"$out" 2>&1; grep -qE -- "$2" "$out" && ok "$1" || bad "$1: missing /$2/"; }
 
+# --- Codex --effort (TASK-CEF-001): validated, forwarded, over tier and profile ---
+codex_argv() { grep -F "new-session" "$TMUX_STUB_DIR/calls.log" | tail -1; }
+codex_has() { codex_argv | grep -qF -- "$2" && ok "$1" || { bad "$1 (missing: $2)"; codex_argv; }; }
+codex_lacks() { codex_argv | grep -qF -- "$2" && { bad "$1 (present: $2)"; codex_argv; } || ok "$1"; }
+codex_xhigh='sandbox = "read-only"
+ask_for_approval = "on-request"
+network_access = false
+model_reasoning_effort = "xhigh"'
+
+for e in none minimal low medium high xhigh max ultra; do
+  launch_ok "codex-cli-effort-$e" --agent codex --full-access --effort "$e"
+  codex_has "codex-cli-effort-$e: forwarded as --reasoning-effort" "--reasoning-effort $e"
+  src_check "codex-cli-effort-$e: record effort with source launch" \
+    "r['reasoning_effort']=='$e' and r['reasoning_effort_source']=='launch' and r['selection_tier'] is None"
+done
+list_has "codex-cli-effort: list shows effort=ultra (launch)" "effort=ultra \(launch\)"
+
+PROFILE_NAME=cli-over-profile.codex.toml PROFILE_BODY="$codex_xhigh" \
+  launch_ok "codex-effort-over-profile" --agent codex --effort low
+codex_has "codex-effort-over-profile: launch effort forwarded" "--reasoning-effort low"
+codex_lacks "codex-effort-over-profile: profile effort not forwarded" "xhigh"
+src_check "codex-effort-over-profile: source launch" "r['reasoning_effort']=='low' and r['reasoning_effort_source']=='launch'"
+[[ "$(cat "$root/.nogging/launch-profiles/cli-over-profile.codex.toml")" == "$codex_xhigh" ]] \
+  && ok "codex-effort-over-profile: source profile unchanged" || bad "codex-effort-over-profile: profile changed"
+
+launch_ok "codex-effort-over-tier" --agent codex --full-access --tier complex --effort low
+codex_has "codex-effort-over-tier: tier model kept" "--model gpt-6.1-sol"
+codex_has "codex-effort-over-tier: launch effort wins" "--reasoning-effort low"
+codex_lacks "codex-effort-over-tier: tier effort not forwarded" "--reasoning-effort high"
+src_check "codex-effort-over-tier: tier attribution kept" \
+  "r['selection_tier']=='complex' and r['selection_tier_effort']=='high' and r['reasoning_effort']=='low' and r['reasoning_effort_source']=='launch'"
+
+launch_ok "codex-tier-model-effort" --agent codex --full-access --tier complex --model gpt-6-luna --effort medium
+codex_has "codex-tier-model-effort: model forwarded" "--model gpt-6-luna"
+codex_has "codex-tier-model-effort: effort forwarded" "--reasoning-effort medium"
+src_check "codex-tier-model-effort: record keeps tier with launch model and effort" \
+  "r['selection_tier']=='complex' and r['requested_model']=='gpt-6-luna' and r['model_source']=='launch' and r['reasoning_effort']=='medium' and r['reasoning_effort_source']=='launch'"
+list_has "codex-tier-model-effort: list shows tier alongside" "gpt-6-luna effort=medium \(launch\) tier=complex"
+
+# Unsupported levels refuse before side effects, even when a tier or profile
+# would supply a valid effort.
+allowed="none, minimal, low, medium, high, xhigh, max, ultra"
+launch_refused "codex-effort-turbo" "$allowed" --agent codex --full-access --effort turbo
+launch_refused "codex-effort-upper" "$allowed" --agent codex --full-access --effort LOW
+launch_refused "codex-effort-empty" "$allowed" --agent codex --full-access --effort ""
+launch_refused "codex-effort-over-valid-tier" "$allowed" --agent codex --full-access --tier complex --effort turbo
+PROFILE_NAME=bad-over-profile.codex.toml PROFILE_BODY="$codex_xhigh" \
+  launch_refused "codex-effort-over-valid-profile" "$allowed" --agent codex --effort turbo
+
+# Exact resume: effort travels like --model (a `-c` override the resume path
+# already requires), so a resume carries it.
+# The resume path inspects `codex resume --help`; answer it from the shared
+# fixture (no real Codex), then restore the inert stub.
+cat >"$work/bin/codex" <<'STUB'
+#!/usr/bin/env bash
+if [[ "${1:-}" == resume && "${2:-}" == --help ]]; then cat "$RESUME_HELP"; exit 0; fi
+if [[ "${1:-}" == --help ]]; then
+  printf 'Usage: codex [OPTIONS]\n  --cd <DIR>\n  --sandbox <MODE>\n  --ask-for-approval <POLICY>\n  --add-dir <DIR>\n  --model <MODEL>\n  -c, --config <key=value>\n'
+  exit 0
+fi
+exit 0
+STUB
+chmod +x "$work/bin/codex"
+export RESUME_HELP="$here/fixtures/codex/codex-resume-help.txt"
+launch_ok "codex-resume-effort" --agent codex --full-access --effort low \
+  --resume 019f0000-0000-7000-8000-000000000001
+codex_has "codex-resume-effort: resumes the exact thread" "--resume 019f0000-0000-7000-8000-000000000001"
+codex_has "codex-resume-effort: effort forwarded" "--reasoning-effort low"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$work/bin/codex"
+
+# --- Provenance (TASK-CRE-003): reasoning_effort_source record + list rendering ---
 PROFILE_NAME=pv.json PROFILE_BODY='{"permissions":{"defaultMode":"default","deny":[]},"effort":"high"}' \
   launch_ok "prov-claude-profile"
 src_check "prov-claude-profile: source profile" "r['reasoning_effort']=='high' and r['reasoning_effort_source']=='profile'"
@@ -337,7 +409,7 @@ src_check "prov-claude-default: null effort, runtime-default" "r['reasoning_effo
 list_has "prov-claude-default: list shows effort=runtime-default" "effort=runtime-default"
 
 PROFILE_NAME=pv.codex.toml PROFILE_BODY='sandbox = "read-only"
-ask_for_approval = "untrusted"
+ask_for_approval = "on-request"
 network_access = false
 model_reasoning_effort = "high"' launch_ok "prov-codex-profile" --agent codex
 src_check "prov-codex-profile: source profile" "r['reasoning_effort']=='high' and r['reasoning_effort_source']=='profile'"

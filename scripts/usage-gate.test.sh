@@ -41,18 +41,17 @@ printf '%s %s\n' "$cmd" "$*" >>"$d/calls.log"
 case "$cmd" in
   has-session)
     [[ "${1:-}" == -t ]] && shift
-    [[ "${TMUX_STUB_LIVE:-0}" == 1 && -f "$d/live-${1:-}" ]] ;;
+    [[ -f "$d/live-${1:-}" ]] ;;
   new-session)
     [[ "${TMUX_STUB_FAIL:-0}" == 1 ]] && exit 1
-    if [[ "${TMUX_STUB_LIVE:-0}" == 1 ]]; then
-      while [[ $# -gt 0 && "$1" != -s ]]; do shift; done
-      [[ "${1:-}" == -s ]] && touch "$d/live-${2:?}"
-    fi
+    while [[ $# -gt 0 && "$1" != -s ]]; do shift; done
+    [[ "${1:-}" == -s ]] && touch "$d/live-${2:?}"
     exit 0 ;;
   *) : ;;
 esac
 STUB
 chmod +x "$work/bin/bd" "$work/bin/tmux"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-agents.sh"; stub_agent_binaries "$work/bin"
 export PATH="$work/bin:$PATH"
 export HOME="$work/home" XDG_CACHE_HOME="$work/cache"
 mkdir -p "$HOME"
@@ -145,6 +144,21 @@ path.write_text(json.dumps({'type': 'event_msg', 'timestamp': stamp.isoformat(),
 PY
 }
 
+claude_usage() {  # claude_usage [age seconds]: statusline capture cache in $XDG_CACHE_HOME
+  python3 - "${1:-0}" <<'PY'
+import datetime as dt, json, os, sys
+from pathlib import Path
+now = dt.datetime.now(dt.timezone.utc)
+base = int(now.timestamp())
+path = Path(os.environ['XDG_CACHE_HOME']) / 'nogging/usage/claude.json'
+path.parent.mkdir(parents=True, exist_ok=True)
+path.write_text(json.dumps({'schema_version': 1,
+    'observed_at': (now - dt.timedelta(seconds=int(sys.argv[1]))).isoformat().replace('+00:00', 'Z'),
+    'rate_limits': {'five_hour': {'used_percentage': 1, 'resets_at': base + 3600},
+                    'seven_day': {'used_percentage': 1, 'resets_at': base + 86400}}}))
+PY
+}
+
 make_root() {
   local r="$1"
   mkdir -p "$r/.nogging/state" "$r/scripts/hooks" "$r/openspec" "$r/.pi/extensions" "$r/.agents"
@@ -230,16 +244,32 @@ BD_STUB_LABELS='["size:small","size:large"]' run_launch --agent codex
 [[ $rc -eq 1 ]] && grep -qF "conflicting size labels" "$out" && ok "conflicting size labels refuse" || bad "conflicting sizes (rc=$rc)"
 no_side_effects "conflicting size labels"
 
-# Unknown usage: stale source warns and launches by default, never as zero.
-new_root; codex_usage "$CODEX_HOME" 1 1 601
+# Codex keeps its newest observation until each window resets: aged but unreset
+# is known (marked stale), so weekly 98% denies instead of admitting unknown.
+new_root; codex_usage "$CODEX_HOME" 10 98 900
 run_launch --agent codex
+[[ $rc -eq 75 ]] && grep -qF "weekly 98% used" "$out" && ! grep -qF "usage is unknown" "$out" \
+  && ok "aged Codex observation with weekly 98% denies" || bad "aged codex denial (rc=$rc)"
+no_side_effects "aged codex denial"
+new_root; codex_usage "$CODEX_HOME" 10 40 900
+run_launch --agent codex
+[[ $rc -eq 0 && "$(record_gate)" == admitted ]] && ! grep -qF "usage is unknown" "$out" \
+  && ok "aged fitting Codex observation is admitted" || bad "aged codex admit (rc=$rc)"
+"$nogg" usage --agent codex >"$out" 2>&1
+grep -qF "; stale (observed 15m ago)" "$out" && ok "nogg usage shows the stale age" || bad "stale age text"
+
+# Unknown usage: a stale Claude source warns and launches by default, never as zero.
+new_root; claude_usage 601
+run_launch --agent claude
 [[ $rc -eq 0 ]] && grep -qF "usage is unknown (short: stale observation" "$out" \
   && [[ "$(record_gate)" == unknown-admitted ]] \
   && ok "stale usage warns and launches (unknown-admitted)" || bad "unknown warn (rc=$rc)"
-GATE_CONFIG='{"on_unknown":"deny","stale_seconds":30}' new_root; codex_usage "$CODEX_HOME" 1 1 60
-run_launch --agent codex
+rm -f "$XDG_CACHE_HOME/nogging/usage/claude.json"
+GATE_CONFIG='{"on_unknown":"deny","stale_seconds":30}' new_root; claude_usage 60
+run_launch --agent claude
 [[ $rc -eq 75 ]] && grep -qF "on_unknown is deny" "$out" && ok "on_unknown=deny exits 75" || bad "unknown deny (rc=$rc)"
 no_side_effects "unknown deny"
+rm -f "$XDG_CACHE_HOME/nogging/usage/claude.json"
 # Missing source for the default claude agent warns too.
 new_root
 run_launch

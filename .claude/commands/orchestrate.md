@@ -38,7 +38,12 @@ a one-line reason in the Bead note or operator update, optionally checks
 `scripts/nogg models --agent <agent> --tier <tier>`, and launches with
 `--tier <tier>`. When unsure it picks the higher tier, a relaunch after a
 failed or stalled attempt escalates one tier, and quota never lowers a tier.
-An explicit `--model` is used only on Product Owner instruction. The full
+An explicit `--model` or `--effort` is used only on Product Owner
+instruction, and passed together with the honest `--tier` so attribution stays
+correct. Under the Product Owner's Codex cost policy, Codex defaults to
+`gpt-6-luna` (launch with `--tier <tier> --model gpt-6-luna --effort <level>`),
+and `gpt-6.1-sol` is used only with effort `low` and only for extremely hard
+tasks (launch with `--tier <tier> --model gpt-6.1-sol --effort low`). The full
 procedure is in `.nogging/launch-prompts/orchestrator.md` and
 `docs/operating-model.md` *Orchestration*; the table and its rationale are in
 `docs/model-selection.md`.
@@ -57,9 +62,12 @@ the orchestrator session — exactly one of:
 
 - **`takeover plan`** — one full planning sequence (`plan-begin` → author →
   `validate` → commit with a Conventional subject **and** a `Nogging-Writer:
-  planning` trailer → `materialize` → wire dependencies → integrate → safe
-  cleanup → `plan-end` from a surviving canonical checkout), then back to
-  orchestrate-only. The trailer is mandatory: the orchestrator session has no
+  planning` trailer → `materialize` → wire dependencies → integrate →
+  `plan-end` from the planning worktree → `worktree cleanup` from the surviving
+  canonical checkout; `plan-end` always precedes worktree retirement), then
+  back to orchestrate-only. After a separate planner reports that `plan-end`
+  ran, stop it (`session stop <name>`), then run `worktree cleanup <record>`
+  from the canonical checkout. The trailer is mandatory: the orchestrator session has no
   `openspec/**` write guard, so the trailer is the only thing that keeps the
   commit past the CI `invariants` job.
 - **`takeover code`** — claim the named Bead, implement, `scripts/test`, commit

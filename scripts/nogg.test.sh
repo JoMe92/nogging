@@ -16,6 +16,8 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/lib/test-env.sh
+source "$here/lib/test-env.sh"
 nogg="$here/nogg"
 repo_root="$(cd "$here/.." && pwd)"
 work=$(mktemp -d)
@@ -899,18 +901,23 @@ before="$(cat "$sentinel")"
 [[ "$(cat "$sentinel")" == "$before" ]] \
   && echo "ok   - twb-bootstrap: a second doctor run does not rewrite the sentinel" \
   || { echo "FAIL - twb-bootstrap: doctor rewrote an existing sentinel"; fail=1; }
-"$nogg" plan-begin >/dev/null 2>&1
-[[ ! -e "$sentinel" ]] \
-  && echo "ok   - twb-bootstrap: plan-begin opens the boundary (sentinel removed)" \
-  || { echo "FAIL - twb-bootstrap: plan-begin left the sentinel"; fail=1; }
-"$nogg" doctor >/dev/null 2>&1 || true
-[[ ! -e "$sentinel" ]] \
-  && echo "ok   - twb-bootstrap: doctor does not re-close the boundary while planning is active" \
-  || { echo "FAIL - twb-bootstrap: doctor recreated the sentinel during a planning session"; fail=1; }
-"$nogg" plan-end >/dev/null 2>&1
-[[ -f "$sentinel" ]] \
-  && echo "ok   - twb-bootstrap: plan-end closes the boundary again" \
-  || { echo "FAIL - twb-bootstrap: plan-end did not write the sentinel"; fail=1; }
+if ! "$nogg" plan-begin >"$out" 2>&1; then
+  echo "FAIL - twb-bootstrap: plan-begin setup failed"
+  cat "$out"
+  fail=1
+else
+  [[ ! -e "$sentinel" ]] \
+    && echo "ok   - twb-bootstrap: plan-begin opens the boundary (sentinel removed)" \
+    || { echo "FAIL - twb-bootstrap: plan-begin left the sentinel"; fail=1; }
+  "$nogg" doctor >/dev/null 2>&1 || true
+  [[ ! -e "$sentinel" ]] \
+    && echo "ok   - twb-bootstrap: doctor does not re-close the boundary while planning is active" \
+    || { echo "FAIL - twb-bootstrap: doctor recreated the sentinel during a planning session"; fail=1; }
+  "$nogg" plan-end >/dev/null 2>&1
+  [[ -f "$sentinel" ]] \
+    && echo "ok   - twb-bootstrap: plan-end closes the boundary again" \
+    || { echo "FAIL - twb-bootstrap: plan-end did not write the sentinel"; fail=1; }
+fi
 unset NOGGING_ROOT BD_FIXTURE
 
 # ===========================================================================
@@ -984,10 +991,15 @@ export BD_FIXTURE="$work/twb-doctor-beads.json"; printf '[]\n' >"$BD_FIXTURE"
 mkdir -p "$root/.nogging/locks"
 "$nogg" doctor >"$out" 2>&1 || true
 check "twb-doctor: closed boundary reported as LOCKED" "openspec write boundary: LOCKED"
-"$nogg" plan-begin >/dev/null 2>&1
-"$nogg" doctor >"$out" 2>&1 || true
-check "twb-doctor: active planning session reported as OPEN" "openspec write boundary: OPEN (planning session active"
-"$nogg" plan-end >/dev/null 2>&1
+if ! "$nogg" plan-begin >"$out" 2>&1; then
+  echo "FAIL - twb-doctor: plan-begin setup failed"
+  cat "$out"
+  fail=1
+else
+  "$nogg" doctor >"$out" 2>&1 || true
+  check "twb-doctor: active planning session reported as OPEN" "openspec write boundary: OPEN (planning session active"
+  "$nogg" plan-end >/dev/null 2>&1
+fi
 printf '{"pid":1,"host":"h","created_at":"2000-01-01T00:00:00+00:00"}\n' \
   >"$root/.nogging/locks/planning.lock"
 rm -f "$root/.nogging/locks/openspec.readonly"
@@ -1068,15 +1080,20 @@ run_guard "scripts/whatever.sh" || true; [[ "$grc" -eq 0 ]] \
   && echo "ok   - twb-guard: a write outside openspec/ is never touched" \
   || { echo "FAIL - twb-guard: guard blocked a non-openspec write (rc=$grc)"; fail=1; }
 
-"$nogg" plan-begin >/dev/null 2>&1            # boundary open (fresh planning lock, no sentinel)
-run_guard "openspec/changes/demo/spec.md" || true; [[ "$grc" -eq 0 ]] \
-  && echo "ok   - twb-guard: guard allows an openspec/ write during a fresh planning session" \
-  || { echo "FAIL - twb-guard: guard blocked during planning (rc=$grc)"; cat "$work/twb-guard.err"; fail=1; }
+if ! "$nogg" plan-begin >"$out" 2>&1; then
+  echo "FAIL - twb-guard: plan-begin setup failed"
+  cat "$out"
+  fail=1
+else
+  run_guard "openspec/changes/demo/spec.md" || true; [[ "$grc" -eq 0 ]] \
+    && echo "ok   - twb-guard: guard allows an openspec/ write during a fresh planning session" \
+    || { echo "FAIL - twb-guard: guard blocked during planning (rc=$grc)"; cat "$work/twb-guard.err"; fail=1; }
 
-"$nogg" plan-end >/dev/null 2>&1              # boundary closed again
-run_guard "openspec/changes/demo/spec.md" || true; [[ "$grc" -eq 2 ]] \
-  && echo "ok   - twb-guard: plan-end re-closes the boundary for the guard" \
-  || { echo "FAIL - twb-guard: guard still allowed after plan-end (rc=$grc)"; fail=1; }
+  "$nogg" plan-end >/dev/null 2>&1              # boundary closed again
+  run_guard "openspec/changes/demo/spec.md" || true; [[ "$grc" -eq 2 ]] \
+    && echo "ok   - twb-guard: plan-end re-closes the boundary for the guard" \
+    || { echo "FAIL - twb-guard: guard still allowed after plan-end (rc=$grc)"; fail=1; }
+fi
 
 # a stale planning lock does not confer write permission (W6), even without a
 # sentinel on disk

@@ -17,6 +17,7 @@
 #   - a seeded secret value reaches neither the recorded command nor the log;
 #   - the append-only log writer rotates by size to the configured depth.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-agents.sh"; use_agent_stubs
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 nogg="$here/nogg"
@@ -92,6 +93,9 @@ case "$cmd" in
     name="$(arg_after -t "$@")"; rm -f "$d/sess-$name" ;;
   kill-server) rm -f "$d"/sess-* ;;
   pipe-pane)
+    if [[ -n "${TMUX_STUB_FAIL_PIPE:-}" ]]; then
+      echo 'injected pipe-pane failure' >&2; exit 42
+    fi
     if [[ -n "${TMUX_STUB_FAST_EXIT:-}" ]]; then
       echo 'cannot find pane' >&2; exit 1
     fi ;;
@@ -165,10 +169,54 @@ grep -qF "pipe-pane " "$TMUX_STUB_DIR/calls.log" \
 [[ "$(record "$root/.nogging/state/sessions/$name.json" state)" == "running" ]] \
   && echo "ok   - launch: record ends in running state" \
   || { echo "FAIL - launch: state not running"; fail=1; }
+[[ "$(record "$root/.nogging/state/sessions/$name.json" backend)" == "tmux" ]] \
+  && echo "ok   - launch: new record records its tmux backend" \
+  || { echo "FAIL - launch: backend missing or wrong"; fail=1; }
+python3 - "$root/.nogging/state/sessions/$name.json" <<'PY' \
+  && echo "ok   - launch: backend reference records the tmux socket" \
+  || { echo "FAIL - launch: tmux backend reference missing"; fail=1; }
+import json, sys
+record = json.load(open(sys.argv[1]))
+assert record['backend_ref']['name'] == record['name']
+assert record['backend_ref']['socket'] == 'nogging'
+PY
 [[ -s "$BD_MUTATION_LOG" ]] \
   && { echo "FAIL - launch: a bd mutation was attempted"; cat "$BD_MUTATION_LOG"; fail=1; } \
   || echo "ok   - launch: no bd mutation (only the read-only bd show)"
 unset NOGGING_ROOT
+
+# --- 1b. a failure after new-session rolls back and records failure --------
+root="$work/launch-pipe-failure"; make_root "$root"
+export NOGGING_ROOT="$root"
+export TMUX_STUB_DIR="$work/launch-pipe-failure-tmux"; mkdir -p "$TMUX_STUB_DIR"
+export BD_KNOWN="SPEC-pipe-failure"
+export TMUX_STUB_FAIL_PIPE=1
+if "$nogg" session launch --role lead --bead SPEC-pipe-failure >"$out" 2>&1; then
+  echo 'FAIL - pipe failure: launch should fail'; fail=1
+else
+  grep -qF 'cleanup succeeded' "$out" \
+    && echo 'ok   - pipe failure: launch reports successful rollback' \
+    || { echo 'FAIL - pipe failure: rollback outcome missing'; cat "$out"; fail=1; }
+  record_path=$(find "$root/.nogging/state/sessions" -maxdepth 1 -name '*.json' ! -name '*.settings.json' -print -quit)
+  python3 - "$record_path" <<'PY' \
+    && echo 'ok   - pipe failure: record is failed' \
+    || { echo 'FAIL - pipe failure: record not failed'; fail=1; }
+import json, sys
+r = json.load(open(sys.argv[1]))
+assert r['state'] == 'failed', r
+assert 'cleanup succeeded' in r['exit_reason'], r
+PY
+  grep -qF 'kill-session -t ' "$TMUX_STUB_DIR/calls.log" \
+    && echo 'ok   - pipe failure: only the created session was killed' \
+    || { echo 'FAIL - pipe failure: session-specific cleanup missing'; cat "$TMUX_STUB_DIR/calls.log"; fail=1; }
+  ! grep -qF 'kill-server' "$TMUX_STUB_DIR/calls.log" \
+    && echo 'ok   - pipe failure: shared server was preserved' \
+    || { echo 'FAIL - pipe failure: kill-server was used'; fail=1; }
+  [[ ! -e "$TMUX_STUB_DIR"/sess-* ]] \
+    && echo 'ok   - pipe failure: no orphan session remains' \
+    || { echo 'FAIL - pipe failure: orphan marker remains'; fail=1; }
+fi
+unset TMUX_STUB_FAIL_PIPE NOGGING_ROOT
 
 # ===========================================================================
 # Scenario: a name collision is rejected without overwriting anything
@@ -699,11 +747,11 @@ touch "$TMUX_STUB_DIR/sess-lingering"
 "$nogg" session cleanup >"$out" 2>&1 \
   || { echo "FAIL - set-file: cleanup errored"; cat "$out"; fail=1; }
 check "set-file: the stopped record is retired" "retired $name"
-check "set-file: no-name cleanup stops the tmux server once nothing real is active" \
+refute "set-file: cleanup keeps the shared tmux server when sessions linger" \
   "Nogging tmux server stopped"
-[[ -z "$(ls "$TMUX_STUB_DIR"/sess-* 2>/dev/null)" ]] \
-  && echo "ok   - set-file: the lingering tmux session was torn down" \
-  || { echo "FAIL - set-file: tmux session survived the server stop"; fail=1; }
+[[ -f "$TMUX_STUB_DIR/sess-lingering" ]] \
+  && echo "ok   - set-file: the lingering tmux session was preserved" \
+  || { echo "FAIL - set-file: tmux session was killed"; fail=1; }
 unset NOGGING_ROOT
 
 # ===========================================================================
@@ -729,6 +777,9 @@ rec="$root/.nogging/state/sessions/$name.json"
 [[ "$(record "$rec" agent)" == "codex" ]] \
   && echo "ok   - codex-full: record shows agent codex" \
   || { echo "FAIL - codex-full: agent is $(record "$rec" agent)"; fail=1; }
+[[ "$(record "$rec" codex_startup_prompt)" == "True" ]] \
+  && echo "ok   - codex-full: cold launch records that it passed a startup prompt" \
+  || { echo "FAIL - codex-full: startup prompt marker is $(record "$rec" codex_startup_prompt)"; fail=1; }
 [[ "$(record "$rec" effective_settings_path)" == "None" ]] \
   && echo "ok   - codex-full: no per-session effective-settings file for Codex" \
   || { echo "FAIL - codex-full: effective_settings_path is $(record "$rec" effective_settings_path)"; fail=1; }
@@ -760,12 +811,27 @@ export CODEX_ARGV_LOG="$work/codex-argv.log"; : >"$CODEX_ARGV_LOG"
   || { echo "FAIL - codex-wrap: wrapper errored"; cat "$out"; fail=1; }
 cp "$CODEX_ARGV_LOG" "$out"
 check "codex-wrap: passes --cd"                         "<--cd>"
+refute "codex-wrap: read-only omits --add-dir"           "<--add-dir>"
 check "codex-wrap: passes the sandbox mode to --sandbox" "<--sandbox> <read-only>"
 check "codex-wrap: maps approval to --ask-for-approval" "<--ask-for-approval> <on-request>"
 check "codex-wrap: --network on enables network via -c override" "sandbox_workspace_write.network_access=true"
 refute "codex-wrap: --network on does not also emit the =false override" "network_access=false"
 refute "codex-wrap: never passes --ignore-rules"       "ignore-rules"
 refute "codex-wrap: never bypasses approvals/sandbox"  "dangerously-bypass"
+
+# Codex CLI 0.162.1 accepts only on-request and never. Refuse unsupported
+# approval values before invoking Codex.
+: >"$CODEX_ARGV_LOG"
+if "$here/session-launch" --agent codex --sandbox workspace-write --approval untrusted \
+  --network off --cwd "$work/codex-full" --bead SPEC-cdx >"$out" 2>&1; then
+  echo "FAIL - codex-approval: unsupported value should be refused"; fail=1
+else
+  echo "ok   - codex-approval: unsupported value refused during preflight"
+fi
+check "codex-approval: refusal names supported values" "expected on-request or never"
+[[ ! -s "$CODEX_ARGV_LOG" ]] \
+  && echo "ok   - codex-approval: Codex was not invoked" \
+  || { echo "FAIL - codex-approval: Codex was invoked before refusal"; fail=1; }
 
 # ... and --network off emits the =false override (restricted path)
 : >"$CODEX_ARGV_LOG"
@@ -1221,6 +1287,7 @@ unset NOGGING_ROOT
 for failure in unknown-flag exec-failure; do
   root="$work/startup-$failure"; make_root "$root"
   cp "$nogg" "$root/scripts/nogg"
+  cp -r "$here/lib" "$root/scripts/lib"
   # This fixture tests fast runtime startup errors, not mount enforcement.
   # CI may prohibit user namespaces. Keep the real wrapper and substitute
   # only this fixture's boundary helper; dedicated fence tests use the real one.

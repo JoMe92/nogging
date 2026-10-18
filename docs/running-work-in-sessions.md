@@ -10,9 +10,12 @@ see `failure-recovery.md`.
 ## What a supervised session is
 
 `scripts/nogg session launch` starts a **separate agent process inside a
-tmux session** on the host — Claude Code by default, or Codex with `--agent
-codex` (see *Choosing the agent*) — on a dedicated tmux server socket (`tmux -L
-nogg`). Compared with running the agent in your terminal:
+supervised session** on the host — Claude Code by default, or Codex with `--agent
+codex` (see *Choosing the agent*) — using a switchable session backend (`tmux` by
+default, or `herdr` with `--backend herdr` or `session_backend`; see
+`using-with-herdr.md`). On tmux, a dedicated tmux server socket (`tmux -L
+nogg`) isolates sessions from the operator's personal tmux. Compared with running
+the agent in your terminal:
 
 - **It keeps running when you leave.** Close the SSH connection, shut the
   laptop — the session keeps working on the host.
@@ -51,17 +54,57 @@ runs under — see *Running with broader authority*.
 `launch` prints the session name, the log path and the attach command. It does
 not attach you — the session comes up idle at a prompt, waiting for direction.
 
-Before contacting tmux, launch verifies that its installed runtime helpers are
+Before contacting the backend (tmux or herdr), launch verifies that its installed runtime helpers are
 executable and support every requested option. A refusal naming a helper
 contract calls for a pinned Nogging `update`; see `failure-recovery.md`.
 If the agent itself exits during startup, the failed record and redacted log
 retain the original error even when the pane has already disappeared. Check
 `session list` and `session log <name>` after a suspected quick failure.
 
+Generated session names replace periods (`.`) and colons (`:`) with
+underscores. This keeps Bead IDs such as `SPEC-abc.1` addressable by tmux,
+which can rename dotted session names; herdr labels use the same safe name as
+the session record. If launch fails before the session reaches `running`,
+Nogging attempts to remove the session it created and records the cleanup
+result. It never kills the tmux server. A refusal after the session is already
+running (for example, kickoff delivery could not be verified) leaves that
+session available for inspection.
+
+These launch and delivery guarantees require the updated Nogging helpers. If
+your repository vendors an older copy, update it using the pinned procedure in
+[`failure-recovery.md`](failure-recovery.md).
+
+### Host-namespace tmux server start and fenced refusal
+
+On the `tmux` backend, the shared tmux server (`tmux -L nogging`) must be
+started in the host namespace so that it survives individual sandboxed sessions.
+A sandboxed Lead or specialist (running under `openspec-sandbox` with
+`NOGG_OPENSPEC_FENCED=1`) cannot start the server: every tmux command it runs
+carries tmux's global `-N` flag ("do not start the server").
+
+If a fenced session runs `session launch` on tmux while the server is down,
+launch refuses before any session record, effective settings, or log is created:
+
+```text
+tmux server -L nogging is not running; a sandboxed session cannot start it, because it would end with this session; launch from an unsandboxed shell (the operator or the Orchestration Agent)
+```
+
+**Remedy:** Launch a session or start the Orchestration Agent from an unsandboxed
+shell on the host (the operator or `systemctl --user start nogg-orchestrator-<slug>`).
+The unsandboxed launch starts the server in the host namespace, where it persists
+across sessions. Once running, sandboxed launches connect to it normally.
+
 Then give it its task: attach (below) and tell it what to do, or point it at a
 briefing file.
 
 ## Start a planning session
+
+Codex and Antigravity planning launches must name their authority with
+`--profile <name>` or `--full-access`; otherwise Nogging refuses before any
+session or worktree side effect. Every successful launch prints its effective
+`profile=` and `prompt=`. Restricted Codex additionally prints a NOTE that its
+network-off sandbox cannot reach the shared, Dolt-server-backed Beads database,
+including over loopback.
 
 ```bash
 ./scripts/nogg session launch --role planning \
@@ -81,10 +124,15 @@ behalf.
 
 The planner commits the validated spec as the `planning` writer before
 `materialize`, wires Beads
-dependencies explicitly, fast-forward integrates its branch, and removes only
-a clean, integrated worktree. Only then does it run `plan-end`, from a
-surviving canonical checkout. `session stop`, cleanup and recovery release
-only the planning lock owned by that session, never another session's.
+dependencies explicitly, and fast-forward integrates its branch. It then runs
+`plan-end` from the planning worktree (`plan-end` always precedes worktree
+retirement) and, as the very last command, retires the clean, integrated
+worktree with `worktree cleanup <record>` from the surviving canonical
+checkout. If cleanup refuses, it reports the hand-off — `./scripts/nogg session stop <name>`, then `./scripts/nogg worktree cleanup <record>` from the canonical checkout — and
+stops. Stopping the owning planner waits within the stop grace period for the
+owner to exit and then releases that session's lock without `--force`;
+`session stop`, cleanup and recovery release only the planning lock owned by
+that session, never another session's.
 Execution sessions stay fenced from `openspec/` while any planning lock is
 held.
 
@@ -155,21 +203,25 @@ The session record keeps `requested_model`, `model_source` (`launch`,
 `runtime-default`: Nogging records that the runtime chose, not a guess at which
 model it chose. A record written before this was recorded shows `-`.
 
-### Choosing Claude reasoning effort
+### Choosing reasoning effort
 
-A Claude session can request a reasoning effort for that launch only:
+A Claude or Codex session can request a reasoning effort for that launch only:
 
 ```bash
-./scripts/nogg session launch --role lead --bead SPEC-xxx --effort high
+./scripts/nogg session launch --role lead --bead SPEC-xxx --agent claude --effort high
+./scripts/nogg session launch --role lead --bead SPEC-xxx --agent codex --effort low
 ```
 
-Precedence is `--effort`, then an optional `effort` key in the Claude launch
-profile, then Claude's own default (no flag is passed). Allowed values are
-exactly `low`, `medium`, `high`, `xhigh` and `max`; anything else (including
-`auto`, `none`, case variants and an invalid profile value that a valid
-`--effort` would override) refuses before any worktree, settings, record or
-tmux side effect. The shipped profiles omit `effort`, so defaults are
-unchanged. To opt in, add it to a complete custom profile JSON:
+Precedence is `--effort`, then a tier effort (when `--tier` is passed), then an
+optional effort key in the launch profile (`effort` for Claude,
+`model_reasoning_effort` for Codex), then the runtime default (no effort flag is
+passed). For Claude, allowed values are exactly `low`, `medium`, `high`, `xhigh`
+and `max`. For Codex, allowed values are `none`, `minimal`, `low`, `medium`,
+`high`, `xhigh`, `max` and `ultra`. Anything else (including case variants and
+an invalid profile value that a valid `--effort` would override) refuses before
+any worktree, settings, record or backend side effect. The shipped profiles omit
+profile effort, so defaults are unchanged. To opt in for Claude, add `effort` to
+a complete custom profile JSON:
 
 ```json
 {
@@ -178,15 +230,19 @@ unchanged. To opt in, add it to a complete custom profile JSON:
 }
 ```
 
-Nogging strips the `effort` key from the generated per-session settings and
+For Codex, `model_reasoning_effort` can be configured in the launch profile's
+`.codex.toml`.
+
+Nogging strips the `effort` key from Claude's generated per-session settings and
 passes it as Claude's native `--effort <level>` argv (also on exact resumes);
-neither the source profile nor `~/.claude` is written. `--effort` is Claude-only:
-Codex keeps `model_reasoning_effort` in its `.codex.toml` profile, and Pi and
-Antigravity refuse both keys. A helper without the `claude-effort-forwarding`
-capability refuses the launch with an update remedy rather than dropping the
-effort. If the Claude CLI rejects the level for the chosen model, the session
-fails visibly and is not retried at another effort. Flag verified against
-Claude Code 2.1.296; which models accept which levels is the runtime's call.
+neither the source profile nor `~/.claude` is written. For Codex, launch
+`--effort` reaches Codex through the wrapper's `--reasoning-effort <level>`
+transport. `--effort` is Claude- and Codex-only: Pi and Antigravity refuse the
+flag before any side effects. A helper without the `claude-effort-forwarding`
+capability refuses a Claude launch with an update remedy rather than dropping the
+effort. If the runtime CLI rejects the level for the chosen model, the session
+fails visibly and is not retried at another effort. Which models accept which
+levels is the runtime's call.
 
 `session list` shows the request and its source in the `MODEL` cell for Claude
 and Codex: `effort=high (profile)`, `effort=low (launch)` or
@@ -226,9 +282,16 @@ Orchestration Agent launches every sub-session this way. See
 ./scripts/nogg session log  <name> --follow        # tail its output
 ```
 
-`session list` reconciles every record against live tmux; a session whose tmux
-is gone shows as `failed`. `session log` never attaches — `Ctrl-C` stops the
-tail, not the session.
+`session list` reconciles every record against live backend sessions (tmux or
+herdr); a session whose backend session is gone shows as `failed`. It shows
+`BACKEND` and `AGENT_STATUS` columns. `session log` never attaches — `Ctrl-C`
+stops the tail, not the session.
+
+Console output is streamed by `scripts/session-log-writer` in binary chunks of
+up to 64 KiB via `O_APPEND` without waiting for line feeds (LF). This ensures
+full-screen TUIs and interactive prompts update live in `session log --follow`
+without freezing or unbounded buffer accumulation. Each log file is strictly
+bounded by `session_log_max_bytes` and rotated up to `session_log_rotation_depth`.
 
 ## Attach and steer
 
@@ -240,13 +303,57 @@ You are now **inside** the session — the same view Claude has. You can type
 instructions, ask a side question with `/btw`, change the permission mode with
 `Shift-Tab`, or press `Esc` to interrupt what Claude is doing.
 
-**Detach without killing it:** press `Ctrl-b`, release, then `d`. This is the
-tmux detach chord. The session keeps running; you are back in your own shell.
-Closing the terminal while attached also just detaches. The session ends only
-if Claude itself exits (`/exit`) or you `session stop` it.
+**Detach without killing it:** on tmux, press `Ctrl-b`, release, then `d` (the
+tmux detach chord); on herdr, detach the herdr client. The session keeps running;
+you are back in your own shell. Closing the terminal while attached also just
+detaches. The session ends only if the agent itself exits (`/exit`) or you
+`session stop` it.
 
 `session attach <name> --read-only` attaches so you can watch keystroke-by-
-keystroke but cannot send input.
+keystroke but cannot send input (supported on tmux; on herdr, where no read-only
+client exists, this is refused with a pointer to `session log --follow`).
+
+### Steering from outside: `session send`
+
+```bash
+./scripts/nogg session send <name> "<instruction>"
+```
+
+`session send` delivers an instruction into a running session without attaching.
+Delivery is verified by default for Claude, Codex, and Antigravity:
+- **Clean input precondition:** Ordinary pane send requires an identified empty
+  composer or placeholder before typing. If the composer holds actual input or
+  reads as unknown, `send` refuses before injecting text and directs the operator
+  to `nudge --message` to prevent unintentional merging or overwriting.
+- **Isolated paste and single Enter:** Multiline input is transferred using unique
+  per-operation tmux paste buffers (`load-buffer` / `paste-buffer -p -r -d`) with
+  LF preservation. After paste, Nogging confirms the exact text in the composer,
+  waits `session_submit_delay_seconds` (default 0.3s), and sends exactly one Enter.
+- **Verification and bounded retry:** Submission is confirmed when the composer
+  becomes empty/placeholder or the backend transitions to working/done. An
+  already-working status alone is not proof of receipt. If the operation's exact
+  input remains positively pending in the composer, submit is retried once after
+  the submit delay; otherwise, unverified outcomes fail non-zero without false
+  success confirmations. `--verify` remains accepted syntax.
+
+### Starting execution: `session kickoff`
+
+```bash
+./scripts/nogg session kickoff <name> [--message "<instruction>"]
+```
+
+Bare `session launch` brings the session up idle without sending a prompt.
+`session kickoff` delivers the initial instruction once startup readiness is
+positively confirmed:
+- **Startup readiness:** Kickoff waits up to `session_startup_timeout_seconds`
+  (default 120s) for a settled empty/placeholder composer and live idle state.
+  Startup dialogs (trust, permissions, feedback surveys) or limits are never
+  speculatively accepted; timeouts fail with diagnostic pointers to session logs.
+- **Serialized and idempotent delivery:** Kickoffs are serialized under a bounded
+  per-session lock. A delivery record tracks launch identity, timestamp, status
+  (`pending`, `submitted`, `unverified`), and message SHA-256 (no plaintext
+  prompts stored). A repeated kickoff rechecks existing submission evidence or
+  submits positively owned pending input, but never requeues or retypes text.
 
 ### Autonomous vs. step-by-step
 
@@ -308,14 +415,19 @@ Control sessions.
 ./scripts/nogg session cleanup <name>
 ```
 
-`stop` sends Claude an interrupt, waits the grace period
-(`session_stop_grace_seconds`, default 10), then terminates the tmux session
+`stop` sends the agent an interrupt, waits the grace period
+(`session_stop_grace_seconds`, default 10), then terminates the backend session
 and records `stopped` with the time and reason. It is idempotent.
 
-`cleanup` removes a lingering tmux session, archive-rotates the log and retires
-the record. It **refuses** a record still in `starting`, `running` or `idle` —
-`stop` it first. `session cleanup` with no name cleans up every already-terminal
-record and kills the tmux server if nothing is left running.
+`cleanup` removes a lingering backend session, archive-rotates the log
+(archiving all rotated generations `<name>.log.1..N` together with the active
+log under a common timestamp), and retires the record. It **refuses** a record
+still in `starting`, `running` or `idle` — `stop` it first. `session cleanup` with
+no name cleans up every already-terminal record. For tmux, it stops the dedicated
+shared server (`tmux -L nogging`) **only** when its `list-sessions` query succeeds
+and reports no sessions on the dedicated server; it never kills a server that still
+hosts sessions for other checkouts or the always-on Orchestration Agent. (For herdr,
+the dedicated headless herdr server is never killed by cleanup).
 
 ## Several at once
 
@@ -351,7 +463,7 @@ subcommand group:
 
 ```bash
 ./scripts/nogg orchestrator status    # unit + linger state, the lock, the live session, last log lines
-./scripts/nogg orchestrator restart   # bounce the service
+./scripts/nogg orchestrator restart   # bounce service & relaunch Claude with updated prompt/settings (--supervisor-only skips session kill)
 ./scripts/nogg orchestrator stop      # stop + disable it, end the session, release the lock
 ./scripts/nogg orchestrator run       # the supervisor itself (what the unit calls); --force reclaims a stale lock
 ```
@@ -359,7 +471,16 @@ subcommand group:
 `orchestrator run` acquires `.nogging/locks/orchestrator.lock`, adopts a live
 `nogg-orchestrator-<slug>` tmux session or starts one (resuming its conversation
 with `claude --continue` when one exists), blocks until it exits, releases the
-lock and exits non-zero so `Restart=always` brings it back. It runs under the
+lock and exits non-zero so `Restart=always` brings it back. `orchestrator restart`
+terminates the live orchestrator tmux session and restarts the service, causing
+the new supervisor run to start a fresh Claude session with the current launch
+prompt and configuration while resuming transcript continuity; `--supervisor-only`
+restarts the supervisor unit alone without terminating the tmux session. Restart
+(including `--supervisor-only`) is refused from within the orchestrator session itself
+(e.g. when directed via Remote Control) to avoid terminating before completion, and
+must be run from an external shell. The Orchestration
+Agent is pinned to tmux and always runs on tmux, even if `herdr` is configured as
+the repository's default session backend. It runs under the
 `orchestrator` profile with the command floor and the `openspec/` boundary
 lifted — `session list` and `doctor` show it as `FULL-ACCESS`. It is Claude-only
 and reachable from a phone through Remote Control. See
@@ -370,22 +491,32 @@ orchestrate-only-by-default scope.
 
 | Command | Effect |
 | --- | --- |
-| `session launch --role <r> [--bead <id>] [--planning-id <id> --description <d>] [--cwd <p>] [--read-only] [--owner <o>] [--agent <claude\|codex>] [--profile <n>] [--prompt <n>] [--full-access]` | start a supervised session; no Beads change |
+| `session launch --role <r> [--backend <b::tmux|herdr>] [--bead <id>] [--planning-id <id> --description <d>] [--cwd <p>] [--read-only] [--owner <o>] [--agent <claude\|codex>] [--profile <n>] [--prompt <n>] [--full-access]` | start a supervised session; no Beads change |
 | `session list` | list every session with live-reconciled state and its launch profile |
 | `session log <name> [--follow]` | print / tail the log; never attaches |
-| `session attach <name> [--read-only]` | attach the terminal; `Ctrl-b d` to detach |
+| `session attach <name> [--read-only]` | attach the terminal; `Ctrl-b d` (tmux) or client detach (herdr) |
+| `session send <name> <text> [--verify]` | send verified instruction into session; verifies by default for Claude/Codex/Antigravity |
+| `session kickoff <name> [--message <m>] [--change <c>]` | deliver verified kickoff once startup readiness is confirmed |
 | `session stop <name> [--reason <text>]` | interrupt, terminate, record a terminal state; idempotent |
 | `session reap` | move vanished active-state records to `failed`; a live one is untouched |
-| `session cleanup [<name>] [--reap]` | retire terminal records; refuses a live one (`--reap` fails the dead ones first) |
+| `session cleanup [<name>] [--reap]` | retire terminal records, archives all rotated logs; refuses a live one; stops shared tmux server only when completely empty |
+| `session herdr-server start` | idempotently verify or start dedicated host-namespace herdr server; host-only |
 | `orchestrator run [--force]` | the always-on supervisor the systemd unit runs; `--force` reclaims a stale lock |
 | `orchestrator status` | unit enabled/active state, linger on/off, the lock holder, the live `FULL-ACCESS` session |
-| `orchestrator stop` \| `orchestrator restart` | stop-and-disable the unit (idempotent), or restart it |
+| `orchestrator stop` \| `orchestrator restart [--supervisor-only]` | stop-and-disable the unit (idempotent), or restart it (terminating the live session to relaunch Claude with updated prompt/settings while resuming transcript; `--supervisor-only` retains the live session) |
 
 Config keys (`.nogging/config.json`): `session_agent` (`claude` |  `codex`,
-default `claude`), `session_tmux_socket`, `session_state_dir`,
+default `claude`), `session_backend` (`tmux` | `herdr`, default `tmux`),
+`session_tmux_socket`, `session_herdr_command` (default `herdr`),
+`session_herdr_session` (default `nogging`), `session_state_dir`,
 `session_log_max_bytes`, `session_log_rotation_depth`,
 `session_stop_grace_seconds`, `orchestrator_lock_ttl_seconds` (default 86400),
-`orchestrator_poll_seconds` (default 5). The launch profile / prompt directories default
+`orchestrator_poll_seconds` (default 5),
+`session_submit_delay_seconds` (pause before sending Enter, default 0.3s, accepted range 0 to 5s),
+`session_submit_verify_delay_seconds` (polling interval for submission verification, default 0.5s, accepted range >0 to 5s),
+`session_delivery_timeout_seconds` (timeout for verified message delivery, default 15s, accepted range 1 to 120s),
+`session_startup_timeout_seconds` (timeout waiting for initial session input readiness, default 120s, accepted range 1 to 600s).
+The launch profile / prompt directories default
 to `.nogging/launch-profiles/` and `.nogging/launch-prompts/` and are
 overridable with `session_launch_profile_dir` / `session_launch_prompt_dir`; a
 `session_launch_profile` / `session_launch_prompt` key still pins a single file
@@ -491,27 +622,54 @@ box. That suggestion is rendered dim and is a placeholder, not typed input, so
 ./scripts/nogg session nudge <name> --message "<instruction>"
 ```
 
-With `--message`, nudge clears any actual pending input, types the message,
-submits it and verifies submission: if the input is still pending it retries
-the submit step once, then fails. A pane whose input box cannot be identified
-also fails as unverified rather than reporting success. `send --verify`
-uses the same check.
+With `--message`, nudge replaces any actual pending input and submits the supplied
+message with bounded verification. For every agent whose composer Nogging can
+classify (Claude, the Codex pane fallback, and Antigravity) across both session
+backends (tmux and herdr), nudge performs a bounded clear and exact-message
+comparison before submitting:
+
+1. **Clear pending input:**
+   - While the composer shows input, nudge sends `ctrl+u` repeatedly (up to 8 times)
+     as long as the text gets shorter, clearing wrapped buffers one visual row at a time.
+   - If input remains, nudge sends `backspace` once per remaining character plus once
+     per composer row (bounded to 4096 keys).
+   - The composer must reach `empty` or `placeholder`. If it does not, or if it reads as
+     `unknown` at any point, nudge refuses to type or submit anything, fails with
+     `<name>: pending input could not be cleared; nothing was typed or submitted`, and exits non-zero.
+2. **Type and compare:**
+   - Nudge types the message and reads back the composer. It proceeds only if the
+     composer holds *exactly* the supplied message (ignoring whitespace differences caused by
+     line re-wrapping) or the runtime's recognized collapsed-paste marker (e.g. Codex `Pasted Content`).
+   - If the composer contains merged text (leftover stale input merged with the message)
+     or unexpected content, nudge clears the composer again and fails with `<name>: the
+     composer did not hold exactly the message; nothing was submitted` without sending Enter.
+3. **Submit and verify:**
+   - Only when the composer is verified to hold exactly the message does nudge send Enter
+     and verify submission. If input remains pending afterwards, it retries the submit step
+     once, then fails.
+
+A pane whose input box cannot be identified also fails as unverified rather than reporting
+success. `send --verify` uses the same check.
 
 Without `--message`, nudge resends only single-line input that it can
 positively identify: non-dim text in Claude's framed input box, captured with
-attributes (`tmux capture-pane -e`). A placeholder-only, empty, multi-line or
+attributes (`tmux capture-pane -e` or herdr `pane.read --format ansi`). A placeholder-only, empty, multi-line or
 unidentifiable prompt sends no keys at all, and the command tells you to pass
 `--message`. Codex and other runtimes cannot expose the buffered text, so they
 always need `--message`. Nudge still refuses any session that is not running,
-before touching tmux. `session sweep` reports `has-unsent-input` as `yes`, `no`
+before touching the backend. `session sweep` reports `has-unsent-input` as `yes`, `no`
 (a placeholder or empty prompt) or `unknown`.
 
 ## Read-only quota inspection
 
 Run `./scripts/nogg usage --agent codex` or `--agent claude`; add `--json`
 for normalized machine-readable observations. Short and weekly windows are
-reported separately. Missing, unsupported, malformed, future-dated, older than
-600 seconds, and already-reset observations are unknown rather than zero.
+reported separately. Missing, unsupported, malformed, future-dated, and
+already-reset observations are unknown rather than zero, as are Claude and
+Antigravity observations older than 600 seconds. A Codex observation (the
+host's newest rollout quota sample) stays valid for each window until that
+window's own reset, even when older than 600 seconds; `nogg usage` marks it
+`stale (observed <age> ago)`.
 This observation command does not install capture, launch sessions, reserve
 headroom, or access authentication files. Account and model-group identities are reported as
 unknown; a source directory does not prove account or model-group identity.
@@ -538,7 +696,7 @@ specialist) only when every known usage window of the launching agent still
 fits: `used + reserved + estimate <= cap` per window. A refusal exits **75**
 and names each limiting window with its reset time and the latest reset to
 retry after; it happens before any helper negotiation, worktree, trust change,
-tmux session or session record. Planning and orchestrator launches are not
+backend session or session record. Planning and orchestrator launches are not
 gated by default. `./scripts/nogg usage` prints the same estimate, projection
 and fit (`gate` in `--json`). Admission checks and reserves headroom under a
 same-host lock in the owner-only user cache
@@ -547,7 +705,7 @@ is shared across repositories. Each window counts its outstanding estimates;
 a reset releases only reservations from that window's previous period.
 Failed launches release immediately. Pending launchers hold kernel file locks,
 so process death releases ownership across PID namespaces. Terminal sessions
-and dead pending launchers are reconciled on the next admission or usage inspection; live tmux
+and dead pending launchers are reconciled on the next admission or usage inspection; live backend
 sessions retain their reservation after the launcher exits.
 
 Current adapters do not identify accounts or model groups, so identity remains
@@ -564,6 +722,52 @@ coordination is unsupported in v1 even with `multi_machine: true`: the
 reservation ledger is strictly host-local, and other machines or external
 tools consuming the account's quota are only observed once local usage snapshots
 update.
+
+The shared reservation ledger (`ledger.json`) uses a single top-level token
+map with integer per-entry `schema_version: 1` on new pending entries. Missing
+versions represent legacy entries (both unversioned tmux and backend-neutral
+shapes remain readable). All entries across versions share a strict accounting
+core: nonempty string `scope`, finite nonnegative `estimate`, a `windows`
+dictionary whose reset values are ISO timestamps or null, and a safe owner file
+basename in `owner`.
+
+### Tolerant reader floor and opaque entries
+
+Readers validate the entire ledger's accounting core before any action or
+rewrite. Corrupt accounting or malformed top-level data halts admission
+safely with a clear diagnostic (`usage reservation ledger is malformed; admission refused`).
+
+When an entry carries a future version (`schema_version > 1`), an invalid
+version, or malformed session metadata but retains a valid accounting core:
+- It is classified as **opaque**.
+- It is preserved verbatim across unrelated admissions, bindings, and releases.
+- It counts toward its matching scope and reset windows in totals and admission.
+- A concise stderr diagnostic (`warning: reservation <token>: <reason>; retained without probing`) is emitted once during ledger transactions.
+- Its probe is **never executed**, its session record is never inspected, its owner lock is never taken as proof of death, and it is **never reaped**, even if its record appears terminal.
+- Direct `bind()` and `release()` refuse to alter an opaque target (`cannot bind/release opaque reservation <token>`).
+
+To operate safely across concurrent versions, all active consumers on the host
+must meet the **tolerant reader floor**: updating older installations to a release
+incorporating tolerant decoding is required before relying on mixed-version operation.
+Downgrading or running unpatched versions (such as v2.2.0) alongside newer
+versioned writers is unsupported because unpatched readers crash on backend-neutral
+or versioned shapes (`KeyError: 'tmux'`).
+
+### Direct test execution and environment isolation
+
+Direct test invocations (such as running `scripts/*.test.sh` directly from a
+terminal or from within a supervised session) isolate their execution
+environment by sourcing `scripts/lib/test-env.sh`.
+
+This removes inherited `NOGG_*` session environment variables (such as
+`NOGG_SESSION_ROLE`, `NOGG_SESSION_NAME`, `NOGG_OPENSPEC_FENCED`, and
+`NOGG_TASK_DONE_SOCKET`) and `NOGGING_ROOT` before imports, fixtures, or child
+processes run. This ensures that direct test runs:
+- Never accidentally contact a live operator's task-done broker socket or emit ticks.
+- Never inherit execution roles that cause false OpenSpec write refusals during planning tests.
+- Never inherit planning roles that grant unauthorized OpenSpec writes during guard tests.
+- Always retain unrelated environment variables, custom quota fixtures, and npm cache settings.
+Fixtures explicitly configure any required session variables after sourcing `test-env.sh`.
 
 Configure it with the optional `usage_gate` object in `.nogging/config.json`;
 these are the defaults:
@@ -633,7 +837,9 @@ safely, the command refuses with manual configuration instructions.
 `./scripts/nogg doctor` reports advisory notes on quota cache freshness:
 - Missing observation sources (advising `nogg usage install-statusline` when
   Claude statusline cache is absent).
-- Stale observations exceeding `stale_seconds` (default 600s).
+- Claude and Antigravity observations exceeding `stale_seconds` (default 600s).
+- Aged Codex observations whose windows have not reset (`observation is N old
+  but windows have not reset — still used`).
 - Fresh observation caches.
 
 ### Orchestrator retry guidance and scheduling

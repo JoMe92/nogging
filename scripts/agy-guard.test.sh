@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+source "$root/scripts/lib/test-env.sh"
 python3 - "$root" <<'PY'
 import datetime as dt
 import json

@@ -46,14 +46,48 @@ restricted split:
 
 | Level | Selected by | Sandbox / approval | Outbound network | Can `git push` |
 | --- | --- | --- | --- | --- |
-| **trusted** | `--full-access` | `workspace-write` / `never` | **on** (`network_access = true`) | **yes** |
-| **restricted** | default (also `--read-only` forces the sandbox to `read-only`) | `workspace-write` / `on-request` | **off** (`network_access = false`) | no |
+| **trusted** | `--profile trusted` or `--full-access` | `workspace-write` / `never` | **on** (`network_access = true`) | **yes** |
+| **restricted** | default or `--profile restricted` (`--read-only` forces the sandbox to `read-only`) | `workspace-write` / `on-request` | **off** (`network_access = false`) | no |
 
 A **trusted** Codex Lead session completes an integration itself, exactly like
 the Claude trusted path: it pushes the feature branch, fast-forward-merges into
 `develop` locally, and pushes `develop` — **no pull request**. A **restricted**
 session has no network, so `git push`, `bd sync`, and `dolt push|pull` all fail;
 it stops and reports instead.
+
+### Model and reasoning effort selection
+
+Codex sessions support launch-time model and reasoning effort selection:
+
+- `--effort <level>`: Validated against `CODEX_REASONING_EFFORTS` (`none`,
+  `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`). Forwarded to
+  Codex as `--reasoning-effort <level>`. Precedence is launch `--effort` >
+  `--tier` table effort > profile `model_reasoning_effort` > runtime default.
+- `--tier <tier>`: Resolves model and effort from the model-selection table.
+  When passed together with `--model` and `--effort`, the tier remains recorded
+  for usage attribution while the explicit flags override the requested values.
+- **Product Owner cost policy:** Under the Product Owner policy, Codex defaults
+  to `gpt-6-luna`; `gpt-6.1-sol` is used only with effort `low` and only for
+  extremely hard tasks, on explicit Product Owner instruction:
+  - Standard/routine: `scripts/nogg session launch --agent codex --tier <tier> --model gpt-6-luna --effort <level>`
+  - Sol exception: `scripts/nogg session launch --agent codex --tier <tier> --model gpt-6.1-sol --effort low`
+
+#### Shared Dolt and planning launches
+
+The shared Beads database uses a host-owned Dolt server over loopback TCP.
+Restricted Codex has network access disabled, including loopback, so a `bd`
+command that needs this server fails with an error such as `Dolt server
+unreachable at 127.0.0.1:3308: ... socket: operation not permitted`. Do not
+start Dolt from the session. Relaunch with `--profile trusted` (or
+`--full-access` when the autonomous prompt is intended), or ask the operator
+to run the `bd` step on the host.
+
+Codex planning launches require an explicit authority choice. Supply
+`--profile restricted`, `--profile trusted`, or `--full-access`; a launch with
+neither `--profile` nor `--full-access` is refused before creating a session
+or worktree. Successful launches print the effective `profile=` and `prompt=`
+line. An explicitly restricted Codex launch also prints a NOTE that its
+network-off sandbox cannot reach a Dolt-server-backed `bd`.
 
 Both levels explicitly add the shared Git directory and the current worktree's
 Git directory to `sandbox_workspace_write.writable_roots`, because Codex
@@ -146,9 +180,13 @@ requirement is behavioural — the file can be rewritten without a spec change.
 The persona and step text are identical; only the invocation surface differs.
 Each is a thin wrapper over `scripts/nogg` — the mechanical steps
 (`plan-begin` → discovery review → author → `validate` → commit as the
-`planning` writer → `materialize` → wire dependencies → integrate → safe
-cleanup → `plan-end` from a surviving canonical checkout; `discoveries` /
-`--ack`; `sync --now`) are agent-neutral.
+`planning` writer → `materialize` → wire dependencies → integrate →
+`plan-end` from the planning worktree → `worktree cleanup` from the surviving
+canonical checkout; `discoveries` /
+`--ack`; `sync --now`) are agent-neutral. `plan-end` always precedes worktree
+retirement. A trusted Codex planner runs `plan-end` from its worktree, but its
+sandbox mounts that worktree, so `worktree cleanup` refuses; that refusal is
+the normal end. The planner reports the hand-off — `./scripts/nogg session stop <name>`, then `./scripts/nogg worktree cleanup <record>` from the canonical checkout — and stops.
 
 **Custom-prompt discovery is version-dependent.** codex-cli 0.148 loads custom
 prompts only from `${CODEX_HOME:-~/.codex}/prompts/` (user-scoped); repo-scoped
@@ -187,6 +225,91 @@ and resolves what it reports with the
 [`failure-recovery.md`](failure-recovery.md) § "Resuming an interrupted run"
 playbook — exactly as `AGENTS.md` § "Resuming a run" describes. The protocol is
 tool-neutral; nothing about it is Claude- or Codex-specific.
+
+## Exact session resume
+
+Nogging supports exact resume for Codex sessions:
+
+```bash
+./scripts/nogg session launch --agent codex --resume <session-id>
+```
+
+Exact resume resumes a prior Codex thread using native `codex resume <thread-id>`:
+- **UUID validation:** Before any worktree, filesystem, or metadata side effect, the
+  target session's thread ID is validated as a UUID. An invalid or non-UUID thread ID
+  refuses immediately.
+- **Thread identity:** The session record stores `codex_thread_id = <uuid>`. Subsequent
+  `session send`, `session nudge`, and `kickoff` use this thread ID to deliver input
+  directly through `codex queue` without needing interactive pane discovery.
+- **Authority preservation:** `scripts/session-launch` runs `codex resume <thread-id>`
+  with the identical authority flags used on a cold launch (sandbox mode, approval
+  policy, writable roots, network disabled/enabled, model, reasoning effort, and
+  read-only root fences).
+- **No prompt re-send:** The wrapper does *not* re-send the launch prompt as a new
+  first message: the resumed thread already contains the original system prompt and
+  conversation history, and an extra prompt would trigger an unsolicited turn.
+- **Required flag gating:** `session-launch` inspects `codex resume --help` on the
+  installed Codex build. If any required authority flag is not accepted by `resume`,
+  the launch is refused before side effects; no authority boundary is ever dropped
+  silently.
+- **Contract check:** The `session-launch` helper contract declares the `codex-resume`
+  feature, which launch preflight requires for any Codex resume.
+
+## Steering and nudge verification
+
+Steering a Codex session (`session send` and `session nudge`) uses queue-first delivery:
+- **Queue delivery and acceptance vs. submission:** When the exact session thread ID resolves,
+  `session send` and `session nudge --message` deliver through `codex queue`. Queue acceptance
+  (exit code 0) alone is **not** proof of submission. Delivery is confirmed only when fresh
+  incremental user-message receipt evidence appears in the exact thread transcript, or when the
+  known composer transitions appropriately. If queue acceptance leaves the exact message
+  positively pending in the composer, Nogging recovers it with a delayed single Enter (and at most
+  one retry) without retyping or requeuing the text.
+- **Unknown outcomes and no blind fallback:** If the queue accepts a message but no fresh receipt
+  or identifiable pending composer text is found within `session_delivery_timeout_seconds`, the
+  operation fails as **unverified**; Nogging never blindly falls back to pane typing or sends
+  unprompted Enters after queue acceptance. Operators are pointed to `nogg session log <name>`
+  or `watch` to inspect session state before taking deliberate action.
+- **Pane fallback and composer classification:** Pane typing is permitted only when thread ID is
+  unavailable or when the queue definitively refuses before acceptance. When typing into the pane,
+  verification uses an ANSI attribute classifier: the composer line begins with `›`; dim text
+  represents a placeholder, while non-dim text represents pending input. If the input remains
+  pending after submit, it is retried once. If the composer cannot be positively identified,
+  the command fails as **unverified** and never falsely reports success.
+
+### Codex launch and delivery safeguards
+
+For a Codex launch with a startup prompt, kickoff waits until that launch's
+startup turn has completed. An empty composer alone is not enough: Nogging
+requires rollout evidence that the turn started and is now idle. If the thread
+or completion evidence cannot be established before
+`session_startup_timeout_seconds`, kickoff fails with a diagnostic instead of
+typing into a turn that may still be running. A launch without a startup prompt
+and an exact resume do not require this startup-turn evidence.
+
+When Codex shows a single `[Pasted Content N chars]` token after Nogging pasted
+a long (200 or more characters) or multiline message, Nogging treats that as
+its pending message only when the composer was verified empty before the paste.
+The displayed `N` is not compared with the source length. Extra text, multiple
+tokens, an image token, or a token already present before the operation remains
+unverified and is not submitted.
+
+Before using `codex queue`, Nogging checks that the pane, agent status and—when
+the thread resolves—the rollout turn state are not busy. It waits up to
+`session_delivery_timeout_seconds` for a busy session to become idle, then
+refuses without queueing, typing or pressing keys. On idle sessions queue
+acceptance still needs fresh receipt evidence; ambiguous outcomes remain
+unverified and are never requeued. A Codex planning launch also needs a
+provable process identity: when the launcher's `/proc` cannot see the pane PID,
+Nogging accepts a matching identity receipt from the launch wrapper. If neither
+source proves the identity, a planning launch fails before kickoff and cleans
+up the created session; launch it from an unsandboxed shell.
+
+The reliable-input fixes described in `docs/running-work-in-sessions.md`
+shipped in Nogging 3.0.0. The safeguards in this section, together with the
+session-name and failed-launch cleanup fixes, require a Nogging update that
+contains the launch-name and Codex-delivery change. If your repository vendors
+an older copy, update it before relying on them.
 
 ## A Codex session hit its usage limit
 
