@@ -1,6 +1,6 @@
 ## 1. Writer-side rebase (#241)
 
-- [ ] TASK-SLR-001 [complex] Per design Decisions 1-5 (abort on any conflict for now): add `nogg worktree rebase [<record>]` for an unfenced caller: implementation records via canonical state, ordered refusals, up-to-date no-op, journal, backup ref, rebase, post-verify, Lead identity kept. Branch fix/. Check: new scripts/worktree-rebase.test.sh with real git fixtures (bare origin, linked worktree, upstream tasks.md tick and archive rename), red first; scripts/test.
+- [x] TASK-SLR-001 [complex] Per design Decisions 1-5 (abort on any conflict for now): add `nogg worktree rebase [<record>]` for an unfenced caller: implementation records via canonical state, ordered refusals, up-to-date no-op, journal, backup ref, rebase, post-verify, Lead identity kept. Branch fix/. Check: new scripts/worktree-rebase.test.sh with real git fixtures (bare origin, linked worktree, upstream tasks.md tick and archive rename), red first; scripts/test.
 
 - [ ] TASK-SLR-002 [standard] Per design Decision 5 conflict policy: an openspec/ conflict aborts and proves the tree equals the previous state; a code-only conflict leaves a real paused rebase (journal paused, exit 3); add writer-side `--continue` and `--abort`, refusing when nothing is paused. Branch refactor/. Depends on SLR-001. Check: new scripts/worktree-rebase-conflict.test.sh (red first); worktree-rebase suite green; scripts/test.
 
