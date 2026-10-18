@@ -81,8 +81,14 @@ Escalation rules:
   reset or launch the same tier on another agent's entry; never switch a
   resumed session's model to dodge a limit.
 
-Pass an explicit `--model` only on Product Owner instruction. Never edit the
-table (`.nogging/model-selection.json`) yourself; a stale or drifted entry
+Pass an explicit `--model` or `--effort` only on Product Owner instruction,
+and pass them together with the honest `--tier` so attribution stays correct.
+Under the Product Owner's Codex cost policy:
+- Codex defaults to `gpt-6-luna`; launch with `--tier <tier> --model gpt-6-luna --effort <level>`.
+- `gpt-6.1-sol` is used only with effort `low` and only for extremely hard tasks:
+  launch with `--tier <tier> --model gpt-6.1-sol --effort low`.
+
+Never edit the table (`.nogging/model-selection.json`) yourself; a stale or drifted entry
 (see `doctor`'s `model-selection` NOTEs) goes to a planning session. Pi has no
 table: launch Pi without `--tier`. See `docs/model-selection.md`.
 
