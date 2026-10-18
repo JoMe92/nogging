@@ -502,6 +502,158 @@ def cleanup_worktree(record_name):
     run("git", "branch", "-D", branch)
     path.unlink()
     print(f"worktree retired: {target} ({branch})")
+
+def worktree_rebase(record_name=None):
+    """Rebase one clean implementation worktree onto the current origin/develop.
+
+    The command is intentionally unfenced only: callers whose OpenSpec mount is
+    read-only must use the host broker added by the follow-up task.
+    """
+    if os.environ.get("NOGG_OPENSPEC_FENCED") == "1":
+        raise RuntimeError("worktree rebase requires an unfenced caller; ask the operator to run it")
+    state = canonical_repository_state(ROOT)
+    main = Path(state["main_checkout"])
+    worktree_state = main / scfg("state_dir", ".nogging/state") / "worktrees"
+    records = []
+    if not worktree_state.is_dir():
+        raise RuntimeError("no canonical worktree records are available")
+    for path in sorted(worktree_state.glob("*.json")):
+        try:
+            value = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        if isinstance(value, dict):
+            records.append((path, value))
+    if record_name:
+        if Path(record_name).name != record_name or not record_name.endswith(".json"):
+            raise RuntimeError("rebase requires a worktree record filename")
+        match = [(path, value) for path, value in records if path.name == record_name]
+    else:
+        caller = Path(run("git", "rev-parse", "--show-toplevel").stdout.strip()).resolve()
+        match = [(path, value) for path, value in records
+                 if isinstance(value.get("path"), str)
+                 and Path(value["path"]).resolve() == caller]
+    if len(match) != 1:
+        raise RuntimeError("could not resolve exactly one registered worktree record")
+    record_path, record = match[0]
+    target_value, branch = record.get("path"), record.get("branch")
+    if (record.get("kind") != "implementation" or record.get("state") != "allocated"
+            or not isinstance(target_value, str) or not isinstance(branch, str)):
+        raise RuntimeError("target must be an allocated implementation worktree")
+    target = Path(target_value).resolve()
+    if str(target) not in git_worktree_paths() or not target.is_dir():
+        raise RuntimeError(f"target is not a registered implementation worktree: {target}")
+    head_branch = run("git", "-C", str(target), "branch", "--show-current", check=False).stdout.strip()
+    if not head_branch or head_branch != branch or branch in {"main", "develop"}:
+        raise RuntimeError(f"worktree HEAD must be on recorded implementation branch {branch}")
+
+    gitdir_result = run("git", "-C", str(target), "rev-parse", "--absolute-git-dir", check=False)
+    if gitdir_result.returncode:
+        raise RuntimeError("could not resolve target worktree Git directory")
+    gitdir = Path(gitdir_result.stdout.strip())
+    operation_paths = [gitdir / name for name in
+                       ("MERGE_HEAD", "CHERRY_PICK_HEAD", "BISECT_LOG", "rebase-merge", "rebase-apply")]
+    if any(path.exists() for path in operation_paths):
+        raise RuntimeError("another Git operation is in progress in the target worktree")
+    before = run("git", "-C", str(target), "rev-parse", "HEAD").stdout.strip()
+    dirty = run("git", "-C", str(target), "status", "--porcelain", check=False)
+    if dirty.returncode:
+        raise RuntimeError("could not inspect target worktree status")
+    if dirty.stdout.strip():
+        paths = [line[3:] for line in dirty.stdout.splitlines()]
+        raise RuntimeError("target worktree is dirty: " + ", ".join(paths))
+
+    sessions = main / scfg("session_state_dir", ".nogging/state/sessions")
+    try:
+        for session_path in sorted(sessions.glob("*.json")) if sessions.is_dir() else []:
+            session = json.loads(session_path.read_text())
+            if not isinstance(session, dict):
+                raise ValueError("session record is not an object")
+            working_dir = session.get("working_dir")
+            if (session.get("state") in SESSION_ACTIVE_STATES and isinstance(working_dir, str)
+                    and path_is_within(working_dir, target)
+                    and session.get("name") != os.environ.get("NOGG_SESSION_NAME")):
+                name = session.get("name") or session_path.stem
+                raise RuntimeError(f"target worktree is in use by active session {name}")
+    except (OSError, ValueError, TypeError) as exc:
+        raise RuntimeError(f"cannot inspect active session records: {exc}") from exc
+
+    origin = resolve_ref("origin/develop")
+    if origin is None:
+        raise RuntimeError("origin/develop does not resolve")
+    merges = run("git", "-C", str(target), "rev-list", "--merges", f"{origin}..HEAD", check=False)
+    if merges.returncode:
+        raise RuntimeError("could not inspect implementation branch history")
+    if merges.stdout.strip():
+        raise RuntimeError("refusing to rebase a branch containing merge commits")
+
+    rebase_state = main / scfg("state_dir", ".nogging/state") / "rebase"
+    journal = rebase_state / f"{record_path.stem}.json"
+    if journal.exists():
+        raise RuntimeError(f"a prior rebase journal needs recovery first: {journal}")
+
+    fetched = run("git", "-C", str(target), "fetch", "origin", "develop", check=False)
+    if fetched.returncode:
+        raise RuntimeError("could not fetch origin/develop")
+    onto = run("git", "-C", str(target), "rev-parse", "--verify", "--quiet",
+               "origin/develop^{commit}", check=False)
+    if onto.returncode:
+        raise RuntimeError("origin/develop does not resolve after fetch")
+    onto_sha = onto.stdout.strip()
+    behind = run("git", "-C", str(target), "merge-base", "--is-ancestor", onto_sha, before,
+                 check=False)
+    if behind.returncode == 0:
+        print("already up to date")
+        return
+    if behind.returncode != 1:
+        raise RuntimeError("could not compare origin/develop with the implementation branch")
+
+    data_dir(rebase_state)
+    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    backup_ref = f"refs/nogg/rebase-backup/{branch}/{stamp}"
+    journal_data = {"branch": branch, "before": before, "onto": onto_sha,
+                    "requester": os.environ.get("NOGG_SESSION_NAME"),
+                    "started_at": now(), "phase": "running", "backup_ref": backup_ref}
+    tmp = journal.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(journal_data, indent=2, sort_keys=True) + "\n")
+    os.replace(tmp, journal)
+    backup = run("git", "-C", str(target), "update-ref", backup_ref, before, check=False)
+    if backup.returncode:
+        journal.unlink(missing_ok=True)
+        raise RuntimeError("could not create rebase backup ref")
+    env = os.environ.copy()
+    env.pop("NOGG_OPENSPEC_FENCED", None)
+    env.update({"GIT_EDITOR": "true", "GIT_SEQUENCE_EDITOR": "true"})
+    rebased = run("git", "-C", str(target), "rebase", "origin/develop", check=False, env=env)
+    if rebased.returncode:
+        abort = run("git", "-C", str(target), "rebase", "--abort", check=False, env=env)
+        clean = run("git", "-C", str(target), "status", "--porcelain", check=False)
+        current = run("git", "-C", str(target), "rev-parse", "HEAD", check=False)
+        still_in_progress = any(path.exists() for path in operation_paths)
+        if clean.returncode or clean.stdout.strip() or current.stdout.strip() != before or still_in_progress:
+            journal_data["phase"] = "recovery-required"
+            tmp.write_text(json.dumps(journal_data, indent=2, sort_keys=True) + "\n")
+            os.replace(tmp, journal)
+            raise RuntimeError(f"rebase failed and automatic abort could not restore {before}; backup {backup_ref}")
+        journal.unlink(missing_ok=True)
+        reason = "conflict" if "CONFLICT" in (rebased.stdout + rebased.stderr).upper() else "failure"
+        raise RuntimeError(f"rebase {reason}; aborted and restored {before}; backup {backup_ref}")
+
+    tip = run("git", "-C", str(target), "rev-parse", "HEAD", check=False)
+    rebased_branch = run("git", "-C", str(target), "branch", "--show-current", check=False)
+    ancestor = run("git", "-C", str(target), "merge-base", "--is-ancestor", onto_sha, "HEAD", check=False)
+    clean = run("git", "-C", str(target), "status", "--porcelain", check=False)
+    operation = any(path.exists() for path in operation_paths)
+    if (tip.returncode or rebased_branch.returncode or rebased_branch.stdout.strip() != branch
+            or ancestor.returncode or clean.returncode or clean.stdout.strip() or operation):
+        journal_data["phase"] = "verification-failed"
+        tmp.write_text(json.dumps(journal_data, indent=2, sort_keys=True) + "\n")
+        os.replace(tmp, journal)
+        raise RuntimeError(f"post-rebase verification failed; inspect {journal} and backup {backup_ref}")
+    journal.unlink(missing_ok=True)
+    print(f"rebased {branch} onto origin/develop: {tip.stdout.strip()}")
+    print(f"backup ref: {backup_ref}")
+    print(f"restore command (information only): git -C {target} reset --hard {before}")
 def current_branch():
     out = run("git", "branch", "--show-current", check=False).stdout.strip()
     if not out or out == "develop":
@@ -8154,6 +8306,8 @@ def main():
     wti.add_argument("--path", help="explicit empty destination path (defaults beside the shared checkout)")
     wtc = wtsub.add_parser("cleanup", help="retire one clean, develop-integrated recorded worktree")
     wtc.add_argument("record", help="record filename under .nogging/state/worktrees/")
+    wtr = wtsub.add_parser("rebase", help="safely rebase an implementation worktree onto origin/develop")
+    wtr.add_argument("record", nargs="?", help="record filename (defaults to the caller's worktree)")
     pr = sub.add_parser("pr", help="create or locate an implementation pull request")
     prsub = pr.add_subparsers(dest="pr_command", required=True)
     pro = prsub.add_parser("open", help="create or locate an open PR targeting develop")
@@ -8283,6 +8437,7 @@ def main():
         if args.worktree_command == "plan": planning_worktree(args.planning_id, args.description, args.path)
         elif args.worktree_command == "implement": implementation_worktree(args.bead_id, args.branch, args.path)
         elif args.worktree_command == "cleanup": cleanup_worktree(args.record)
+        elif args.worktree_command == "rebase": worktree_rebase(args.record)
     elif args.command == "pr":
         if args.pr_command == "open": pull_request(args.plan, args.task, args.decision, args.validation, args.limitation)
         elif args.pr_command == "ci": pull_request_ci()
