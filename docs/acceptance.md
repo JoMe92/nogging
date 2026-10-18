@@ -64,15 +64,16 @@ no network. That subset also runs from `scripts/test` (via
 ### 3. Assert the readiness verdict — [M]
 
 - **Prerequisite:** step 2.
-- **Do:** read the last line of the installer output.
+- **Do:** find the readiness verdict line in the installer output (the last
+  line starting `Nogging is`; the fix lines and next steps follow it).
 - **Expected:**
-  - With the Beads backend present and provisioned: `Nogging is ready — run
-    ./scripts/nogg plan-begin to start.` and `./scripts/nogg doctor`
-    exits 0.
+  - With the Beads backend present and provisioned: `Nogging is ready — start
+    your first plan with /plan or ./scripts/nogg worktree plan <planning-id>
+    <description>.` and `./scripts/nogg doctor` exits 0.
   - Without the backend (the `--mechanical` subset): `Nogging is installed but
     not ready: uninitialized tracker (run \`bd init\`)` — the uninitialized
-    tracker is named as the only gap and the verdict does **not** claim the
-    repository is ready.
+    tracker is named as the only gap, followed by one indented `fix:` line, and
+    the verdict does **not** claim the repository is ready.
 
 ### 4. Real-distribution install check — [A]
 
