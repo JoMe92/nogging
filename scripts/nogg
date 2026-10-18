@@ -277,6 +277,69 @@ def recorded_worktree_lines():
             lines.append(f"{path.name}: recorded {branch} at {location} is missing")
             attention.append("missing recorded worktree")
     return lines, attention
+def worktree_integrity_diagnostics():
+    """Read-only half-checkout and abandoned-rebase-journal diagnostics."""
+    lines, attention = [], []
+    for record_path, record in worktree_records():
+        if not isinstance(record, dict) or record.get("kind") != "implementation":
+            continue
+        location = record.get("path")
+        if not isinstance(location, str) or not Path(location).is_dir():
+            continue
+        try:
+            result = classify_worktree_integrity(location)
+        except (OSError, RuntimeError) as exc:
+            lines.append(f"{record_path.name}: integrity check unavailable ({exc})")
+            continue
+        state = result["state"]
+        if state not in ("half-applied", "mixed"):
+            continue
+        reproducible = result["reproducible"]
+        detail = ", ".join(reproducible)
+        tracked, untracked = [], []
+        for name in reproducible:
+            probe = subprocess.run(["git", "-C", location, "ls-files", "--error-unmatch", "--", name],
+                                   text=True, capture_output=True)
+            (tracked if probe.returncode == 0 else untracked).append(name)
+        hints = []
+        if tracked:
+            hints.append("git restore --source=HEAD --staged --worktree -- "
+                         + " ".join(shlex.quote(p) for p in tracked))
+        if untracked:
+            hints.append("git clean -f -- " + " ".join(shlex.quote(p) for p in untracked))
+        hint = "; path-scoped recovery: " + " && ".join(hints) if hints else ""
+        lines.append(f"worktree {Path(location).name}: {state}; upstream-reproducible paths: {detail}{hint}")
+        attention.append(f"worktree {Path(location).name} {state}")
+    journal_dir = STATE / "rebase"
+    if journal_dir.is_dir():
+        for journal in sorted(journal_dir.glob("*.json")):
+            try:
+                entry = json.loads(journal.read_text())
+            except (ValueError, OSError):
+                lines.append(f"rebase journal {journal.name}: unreadable; preserve for inspection")
+                attention.append("unreadable rebase journal")
+                continue
+            branch, phase = entry.get("branch", "unknown"), entry.get("phase", "unknown")
+            location = next((r.get("path") for _, r in worktree_records()
+                             if isinstance(r, dict) and r.get("branch") == branch), None)
+            in_progress = False
+            rebase_merge = False
+            if location and Path(location).is_dir():
+                try:
+                    gd = subprocess.run(["git", "-C", location, "rev-parse", "--git-dir"],
+                                        text=True, capture_output=True, check=True).stdout.strip()
+                    gp = Path(gd)
+                    if not gp.is_absolute(): gp = (Path(location) / gp).resolve()
+                    in_progress = any((gp / marker).exists() for marker, _ in MIDOP_MARKERS)
+                    rebase_merge = (gp / "rebase-merge").exists()
+                except (OSError, subprocess.SubprocessError):
+                    pass
+            stale = ((phase == "running" and not in_progress)
+                     or (phase == "paused" and not rebase_merge))
+            if stale:
+                lines.append(f"rebase journal {journal.name}: stale phase={phase}; backup ref {entry.get('backup_ref', '(not recorded)')}")
+                attention.append(f"stale rebase journal {journal.name}")
+    return lines, attention
 def git_worktree_paths():
     result = run("git", "worktree", "list", "--porcelain", check=False)
     if result.returncode:
@@ -2020,6 +2083,72 @@ MIDOP_MARKERS = (
     ("CHERRY_PICK_HEAD", "cherry-pick in progress"),
     ("BISECT_LOG", "bisect in progress"),
 )
+def classify_worktree_integrity(path, upstream="origin/develop"):
+    """Classify dirty paths that exactly reproduce the fetched upstream tree.
+
+    This is deliberately read-only: path bytes, Git status and upstream blobs
+    are the only evidence. A directory-wide cleanup is never inferred.
+    """
+    path = Path(path).resolve()
+    def git(*args):
+        return subprocess.run(["git", "-C", str(path), *args], text=False,
+                              capture_output=True)
+    gd = git("rev-parse", "--git-dir")
+    if gd.returncode:
+        raise RuntimeError(f"cannot inspect worktree {path}")
+    ref = git("rev-parse", "--verify", f"{upstream}^{{tree}}")
+    if ref.returncode:
+        raise RuntimeError(f"upstream ref {upstream} does not resolve in {path}")
+    git_dir_path = Path(os.fsdecode(gd.stdout.strip()))
+    if not git_dir_path.is_absolute():
+        git_dir_path = (path / git_dir_path).resolve()
+    for marker, _reason in MIDOP_MARKERS:
+        if (git_dir_path / marker).exists():
+            return {"state": "operation-in-progress", "paths": [], "reproducible": [], "other": []}
+    status = git("status", "--porcelain=v1", "-z", "--untracked-files=all")
+    if status.returncode:
+        raise RuntimeError(f"cannot inspect worktree status at {path}")
+    records = status.stdout.split(b"\0")
+    dirty = []
+    i = 0
+    while i < len(records):
+        record = records[i]
+        i += 1
+        if not record:
+            continue
+        # Rename/copy status has a second NUL-delimited path. Classify both:
+        # the destination's bytes are the only potentially reproducible ones.
+        name = os.fsdecode(record[3:])
+        if name:
+            dirty.append(name)
+        if record[:2] and (b"R" in record[:2] or b"C" in record[:2]):
+            if i < len(records) and records[i]:
+                dirty.append(os.fsdecode(records[i]))
+                i += 1
+    if not dirty:
+        return {"state": "clean", "paths": [], "reproducible": [], "other": []}
+    reproducible, other = [], []
+    for name in sorted(set(dirty)):
+        target = path / name
+        upstream_blob = git("show", f"{upstream}:{name}")
+        expected_exists = upstream_blob.returncode == 0
+        actual_exists = target.exists() or target.is_symlink()
+        if expected_exists:
+            if target.is_symlink():
+                actual = os.fsencode(os.readlink(target))
+            elif target.is_file():
+                actual = target.read_bytes()
+            else:
+                actual = None
+            same = actual_exists and actual == upstream_blob.stdout
+        else:
+            same = not actual_exists
+        (reproducible if same else other).append(name)
+    state = ("half-applied" if reproducible and not other else
+             "mixed" if reproducible else "dirty")
+    return {"state": state, "paths": sorted(set(dirty)),
+            "reproducible": reproducible, "other": other}
+
 def git_dir():
     """The absolute path to the repository's git directory, or None when the
     working tree is not a git repository."""
@@ -7448,6 +7577,9 @@ def recover_scan():
     # --- Durable worktree records -------------------------------------
     worktree_lines, worktree_attention = recorded_worktree_lines()
     attention.extend(worktree_attention)
+    integrity_lines, integrity_attention = worktree_integrity_diagnostics()
+    worktree_lines.extend(integrity_lines)
+    attention.extend(integrity_attention)
     section("Worktrees", worktree_lines)
 
     # --- Crashed sessions -----------------------------------------
@@ -7856,6 +7988,11 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
              "Git 2.30+, Bash 4.4+, OpenSpec 1.11.x, Beads 1.2.x, Dolt 2.3.x "
              "(docs/nogging/compatibility.md)"]
     notes.extend(mapping_health_lines())
+    try:
+        integrity_lines, _integrity_attention = worktree_integrity_diagnostics()
+        notes.extend(f"worktree integrity: {line}" for line in integrity_lines)
+    except Exception as exc:
+        notes.append(f"worktree integrity check unavailable: {exc}")
     notes.extend(artifact_notes)
     # Advisory only, like every other NOTE here: never a FAIL, never changes
     # doctor's exit code. `/plan`'s archive step (TASK-TCC-004) is what
