@@ -22,7 +22,7 @@
 
 ## 4. Delivery-host acceptance (docs/, host-capable Lead)
 
-- [ ] TASK-RSI-009 [complex] Per design Decisions 1 and 9: run disposable Claude/Codex/AGY delivery acceptance on both backends, slow and multiline kickoff, queue receipts, repeated attempts and startup failures; record versions and honest outcomes in an unsigned dated report, touching no fleet sessions. Branch docs/. Depends on RSI-007 and RSI-008. Check: docs/acceptance/<date>-reliable-session-input.md with empty Signed-off-by; scripts/test.
+- [x] TASK-RSI-009 [complex] Per design Decisions 1 and 9: run disposable Claude/Codex/AGY delivery acceptance on both backends, slow and multiline kickoff, queue receipts, repeated attempts and startup failures; record versions and honest outcomes in an unsigned dated report, touching no fleet sessions. Branch docs/. Depends on RSI-007 and RSI-008. Check: docs/acceptance/<date>-reliable-session-input.md with empty Signed-off-by; scripts/test.
 
 ## Dependency contract
 
