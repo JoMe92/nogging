@@ -14,7 +14,7 @@
 
 ## 3. Planner process identity (HPS-007 step 4)
 
-- [ ] TASK-LCD-006 [standard] Per design Decisions 1 and 7, diagnostic first: reproduce with a failing test that a tmux session started from a caller whose /proc cannot see the pane PID gets null session_pid_start/ns and cannot take the planning lock; then use a wrapper receipt and refuse an unprovable planning launch after cleanup; if not reproducible, document it. Branch fix/. Depends on LCD-002. Check: new scripts/session-pid-identity.test.sh; scripts/test.
+- [x] TASK-LCD-006 [standard] Per design Decisions 1 and 7, diagnostic first: reproduce with a failing test that a tmux session started from a caller whose /proc cannot see the pane PID gets null session_pid_start/ns and cannot take the planning lock; then use a wrapper receipt and refuse an unprovable planning launch after cleanup; if not reproducible, document it. Branch fix/. Depends on LCD-002. Check: new scripts/session-pid-identity.test.sh; scripts/test.
 
 ## 4. Guidance (docs/)
 
