@@ -70,6 +70,12 @@ run_msg fail "legacy SpecForge-Writer: bogus does not exempt" \
 run pass "legacy SPECFORGE_WRITER exemption still accepted" \
   SPECFORGE_WRITER=planning "docs: revise openspec change"
 
+# Historic commit 4f10ca8: exact-subject exemption only.
+historic='plan(launch-hook-fixes): fix blocking-edge check, agent-binary preflight, absolute Stop hook'
+run pass "historic 4f10ca8 subject exempt"                      - "$historic"
+run fail "one-character variant of historic subject rejected"   - "${historic%k}K"
+run fail "ordinary non-Conventional subject still rejected"     - "plan(other): do a thing"
+
 if [[ $fail -ne 0 ]]; then
   echo "commit-msg checks failed" >&2
   exit 1
