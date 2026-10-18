@@ -14,7 +14,7 @@ import sys
 import time
 import uuid
 
-from session_backend import BackendError, Capabilities, KEYS
+from session_backend import BackendError, Capabilities, KEYS, safe_session_name
 
 
 def process_start(pid):
@@ -253,6 +253,8 @@ class HerdrBackend:
 
     def prepare(self, name, cwd):
         """Server/workspace/socket preconditions, before the caller writes a record."""
+        if safe_session_name(name) != name:
+            raise BackendError("herdr session name is not backend-safe")
         owned = self._ensure_server()
         path = self._reported_socket()
         self.verify_socket(path)
@@ -347,6 +349,8 @@ class HerdrBackend:
         return matches[0] if matches else None
 
     def start(self, name, cwd, env, argv, log):
+        if safe_session_name(name) != name:
+            raise BackendError("herdr session name is not backend-safe")
         ref = self._prepared if self._prepared and self._prepared["name"] == name else self.prepare(name, cwd)
         ref = dict(ref)
         self.verify_socket(ref["socket_path"])

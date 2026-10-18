@@ -7,6 +7,13 @@ from typing import Protocol
 KEYS = frozenset({"enter", "escape", "ctrl+c", "ctrl+u", "backspace"})
 
 
+def safe_session_name(name: str) -> str:
+    """Return the one canonical name accepted by every session substrate."""
+    value = str(name).lower().replace(".", "_").replace(":", "_")
+    return "".join(char if char in "abcdefghijklmnopqrstuvwxyz0123456789_-" else "-"
+                   for char in value)
+
+
 class BackendError(RuntimeError):
     """A substrate operation failed without exposing its private request."""
 

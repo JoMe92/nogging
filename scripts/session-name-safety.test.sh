@@ -47,7 +47,8 @@ with patch.object(herdr, "_ensure_server", side_effect=lambda: calls.append("ser
             raise AssertionError("herdr accepted a name that requires rewriting")
 assert not calls, "herdr performed a side effect before rejecting an unsafe name"
 
-import nogg
+from importlib.machinery import SourceFileLoader
+nogg = SourceFileLoader("nogg", str(here / "nogg")).load_module()
 with patch.object(nogg, "session_name_in_use", return_value=False):
     generated = nogg.gen_session_name("lead", "supply-doc-v0zu.1")
 assert generated.startswith("sf-lead-supply-doc-v0zu_1-")
