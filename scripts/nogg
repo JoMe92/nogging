@@ -2707,7 +2707,7 @@ def gen_session_name(role_slug, bead_id, backend=None):
     returns a name that is already in use; never reuses or overwrites one."""
     for _ in range(64):
         nonce = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S") + "-" + os.urandom(2).hex()
-        name = re.sub(r"[^a-z0-9_.-]", "-", f"sf-{role_slug}-{bead_id}-{nonce}".lower())
+        name = session_backend_module().safe_session_name(f"sf-{role_slug}-{bead_id}-{nonce}")
         if not session_name_in_use(name, backend):
             return name
     raise RuntimeError("could not generate a collision-free session name; "
@@ -6824,7 +6824,8 @@ def session_resume_when_ready(name, message=None, poll_interval=60):
 # / `stop` / `restart` drive the service so the operator does not fight the
 # generic `session` commands.
 def orchestrator_slug(): return slugify(ORCHESTRATOR_HOME.name)
-def orchestrator_session_name(): return f"nogg-orchestrator-{orchestrator_slug()}"
+def orchestrator_session_name():
+    return session_backend_module().safe_session_name(f"nogg-orchestrator-{orchestrator_slug()}")
 def orchestrator_sessions_dir():
     return ORCHESTRATOR_HOME / scfg("session_state_dir", ".nogging/state/sessions")
 def orchestrator_local_lock_note():
