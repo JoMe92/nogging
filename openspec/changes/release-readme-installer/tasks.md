@@ -6,7 +6,7 @@
 
 - [x] TASK-RRI-003 [standard] Per design Decision 4: add bin/lib/report.js: a header, changes grouped by file class with counts, each path once, unchanged files counted, new --verbose, one review block for preserved and forced files, deduplicated warnings. Check: new scripts/installer-output.test.sh; cli and manifest-legacy-upgrade suites adjusted for wording only; scripts/test. Branch feat/ (after TASK-RRI-002).
 
-- [ ] TASK-RRI-004 [standard] Per design Decision 5: numbered next steps after init, update and remove; ready verdict points to /plan or worktree plan; gaps deduplicated, no internal commands, a fix line each; npx doctor ends with the same verdict and exit status; update docs/acceptance.md step 3. Check: new scripts/installer-next-steps.test.sh; acceptance.sh and release-smoke-test matching unchanged; scripts/test. Branch feat/ (after TASK-RRI-003).
+- [x] TASK-RRI-004 [standard] Per design Decision 5: numbered next steps after init, update and remove; ready verdict points to /plan or worktree plan; gaps deduplicated, no internal commands, a fix line each; npx doctor ends with the same verdict and exit status; update docs/acceptance.md step 3. Check: new scripts/installer-next-steps.test.sh; acceptance.sh and release-smoke-test matching unchanged; scripts/test. Branch feat/ (after TASK-RRI-003).
 
 ## 2. Bootstrap and changelog (fix/ and chore/, start at once)
 

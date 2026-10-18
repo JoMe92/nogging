@@ -1,10 +1,10 @@
 ## 1. Launch flag
 
-- [ ] TASK-CEF-001 [standard] Per design Decisions 1-4, 6: accept `--effort` for Codex in scripts/nogg (validated before side effects, forwarded as --reasoning-effort, over tier and profile, source launch), keep selection_tier with --tier --model --effort, refuse pi/antigravity with the Claude-and-Codex wording, decide the resume case. Stub tests in session-effort and session-tier suites. Check: those, session-model-forwarding, model-selection; scripts/test. Branch feat/.
+- [x] TASK-CEF-001 [standard] Per design Decisions 1-4, 6: accept `--effort` for Codex in scripts/nogg (validated before side effects, forwarded as --reasoning-effort, over tier and profile, source launch), keep selection_tier with --tier --model --effort, refuse pi/antigravity with the Claude-and-Codex wording, decide the resume case. Stub tests in session-effort and session-tier suites. Check: those, session-model-forwarding, model-selection; scripts/test. Branch feat/.
 
 ## 2. Docs
 
-- [ ] TASK-CEF-002 [routine] Per design Decisions 2, 3, 5: update docs/model-selection.md (Codex effort precedence, Codex cost policy with Luna default, Sol only with effort low for extremely hard tasks, both command spellings), running-work-in-sessions.md, using-with-codex.md and architecture.md. Check: model-selection and runtime-guidance-docs suites with a new policy/spelling assertion; scripts/test. Branch docs/.
+- [x] TASK-CEF-002 [routine] Per design Decisions 2, 3, 5: update docs/model-selection.md (Codex effort precedence, Codex cost policy with Luna default, Sol only with effort low for extremely hard tasks, both command spellings), running-work-in-sessions.md, using-with-codex.md and architecture.md. Check: model-selection and runtime-guidance-docs suites with a new policy/spelling assertion; scripts/test. Branch docs/.
 
 ## 3. Orchestrator guidance
 
