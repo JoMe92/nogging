@@ -190,21 +190,25 @@ The session record keeps `requested_model`, `model_source` (`launch`,
 `runtime-default`: Nogging records that the runtime chose, not a guess at which
 model it chose. A record written before this was recorded shows `-`.
 
-### Choosing Claude reasoning effort
+### Choosing reasoning effort
 
-A Claude session can request a reasoning effort for that launch only:
+A Claude or Codex session can request a reasoning effort for that launch only:
 
 ```bash
-./scripts/nogg session launch --role lead --bead SPEC-xxx --effort high
+./scripts/nogg session launch --role lead --bead SPEC-xxx --agent claude --effort high
+./scripts/nogg session launch --role lead --bead SPEC-xxx --agent codex --effort low
 ```
 
-Precedence is `--effort`, then an optional `effort` key in the Claude launch
-profile, then Claude's own default (no flag is passed). Allowed values are
-exactly `low`, `medium`, `high`, `xhigh` and `max`; anything else (including
-`auto`, `none`, case variants and an invalid profile value that a valid
-`--effort` would override) refuses before any worktree, settings, record or
-backend side effect. The shipped profiles omit `effort`, so defaults are
-unchanged. To opt in, add it to a complete custom profile JSON:
+Precedence is `--effort`, then a tier effort (when `--tier` is passed), then an
+optional effort key in the launch profile (`effort` for Claude,
+`model_reasoning_effort` for Codex), then the runtime default (no effort flag is
+passed). For Claude, allowed values are exactly `low`, `medium`, `high`, `xhigh`
+and `max`. For Codex, allowed values are `none`, `minimal`, `low`, `medium`,
+`high`, `xhigh`, `max` and `ultra`. Anything else (including case variants and
+an invalid profile value that a valid `--effort` would override) refuses before
+any worktree, settings, record or backend side effect. The shipped profiles omit
+profile effort, so defaults are unchanged. To opt in for Claude, add `effort` to
+a complete custom profile JSON:
 
 ```json
 {
@@ -213,15 +217,19 @@ unchanged. To opt in, add it to a complete custom profile JSON:
 }
 ```
 
-Nogging strips the `effort` key from the generated per-session settings and
+For Codex, `model_reasoning_effort` can be configured in the launch profile's
+`.codex.toml`.
+
+Nogging strips the `effort` key from Claude's generated per-session settings and
 passes it as Claude's native `--effort <level>` argv (also on exact resumes);
-neither the source profile nor `~/.claude` is written. `--effort` is Claude-only:
-Codex keeps `model_reasoning_effort` in its `.codex.toml` profile, and Pi and
-Antigravity refuse both keys. A helper without the `claude-effort-forwarding`
-capability refuses the launch with an update remedy rather than dropping the
-effort. If the Claude CLI rejects the level for the chosen model, the session
-fails visibly and is not retried at another effort. Flag verified against
-Claude Code 2.1.296; which models accept which levels is the runtime's call.
+neither the source profile nor `~/.claude` is written. For Codex, launch
+`--effort` reaches Codex through the wrapper's `--reasoning-effort <level>`
+transport. `--effort` is Claude- and Codex-only: Pi and Antigravity refuse the
+flag before any side effects. A helper without the `claude-effort-forwarding`
+capability refuses a Claude launch with an update remedy rather than dropping the
+effort. If the runtime CLI rejects the level for the chosen model, the session
+fails visibly and is not retried at another effort. Which models accept which
+levels is the runtime's call.
 
 `session list` shows the request and its source in the `MODEL` cell for Claude
 and Codex: `effort=high (profile)`, `effort=low (launch)` or

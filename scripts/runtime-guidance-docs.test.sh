@@ -23,7 +23,8 @@ require("docs/using-with-codex.md", "host-owned Dolt server", "including loopbac
         "Dolt server unreachable at 127.0.0.1:3308", "socket: operation not permitted",
         "--profile trusted", "operator", "--profile restricted", "--full-access",
         "refused before creating a session or worktree", "profile=", "prompt=",
-        "network-off sandbox cannot reach a Dolt-server-backed `bd`")
+        "network-off sandbox cannot reach a Dolt-server-backed `bd`",
+        "CODEX_REASONING_EFFORTS", "gpt-6-luna", "--model gpt-6.1-sol --effort low")
 require("docs/using-with-antigravity.md", "`search_web`", "`query` is a non-empty string",
         "Trusted sessions may run", "restricted sessions must approve it",
         "`invalid search query`", "sanitized tool name", "`<invalid>`",
