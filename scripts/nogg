@@ -8628,14 +8628,11 @@ def main():
     rebase_mode = wtr.add_mutually_exclusive_group()
     rebase_mode.add_argument("--continue", dest="rebase_continue", action="store_true")
     rebase_mode.add_argument("--abort", dest="rebase_abort", action="store_true")
-<<<<<<< HEAD
+    wtr.add_argument("--allow-live-session", action="store_true",
+                     help="operator-confirmed override for a parked session using the worktree")
     wtrepair = wtsub.add_parser("repair", help="dry-run or safely repair reproducible worktree paths")
     wtrepair.add_argument("record", help="implementation worktree record filename")
     wtrepair.add_argument("--apply", action="store_true", help="snapshot and restore reproducible paths")
-=======
-    wtr.add_argument("--allow-live-session", action="store_true",
-                     help="operator-confirmed override for a parked session using the worktree")
->>>>>>> 037034f (feat(worktree): broker fenced rebases [SPEC-ipmb])
     pr = sub.add_parser("pr", help="create or locate an implementation pull request")
     prsub = pr.add_subparsers(dest="pr_command", required=True)
     pro = prsub.add_parser("open", help="create or locate an open PR targeting develop")
@@ -8765,12 +8762,8 @@ def main():
         if args.worktree_command == "plan": planning_worktree(args.planning_id, args.description, args.path)
         elif args.worktree_command == "implement": implementation_worktree(args.bead_id, args.branch, args.path)
         elif args.worktree_command == "cleanup": cleanup_worktree(args.record)
-<<<<<<< HEAD
-        elif args.worktree_command == "rebase": worktree_rebase(args.record, "continue" if args.rebase_continue else "abort" if args.rebase_abort else "start")
-        elif args.worktree_command == "repair": worktree_repair(args.record, args.apply)
-=======
         elif args.worktree_command == "rebase": worktree_rebase(args.record, "continue" if args.rebase_continue else "abort" if args.rebase_abort else "start", args.allow_live_session)
->>>>>>> 037034f (feat(worktree): broker fenced rebases [SPEC-ipmb])
+        elif args.worktree_command == "repair": worktree_repair(args.record, args.apply)
     elif args.command == "pr":
         if args.pr_command == "open": pull_request(args.plan, args.task, args.decision, args.validation, args.limitation)
         elif args.pr_command == "ci": pull_request_ci()
