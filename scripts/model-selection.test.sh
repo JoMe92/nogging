@@ -193,7 +193,7 @@ assert "{check}" in models_help, "models check"
 doc = (root / "docs/model-selection.md").read_text()
 for snippet in ["scripts/nogg models check", "--agent agy", "--json", "session launch",
                 "--tier standard", "explicit `--model` > tier > profile `model` > runtime default",
-                "explicit `--effort` > tier > profile `model_reasoning_effort` > runtime default",
+                "explicit `--effort` > project override > table > profile `model_reasoning_effort` > runtime default",
                 "selection_tier", "tier=<tier>", "--agent pi", "claude-effort-forwarding",
                 "quota never lowers a tier", "## Drift", "Product Owner Codex cost policy",
                 "--model gpt-6-luna", "--model gpt-6.1-sol --effort low"]:
