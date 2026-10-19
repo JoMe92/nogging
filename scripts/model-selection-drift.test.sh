@@ -10,6 +10,10 @@
 #     non-zero, timed out, empty) are reported as unavailable, never as drift;
 #   - an installed table older than the packaged one, and an invalid table,
 #     each yield a NOTE; the packaged version constant matches the template;
+#   - project tier_overrides (TASK-TEO-003): a malformed block and a redundant
+#     override (equal to the installed table's effort) each yield a NOTE; drift
+#     NOTEs are computed from the table alone, so an override never hides or
+#     creates one; no block means no override NOTE;
 #   - a full `doctor` run prints the NOTEs and exits exactly as it does
 #     without drift.
 set -euo pipefail
@@ -177,6 +181,74 @@ expect "doctor prints the unavailable Codex source" present "NOTE  model-selecti
   || { cp "$out.clean" "$out"; bad "doctor without drift"; }
 [[ "$clean" == "$drift" ]] && ok "doctor exit status unchanged by drift ($clean)" \
   || { echo "clean=$clean drift=$drift" >"$out"; bad "doctor exit status changed"; }
+rm -f "$out.clean"
+
+# Project tier_overrides (TEO-003): NOTEs only, drift stays table-derived.
+set_overrides() {  # set_overrides <root> <json>
+  python3 - "$1/.nogging/config.json" "$2" <<'PY'
+import json, sys
+c = json.load(open(sys.argv[1])); c["tier_overrides"] = json.loads(sys.argv[2])
+json.dump(c, open(sys.argv[1], "w"), indent=2)
+PY
+}
+r="$work/ovr-none"; make_root "$r"
+notes "$r" "$with_agy" >"$out"
+expect "no tier_overrides block: no override NOTE" absent "tier_overrides"
+set_overrides "$r" '{}'
+notes "$r" "$with_agy" >"$out"
+expect "empty tier_overrides block: no override NOTE" absent "tier_overrides"
+
+r="$work/ovr-ok"; make_root "$r"
+set_overrides "$r" '{"complex": {"codex": {"effort": "low"}}}'
+notes "$r" "$with_agy" >"$out"
+[[ ! -s "$out" ]] && ok "effective override differing from the table: no NOTE" || bad "unexpected NOTE for a differing override"
+
+r="$work/ovr-redundant"; make_root "$r"
+table_effort=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["agents"]["codex"]["complex"]["effort"])' "$template")
+set_overrides "$r" "{\"complex\": {\"codex\": {\"effort\": \"$table_effort\"}}}"
+notes "$r" "$with_agy" >"$out"
+expect "redundant override: NOTE names tier, agent and effort" present \
+  "model-selection: tier_overrides.complex.codex.effort $table_effort equals the installed table's effort; it can be removed"
+expect "redundant override: no malformed NOTE" absent "tier launches refuse"
+
+r="$work/ovr-bad"; make_root "$r"
+set_overrides "$r" '{"complex": {"codex": {"effort": "turbo"}}, "bogus": {}}'
+notes "$r" "$with_agy" >"$out"
+expect "malformed block: NOTE names the first offending key" present \
+  "model-selection: tier_overrides: unknown tier 'bogus'"
+expect "malformed block: launch consequence named" present "tier launches refuse until it is fixed"
+expect "malformed block: remedy named" present "scripts/nogg models check"
+expect "malformed block: no redundant NOTE" absent "can be removed"
+set_overrides "$r" '"nope"'
+notes "$r" "$with_agy" >"$out"
+expect "non-object block: NOTE" present "model-selection: tier_overrides: must be an object"
+
+# An override plus a retired model prints the same drift NOTE as without it.
+r="$work/ovr-drift"; make_root "$r"
+AGY_STUB_LIST="$work/agy-short" CODEX_HOME="$work/codex-short" notes "$r" "$with_agy" >"$work/drift-plain"
+set_overrides "$r" '{"complex": {"codex": {"effort": "low"}}, "routine": {"codex": {"effort": "high"}}}'
+AGY_STUB_LIST="$work/agy-short" CODEX_HOME="$work/codex-short" notes "$r" "$with_agy" >"$out"
+cmp -s "$work/drift-plain" "$out" && ok "override plus retired model: identical drift NOTEs" || bad "override changed the drift NOTEs"
+expect "override plus retired model: drift NOTE still present" present "codex routine model gpt-6-luna is not listed"
+# A malformed block and a broken table each yield their own NOTE.
+set_overrides "$r" '{"complex": {"codex": {"effort": "turbo"}}}'
+python3 - "$r/.nogging/model-selection.json" <<'PY'
+import json, sys
+t = json.load(open(sys.argv[1])); del t["agents"]["codex"]["complex"]
+json.dump(t, open(sys.argv[1], "w"))
+PY
+notes "$r" "$with_agy" >"$out"
+expect "broken table and malformed block: table NOTE" present "model-selection: model-selection table"
+expect "broken table and malformed block: block NOTE" present "tier launches refuse until it is fixed"
+
+# Doctor exit status is unchanged by an override NOTE.
+r="$work/ovr-doctor"; make_root "$r"
+NOGGING_ROOT="$r" PATH="$with_agy" "$nogg" doctor >"$out.clean" 2>&1 || rc=$?; clean=${rc:-0}; unset rc
+set_overrides "$r" '{"complex": {"codex": {"effort": "turbo"}}}'
+NOGGING_ROOT="$r" PATH="$with_agy" "$nogg" doctor >"$out" 2>&1 || rc=$?; ovr=${rc:-0}; unset rc
+expect "doctor prints the malformed tier_overrides NOTE" present "NOTE  model-selection: tier_overrides.complex.codex.effort"
+[[ "$clean" == "$ovr" ]] && ok "doctor exit status unchanged by an override NOTE ($clean)" \
+  || { echo "clean=$clean ovr=$ovr" >"$out"; bad "doctor exit status changed by override NOTE"; }
 rm -f "$out.clean"
 
 exit "$fail"
