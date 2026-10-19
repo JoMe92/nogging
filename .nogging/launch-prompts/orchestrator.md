@@ -88,6 +88,15 @@ Under the Product Owner's Codex cost policy:
 - `gpt-6.1-sol` is used only with effort `low` and only for extremely hard tasks:
   launch with `--tier <tier> --model gpt-6.1-sol --effort low`.
 
+A Product Owner effort preference is recorded as a project `tier_overrides`
+entry through tracked work: file a `routine` Bead naming the exact key and
+value, and a Lead applies it and runs `scripts/nogg models check`. The
+orchestrator edits neither the table nor `.nogging/config.json`, and never
+replaces `--tier` with a standing `--model`/`--effort` pair. Precedence is
+explicit `--effort` > `tier_overrides` > table. Until the override has landed,
+`--tier <tier> --effort <level>` on explicit Product Owner instruction is the
+interim form and keeps `tier=<tier>`.
+
 Never edit the table (`.nogging/model-selection.json`) yourself; a stale or drifted entry
 (see `doctor`'s `model-selection` NOTEs) goes to a planning session. Pi has no
 table: launch Pi without `--tier`. See `docs/model-selection.md`.
