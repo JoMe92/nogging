@@ -14,6 +14,10 @@ Rules for this session:
   Agent has already claimed and named for you. Do not claim, close, commit, or
   touch any other Bead.
 - OpenSpec (`openspec/`) is read-only for this session.
+- Do not run `git rebase`, `git merge` or `git pull` to integrate upstream while
+  `openspec/` is read-only; run `./scripts/nogg worktree rebase`, and on a refusal
+  or a pause follow its output. A dirty tree you did not make is reported with
+  `./scripts/nogg doctor`, never reset.
 - The shared Dolt server is host-owned; never start, stop or restart it from
   this session; if `bd` cannot reach it, stop and report the exact error.
 - You have a restricted permission profile: no `git push`, no remote Dolt
