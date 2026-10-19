@@ -3685,13 +3685,28 @@ def model_selection_notes():
     local catalog, an Antigravity table model absent from a bounded `agy
     models` probe, and an installed table older than the packaged one. An
     unavailable source is reported as unavailable, not as drift. Claude entries
-    are only format-checked (by the loader); Claude has no list command."""
+    are only format-checked (by the loader); Claude has no list command.
+    Project `tier_overrides` add two NOTEs (a malformed block, an override equal
+    to the table's effort) and never touch the drift findings: an override
+    cannot change a model."""
+    overrides = CFG.get("tier_overrides", {})
+    override_errors = tier_overrides_errors(overrides)
+    notes = []
+    if override_errors:
+        notes.append(f"model-selection: {override_errors[0]}; tier launches refuse until it is "
+                     "fixed (run `scripts/nogg models check`)")
     try:
         table = load_model_selection()
     except RuntimeError as exc:
         return [f"model-selection: {str(exc).splitlines()[0]}; `session launch --tier` refuses "
-                "until it is fixed (run `scripts/nogg models check`)"]
-    notes = []
+                "until it is fixed (run `scripts/nogg models check`)"] + notes
+    if not override_errors:
+        for tier in MODEL_SELECTION_TIERS:
+            for agent in ("claude", "codex"):
+                effort = overrides.get(tier, {}).get(agent, {}).get("effort")
+                if effort is not None and effort == table["agents"][agent][tier].get("effort"):
+                    notes.append(f"model-selection: tier_overrides.{tier}.{agent}.effort {effort} "
+                                 "equals the installed table's effort; it can be removed")
     if table["table_version"] < PACKAGED_MODEL_SELECTION_TABLE_VERSION:
         notes.append(f"model-selection: installed table_version {table['table_version']} is older "
                      f"than the packaged {PACKAGED_MODEL_SELECTION_TABLE_VERSION}; review "
