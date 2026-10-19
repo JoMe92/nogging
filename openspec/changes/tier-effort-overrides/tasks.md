@@ -14,7 +14,7 @@
 
 ## 3. Packed verification (Part A)
 
-- [ ] TASK-TEO-006 [standard] Per design Decisions 1, 5, 11: verify in a packed install that init scaffolds the empty tier_overrides block, update keeps a consumer's block byte for byte, and an installed-consumer tier launch fixture and `models check` honour it. Check: extend scripts/packed-model-selection.test.sh first and red (no network, no real agent); scripts/test with NOGG_* cleared. Branch test/. Depends on TEO-001, TEO-002, TEO-003.
+- [x] TASK-TEO-006 [standard] Per design Decisions 1, 5, 11: verify in a packed install that init scaffolds the empty tier_overrides block, update keeps a consumer's block byte for byte, and an installed-consumer tier launch fixture and `models check` honour it. Check: extend scripts/packed-model-selection.test.sh first and red (no network, no real agent); scripts/test with NOGG_* cleared. Branch test/. Depends on TEO-001, TEO-002, TEO-003.
 
 ## 4. Shipped defaults (Part B) - DECISION-NEEDED
 
