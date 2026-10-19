@@ -16,19 +16,16 @@
 
 - [x] TASK-TEO-006 [standard] Per design Decisions 1, 5, 11: verify in a packed install that init scaffolds the empty tier_overrides block, update keeps a consumer's block byte for byte, and an installed-consumer tier launch fixture and `models check` honour it. Check: extend scripts/packed-model-selection.test.sh first and red (no network, no real agent); scripts/test with NOGG_* cleared. Branch test/. Depends on TEO-001, TEO-002, TEO-003.
 
-## 4. Shipped defaults (Part B) - DECISION-NEEDED
+## 4. Shipped defaults (Part B)
 
-- [ ] TASK-TEO-007 [standard] [DECISION-NEEDED] Part B: do NOT start until the Product Owner decides and records it on this Bead. Decision: change the shipped complex defaults for all projects (Claude opus xhigh to medium, Codex sol high to low), keep them, or change one agent. If decided: edit templates/model-selection.json, docs/model-selection.md and pinning tests (design Decision 10). Branch build/. No dependency edge; stays blocked.
+- [ ] TASK-TEO-007 [standard] Part B: per PO decision 2026-10-19, change the SHIPPED complex default for Codex ONLY from gpt-6.1-sol effort high to effort low; Claude entries stay unchanged (opus xhigh). Scope: the Codex complex entry in templates/model-selection.json (bump table_version), docs/model-selection.md, the pinning/drift tests and the doctor model-selection drift NOTE expectations (design Decision 10). Must not touch Claude entries. Branch build/.
 
 ## Dependency contract
 
 Explicit blocking edges (`A <- B` means A depends on B):
 TEO-002<-TEO-001; TEO-003<-TEO-001; TEO-006<-TEO-001,TEO-002,TEO-003.
 TEO-001, TEO-004 and TEO-005 have no prerequisites and run in parallel. Markdown
-order does not block work. TEO-007 has no edge in either direction: it is
-materialized, then set `blocked` with the `decision-needed` label and a note
-stating the open decision; nobody unblocks it except the Product Owner's
-recorded decision. Before allocating a dependent worktree, verify every
+order does not block work. TEO-007 has no edge in either direction; the Product Owner decision is recorded, so it is ready on materialization. Before allocating a dependent worktree, verify every
 prerequisite execution commit has reached develop, not merely that its Bead is
 closed.
 

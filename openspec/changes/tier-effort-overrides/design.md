@@ -109,11 +109,9 @@ Facts on `develop` at `fc38f9e` (after archiving `codex-effort-flag`):
     tests that pin them. Note its real reach: `update` never overwrites an
     installed `.nogging/model-selection.json`, so existing projects keep their
     values and only get the doctor "installed table_version is older" NOTE;
-    new installs get the new defaults. The decision for the Product Owner is
-    stated in the task. The task is created `blocked`, labelled
-    `decision-needed`, with no dependency edge in either direction: an edge on
-    Part A would make it ready when Part A closes, which is exactly what must not
-    happen.
+    new installs get the new defaults. The Product Owner decided on 2026-10-19: change
+    Codex `complex` (gpt-6.1-sol) from `high` to `low` only; Claude entries stay
+    unchanged. The task has no dependency edge.
 11. **Tests are failing-first and stub-only.** Each code task writes its test
     first and shows it red before implementing. Launch tests reuse the
     `session-tier.test.sh` fixtures (PATH `bd`/`tmux` stubs and
