@@ -566,14 +566,42 @@ def cleanup_worktree(record_name):
     path.unlink()
     print(f"worktree retired: {target} ({branch})")
 
-def worktree_rebase(record_name=None, mode="start"):
+def worktree_rebase(record_name=None, mode="start", allow_live_session=False):
     """Rebase one clean implementation worktree onto the current origin/develop.
 
-    The command is intentionally unfenced only: callers whose OpenSpec mount is
-    read-only must use the host broker added by the follow-up task.
+    Fenced callers send the closed request to the host-side sandbox broker;
+    unfenced callers run the engine directly.
     """
     if os.environ.get("NOGG_OPENSPEC_FENCED") == "1":
-        raise RuntimeError("worktree rebase requires an unfenced caller; ask the operator to run it")
+        if allow_live_session:
+            raise RuntimeError("--allow-live-session is available only to an unfenced operator")
+        broker = os.environ.get("NOGG_TASK_DONE_SOCKET")
+        if not broker:
+            raise RuntimeError("worktree rebase: this session has no rebase broker; nothing was changed; ask the operator to run `./scripts/nogg worktree rebase <record> --allow-live-session` from an unfenced shell, or relaunch")
+        checkout = str(Path.cwd().resolve())
+        request = {"action": "rebase", "checkout": checkout, "mode": mode,
+                   "session": os.environ.get("NOGG_SESSION_NAME")}
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                client.settimeout(300)
+                client.connect(broker)
+                client.sendall(json.dumps(request).encode())
+                client.shutdown(socket.SHUT_WR)
+                chunks = []
+                while chunk := client.recv(65536):
+                    chunks.append(chunk)
+            response = json.loads(b"".join(chunks))
+        except (OSError, ValueError, socket.timeout) as exc:
+            raise RuntimeError("worktree rebase: this session's sandbox broker is unavailable or predates rebase brokering; nothing was changed; ask the operator to run `./scripts/nogg worktree rebase <record> --allow-live-session` from an unfenced shell, or relaunch") from exc
+        if not response.get("ok"):
+            error = response.get("error", "")
+            if "closed rebase request" in error or not response.get("status"):
+                raise RuntimeError("worktree rebase: this session's sandbox broker predates rebase brokering; nothing was changed; ask the operator to run `./scripts/nogg worktree rebase <record> --allow-live-session` from an unfenced shell, or relaunch")
+            raise RuntimeError(error or "worktree rebase request refused")
+        print(response.get("output", ""), end="")
+        if response.get("status") == "paused":
+            raise SystemExit(3)
+        return
     state = canonical_repository_state(ROOT)
     main = Path(state["main_checkout"])
     worktree_state = main / scfg("state_dir", ".nogging/state") / "worktrees"
@@ -635,7 +663,8 @@ def worktree_rebase(record_name=None, mode="start"):
             working_dir = session.get("working_dir")
             if (session.get("state") in SESSION_ACTIVE_STATES and isinstance(working_dir, str)
                     and path_is_within(working_dir, target)
-                    and session.get("name") != os.environ.get("NOGG_SESSION_NAME")):
+                    and session.get("name") != os.environ.get("NOGG_SESSION_NAME")
+                    and not allow_live_session):
                 name = session.get("name") or session_path.stem
                 raise RuntimeError(f"target worktree is in use by active session {name}")
     except (OSError, ValueError, TypeError) as exc:
@@ -8599,9 +8628,14 @@ def main():
     rebase_mode = wtr.add_mutually_exclusive_group()
     rebase_mode.add_argument("--continue", dest="rebase_continue", action="store_true")
     rebase_mode.add_argument("--abort", dest="rebase_abort", action="store_true")
+<<<<<<< HEAD
     wtrepair = wtsub.add_parser("repair", help="dry-run or safely repair reproducible worktree paths")
     wtrepair.add_argument("record", help="implementation worktree record filename")
     wtrepair.add_argument("--apply", action="store_true", help="snapshot and restore reproducible paths")
+=======
+    wtr.add_argument("--allow-live-session", action="store_true",
+                     help="operator-confirmed override for a parked session using the worktree")
+>>>>>>> 037034f (feat(worktree): broker fenced rebases [SPEC-ipmb])
     pr = sub.add_parser("pr", help="create or locate an implementation pull request")
     prsub = pr.add_subparsers(dest="pr_command", required=True)
     pro = prsub.add_parser("open", help="create or locate an open PR targeting develop")
@@ -8731,8 +8765,12 @@ def main():
         if args.worktree_command == "plan": planning_worktree(args.planning_id, args.description, args.path)
         elif args.worktree_command == "implement": implementation_worktree(args.bead_id, args.branch, args.path)
         elif args.worktree_command == "cleanup": cleanup_worktree(args.record)
+<<<<<<< HEAD
         elif args.worktree_command == "rebase": worktree_rebase(args.record, "continue" if args.rebase_continue else "abort" if args.rebase_abort else "start")
         elif args.worktree_command == "repair": worktree_repair(args.record, args.apply)
+=======
+        elif args.worktree_command == "rebase": worktree_rebase(args.record, "continue" if args.rebase_continue else "abort" if args.rebase_abort else "start", args.allow_live_session)
+>>>>>>> 037034f (feat(worktree): broker fenced rebases [SPEC-ipmb])
     elif args.command == "pr":
         if args.pr_command == "open": pull_request(args.plan, args.task, args.decision, args.validation, args.limitation)
         elif args.pr_command == "ci": pull_request_ci()
