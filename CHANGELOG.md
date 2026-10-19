@@ -11,6 +11,12 @@ and GitHub Releases for that history.
 
 ### Added
 
+- Project effort overrides: a `tier_overrides` block in `.nogging/config.json`
+  changes the effort of one tier and agent (Claude, Codex) with precedence
+  explicit `--effort` > override > table. `models` shows `(project; table X)`,
+  `session list` shows `(project)`, `models check` validates the block, and
+  `doctor` NOTEs a malformed or redundant override. The shipped table is
+  unchanged.
 - `nogg worktree rebase` brings an implementation branch up to date with
   `origin/develop` on the side that can write `openspec/` (directly when
   unfenced, through the sandbox broker for a fenced Lead), with ordered
