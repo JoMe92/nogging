@@ -3711,10 +3711,13 @@ def model_selection_notes():
     return notes
 def resolve_launch_tier(tier, agent, resume=None):
     """Resolve `session launch --tier` for an already resolved agent, before any
-    side effect. Returns `{tier, model, effort}`; refuses (with a remedy) an
-    unknown tier, a missing or invalid table, and an agent without entries
-    (Pi). An exact resume keeps the selection recorded for that conversation
-    and never re-resolves against a possibly changed table."""
+    side effect. Returns `{tier, model, effort, effort_source, table_effort}`
+    (`effort` is the effective one: a project `tier_overrides` entry, else the
+    table's); refuses (with a remedy) an unknown tier, a missing or invalid
+    table, a malformed `tier_overrides` block, and an agent without entries
+    (Pi). An exact Claude/Antigravity resume keeps the selection recorded for
+    that conversation and never re-resolves against a possibly changed table
+    or re-reads `tier_overrides`."""
     if tier not in MODEL_SELECTION_TIERS:
         raise RuntimeError(f"--tier {tier!r} is not a model-selection tier; choose one of "
                            f"{', '.join(MODEL_SELECTION_TIERS)} (see `nogg models`); launch refused")
@@ -3737,14 +3740,25 @@ def resolve_launch_tier(tier, agent, resume=None):
                                f"{rec['selection_tier']!r}; an exact resume keeps its recorded "
                                f"selection, so pass --tier {rec['selection_tier']} or drop --tier; "
                                "launch refused")
+        effort = rec.get("selection_tier_effort")
+        # Records predating the source field were table-derived.
+        source = (rec.get("selection_tier_effort_source") or "table") if effort is not None else None
         return {"tier": tier, "model": rec.get("requested_model"),
-                "effort": rec.get("selection_tier_effort")}
+                "effort": effort, "effort_source": source, "table_effort": None}
+    overrides = CFG.get("tier_overrides", {})
+    override_errors = tier_overrides_errors(overrides)
+    if override_errors:
+        raise RuntimeError("invalid .nogging/config.json tier_overrides:\n  "
+                           + "\n  ".join(override_errors)
+                           + f"\nrun scripts/nogg models check, fix or remove the block; "
+                           f"--tier {tier} launch refused")
     try:
         table = load_model_selection()
     except RuntimeError as exc:
         raise RuntimeError(f"{exc}\n--tier {tier} launch refused")
-    entry = model_selection_entry(table, agent, tier)
-    return {"tier": tier, "model": entry["model"], "effort": entry["effort"]}
+    entry = model_selection_entry(table, agent, tier, overrides)
+    return {"tier": tier, "model": entry["model"], "effort": entry["effort"],
+            "effort_source": entry["effort_source"], "table_effort": entry["table_effort"]}
 CODEX_SANDBOX_MODES = ("read-only", "workspace-write", "danger-full-access")
 CODEX_APPROVAL_POLICIES = ("on-request", "never")
 def load_codex_spec(path):
@@ -4809,23 +4823,27 @@ def _session_launch(role, bead, cwd, read_only, owner,
     # `model_reasoning_effort` over runtime default; it travels through the
     # wrapper's existing --reasoning-effort (a `-c` override, which the exact
     # resume path already requires, so a resume carries it too).
-    # Claude effort: explicit `--effort` over tier over profile `effort` over
-    # runtime default; it travels as the wrapper's `--effort` under the
+    # Claude effort: explicit `--effort` over tier (a project `tier_overrides`
+    # entry, else the table) over profile `effort` over runtime default; it travels as the wrapper's `--effort` under the
     # `claude-effort-forwarding` contract check. Antigravity's effort is part
     # of its model name.
     tier_effort = tier_selection and tier_selection["effort"]
+    tier_effort_source = tier_selection and tier_selection["effort_source"]
+    # Provenance of a tier-supplied effort: `project` for a tier_overrides
+    # entry, otherwise `launch` (the table's, recorded as before).
+    tier_reasoning_source = "project" if tier_effort_source == "project" else "launch"
     if agent == "codex" and effort is not None:
         reasoning_effort = effort
         reasoning_effort_source = "launch"
     elif agent == "codex" and tier_effort is not None:
         reasoning_effort = tier_effort
-        reasoning_effort_source = "launch"
+        reasoning_effort_source = tier_reasoning_source
     elif agent == "claude":
         reasoning_effort = selected_effort
         reasoning_effort_source = effort_source
         if effort is None and tier_effort is not None:
             reasoning_effort = tier_effort
-            reasoning_effort_source = "launch"
+            reasoning_effort_source = tier_reasoning_source
     if agent == "codex" and resume is not None:
         codex_sandbox = "read-only" if read_only else codex_spec["sandbox"]
         validate_codex_resume_options(
@@ -5041,15 +5059,18 @@ def _session_launch(role, bead, cwd, read_only, owner,
         # does not guess which model that is).
         "requested_model": selected_model, "model_source": model_source,
         "reasoning_effort": reasoning_effort,
-        # Where the requested effort came from (`launch`, `profile` or
-        # `runtime-default`); recorded for Claude and Codex only. It describes
+        # Where the requested effort came from (`launch`, `profile`,
+        # `project` or `runtime-default`); recorded for Claude and Codex only. It describes
         # the launch request, never a later interactive change.
         "reasoning_effort_source": (
             reasoning_effort_source if agent in ("claude", "codex") else None),
-        # The `--tier` this launch resolved (or null), with its table effort,
+        # The `--tier` this launch resolved (or null), with its effective effort,
         # kept so an exact resume reuses the same selection.
         "selection_tier": tier_selection and tier_selection["tier"],
         "selection_tier_effort": tier_effort,
+        # `project` when selection_tier_effort is a tier_overrides entry, `table`
+        # otherwise; null without a tier and for Antigravity (no effort).
+        "selection_tier_effort_source": tier_effort_source,
         "usage_gate": usage_gate,
         "session_pid": None, "session_pid_start": None,
         # Usage attribution snapshot (session-token-usage-tracking): each launch,
