@@ -66,8 +66,7 @@ grep -q 'target worktree is dirty: unsaved.txt' "$scratch/dirty.out"
 [[ ! -e "$root/.nogging/state/rebase/implementation--spec-demo.json" ]]
 rm "$tree/unsaved.txt"
 
-# A code conflict is aborted automatically; the previous branch state returns
-# cleanly and the journal is removed (this task deliberately has no pause flow).
+# A code conflict is left paused for the writer-side continue/abort commands.
 printf '%s\n' 'lead side' >"$tree/code.txt"
 git -C "$tree" add code.txt
 git -C "$tree" commit -q -m 'fix: change code side [SPEC-demo]'
@@ -79,8 +78,10 @@ git -C "$root" push -q origin develop
 if run_rebase >"$scratch/conflict.out" 2>&1; then
   echo 'conflicting rebase unexpectedly succeeded' >&2; exit 1
 fi
-grep -q "rebase conflict; aborted and restored $conflict_tip" "$scratch/conflict.out"
-[[ "$(git -C "$tree" rev-parse HEAD)" == "$conflict_tip" ]]
+grep -q 'code rebase conflict paused' "$scratch/conflict.out"
+[[ "$(git -C "$tree" rev-parse refs/heads/fix/demo)" == "$conflict_tip" ]]
+[[ -d "$(git -C "$tree" rev-parse --absolute-git-dir)/rebase-merge" ]]
+run_rebase --abort >"$scratch/abort.out"
 [[ -z "$(git -C "$tree" status --porcelain)" ]]
 [[ ! -e "$root/.nogging/state/rebase/implementation--spec-demo.json" ]]
 
