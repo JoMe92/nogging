@@ -30,15 +30,15 @@ open(p, 'w').write(json.dumps(c, indent=2) + '\n')
 PY
 }
 
-r="$work/override"; make_root "$r"; set_override "$r" complex codex low
+r="$work/override"; make_root "$r"; set_override "$r" complex codex medium
 if models "$r" --agent codex --tier complex >"$out" 2>&1 \
-  && grep -q 'model=gpt-6.1-sol effort=low (project; table high)' "$out"; then
+  && grep -q 'model=gpt-6.1-sol effort=medium (project; table low)' "$out"; then
   ok "text lookup shows project override and table effort"
 else bad "text lookup shows project override and table effort"; fi
 if models "$r" --agent codex --tier complex --json >"$out" 2>&1 && python3 - "$out" <<'PY'
 import json, sys
 e = json.load(open(sys.argv[1]))
-assert e['effort'] == 'low' and e['table_effort'] == 'high' and e['effort_source'] == 'project', e
+assert e['effort'] == 'medium' and e['table_effort'] == 'low' and e['effort_source'] == 'project', e
 PY
 then ok "JSON lookup exposes effective and table effort"; else bad "JSON lookup exposes effective and table effort"; fi
 if models "$r" --json >"$out" 2>&1 && python3 - "$out" "$repo_root/templates/model-selection.json" <<'PY'

@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "table_version": "2026-10-11",
-  "researched_at": "2026-10-11",
+  "table_version": "2026-10-19",
+  "researched_at": "2026-10-19",
   "tiers": {
     "routine": {
       "summary": "Mechanical, fully specified, low blast radius.",
@@ -46,7 +46,7 @@
     "codex": {
       "routine": {"model": "gpt-6-luna", "effort": "low"},
       "standard": {"model": "gpt-6-luna", "effort": "medium"},
-      "complex": {"model": "gpt-6.1-sol", "effort": "high"}
+      "complex": {"model": "gpt-6.1-sol", "effort": "low"}
     },
     "antigravity": {
       "routine": {"model": "gemini-3.8-flash-low"},

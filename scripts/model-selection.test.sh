@@ -58,6 +58,16 @@ t = json.load(open(sys.argv[1]))
 tiers = ("routine", "standard", "complex")
 assert tuple(t["tiers"]) == tiers, t["tiers"].keys()
 assert t["table_version"] and t["researched_at"]
+assert t["table_version"] == "2026-10-19", t["table_version"]
+assert t["researched_at"] == "2026-10-19", t["researched_at"]
+assert t["agents"]["codex"]["complex"] == {"model": "gpt-6.1-sol", "effort": "low"}
+# This task changes Codex only. Pin the full Claude subtree so every entry,
+# including complex opus/xhigh, remains unchanged.
+assert t["agents"]["claude"] == {
+    "routine": {"model": "claude-sonnet-5-5", "effort": "low"},
+    "standard": {"model": "claude-sonnet-5-5", "effort": "high"},
+    "complex": {"model": "claude-opus-5-5", "effort": "xhigh"},
+}, t["agents"]["claude"]
 for agent in ("claude", "codex", "antigravity"):
     for tier in tiers:
         entry = t["agents"][agent][tier]
@@ -137,7 +147,7 @@ assert json.load(open(sys.argv[1])) == json.load(open(sys.argv[2]))
 PY
 then ok "--json prints the full table"; else bad "--json prints the full table"; fi
 if models "$r" --tier complex >"$out" 2>&1 && [[ $(grep -c '^complex ' "$out") == 3 ]] \
-   && grep -q "table_version=2026-10-11" "$out"; then
+   && grep -q "table_version=2026-10-19" "$out"; then
   ok "--tier filter lists every agent's entry"; else bad "--tier filter"; fi
 if models "$r" >"$out" 2>&1 && [[ $(grep -cE '^(routine|standard|complex) ' "$out") == 9 ]]; then
   ok "full table prints nine entries"; else bad "full table prints nine entries"; fi

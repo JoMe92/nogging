@@ -329,8 +329,8 @@ while True:
                ["--model", "gpt-6-luna", "-c", 'model_reasoning_effort="medium"'], [], "launch",
                "gpt-6-luna effort=medium (launch) tier=standard", tier="standard")
         launch("codex complex tier", "codex", ["--tier", "complex"],
-               ["--model", "gpt-6.1-sol", "-c", 'model_reasoning_effort="high"'], [], "launch",
-               "gpt-6.1-sol effort=high (launch) tier=complex", tier="complex")
+               ["--model", "gpt-6.1-sol", "-c", 'model_reasoning_effort="low"'], [], "launch",
+               "gpt-6.1-sol effort=low (launch) tier=complex", tier="complex")
         launch("antigravity complex tier", "agy", ["--tier", "complex"],
                ["--model", "gemini-3.8-flash-high"], ["--reasoning-effort"], "launch",
                "gemini-3.8-flash-high tier=complex", tier="complex")
