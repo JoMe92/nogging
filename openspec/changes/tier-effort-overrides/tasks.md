@@ -1,6 +1,6 @@
 ## 1. Override mechanism (Part A)
 
-- [ ] TASK-TEO-001 [standard] Per design Decisions 1-3, 7: add tier_overrides validation and the override-aware model_selection_entry (effective effort, effort_source, table_effort) in scripts/nogg; `models check` counts the block, `models` shows `(project; table X)`, a malformed block refuses; add `"tier_overrides": {}` to templates/nogging-config.json. Check: new scripts/model-selection-overrides.test.sh written first and red; model-selection suite; scripts/test. Branch feat/.
+- [x] TASK-TEO-001 [standard] Per design Decisions 1-3, 7: add tier_overrides validation and the override-aware model_selection_entry (effective effort, effort_source, table_effort) in scripts/nogg; `models check` counts the block, `models` shows `(project; table X)`, a malformed block refuses; add `"tier_overrides": {}` to templates/nogging-config.json. Check: new scripts/model-selection-overrides.test.sh written first and red; model-selection suite; scripts/test. Branch feat/.
 
 - [ ] TASK-TEO-002 [standard] Per design Decisions 3-6: apply the override in resolve_launch_tier and _session_launch (explicit --effort > override > table > profile), record selection_tier_effort_source and reasoning_effort_source project, show `(project)` in session list, keep it on exact resume, refuse a malformed block before side effects. Check: new scripts/session-tier-overrides.test.sh first and red, with test-agents.sh stubs; scripts/test. Branch fix/. Depends on TEO-001.
 

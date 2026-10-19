@@ -3538,7 +3538,47 @@ def load_model_selection(path=None):
         raise RuntimeError(f"model-selection table {path} is invalid:\n  "
                            + "\n  ".join(errors) + f"\n{remedy}")
     return table
-def model_selection_entry(table, agent, tier):
+def tier_overrides_errors(block):
+    """Validate project tier effort overrides, naming each invalid key."""
+    errors = []
+    where = "tier_overrides"
+    if not isinstance(block, dict):
+        return [f"{where}: must be an object"]
+    for tier in sorted(block):
+        if tier not in MODEL_SELECTION_TIERS:
+            errors.append(f"{where}: unknown tier {tier!r}; choose one of "
+                          f"{', '.join(MODEL_SELECTION_TIERS)}")
+            continue
+        agents = block[tier]
+        tier_where = f"{where}.{tier}"
+        if not isinstance(agents, dict):
+            errors.append(f"{tier_where}: must be an object")
+            continue
+        for agent in sorted(agents):
+            agent_where = f"{tier_where}.{agent}"
+            if agent not in ("claude", "codex"):
+                if agent == "antigravity":
+                    errors.append(f"{agent_where}: effort is not allowed; Antigravity carries "
+                                  "effort in its model name")
+                else:
+                    errors.append(f"{tier_where}: unknown agent {agent!r}; choose claude or codex")
+                continue
+            value = agents[agent]
+            if not isinstance(value, dict):
+                errors.append(f"{agent_where}: must be an object")
+                continue
+            for key in sorted(set(value) - {"effort"}):
+                errors.append(f"{agent_where}: unknown key {key!r}")
+            if "effort" not in value:
+                errors.append(f"{agent_where}: missing key 'effort'")
+                continue
+            effort = value["effort"]
+            allowed = MODEL_SELECTION_EFFORTS[agent]
+            if not isinstance(effort, str) or effort not in allowed:
+                errors.append(f"{agent_where}.effort: {effort!r} is not one of {', '.join(allowed)}")
+    return errors
+
+def model_selection_entry(table, agent, tier, overrides=None):
     """One validated lookup as {agent, tier, model, effort}; `agy` is an alias
     for `antigravity`, whose effort lives in the model name (effort None)."""
     agent = "antigravity" if agent == "agy" else agent
@@ -3548,20 +3588,37 @@ def model_selection_entry(table, agent, tier):
     if tier not in MODEL_SELECTION_TIERS:
         raise RuntimeError(f"unknown tier {tier!r}; choose one of {', '.join(MODEL_SELECTION_TIERS)}")
     entry = table["agents"][agent][tier]
-    return {"agent": agent, "tier": tier, "model": entry["model"], "effort": entry.get("effort")}
+    table_effort = entry.get("effort")
+    effort = table_effort
+    effort_source = None if agent == "antigravity" else "table"
+    if agent in ("claude", "codex"):
+        override = (overrides or {}).get(tier, {}).get(agent, {}).get("effort")
+        if override is not None:
+            effort = override
+            effort_source = "project"
+    return {"agent": agent, "tier": tier, "model": entry["model"], "effort": effort,
+            "effort_source": effort_source, "table_effort": table_effort}
 def models_cmd(action, agent, tier, as_json, path=None):
     """`nogg models [check] [--agent A] [--tier T] [--json]`: print the table,
     a filtered view or one lookup; `check` only validates. Read-only, no probe."""
     table = load_model_selection(path)
+    overrides = CFG.get("tier_overrides", {})
+    override_errors = tier_overrides_errors(overrides)
+    if override_errors:
+        raise RuntimeError("invalid .nogging/config.json tier_overrides:\n  "
+                           + "\n  ".join(override_errors)
+                           + "\nfix the project overrides or remove the block")
     if action == "check":
         location = Path(path) if path else ROOT / MODEL_SELECTION_PATH
         print(f"model-selection table {location} is valid "
               f"(table_version {table['table_version']}, {len(MODEL_SELECTION_TIERS)} tiers x "
-              f"{len(MODEL_SELECTION_AGENTS)} agents)")
+              f"{len(MODEL_SELECTION_AGENTS)} agents, "
+              f"{sum(len(v) for v in overrides.values())} tier override"
+              f"{'s' if sum(len(v) for v in overrides.values()) != 1 else ''})")
         return
     agents = [agent] if agent else list(MODEL_SELECTION_AGENTS)
     tiers = [tier] if tier else list(MODEL_SELECTION_TIERS)
-    entries = [model_selection_entry(table, a, t) for t in tiers for a in agents]
+    entries = [model_selection_entry(table, a, t, overrides) for t in tiers for a in agents]
     if as_json:
         if agent and tier:
             print(json.dumps(entries[0], indent=2))
@@ -3577,6 +3634,8 @@ def models_cmd(action, agent, tier, as_json, path=None):
               f"researched_at={table['researched_at']}")
     for e in entries:
         effort = f" effort={e['effort']}" if e["effort"] else ""
+        if e["effort_source"] == "project":
+            effort += f" (project; table {e['table_effort']})"
         print(f"{e['tier']:<9} {e['agent']:<12} model={e['model']}{effort}")
     if not agent and not tier:
         for t in MODEL_SELECTION_TIERS:

@@ -127,7 +127,8 @@ if models "$r" --agent agy --tier complex >"$out" 2>&1 \
 if models "$r" --agent agy --tier routine --json >"$out" 2>&1 && python3 - "$out" <<'PY'
 import json, sys
 e = json.load(open(sys.argv[1]))
-assert e == {"agent": "antigravity", "tier": "routine", "model": "gemini-3.8-flash-low", "effort": None}, e
+assert e == {"agent": "antigravity", "tier": "routine", "model": "gemini-3.8-flash-low",
+             "effort": None, "effort_source": None, "table_effort": None}, e
 PY
 then ok "--json single lookup"; else bad "--json single lookup"; fi
 if models "$r" --json >"$out" 2>&1 && python3 - "$out" "$template" <<'PY'
