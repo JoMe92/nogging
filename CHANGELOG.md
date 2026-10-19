@@ -9,6 +9,21 @@ and GitHub Releases for that history.
 
 ## [Unreleased]
 
+### Added
+
+- `nogg worktree rebase` brings an implementation branch up to date with
+  `origin/develop` on the side that can write `openspec/` (directly when
+  unfenced, through the sandbox broker for a fenced Lead), with ordered
+  refusals, a journal, a backup ref and `--continue`/`--abort`: an `openspec/`
+  conflict aborts with the tree proven unchanged, a code-only conflict pauses
+  (exit 3).
+- A read-only worktree-integrity classifier reported by `doctor` and `recover`,
+  and `nogg worktree repair <record> [--apply]` to restore a half-applied
+  checkout (#241) without losing local edits.
+- `scripts/hooks/pre-rebase` refuses a raw `git rebase` or `git pull --rebase`
+  that would replay an `openspec/` change onto a read-only tree; the launch
+  prompts tell Leads to use `nogg worktree rebase`.
+
 ## [3.0.0] - 2026-10-18
 
 Upgrade notes: run `npx github:JoMe92/nogging#<new-tag> update` from each
