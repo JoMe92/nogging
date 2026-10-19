@@ -20,7 +20,7 @@
 
 ## 5. Guidance (docs/)
 
-- [ ] TASK-SLR-007 [routine] Per design Decisions 2-10: document in running-work-in-sessions, failure-recovery, operating-model and architecture who runs the rebase, the refusals, conflict policy, half-applied hint and repair, the pre-rebase delivery limit, the push-after-rebase note and a host recipe for a real read-only mount; add a CHANGELOG Unreleased entry. Branch docs/. Depends on SLR-001 to SLR-006. Check: extend scripts/runtime-guidance-docs.test.sh; scripts/test.
+- [x] TASK-SLR-007 [routine] Per design Decisions 2-10: document in running-work-in-sessions, failure-recovery, operating-model and architecture who runs the rebase, the refusals, conflict policy, half-applied hint and repair, the pre-rebase delivery limit, the push-after-rebase note and a host recipe for a real read-only mount; add a CHANGELOG Unreleased entry. Branch docs/. Depends on SLR-001 to SLR-006. Check: extend scripts/runtime-guidance-docs.test.sh; scripts/test.
 
 ## Dependency contract
 
