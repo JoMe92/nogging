@@ -6,7 +6,7 @@
 
 ## 2. Fenced Lead access
 
-- [ ] TASK-SLR-003 [complex] Per design Decisions 2 and 6: a fenced caller never runs git and sends the closed rebase request (start|continue|abort, session) to the sandbox broker; extend scripts/openspec-sandbox with that shape and a `rebase-broker` contract feature, task-done unchanged; an old or missing broker gives the hand-off message. Branch chore/. Depends on SLR-001, SLR-002. Check: new scripts/worktree-rebase-broker.test.sh (real handler, PATH git shim, red first); scripts/test.
+- [x] TASK-SLR-003 [complex] Per design Decisions 2 and 6: a fenced caller never runs git and sends the closed rebase request (start|continue|abort, session) to the sandbox broker; extend scripts/openspec-sandbox with that shape and a `rebase-broker` contract feature, task-done unchanged; an old or missing broker gives the hand-off message. Branch chore/. Depends on SLR-001, SLR-002. Check: new scripts/worktree-rebase-broker.test.sh (real handler, PATH git shim, red first); scripts/test.
 
 ## 3. Detection and repair
 
