@@ -69,6 +69,71 @@ def handle_task_done_request(bridge, request, repository):
         bridge.ROOT = previous_root
 
 
+def handle_rebase_request(bridge, request, repository):
+    """Run a closed rebase request from the host side of the OpenSpec fence."""
+    def refused(message):
+        return {'ok': False, 'status': 'refused', 'output': message, 'error': message}
+
+    if (not isinstance(request, dict) or set(request) != {'action', 'checkout', 'mode', 'session'}
+            or request.get('action') != 'rebase'
+            or not isinstance(request.get('mode'), str)
+            or request['mode'] not in {'start', 'continue', 'abort'}
+            or (request.get('session') is not None
+                and (not isinstance(request.get('session'), str)
+                     or not bridge.re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,127}', request['session'])))):
+        return refused('broker requires exactly a closed rebase request')
+    checkout_value = request.get('checkout')
+    if not isinstance(checkout_value, str) or not Path(checkout_value).is_absolute():
+        return refused('checkout must be an absolute registered worktree path')
+    try:
+        checkout = Path(checkout_value).resolve(strict=True)
+        state = bridge.canonical_repository_state(checkout)
+    except (OSError, RuntimeError) as exc:
+        return refused(f'checkout is not a registered worktree: {exc}')
+    if state['common_dir'] != repository['common_dir']:
+        return refused('checkout belongs to a different repository')
+    if str(checkout) not in state['checkout_roots'] or state['checkout_root'] != str(checkout):
+        return refused('checkout is not a registered worktree root')
+    if request['session'] is not None:
+        session_dir = Path(state['main_checkout']) / bridge.scfg('session_state_dir', '.nogging/state/sessions')
+        session_path = session_dir / f"{request['session']}.json"
+        try:
+            session = json.loads(session_path.read_text())
+        except (OSError, ValueError) as exc:
+            return refused(f"requester session is unavailable: {exc}")
+        if (not isinstance(session, dict) or session.get('name') != request['session']
+                or session.get('working_dir') != str(checkout)):
+            return refused('requester session does not own this checkout')
+
+    previous_root = bridge.ROOT
+    previous_session = os.environ.get('NOGG_SESSION_NAME')
+    output = io.StringIO()
+    try:
+        bridge.ROOT = checkout
+        if request['session'] is None:
+            os.environ.pop('NOGG_SESSION_NAME', None)
+        else:
+            os.environ['NOGG_SESSION_NAME'] = request['session']
+        try:
+            with contextlib.redirect_stdout(output):
+                bridge.worktree_rebase(None, request['mode'])
+        except SystemExit as exc:
+            if exc.code == 3 or 'code rebase conflict paused' in str(exc):
+                output.write(str(exc))
+                return {'ok': True, 'status': 'paused', 'output': output.getvalue()}
+            return refused(str(exc))
+        text = output.getvalue()
+        return {'ok': True, 'status': 'up-to-date' if 'already up to date' in text else 'done', 'output': text}
+    except Exception as exc:
+        return refused(str(exc))
+    finally:
+        bridge.ROOT = previous_root
+        if previous_session is None:
+            os.environ.pop('NOGG_SESSION_NAME', None)
+        else:
+            os.environ['NOGG_SESSION_NAME'] = previous_session
+
+
 def supervise(argv):
     helper = Path(__file__).resolve().with_name('nogg')
     original_root = os.environ.get('NOGGING_ROOT')
@@ -82,8 +147,8 @@ def supervise(argv):
             os.environ['NOGGING_ROOT'] = original_root
     roots = bridge.canonical_repository_state(os.getcwd())['checkout_roots']
     repository = bridge.canonical_repository_state(os.getcwd())
-    # A private host-side broker exposes only the already-closed Bead tick.
-    # No shell command, pathname, replacement text or general writer is accepted.
+    # The private host-side broker exposes only the closed Bead tick and the
+    # fixed rebase state machine. No arbitrary command or general writer exists.
     with tempfile.TemporaryDirectory(prefix='nogg-tick-') as directory:
         server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         address = str(Path(directory) / 'broker')
@@ -106,9 +171,12 @@ def supervise(argv):
                             if len(raw) > 4096:
                                 raise RuntimeError("mechanical tick request is too large")
                         request = json.loads(raw)
-                        response = handle_task_done_request(bridge, request, repository)
+                        if isinstance(request, dict) and request.get('action') == 'rebase':
+                            response = handle_rebase_request(bridge, request, repository)
+                        else:
+                            response = handle_task_done_request(bridge, request, repository)
                     except Exception as exc:
-                        response = {'ok': False, 'error': str(exc)}
+                        response = {'ok': False, 'status': 'refused', 'output': str(exc), 'error': str(exc)}
                     try:
                         client.sendall(json.dumps(response).encode())
                     except OSError:
@@ -133,7 +201,7 @@ def supervise(argv):
 if __name__ == '__main__':
     try:
         if sys.argv[1:] == ['--contract']:
-            print(json.dumps({'version': 1, 'features': ['readonly-mounts', 'closed-task-broker', 'checkout-task-broker']}))
+            print(json.dumps({'version': 1, 'features': ['readonly-mounts', 'closed-task-broker', 'checkout-task-broker', 'rebase-broker']}))
             sys.exit(0)
         if sys.argv[1:2] == ['--enter']:
             enter(json.loads(sys.argv[2]), sys.argv[4:])
