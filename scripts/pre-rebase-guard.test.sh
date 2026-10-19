@@ -107,17 +107,23 @@ rc=0; (cd "$c" && git rebase origin/main >/dev/null 2>&1) || rc=$?
 check "the planner-style rebase applied the openspec/ change" test "$(cat "$c/openspec/spec.md")" = spec2
 
 # --- shipped and prompted -------------------------------------------------
-check "package.json ships the hook" grep -q '"scripts/hooks/pre-rebase"' "$root/package.json"
-check "package.json ships this test" grep -q '"scripts/pre-rebase-guard.test.sh"' "$root/package.json"
-manifest_has() {
-  node -e "const m=require('$root/bin/lib/manifest');const a=[...m.verbatim].concat(m.executable);process.exit(['$1'].every(p=>a.includes(p))?0:1)"
-}
-if command -v node >/dev/null 2>&1; then
-  check "payload manifest ships the hook" manifest_has scripts/hooks/pre-rebase
-  check "payload manifest marks the hook executable" node -e "process.exit(require('$root/bin/lib/manifest').executable.includes('scripts/hooks/pre-rebase')?0:1)"
-  check "payload manifest ships this test" manifest_has scripts/pre-rebase-guard.test.sh
+# The shipping checks read the source tree; an installed consumer copy has no
+# package.json or bin/lib/manifest.js, so they only run from the source checkout.
+if [ -f "$root/package.json" ] && [ -f "$root/bin/lib/manifest.js" ]; then
+  check "package.json ships the hook" grep -q '"scripts/hooks/pre-rebase"' "$root/package.json"
+  check "package.json ships this test" grep -q '"scripts/pre-rebase-guard.test.sh"' "$root/package.json"
+  manifest_has() {
+    node -e "const m=require('$root/bin/lib/manifest');const a=[...m.verbatim].concat(m.executable);process.exit(['$1'].every(p=>a.includes(p))?0:1)"
+  }
+  if command -v node >/dev/null 2>&1; then
+    check "payload manifest ships the hook" manifest_has scripts/hooks/pre-rebase
+    check "payload manifest marks the hook executable" node -e "process.exit(require('$root/bin/lib/manifest').executable.includes('scripts/hooks/pre-rebase')?0:1)"
+    check "payload manifest ships this test" manifest_has scripts/pre-rebase-guard.test.sh
+  else
+    echo "skip - node not available; manifest checks"
+  fi
 else
-  echo "skip - node not available; manifest checks"
+  echo "skip - not a source checkout; package and manifest checks"
 fi
 for p in no-autonomous-claim autonomous; do
   f="$root/.nogging/launch-prompts/$p.md"
