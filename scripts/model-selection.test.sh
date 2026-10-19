@@ -204,7 +204,9 @@ for rel in [".nogging/launch-prompts/orchestrator.md", ".claude/commands/orchest
     for snippet in ["--tier <tier>", "scripts/nogg models --agent <agent> --tier <tier>",
                     "routine", "standard", "complex", "higher tier", "escalates one tier",
                     "quota never lowers a tier", "one-line reason", "product owner instruction",
-                    "--model gpt-6-luna", "--model gpt-6.1-sol --effort low", "honest `--tier`"]:
+                    "--model gpt-6-luna", "--model gpt-6.1-sol --effort low", "honest `--tier`",
+                    "`tier_overrides`", "tracked work", "never replaces `--tier`",
+                    "--tier <tier> --effort <level>", "interim form"]:
         assert snippet in text, f"{rel} lacks {snippet!r}"
 PY
 then ok "docs match the CLI help; orchestrator procedure stated in prompt, command and operating model"

@@ -147,6 +147,15 @@ the classification; the safeguard is visibility — `tier=` in `session list` an
 the reason in the notes. A Lead Agent launching an out-of-process specialist
 may pass `--tier` too, but is not required to.
 
+A Product Owner effort preference is recorded as a project `tier_overrides`
+entry through tracked work: file a `routine` Bead naming the exact key and
+value, and a Lead applies it and runs `scripts/nogg models check`. The
+orchestrator edits neither the table nor `.nogging/config.json`, and never
+replaces `--tier` with a standing `--model`/`--effort` pair. Precedence is
+explicit `--effort` > `tier_overrides` > table. Until the override has landed,
+`--tier <tier> --effort <level>` on explicit Product Owner instruction is the
+interim form and keeps `tier=<tier>`.
+
 **Explicit takeover.** Only on an explicit in-session operator instruction of
 the form `/orchestrate takeover {plan|code} <description>` does it perform one
 task directly — a planning task run as a full `plan-begin` … `plan-end`
