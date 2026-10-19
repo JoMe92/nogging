@@ -16,7 +16,7 @@
 
 ## 4. Stop the damage at the source
 
-- [ ] TASK-SLR-006 [standard] Per design Decision 9: add scripts/hooks/pre-rebase (fenced or read-only openspec/ plus an upstream diff touching openspec/ exits 1 before any write), install it via scripts/install-hooks and the payload manifest, and add the one rule to the no-autonomous-claim and autonomous prompts. Branch test/. Depends on SLR-003. Check: new scripts/pre-rebase-guard.test.sh with real git rebase and pull --rebase (red first); scripts/test.
+- [x] TASK-SLR-006 [standard] Per design Decision 9: add scripts/hooks/pre-rebase (fenced or read-only openspec/ plus an upstream diff touching openspec/ exits 1 before any write), install it via scripts/install-hooks and the payload manifest, and add the one rule to the no-autonomous-claim and autonomous prompts. Branch test/. Depends on SLR-003. Check: new scripts/pre-rebase-guard.test.sh with real git rebase and pull --rebase (red first); scripts/test.
 
 ## 5. Guidance (docs/)
 
