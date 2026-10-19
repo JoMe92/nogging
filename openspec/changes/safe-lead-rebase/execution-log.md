@@ -84,3 +84,11 @@
     commit 934c95d; scripts/pre-rebase-guard.test.sh red first then green (real git rebase + pull --rebase, bare origin, install-hooks); package-manifest, manifest-store/update/doctor/legacy-upgrade, session-payload-install, runtime-guidance-docs, install-surface-consistency, planning-docs, nogging-identity pass; cli.test.sh slow on loaded Pi, left to CI
     orchestrator 2026-10-19 12:4x: PR #253 fails CI (package.json and the payload manifest do not ship scripts/hooks/pre-rebase and its test; installed-diagnostics self-tests fail). The Lead session died in the orchestrator restart; Bead reopened, continuing on Claude (Codex weekly gated). Close again after the push.
     commit e0a2e1e (on 934c95d); CI failure cause: pre-rebase-guard.test.sh ran source-only package.json/manifest checks inside the installed consumer copy (no package.json, bin/lib/manifest.js), failing installed-diagnostics self-tests. Gated those checks on a source checkout. Verified: test green from source (28 ok) and from a fresh nogg init consumer (skip line, rc 0); package-manifest, manifest-store, session-payload-install pass. package.json and manifest.js already shipped hook+test correctly. develop unchanged, no rebase needed; pushed to PR 253.
+
+<!-- nogg:SPEC-cwve:2026-10-19T11:00:40Z -->
+- 2026-10-19T11:10:55+00:00 — SPEC-cwve closed for TASK-SLR-007 (Bead closed at 2026-10-19T11:00:40Z).
+  - implementation commits: 59ec3f122d6f9314688d7cb10cd080ebe28728b9
+  - Bead note:
+    tier routine; Claude (Codex weekly 86% + TEO-001 reservation exceeds the 92% cap)
+    tier routine; Claude. Docs + CHANGELOG + test extension. session-delivery-docs.test.sh asserted Unreleased empty while v3.0.0 untagged (v3.0.0 is tagged), dropped that stale assertion.
+    commit 59ec3f122d6f9314688d7cb10cd080ebe28728b9; evidence: runtime-guidance-docs, session-delivery-docs, planning-docs, security-docs, installation-docs, install-surface-consistency pass; PR https://github.com/JoMe92/nogging/pull/256
