@@ -18,7 +18,7 @@
 
 ## 4. Shipped defaults (Part B) - DECISION-NEEDED
 
-- [ ] TASK-TEO-007 [standard] [DECISION-NEEDED] Part B: do NOT start until the Product Owner decides and records it on this Bead. Decision: change the shipped complex defaults for all projects (Claude opus xhigh to medium, Codex sol high to low), keep them, or change one agent. If decided: edit templates/model-selection.json (bump table_version), docs/model-selection.md and pinning tests (design Decision 10). Check: model-selection, drift, packed suites; scripts/test. Branch build/. No dependency edge; stays blocked.
+- [ ] TASK-TEO-007 [standard] [DECISION-NEEDED] Part B: do NOT start until the Product Owner decides and records it on this Bead. Decision: change the shipped complex defaults for all projects (Claude opus xhigh to medium, Codex sol high to low), keep them, or change one agent. If decided: edit templates/model-selection.json, docs/model-selection.md and pinning tests (design Decision 10). Branch build/. No dependency edge; stays blocked.
 
 ## Dependency contract
 
