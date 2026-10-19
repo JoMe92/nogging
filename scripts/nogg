@@ -760,6 +760,114 @@ def worktree_rebase(record_name=None, mode="start"):
     print(f"rebased {branch} onto origin/develop: {tip.stdout.strip()}")
     print(f"backup ref: {journal_data['backup_ref']}")
     print(f"restore command (information only): git -C {target} reset --hard {journal_data['before']}")
+
+def worktree_repair(record_name, apply=False):
+    """Safely restore only paths proven byte-identical to origin/develop."""
+    if Path(record_name).name != record_name or not record_name.endswith(".json"):
+        raise RuntimeError("repair requires a worktree record filename")
+    state = canonical_repository_state(ROOT)
+    main = Path(state["main_checkout"])
+    worktree_state = main / scfg("state_dir", ".nogging/state") / "worktrees"
+    record_path = worktree_state / record_name
+    try:
+        record = json.loads(record_path.read_text())
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"could not read worktree record {record_name}") from exc
+    if (not isinstance(record, dict) or record.get("kind") != "implementation"
+            or record.get("state") != "allocated" or not isinstance(record.get("path"), str)
+            or not isinstance(record.get("branch"), str)):
+        raise RuntimeError("target must be an allocated implementation worktree")
+    target = Path(record["path"]).resolve()
+    if not target.is_dir() or str(target) not in git_worktree_paths():
+        raise RuntimeError(f"target is not a registered implementation worktree: {target}")
+    branch = record["branch"]
+    head_branch = run("git", "-C", str(target), "branch", "--show-current", check=False)
+    if head_branch.returncode or head_branch.stdout.strip() != branch or branch in {"main", "develop"}:
+        raise RuntimeError(f"worktree HEAD must be on recorded implementation branch {branch}")
+
+    result = classify_worktree_integrity(target)
+    reproducible = result["reproducible"]
+    print(f"worktree {target.name}: {result['state']}")
+    print("restore: " + (", ".join(reproducible) if reproducible else "none"))
+    if result["other"]:
+        print("leave: " + ", ".join(result["other"]))
+    elif not reproducible:
+        print("leave: none")
+    if not apply:
+        if result["state"] == "operation-in-progress":
+            print("apply would refuse: a Git operation is in progress")
+        return
+    if result["state"] == "operation-in-progress":
+        raise RuntimeError("refusing repair: a Git operation is in progress")
+    if not reproducible:
+        print("nothing to repair")
+        return
+
+    sessions = main / scfg("session_state_dir", ".nogging/state/sessions")
+    try:
+        for session_path in sorted(sessions.glob("*.json")) if sessions.is_dir() else []:
+            session = json.loads(session_path.read_text())
+            if not isinstance(session, dict):
+                raise ValueError("session record is not an object")
+            working_dir = session.get("working_dir")
+            if (session.get("state") in SESSION_ACTIVE_STATES and isinstance(working_dir, str)
+                    and path_is_within(working_dir, target)
+                    and session.get("name") != os.environ.get("NOGG_SESSION_NAME")):
+                name = session.get("name") or session_path.stem
+                raise RuntimeError(f"target worktree is in use by active session {name}")
+    except (OSError, ValueError, TypeError) as exc:
+        raise RuntimeError(f"cannot inspect active session records: {exc}") from exc
+
+    if (os.environ.get("NOGG_OPENSPEC_FENCED") == "1"
+            and any(path == "openspec" or path.startswith("openspec/") for path in result["paths"])):
+        paths = [path for path in result["paths"]
+                 if path == "openspec" or path.startswith("openspec/")]
+        raise RuntimeError("fenced repair refuses OpenSpec paths: " + ", ".join(paths))
+
+    # Snapshot the complete working tree with a private index, preserving the
+    # real index and recording tracked edits plus untracked files.
+    temp_fd, temp_index = tempfile.mkstemp(prefix="nogg-repair-index-")
+    os.close(temp_fd)
+    env = os.environ.copy()
+    env["GIT_INDEX_FILE"] = temp_index
+    try:
+        run("git", "-C", str(target), "read-tree", "HEAD", env=env)
+        run("git", "-C", str(target), "add", "-A", "--", ".", env=env)
+        tree = run("git", "-C", str(target), "write-tree", env=env).stdout.strip()
+        before = run("git", "-C", str(target), "rev-parse", "HEAD").stdout.strip()
+        staged_tree = run("git", "-C", str(target), "write-tree").stdout.strip()
+        head_tree = run("git", "-C", str(target), "rev-parse", "HEAD^{tree}").stdout.strip()
+        staged_parent = None
+        if staged_tree != head_tree:
+            staged_parent = run("git", "-C", str(target), "-c", "user.name=Nogging Repair Backup",
+                                "-c", "user.email=nogging-repair@localhost", "commit-tree",
+                                staged_tree, "-p", before,
+                                input=f"Nogging staged index backup for {branch}\n").stdout.strip()
+        parents = ["-p", before]
+        if staged_parent:
+            parents.extend(["-p", staged_parent])
+        snapshot = run("git", "-C", str(target), "-c", "user.name=Nogging Repair Backup",
+                       "-c", "user.email=nogging-repair@localhost", "commit-tree", tree,
+                       *parents, input=f"Nogging repair backup for {branch}\n").stdout.strip()
+        stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        backup_ref = f"refs/nogg/repair-backup/{branch}/{stamp}"
+        run("git", "-C", str(target), "update-ref", backup_ref, snapshot)
+    finally:
+        Path(temp_index).unlink(missing_ok=True)
+        Path(temp_index + ".lock").unlink(missing_ok=True)
+
+    print(f"backup ref: {backup_ref}")
+    tracked, untracked = [], []
+    for name in reproducible:
+        check = run("git", "-C", str(target), "ls-files", "--error-unmatch", "--", name, check=False)
+        (tracked if check.returncode == 0 else untracked).append(name)
+    if tracked:
+        run("git", "-C", str(target), "restore", "--source=HEAD", "--staged", "--worktree",
+            "--", *tracked)
+    if untracked:
+        run("git", "-C", str(target), "clean", "-f", "--", *untracked)
+    print("repair applied")
+
 def current_branch():
     out = run("git", "branch", "--show-current", check=False).stdout.strip()
     if not out or out == "develop":
@@ -8491,6 +8599,9 @@ def main():
     rebase_mode = wtr.add_mutually_exclusive_group()
     rebase_mode.add_argument("--continue", dest="rebase_continue", action="store_true")
     rebase_mode.add_argument("--abort", dest="rebase_abort", action="store_true")
+    wtrepair = wtsub.add_parser("repair", help="dry-run or safely repair reproducible worktree paths")
+    wtrepair.add_argument("record", help="implementation worktree record filename")
+    wtrepair.add_argument("--apply", action="store_true", help="snapshot and restore reproducible paths")
     pr = sub.add_parser("pr", help="create or locate an implementation pull request")
     prsub = pr.add_subparsers(dest="pr_command", required=True)
     pro = prsub.add_parser("open", help="create or locate an open PR targeting develop")
@@ -8621,6 +8732,7 @@ def main():
         elif args.worktree_command == "implement": implementation_worktree(args.bead_id, args.branch, args.path)
         elif args.worktree_command == "cleanup": cleanup_worktree(args.record)
         elif args.worktree_command == "rebase": worktree_rebase(args.record, "continue" if args.rebase_continue else "abort" if args.rebase_abort else "start")
+        elif args.worktree_command == "repair": worktree_repair(args.record, args.apply)
     elif args.command == "pr":
         if args.pr_command == "open": pull_request(args.plan, args.task, args.decision, args.validation, args.limitation)
         elif args.pr_command == "ci": pull_request_ci()
