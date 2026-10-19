@@ -245,6 +245,19 @@ trailer.
 
 ## Acceptance
 
+## Keeping a Lead branch current
+
+A Lead never integrates upstream with raw git while `openspec/` is read-only.
+It runs `./scripts/nogg worktree rebase`; the writer side (a host-side broker
+for a fenced session, the process itself for an unfenced one) performs the
+checkout, refuses on a dirty tree, an operation in progress, another live
+session or merge commits, aborts and proves the tree unchanged on an
+`openspec/` conflict, and pauses a real rebase (exit 3) on a code-only conflict
+for the Lead to resolve and `--continue`. A dirty tree the Lead did not make is
+reported with `./scripts/nogg doctor` and repaired with `worktree repair`,
+never reset. Details: `docs/running-work-in-sessions.md` and
+`docs/failure-recovery.md`.
+
 ## Requested review changes
 
 The Lead Agent classifies post-review requests autonomously. A small change
