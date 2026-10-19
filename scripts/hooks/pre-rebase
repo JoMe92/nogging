@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# pre-rebase: stop a raw `git rebase` / `git pull --rebase` before git writes
+# anything when it would replay an upstream change to openspec/ onto a tree the
+# caller cannot write there. Git passes <upstream> [<branch>]; `git pull
+# --rebase` reaches this hook through the same `git rebase`. It allows every
+# other rebase, including any by a caller that can write openspec/.
+#
+# It cannot catch `git merge` / `git pull` (no pre-merge hook runs before the
+# checkout); the launch-prompt rule and detection cover those. Where
+# core.hooksPath diverts Git away from .git/hooks this hook does not run.
+set -euo pipefail
+
+upstream="${1:-}"
+[[ -n "$upstream" ]] || exit 0
+
+root=$(git rev-parse --show-toplevel 2>/dev/null || true)
+[[ -n "$root" ]] || exit 0
+
+if [[ "${NOGG_OPENSPEC_FENCED:-}" != "1" ]] && { [[ ! -d "$root/openspec" ]] || [[ -w "$root/openspec" ]]; }; then
+  exit 0
+fi
+
+# An unreadable upstream is git's error to report, not ours.
+changed=$(git -C "$root" diff --name-only HEAD "$upstream" -- openspec/ 2>/dev/null || true)
+[[ -n "$changed" ]] || exit 0
+
+{
+  echo "Nogging pre-rebase: refusing to rebase onto '$upstream'."
+  echo "It changes openspec/ and this session cannot write openspec/, so git would"
+  echo "fail halfway and leave the tree half-applied. Nothing was changed."
+  echo "Run the supported command instead:"
+  echo "  ./scripts/nogg worktree rebase"
+} >&2
+exit 1
