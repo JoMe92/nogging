@@ -8,9 +8,9 @@
 
 ## 2. Guidance (Part A)
 
-- [ ] TASK-TEO-004 [routine] Per design Decisions 1, 4, 5, 7, 8: document tier_overrides, the new precedence rows, provenance, `models` display and the doctor NOTEs in docs/model-selection.md, docs/running-work-in-sessions.md and docs/architecture.md, plus a CHANGELOG Unreleased entry; the shipped table is untouched. Check: new assertions in scripts/runtime-guidance-docs.test.sh first and red; model-selection suite; scripts/test. Branch docs/.
+- [x] TASK-TEO-004 [routine] Per design Decisions 1, 4, 5, 7, 8: document tier_overrides, the new precedence rows, provenance, `models` display and the doctor NOTEs in docs/model-selection.md, docs/running-work-in-sessions.md and docs/architecture.md, plus a CHANGELOG Unreleased entry; the shipped table is untouched. Check: new assertions in scripts/runtime-guidance-docs.test.sh first and red; model-selection suite; scripts/test. Branch docs/.
 
-- [ ] TASK-TEO-005 [routine] Per design Decision 9: state in .nogging/launch-prompts/orchestrator.md, .claude/commands/orchestrate.md and docs/operating-model.md that a Product Owner effort preference is recorded as a project tier_overrides entry via tracked work, never by bypassing --tier, with `--tier <t> --effort <e>` as the interim form. Check: prompt assertions in scripts/model-selection.test.sh first and red; cli and orchestrator suites; scripts/test. Branch chore/.
+- [x] TASK-TEO-005 [routine] Per design Decision 9: state in .nogging/launch-prompts/orchestrator.md, .claude/commands/orchestrate.md and docs/operating-model.md that a Product Owner effort preference is recorded as a project tier_overrides entry via tracked work, never by bypassing --tier, with `--tier <t> --effort <e>` as the interim form. Check: prompt assertions in scripts/model-selection.test.sh first and red; cli and orchestrator suites; scripts/test. Branch chore/.
 
 ## 3. Packed verification (Part A)
 

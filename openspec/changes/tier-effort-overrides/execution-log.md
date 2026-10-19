@@ -28,3 +28,24 @@
     tier standard; Claude entry (Codex weekly 87%, gate would deny)
     commit d6cbfe5895b74930885e00177ab311742d77efce; evidence: scripts/model-selection-drift.test.sh written first and red (6 FAILs), now green (39 ok); scripts/model-selection-overrides.test.sh and scripts/model-selection.test.sh pass; py_compile ok. Full scripts/test not run locally (Pi loaded, nested installed-diagnostics timeout known from SPEC-z6kb); CI judges.
     correction: final commit SHA after the task-done tick amend is 7b5740ea4e2a52b63a8625c3d53eae4bc46108c1 (note above names the pre-amend SHA). PR https://github.com/JoMe92/nogging/pull/257. worktree rebase refused: 'requester session does not own this checkout' (session working_dir is the main checkout); branch based on c57c304, 3 newer develop commits (docs/archive only) not integrated.
+
+<!-- nogg:SPEC-im5v:2026-10-19T12:14:08Z -->
+- 2026-10-19T12:28:26+00:00 — SPEC-im5v closed for TASK-TEO-006 (Bead closed at 2026-10-19T12:14:08Z).
+  - implementation commits: 108c8ef6efba, 7ee1a72
+  - Bead note:
+    tier standard; Claude entry (Codex weekly 87%, gate would deny)
+    commit 108c8ef (task tick included); PR https://github.com/JoMe92/nogging/pull/261. scripts/packed-model-selection.test.sh extended: init scaffolds tier_overrides {}; update keeps config.json carrying a block byte-identical; installed models check counts '2 tier override' and lookup JSON gives effort_source project/table_effort; installed tier launches: codex/claude override recorded project (list shows '(project)'), explicit --effort stays launch over override, other tier stays table, --model override keeps override effort, malformed block refuses before tmux/record with models-check remedy, launch without --tier ignores block. Passed with NOGG_* cleared. No red phase (behaviour pre-merged in TEO-001..003). Full scripts/test left to CI (Pi loaded). worktree rebase refused ('requester session does not own this checkout'); branch already at origin/develop 7ee1a72, 0 behind.
+
+<!-- nogg:SPEC-5wx2:2026-10-19T12:13:39Z -->
+- 2026-10-19T12:28:26+00:00 — SPEC-5wx2 closed for TASK-TEO-005 (Bead closed at 2026-10-19T12:13:39Z).
+  - implementation commits: 817c983b6dc5
+  - Bead note:
+    tier routine; Claude entry (Codex weekly 87%, gate would deny)
+    commit 817c983; model-selection.test.sh green (prompt assertions added); cli/orchestrator suites left to CI (Pi loaded)
+
+<!-- nogg:SPEC-c4l4:2026-10-19T12:08:31Z -->
+- 2026-10-19T12:28:26+00:00 — SPEC-c4l4 closed for TASK-TEO-004 (Bead closed at 2026-10-19T12:08:31Z).
+  - implementation commits: 562fbb7f151a, b7a234bea4d0
+  - Bead note:
+    tier routine; Claude entry (Codex weekly 87%, gate would deny)
+    commit 562fbb7; docs+assertions in runtime-guidance-docs.test.sh (red first, then green); model-selection.test.sh green; worktree rebase refused (requester does not own checkout) but branch is on develop tip; scripts/test left to CI
