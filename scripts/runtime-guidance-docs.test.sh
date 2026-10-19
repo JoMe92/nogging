@@ -36,6 +36,14 @@ for rel in ("docs/running-work-in-sessions.md", "docs/operating-model.md"):
 require("docs/security-model.md", "`search_web`", "`read_url_content`",
         "restricted requires approval", "sanitized reasons")
 
+require("docs/running-work-in-sessions.md", "worktree rebase", "--allow-live-session",
+        "rebase-backup", "exit 3", "--force-with-lease", "already up to date")
+require("docs/failure-recovery.md", "half-applied", "worktree repair", "repair-backup",
+        "core.hooksPath", "pre-rebase", "read-only mount", "never runs `reset --hard`")
+require("docs/operating-model.md", "worktree rebase", "worktree repair")
+require("docs/architecture.md", "rebase-broker", "classifier", "pre-rebase")
+require("CHANGELOG.md", "worktree rebase", "worktree repair", "pre-rebase")
+
 host_rule = ("shared Dolt server is host-owned", "never start, stop or restart it",
              "stop and report the exact error")
 for rel in (".nogging/launch-prompts/planning.md",
