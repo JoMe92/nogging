@@ -21,7 +21,7 @@ scripts/nogg models --agent agy --tier complex --json # agy = antigravity
 scripts/nogg models check                             # validate; non-zero on error
 ```
 
-`models` reads only the installed table. It performs no live model probe and
+`models` reads only the installed table and the project's `tier_overrides` (below). It performs no live model probe and
 writes nothing.
 
 ## Tiers
@@ -68,6 +68,40 @@ Pi has no table: its model namespace depends on the configured provider.
 - Unknown keys and duplicate keys are rejected. `models check` names every
   offending entry.
 
+## Project effort overrides
+
+A project can change the effort of one tier and agent without touching the
+researched table. The `tier_overrides` block lives in `.nogging/config.json`
+(scaffolded as `"tier_overrides": {}`; `update` preserves it):
+
+```json
+{"tier_overrides": {"complex": {"codex": {"effort": "medium"}}}}
+```
+
+Shape: `{"<tier>": {"<agent>": {"effort": "<level>"}}}`. Only `effort`, and only
+`claude` and `codex`; `antigravity` (effort is in the model name), `pi`, `agy`,
+unknown tiers and unknown keys such as `model` are rejected by name. Levels are
+the same sets `--effort` accepts. An override replaces only the effort of the
+exact tier and agent it names; it never changes a model. Absent or `{}` means no
+overrides. `.nogging/config.json` is per checkout, so an override applies to
+launches run from a checkout that carries it.
+
+- **Precedence.** explicit `--effort` > project override > table > profile >
+  runtime default. `--tier complex --model gpt-6-luna` keeps the override effort.
+- **Malformed block.** `session launch --tier` and `models` refuse, with the
+  remedy `scripts/nogg models check`, before any worktree, trust, settings,
+  record or tmux side effect. Nogging never silently substitutes another effort.
+  A launch without `--tier` never reads the block.
+- **Display.** `models` prints `effort=low (project; table high)` for an
+  overridden entry and the usual form otherwise. Lookup JSON (`--agent` +
+  `--tier`, and the filtered `entries`) gains `effort_source` (`table`,
+  `project`, or null for Antigravity) and `table_effort`; the unfiltered JSON
+  stays the shipped table. `models check` also prints the override count.
+- **Doctor.** `doctor` adds two NOTEs, never failures: a malformed block (tier
+  launches refuse until fixed) and an override equal to the installed table's
+  effort (it can be removed). Model-drift NOTEs are computed from the table
+  alone and are unaffected by overrides.
+
 ## Launching with a tier
 
 ```bash
@@ -83,8 +117,8 @@ Precedence, per field (highest first):
 | Field | Order |
 | --- | --- |
 | Model | explicit `--model` > tier > profile `model` > runtime default |
-| Claude effort | explicit `--effort` > tier > profile `effort` > runtime default |
-| Codex effort | explicit `--effort` > tier > profile `model_reasoning_effort` > runtime default |
+| Claude effort | explicit `--effort` > project override > table > profile `effort` > runtime default |
+| Codex effort | explicit `--effort` > project override > table > profile `model_reasoning_effort` > runtime default |
 
 An explicit `--model` or `--effort` over a tier is the orchestrator's documented
 exception, used only on Product Owner instruction, not routine use.
@@ -114,10 +148,16 @@ exception, used only on Product Owner instruction, not routine use.
 
 **Provenance.** A new session record stores `selection_tier` (the tier, or
 null). When `--tier X --model M --effort E` are passed together, the record keeps
-`selection_tier` X and `selection_tier_effort` (the table's effort, for usage
-attribution), while `requested_model` is M and `reasoning_effort` is E, each with
+`selection_tier` X and `selection_tier_effort` (the effective tier effort, for usage
+attribution) with `selection_tier_effort_source` (`table` or `project`; null for
+Antigravity or no tier), while `requested_model` is M and `reasoning_effort` is E, each with
 source `launch`. `session list` appends `tier=<tier>` to the `MODEL` cell, for
-example `gpt-6-luna effort=medium tier=standard`. Legacy records and records
+example `gpt-6-luna effort=medium tier=standard`, or `effort=medium (project)
+tier=complex` when the effort came from an override: `reasoning_effort_source`
+gains the value `project`, used only when no explicit `--effort` was passed (an
+explicit `--effort` stays `launch`, even if equal to the override). An exact
+`--resume` keeps the recorded values and never re-reads `tier_overrides`. Legacy
+records without `selection_tier_effort_source` read as `table`. Legacy records and records
 without a tier show nothing extra and are never rewritten.
 
 ## The orchestrator procedure
