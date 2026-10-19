@@ -212,7 +212,7 @@ A Claude or Codex session can request a reasoning effort for that launch only:
 ./scripts/nogg session launch --role lead --bead SPEC-xxx --agent codex --effort low
 ```
 
-Precedence is `--effort`, then a tier effort (when `--tier` is passed), then an
+Precedence is `--effort`, then a tier effort (a project override, else the table; when `--tier` is passed), then an
 optional effort key in the launch profile (`effort` for Claude,
 `model_reasoning_effort` for Codex), then the runtime default (no effort flag is
 passed). For Claude, allowed values are exactly `low`, `medium`, `high`, `xhigh`
@@ -269,6 +269,11 @@ model whose name carries the thinking level; Claude gets the tier model and the
 tier effort (as its native `--effort`, source `launch`; an explicit `--effort`
 beats the tier, and a helper without `claude-effort-forwarding` refuses rather
 than drop it).
+A project can override a tier's effort for Claude or Codex with a
+`tier_overrides` block in `.nogging/config.json`; precedence is explicit
+`--effort` > project override > table, `session list` shows `effort=<level>
+(project)`, and a malformed block refuses `--tier` launches (check with
+`scripts/nogg models check`).
 Pi has no table, so `--tier` with `--agent pi` refuses, as do an unknown tier
 and a missing or invalid table — all before any side effect. The record stores
 `selection_tier` and `session list` shows `tier=<tier>` in the `MODEL` cell. The
