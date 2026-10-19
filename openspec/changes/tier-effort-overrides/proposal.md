@@ -37,11 +37,9 @@ Part A (planned and ready to execute):
 
 Part B (planned, **not ready**, Decision needed from the Product Owner):
 
-- One clearly labelled task to change the *shipped* `complex` defaults (Claude
-  `xhigh` to `medium`, Codex `high` to `low`). It is a product and cost
-  decision that reaches every installed project, so it carries a
-  `DECISION-NEEDED` marker, is left `blocked` after materialization and has no
-  dependency edge that could make it ready.
+- One task to change the *shipped* `complex` default for Codex only (`high` to
+  `low`; Claude stays `xhigh`), per the Product Owner decision of 2026-10-19.
+  It has no dependency edge.
 
 ## Non-goals
 
