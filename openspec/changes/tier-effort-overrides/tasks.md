@@ -4,7 +4,7 @@
 
 - [ ] TASK-TEO-002 [standard] Per design Decisions 3-6: apply the override in resolve_launch_tier and _session_launch (explicit --effort > override > table > profile), record selection_tier_effort_source and reasoning_effort_source project, show `(project)` in session list, keep it on exact resume, refuse a malformed block before side effects. Check: new scripts/session-tier-overrides.test.sh first and red, with test-agents.sh stubs; scripts/test. Branch fix/. Depends on TEO-001.
 
-- [ ] TASK-TEO-003 [standard] Per design Decision 8: add doctor NOTEs for a malformed block and a redundant override in model_selection_notes; model-drift NOTEs stay computed from the table alone. Check: extend scripts/model-selection-drift.test.sh first and red (override plus retired model prints the same drift NOTE, exit status unchanged, no block means no new NOTE); scripts/test. Branch refactor/. Depends on TEO-001.
+- [x] TASK-TEO-003 [standard] Per design Decision 8: add doctor NOTEs for a malformed block and a redundant override in model_selection_notes; model-drift NOTEs stay computed from the table alone. Check: extend scripts/model-selection-drift.test.sh first and red (override plus retired model prints the same drift NOTE, exit status unchanged, no block means no new NOTE); scripts/test. Branch refactor/. Depends on TEO-001.
 
 ## 2. Guidance (Part A)
 
