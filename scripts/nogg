@@ -3644,7 +3644,7 @@ def models_cmd(action, agent, tier, as_json, path=None):
 # `update`, so this constant always names the version the installed package
 # ships, even in a consumer that never receives templates/. A test pins it to
 # templates/model-selection.json; a planning session bumps both together.
-PACKAGED_MODEL_SELECTION_TABLE_VERSION = "2026-10-11"
+PACKAGED_MODEL_SELECTION_TABLE_VERSION = "2026-10-19"
 def codex_catalog_models():
     """Model slugs in the local Codex catalog (`<CODEX_HOME>/models_cache.json`).
     Returns `(slugs, None)`, or `(None, reason)` when the source is unavailable."""

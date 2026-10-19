@@ -42,13 +42,13 @@ escalates one tier; quota never lowers a tier.
 
 ## The table
 
-`table_version` 2026-10-11, `researched_at` 2026-10-11.
+`table_version` 2026-10-19, `researched_at` 2026-10-19.
 
 | Tier | Claude (`model` / `effort`) | Codex (`model` / `effort`) | Antigravity (`model`) |
 | --- | --- | --- | --- |
 | routine | `claude-sonnet-5-5` / `low` | `gpt-6-luna` / `low` | `gemini-3.8-flash-low` |
 | standard | `claude-sonnet-5-5` / `high` | `gpt-6-luna` / `medium` | `gemini-3.8-flash-medium` |
-| complex | `claude-opus-5-5` / `xhigh` | `gpt-6.1-sol` / `high` | `gemini-3.8-flash-high` |
+| complex | `claude-opus-5-5` / `xhigh` | `gpt-6.1-sol` / `low` | `gemini-3.8-flash-high` |
 
 Pi has no table: its model namespace depends on the configured provider.
 
@@ -237,8 +237,9 @@ is its `standard` effort and `low` is used only for `routine`: Luna's own
 catalog default is medium and its coding score is much weaker than Sol's
 (BenchLM about 51 vs 67), so lowering effort compounds that weakness on
 anything beyond mechanical work. `complex` moves to `gpt-6.1-sol` (the
-catalog's "latest workhorse") at `high`, rather than the costlier frontier
-`gpt-6-astra`. Effort reaches Codex as its `model_reasoning_effort`.
+catalog's "latest workhorse"), rather than the costlier frontier
+`gpt-6-astra`. Per the Product Owner decision on 2026-10-19, it keeps that
+model but uses `low` effort. Effort reaches Codex as its `model_reasoning_effort`.
 
 **Antigravity.** Gemini 3.8 Flash is used at all three tiers: it beats 3.1 Pro
 on the coding and agentic evidence (Google reports Terminal-bench 2.1 90.8% and

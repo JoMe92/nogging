@@ -145,11 +145,12 @@ expect "agy empty: unavailable" present "listed no models"
 r="$work/old"; make_root "$r"
 python3 - "$r/.nogging/model-selection.json" <<'PY'
 import json, sys
-t = json.load(open(sys.argv[1])); t["table_version"] = "2025-01-01"
+t = json.load(open(sys.argv[1])); t["table_version"] = "2026-10-11"
 json.dump(t, open(sys.argv[1], "w"))
 PY
 notes "$r" "$with_agy" >"$out"
-expect "old table: NOTE" present "installed table_version 2025-01-01 is older than the packaged"
+expect "old table: NOTE names the prior and packaged versions" present \
+  "installed table_version 2026-10-11 is older than the packaged 2026-10-19"
 r="$work/invalid"; make_root "$r"
 python3 - "$r/.nogging/model-selection.json" <<'PY'
 import json, sys
@@ -173,10 +174,17 @@ else bad "packaged version constant matches the template"; fi
 r="$work/doctor"; make_root "$r"
 clean=0; drift=0
 NOGGING_ROOT="$r" PATH="$with_agy" "$nogg" doctor >"$out.clean" 2>&1 || rc=$?; clean=${rc:-0}; unset rc
+python3 - "$r/.nogging/model-selection.json" <<'PY'
+import json, sys
+p = sys.argv[1]; t = json.load(open(p)); t["table_version"] = "2026-10-11"
+json.dump(t, open(p, "w"))
+PY
 AGY_STUB_LIST="$work/agy-short" CODEX_HOME="$work/nowhere" NOGGING_ROOT="$r" PATH="$with_agy" \
   "$nogg" doctor >"$out" 2>&1 || rc=$?; drift=${rc:-0}; unset rc
 expect "doctor prints the Antigravity drift NOTE" present "NOTE  model-selection: antigravity complex model gemini-3.8-flash-high"
 expect "doctor prints the unavailable Codex source" present "NOTE  model-selection: codex drift not checked"
+expect "doctor prints the table-version drift NOTE" present \
+  "NOTE  model-selection: installed table_version 2026-10-11 is older than the packaged 2026-10-19"
 ! grep -q "model-selection" "$out.clean" && ok "doctor without drift prints no model-selection NOTE" \
   || { cp "$out.clean" "$out"; bad "doctor without drift"; }
 [[ "$clean" == "$drift" ]] && ok "doctor exit status unchanged by drift ($clean)" \
@@ -199,7 +207,7 @@ notes "$r" "$with_agy" >"$out"
 expect "empty tier_overrides block: no override NOTE" absent "tier_overrides"
 
 r="$work/ovr-ok"; make_root "$r"
-set_overrides "$r" '{"complex": {"codex": {"effort": "low"}}}'
+set_overrides "$r" '{"complex": {"codex": {"effort": "medium"}}}'
 notes "$r" "$with_agy" >"$out"
 [[ ! -s "$out" ]] && ok "effective override differing from the table: no NOTE" || bad "unexpected NOTE for a differing override"
 
@@ -226,7 +234,7 @@ expect "non-object block: NOTE" present "model-selection: tier_overrides: must b
 # An override plus a retired model prints the same drift NOTE as without it.
 r="$work/ovr-drift"; make_root "$r"
 AGY_STUB_LIST="$work/agy-short" CODEX_HOME="$work/codex-short" notes "$r" "$with_agy" >"$work/drift-plain"
-set_overrides "$r" '{"complex": {"codex": {"effort": "low"}}, "routine": {"codex": {"effort": "high"}}}'
+set_overrides "$r" '{"complex": {"codex": {"effort": "medium"}}, "routine": {"codex": {"effort": "high"}}}'
 AGY_STUB_LIST="$work/agy-short" CODEX_HOME="$work/codex-short" notes "$r" "$with_agy" >"$out"
 cmp -s "$work/drift-plain" "$out" && ok "override plus retired model: identical drift NOTEs" || bad "override changed the drift NOTEs"
 expect "override plus retired model: drift NOTE still present" present "codex routine model gpt-6-luna is not listed"
