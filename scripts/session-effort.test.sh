@@ -353,7 +353,7 @@ codex_has "codex-effort-over-tier: tier model kept" "--model gpt-6.1-sol"
 codex_has "codex-effort-over-tier: launch effort wins" "--reasoning-effort low"
 codex_lacks "codex-effort-over-tier: tier effort not forwarded" "--reasoning-effort high"
 src_check "codex-effort-over-tier: tier attribution kept" \
-  "r['selection_tier']=='complex' and r['selection_tier_effort']=='high' and r['reasoning_effort']=='low' and r['reasoning_effort_source']=='launch'"
+  "r['selection_tier']=='complex' and r['selection_tier_effort']=='low' and r['reasoning_effort']=='low' and r['reasoning_effort_source']=='launch'"
 
 launch_ok "codex-tier-model-effort" --agent codex --full-access --tier complex --model gpt-6-luna --effort medium
 codex_has "codex-tier-model-effort: model forwarded" "--model gpt-6-luna"

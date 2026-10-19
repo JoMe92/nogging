@@ -210,7 +210,7 @@ lacks "codex-effort-over-tier: tier effort not forwarded" "--reasoning-effort hi
 expect_record "codex-effort-over-tier: reasoning_effort" reasoning_effort low
 expect_record "codex-effort-over-tier: effort source launch" reasoning_effort_source launch
 expect_record "codex-effort-over-tier: selection_tier kept" selection_tier complex
-expect_record "codex-effort-over-tier: table effort kept for attribution" selection_tier_effort high
+expect_record "codex-effort-over-tier: table effort kept for attribution" selection_tier_effort low
 
 launch_ok "codex-tier-model-effort" --agent codex --full-access --tier complex --model gpt-6-luna --effort medium
 has "codex-tier-model-effort: explicit model" "--model gpt-6-luna"
@@ -258,7 +258,7 @@ cat >"$root/.nogging/state/sessions/legacy.json" <<'LEG'
 LEG
 legacy_before=$(sha256sum <"$root/.nogging/state/sessions/legacy.json")
 "$nogg" session list >"$out" 2>&1
-grep -E "SPEC-tier .*gpt-6.1-sol effort=high \(launch\) tier=complex" "$out" >/dev/null \
+grep -E "SPEC-tier .*gpt-6.1-sol effort=low \(launch\) tier=complex" "$out" >/dev/null \
   && ok "list shows tier=complex alongside the model" || bad "list shows tier"
 grep -E "^legacy .*old-model +profile" "$out" >/dev/null && ! grep -E "^legacy .*tier=" "$out" >/dev/null \
   && ok "legacy record keeps the prior display" || bad "legacy display"

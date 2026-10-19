@@ -18,7 +18,7 @@
 
 ## 4. Shipped defaults (Part B)
 
-- [ ] TASK-TEO-007 [standard] Part B: per PO decision 2026-10-19, change the SHIPPED complex default for Codex ONLY from gpt-6.1-sol effort high to effort low; Claude entries stay unchanged (opus xhigh). Scope: the Codex complex entry in templates/model-selection.json (bump table_version), docs/model-selection.md, the pinning/drift tests and the doctor model-selection drift NOTE expectations (design Decision 10). Must not touch Claude entries. Branch build/.
+- [x] TASK-TEO-007 [standard] Part B: per PO decision 2026-10-19, change the SHIPPED complex default for Codex ONLY from gpt-6.1-sol effort high to effort low; Claude entries stay unchanged (opus xhigh). Scope: the Codex complex entry in templates/model-selection.json (bump table_version), docs/model-selection.md, the pinning/drift tests and the doctor model-selection drift NOTE expectations (design Decision 10). Must not touch Claude entries. Branch build/.
 
 ## Dependency contract
 
