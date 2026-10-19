@@ -496,6 +496,75 @@ strip `NOGG_*` and `NOGGING_ROOT` from the calling environment.
   under `set -e`. Dependent assertions are skipped on setup failure, and the test
   exits non-zero.
 
+## A half-applied worktree after a failed rebase or checkout
+
+**Symptom.** A Lead's `git rebase`, `git merge` or `git pull` hit a read-only
+`openspec/` (#241). Files sorted before `openspec/` were already written from
+upstream, but the index and `HEAD` did not move and no `rebase-merge/` or
+`rebase-apply/` exists, so neither `git rebase --abort` nor a plain reset knows
+about it. `git status` shows many modified files nobody edited.
+
+**Detect.** A read-only classifier compares each dirty path with the blob at
+`origin/develop`. It reports one of:
+
+- `clean`;
+- `operation-in-progress` (merge, cherry-pick, bisect, rebase; Nogg's own paused
+  rebase is named as such) — not half-applied;
+- `half-applied` — no operation in progress and every dirty path is
+  reproducible from upstream (modified or untracked: bytes equal to
+  `origin/develop:<path>`; deleted: absent at `origin/develop`);
+- `mixed` — some dirty paths are reproducible, others are your own work, which
+  is listed as "your work — untouched";
+- `dirty` — nothing is reproducible: ordinary work in progress, never reported
+  as a problem.
+
+`./scripts/nogg doctor` prints a `NOTE` and `./scripts/nogg recover` raises
+attention for `half-applied` and `mixed`. Both also report a leftover
+`.nogging/state/rebase/*.json` journal at `running` with no operation in
+progress, or at `paused` with no `rebase-merge/`, together with its backup ref.
+The rebase refusal for a dirty tree prints the same hint. Evidence is byte
+equality, not a count of modified files.
+
+**Repair.**
+
+```bash
+./scripts/nogg worktree repair <record>          # dry run (default)
+./scripts/nogg worktree repair <record> --apply
+```
+
+The dry run prints what would be restored and what is left alone. `--apply`
+first snapshots the entire dirty state (tracked and untracked, via a temporary
+index, leaving the working tree untouched) to
+`refs/nogg/repair-backup/<branch>/<UTC-stamp>`, then restores only the proven
+reproducible paths with path-scoped commands (`git restore --source=HEAD
+--staged --worktree -- <paths>` and `git clean -f -- <paths>`). It never runs
+`reset --hard` or a directory-wide `clean -fd`, does nothing for `dirty` and for
+the non-reproducible paths of `mixed`, and refuses when an operation is in
+progress or a live foreign session works there. A fenced caller gets the dry run
+and hint, and a fenced `--apply` refuses `openspec/` paths and names them for
+the operator. Repair does not prune a registered worktree whose directory is
+gone; `git worktree prune` does.
+
+**Rebase journals.** A journal at `running` with no git state means the engine
+crashed; the backup ref `refs/nogg/rebase-backup/<branch>/<stamp>` holds the
+previous tip (`git reset --hard <sha>` from an unfenced shell, deliberately).
+
+**Pre-rebase hook limit.** `scripts/hooks/pre-rebase` (installed by
+`scripts/install-hooks`) exits 1 before git writes anything when the caller is
+fenced or `openspec/` is not writable and the upstream diff touches
+`openspec/`; it catches `git rebase` and `git pull --rebase`. It cannot catch
+`git merge` or `git pull` (git runs no hook before that checkout), and it does
+not run where `core.hooksPath` diverts git away from `.git/hooks`. There the
+launch-prompt rule and the detection above are the defence.
+
+**Host recipe: a real read-only mount.** CI cannot exercise the mount. Once per
+release, on the host: launch a fenced Lead (`session launch`) on a throwaway
+implementation worktree, push an upstream commit that ticks a `tasks.md`
+checkbox, and from the Lead's shell confirm that `git rebase origin/develop` is
+refused by the hook, that `./scripts/nogg worktree rebase` succeeds through the
+broker with the Lead identity kept, and that `./scripts/nogg worktree repair
+<record>` on a clean tree reports `clean`.
+
 ## `openspec/` stuck read-only or stuck writable
 
 The canonical boundary lives in the **main checkout's** `.nogging/locks`,

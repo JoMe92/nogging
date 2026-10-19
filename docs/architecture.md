@@ -393,6 +393,25 @@ No single accidental action defeats the boundary. A deliberate bypass
 `invariants` job on the pull request, and past that by human review — the same
 place requirement-to-code fidelity already lives.
 
+### Safe upstream integration for a fenced Lead
+
+The fence makes a Lead's own `git rebase` unsafe: git checks files out in path
+order and stops at the first read-only `openspec/` path, leaving upstream bytes
+written with `HEAD` and the index unmoved and no operation state. Nogg
+therefore splits the work. `nogg worktree rebase` runs the engine on the side
+that can write `openspec/`: directly for an unfenced caller, or through the
+sandbox broker, which accepts a second closed request shape
+(`{action: "rebase", checkout, mode: start|continue|abort, session}`; the
+`{bead_id, checkout}` task-done shape is unchanged) and advertises the
+`rebase-broker` contract feature. The engine owns the refusals, the journal
+(`.nogging/state/rebase/`), the backup ref (`refs/nogg/rebase-backup/`) and the
+conflict policy; it never resolves conflicts or resets. A pure read-only
+classifier (clean, operation-in-progress, half-applied, mixed, dirty, by byte
+equality with `origin/develop` blobs) is shared by the refusal text, `doctor`,
+`recover` and `worktree repair`, whose snapshots go to
+`refs/nogg/repair-backup/`. `scripts/hooks/pre-rebase` stops a raw rebase
+before any write. The broker is not an authentication boundary.
+
 ### CI backstop: the `invariants` job
 
 Because `core.hooksPath` points Git at `.beads/hooks` in this repository (and
