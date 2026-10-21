@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# fixture-backend-pin: allow - exercises backend selection from the host config
 # Selection precedence, record-based dispatch, and unknown-liveness safety (HDR-003).
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/test-agents.sh"; use_agent_stubs

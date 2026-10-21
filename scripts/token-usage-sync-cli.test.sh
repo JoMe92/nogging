@@ -10,6 +10,7 @@
 #   - an operator sync pushes to a file:// remote; report, status and doctor
 #     show synchronization freshness without exposing remote credentials.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-fixture-config.sh"
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 nogg="$here/nogg"
@@ -47,7 +48,7 @@ root="$work/repo"
 mkdir -p "$root/.nogging/state/sessions" "$root/scripts"
 cp "$repo_root/scripts/nogg" "$root/scripts/"
 cp -r "$repo_root/scripts/lib" "$root/scripts/lib"
-cp "$repo_root/.nogging/config.json" "$root/.nogging/config.json"
+copy_host_config "$repo_root/.nogging/config.json" "$root/.nogging/config.json"
 git init -q -b develop "$root"
 git -C "$root" -c user.name=Test -c user.email=test@example.org commit -q --allow-empty -m init
 export NOGGING_ROOT="$root"

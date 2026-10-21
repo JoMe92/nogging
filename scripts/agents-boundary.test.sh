@@ -12,6 +12,7 @@
 # Language-neutral: bash + coreutils + jq (the guard's own dependency). No
 # network, no Beads/Dolt server.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-fixture-config.sh"
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib/test-env.sh
@@ -71,7 +72,7 @@ run_guard "openspec/changes/demo/spec.md" || true
 
 # a STALE planning lock (older than planning_lock_ttl_seconds) no longer confers
 # write permission — crash-resilience weakness W6 (SPEC-qjz / TASK-TWB-003)
-cp "$repo_root/.nogging/config.json" "$root/.nogging/config.json" 2>/dev/null || \
+copy_host_config "$repo_root/.nogging/config.json" "$root/.nogging/config.json" 2>/dev/null || \
   printf '{"planning_lock_ttl_seconds":7200}\n' >"$root/.nogging/config.json"
 printf '{"pid":1,"host":"h","created_at":"2000-01-01T00:00:00+00:00"}\n' \
   >"$root/.nogging/locks/planning.lock"

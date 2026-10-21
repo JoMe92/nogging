@@ -12,7 +12,7 @@ with tempfile.TemporaryDirectory(prefix='nogg-rebase-broker-') as td:
     main, remote, tree = base/'main', base/'origin.git', base/'lead'
     main.mkdir(); (main/'.nogging/state/worktrees').mkdir(parents=True)
     (main/'.nogging/state/sessions').mkdir()
-    (main/'.nogging/config.json').write_text((source/'.nogging/config.json').read_text())
+    subprocess.run(['bash',str(source/'scripts/lib/test-fixture-config.sh'),str(source/'.nogging/config.json'),str(main/'.nogging/config.json')],check=True)
     subprocess.run(['git','init','-q','--bare',str(remote)],check=True)
     subprocess.run(['git','init','-q','-b','develop',str(main)],check=True)
     def git(cwd,*args,env=None):

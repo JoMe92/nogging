@@ -11,7 +11,7 @@ import json,os,shutil,subprocess,sys,tempfile,threading
 source=Path(sys.argv[1])
 with tempfile.TemporaryDirectory(prefix='nogg planning kickoff ') as td:
     root=Path(td)/'main';root.mkdir();(root/'.nogging').mkdir()
-    shutil.copy2(source/'.nogging/config.json',root/'.nogging/config.json')
+    subprocess.run(['bash',str(source/'scripts/lib/test-fixture-config.sh'),str(source/'.nogging/config.json'),str(root/'.nogging/config.json')],check=True)
     (root/'.gitignore').write_text('.nogging/state/\n.nogging/locks/\n')
     subprocess.run(['git','init','-q',str(root)],check=True)
     subprocess.run(['git','-C',str(root),'add','.'],check=True)

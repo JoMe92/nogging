@@ -8,7 +8,7 @@ import copy,json,os,shutil,subprocess,sys,tempfile
 source=Path(sys.argv[1])
 with tempfile.TemporaryDirectory(prefix='nogg scoped permissions ') as td:
     root=Path(td);(root/'.nogging').mkdir();(root/'.claude').mkdir()
-    shutil.copy2(source/'.nogging/config.json',root/'.nogging/config.json')
+    subprocess.run(['bash',str(source/'scripts/lib/test-fixture-config.sh'),str(source/'.nogging/config.json'),str(root/'.nogging/config.json')],check=True)
     subprocess.run(['git','init','-q',str(root)],check=True)
     os.environ['NOGGING_ROOT']=str(root)
     os.environ['CLAUDE_CONFIG_DIR']=str(root/'user-claude')

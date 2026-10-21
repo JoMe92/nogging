@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Codex exact resume contract and argv regression coverage (TASK-HHB-010).
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-fixture-config.sh"
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 work="$(mktemp -d /tmp/nogg.XXXXXX)"
@@ -87,7 +88,7 @@ make_root() {
   cp "$here/../.pi/extensions/nogging-guard.ts" "$root/.pi/extensions/"
   : >"$root/.codex/rules/nogging.rules"
   cp -r "$here/../.nogging/launch-profiles" "$here/../.nogging/launch-prompts" "$root/.nogging/"
-  cp "$here/../.nogging/config.json" "$root/.nogging/config.json"
+  copy_host_config "$here/../.nogging/config.json" "$root/.nogging/config.json"
   git init -q "$root"
 }
 

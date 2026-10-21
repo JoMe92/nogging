@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# fixture-backend-pin: allow - cleanup only; launches no session
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

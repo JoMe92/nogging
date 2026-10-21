@@ -15,7 +15,9 @@ with tempfile.TemporaryDirectory(prefix="nogg.", dir="/tmp") as directory:
         (root / name).mkdir()
     for name in ("launch-profiles", "launch-prompts"):
         shutil.copytree(source / ".nogging" / name, root / ".nogging" / name)
-    config = json.loads((source / ".nogging/config.json").read_text())
+    subprocess.run(["bash", str(source / "scripts/lib/test-fixture-config.sh"),
+                    str(source / ".nogging/config.json"), str(root / ".nogging/config.json")], check=True)
+    config = json.loads((root / ".nogging/config.json").read_text())
     sock = "nogg-startup-test-" + uuid.uuid4().hex
     tmux_tmpdir = root / "tmux"
     tmux_tmpdir.mkdir()

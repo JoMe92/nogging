@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# fixture-backend-pin: allow - selects tmux explicitly itself
 # TASK-HSS-003: canonical singleton state across linked worktrees.
 # All services and bd are stubbed; only our own child is used for PID liveness.
 set -euo pipefail

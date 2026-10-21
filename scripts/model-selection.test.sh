@@ -15,6 +15,7 @@
 #     mandatory tier procedure (TASK-MES-004);
 #   - init scaffolds the table and update leaves a consumer edit byte-identical.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-fixture-config.sh"
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$here/.." && pwd)"
@@ -32,7 +33,7 @@ make_root() {
   local r="$1"
   mkdir -p "$r/.nogging"
   git init -q "$r"
-  cp "$repo_root/.nogging/config.json" "$r/.nogging/config.json"
+  copy_host_config "$repo_root/.nogging/config.json" "$r/.nogging/config.json"
   cp "$template" "$r/.nogging/model-selection.json"
 }
 # mutate <root> <python statement over `t`>

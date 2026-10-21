@@ -14,7 +14,7 @@ with tempfile.TemporaryDirectory(prefix='nogg planning role ') as td:
     shutil.copytree(source/'.codex/rules',root/'.codex/rules')
     shutil.copytree(source/'.nogging/launch-profiles',root/'.nogging/launch-profiles')
     shutil.copytree(source/'.nogging/launch-prompts',root/'.nogging/launch-prompts')
-    shutil.copy2(source/'.nogging/config.json',root/'.nogging/config.json')
+    subprocess.run(['bash',str(source/'scripts/lib/test-fixture-config.sh'),str(source/'.nogging/config.json'),str(root/'.nogging/config.json')],check=True)
     (root/'scripts').mkdir()
     for name in ['session-launch','session-log-writer','openspec-sandbox','nogg']:
         shutil.copy2(source/'scripts'/name,root/'scripts'/name)
