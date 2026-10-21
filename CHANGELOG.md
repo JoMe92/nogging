@@ -9,14 +9,16 @@ and GitHub Releases for that history.
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-10-21
+
 ### Added
 
 - Project effort overrides: a `tier_overrides` block in `.nogging/config.json`
   changes the effort of one tier and agent (Claude, Codex) with precedence
   explicit `--effort` > override > table. `models` shows `(project; table X)`,
   `session list` shows `(project)`, `models check` validates the block, and
-  `doctor` NOTEs a malformed or redundant override. The shipped table is
-  unchanged.
+  `doctor` NOTEs a malformed or redundant override. Apart from the Codex
+  complex default listed under Changed, the shipped table is unchanged.
 - `nogg worktree rebase` brings an implementation branch up to date with
   `origin/develop` on the side that can write `openspec/` (directly when
   unfenced, through the sandbox broker for a fenced Lead), with ordered
@@ -29,6 +31,13 @@ and GitHub Releases for that history.
 - `scripts/hooks/pre-rebase` refuses a raw `git rebase` or `git pull --rebase`
   that would replay an `openspec/` change onto a read-only tree; the launch
   prompts tell Leads to use `nogg worktree rebase`.
+
+### Changed
+
+- The shipped Codex `complex` default is now `gpt-6.1-sol` at effort `low`
+  (was `high`; `table_version` `2026-10-19`). The Claude defaults are
+  unchanged. A project that wants the previous effort sets it with a
+  `tier_overrides` entry.
 
 ### Fixed
 
