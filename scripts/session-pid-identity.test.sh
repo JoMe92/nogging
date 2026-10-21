@@ -3,6 +3,7 @@
 # foreign tmux PID namespace by hiding the reported pane PID from launcher
 # /proc reads. The runtime stub attempts plan-begin in the launched session.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-fixture-config.sh"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$here/lib/test-env.sh"
 source "$here/lib/test-agents.sh"
@@ -18,7 +19,7 @@ cp -R "$here/lib/." "$root/scripts/lib/"
 cp "$here/nogg" "$here/session-launch" "$here/session-log-writer" "$here/openspec-sandbox" "$here/nogg_usage.py" "$root/scripts/"
 cp -R "$here/../.nogging/launch-profiles/." "$root/.nogging/launch-profiles/"
 cp -R "$here/../.nogging/launch-prompts/." "$root/.nogging/launch-prompts/"
-cp "$here/../.nogging/config.json" "$root/.nogging/config.json"
+copy_host_config "$here/../.nogging/config.json" "$root/.nogging/config.json"
 git -C "$root" init -q
 git init --bare -q "$work/origin.git"
 git -C "$root" config user.email test@example.invalid

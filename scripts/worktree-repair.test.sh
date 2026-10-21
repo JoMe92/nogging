@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-fixture-config.sh"
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$repo_root/scripts/lib/test-env.sh"
@@ -16,7 +17,7 @@ remote="$scratch/origin.git"
 tree="$root/lead"
 mkdir -p "$root/.nogging/state/worktrees" "$root/.nogging/state/sessions" \
   "$root/openspec/changes/demo"
-cp "$repo_root/.nogging/config.json" "$root/.nogging/config.json"
+copy_host_config "$repo_root/.nogging/config.json" "$root/.nogging/config.json"
 git init -q --bare "$remote"
 git init -q -b develop "$root"
 git -C "$root" config user.name Fixture

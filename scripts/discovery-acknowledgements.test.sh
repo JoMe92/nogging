@@ -26,7 +26,9 @@ else:
     sys.exit(77)
 ''')
     tracker.chmod(0o755)
-    config = json.loads((source / ".nogging/config.json").read_text())
+    subprocess.run(["bash", str(source / "scripts/lib/test-fixture-config.sh"),
+                    str(source / ".nogging/config.json"), str(main / ".nogging/config.json")], check=True)
+    config = json.loads((main / ".nogging/config.json").read_text())
     config["beads_command"] = str(tracker)
     (main / ".nogging/config.json").write_text(json.dumps(config))
     (main / ".gitignore").write_text(".nogging/state/\n.nogging/locks/\n")

@@ -10,6 +10,7 @@
 #
 # Language-neutral: bash + coreutils only, no network, no Beads/Dolt server.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-fixture-config.sh"
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 nogg="$here/nogg"
@@ -25,7 +26,7 @@ bad() { echo "FAIL - $1"; fail=1; }
 # --- a scratch Nogging checkout with one change and a git repo -----------
 root="$work/root"
 mkdir -p "$root/.nogging/state" "$root/.nogging/locks" "$root/openspec/changes/demo"
-cp "$repo_root/.nogging/config.json" "$root/.nogging/config.json"
+copy_host_config "$repo_root/.nogging/config.json" "$root/.nogging/config.json"
 cat >"$root/openspec/changes/demo/tasks.md" <<'MD'
 # Tasks
 

@@ -17,6 +17,7 @@
 #   - a seeded secret value reaches neither the recorded command nor the log;
 #   - the append-only log writer rotates by size to the configured depth.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-fixture-config.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/test-agents.sh"; use_agent_stubs
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -125,7 +126,8 @@ make_root() {
   cp "$repo_root/.nogging/session-launch-prompt.md" "$r/.nogging/" 2>/dev/null || true
   cp -r "$repo_root/.nogging/launch-profiles" "$r/.nogging/" 2>/dev/null || true
   cp -r "$repo_root/.nogging/launch-prompts" "$r/.nogging/" 2>/dev/null || true
-  python3 - "$repo_root/.nogging/config.json" "$r/.nogging/config.json" "$grace" <<'PY'
+  copy_host_config "$repo_root/.nogging/config.json" "$r/.nogging/config.json"
+  python3 - "$r/.nogging/config.json" "$r/.nogging/config.json" "$grace" <<'PY'
 import json, sys
 cfg = json.load(open(sys.argv[1]))
 # Generic fixtures exercise shipped CLI defaults independently of owner opt-ins.

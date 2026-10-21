@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Project tier effort overrides for the public models command (TASK-TEO-001).
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-fixture-config.sh"
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$here/.." && pwd)"
@@ -16,7 +17,7 @@ make_root() {
   local r="$1"
   mkdir -p "$r/.nogging"
   git init -q "$r"
-  cp "$repo_root/.nogging/config.json" "$r/.nogging/config.json"
+  copy_host_config "$repo_root/.nogging/config.json" "$r/.nogging/config.json"
   cp "$repo_root/templates/model-selection.json" "$r/.nogging/model-selection.json"
 }
 models() { NOGGING_ROOT="$1" "$nogg" models "${@:2}"; }

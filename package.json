@@ -47,6 +47,7 @@
     "scripts/lib/token_usage_store.py",
     "scripts/lib/token_usage_sync.py",
     "scripts/lib/test-env.sh",
+    "scripts/lib/test-fixture-config.sh",
     "scripts/install-hooks",
     "scripts/test",
     "scripts/nogg.test.sh",

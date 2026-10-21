@@ -5,6 +5,7 @@
 # before any side effect; explicit restricted prints NOTE; every launch prints
 # profile=/prompt=; Claude implicit planning warns; restricted Codex prints Dolt note.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-fixture-config.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/test-agents.sh"; use_agent_stubs
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib/test-env.sh"
@@ -30,7 +31,7 @@ git -C "$main" branch -M develop
 mkdir -p "$main/.nogging" "$main/scripts" "$main/.codex/rules" "$main/.pi/extensions" "$main/.agents"
 cp -r "$repo_root/.nogging/launch-profiles" "$main/.nogging/"
 cp -r "$repo_root/.nogging/launch-prompts" "$main/.nogging/"
-cp "$repo_root/.nogging/config.json" "$main/.nogging/"
+copy_host_config "$repo_root/.nogging/config.json" "$main/.nogging/config.json"
 python3 -c "import json, pathlib; p = pathlib.Path('$main/.nogging/config.json'); d = json.loads(p.read_text()); d.pop('session_launch_profile', None); d.pop('session_launch_prompt', None); p.write_text(json.dumps(d))"
 cp -r "$repo_root/.codex/rules" "$main/.codex/"
 cp -r "$repo_root/.pi/extensions" "$main/.pi/"

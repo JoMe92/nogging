@@ -17,6 +17,7 @@
 #   - a full `doctor` run prints the NOTEs and exits exactly as it does
 #     without drift.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-fixture-config.sh"
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 nogg="$here/nogg"
@@ -65,7 +66,7 @@ with_agy="$work/bin:$base_path"; without_agy="$work/noagy:$base_path"
 make_root() {
   local r="$1"
   mkdir -p "$r/.nogging/state" "$r/.nogging/locks" "$r/openspec/changes"
-  cp "$repo_root/.nogging/config.json" "$r/.nogging/config.json"
+  copy_host_config "$repo_root/.nogging/config.json" "$r/.nogging/config.json"
   python3 - "$r/.nogging/config.json" <<'PY'
 import json, sys
 c = json.load(open(sys.argv[1])); c["doctor_agy_models_timeout_seconds"] = 1

@@ -12,6 +12,7 @@
 # bd and tmux are PATH-injected stubs; the settle clock and sleep are injected
 # through a small driver, so no test waits on a real deadline.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-fixture-config.sh"
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$here/lib/test-env.sh"
@@ -83,7 +84,8 @@ make_root() {
      "$repo_root/scripts/openspec-sandbox" "$r/scripts/"
   git init -q "$r"
   cp -r "$repo_root/.nogging/launch-profiles" "$repo_root/.nogging/launch-prompts" "$r/.nogging/"
-  python3 - "$repo_root/.nogging/config.json" "$r/.nogging/config.json" <<'PY'
+  copy_host_config "$repo_root/.nogging/config.json" "$r/.nogging/config.json"
+  python3 - "$r/.nogging/config.json" "$r/.nogging/config.json" <<'PY'
 import json, sys
 cfg = json.load(open(sys.argv[1]))
 cfg.pop("session_launch_profile", None); cfg.pop("session_launch_prompt", None)

@@ -32,7 +32,7 @@ for issues,duplicates in [([bead('SPEC-unknown',None,'TASK-NONE')],()),
     else: raise AssertionError('repository-wide ambiguity allowed a plan')
 with tempfile.TemporaryDirectory(prefix='nogg scoped mapping ') as td:
     root=pathlib.Path(td); config=root/'.nogging/config.json';config.parent.mkdir()
-    config.write_bytes((source/'.nogging/config.json').read_bytes())
+    subprocess.run(['bash',str(source/'scripts/lib/test-fixture-config.sh'),str(source/'.nogging/config.json'),str(config)],check=True)
     subprocess.run(['git','init','-q',str(root)],check=True)
     (root/'.gitignore').write_text('.nogging/state/\n.nogging/locks/\nbin/\ntracker.json\n')
     files={}

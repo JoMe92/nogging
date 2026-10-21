@@ -7,6 +7,7 @@
 # - Sockets in /tmp/nogg.XXXXXX with path length < 108 bytes
 # - Clean environment: unset inherited NOGG_*, HERDR_*, TMUX
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-fixture-config.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/test-agents.sh"; use_agent_stubs
 
 # Test fixtures must not inherit the supervised agent's private session context.
@@ -108,7 +109,8 @@ repo_dir="$work/repo"
 mkdir -p "$repo_dir/.nogging/state" "$repo_dir/scripts" "$repo_dir/openspec"
 cp "$source_root/scripts/session-launch" "$source_root/scripts/session-log-writer" "$source_root/scripts/openspec-sandbox" "$repo_dir/scripts/"
 (cd "$repo_dir" && git init -q && git config user.email "test@example.com" && git config user.name "Test")
-python3 - "$source_root/.nogging/config.json" "$repo_dir/.nogging/config.json" <<'PY'
+copy_host_config "$source_root/.nogging/config.json" "$repo_dir/.nogging/config.json"
+python3 - "$repo_dir/.nogging/config.json" "$repo_dir/.nogging/config.json" <<'PY'
 import json, sys
 cfg = json.load(open(sys.argv[1]))
 cfg.pop("session_launch_profile", None)

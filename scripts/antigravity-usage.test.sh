@@ -15,6 +15,7 @@
 #   - a real `session launch` is refused with exit 75 before any trust,
 #     worktree, tmux or record side effect, and is admitted per model group.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-fixture-config.sh"
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 nogg="$here/nogg"
@@ -426,7 +427,8 @@ new_root() {
   git init -q "$root"
   cp -r "$repo_root/.nogging/launch-profiles" "$repo_root/.nogging/launch-prompts" "$root/.nogging/"
   cp "$repo_root/templates/model-selection.json" "$root/.nogging/model-selection.json"
-  python3 - "$repo_root/.nogging/config.json" "$root/.nogging/config.json" "${GATE_CONFIG:-}" <<'PY'
+  copy_host_config "$repo_root/.nogging/config.json" "$root/.nogging/config.json"
+  python3 - "$root/.nogging/config.json" "$root/.nogging/config.json" "${GATE_CONFIG:-}" <<'PY'
 import json, sys
 cfg = json.load(open(sys.argv[1]))
 cfg.pop("session_launch_profile", None); cfg.pop("session_launch_prompt", None); cfg.pop("usage_gate", None)

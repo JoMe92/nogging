@@ -14,6 +14,7 @@
 #
 # tmux and bd are PATH-injected stubs; no real session is ever started.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-fixture-config.sh"
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 nogg="$here/nogg"
@@ -57,7 +58,8 @@ make_root() {
   cp "$repo_root/.pi/extensions/nogging-guard.ts" "$r/.pi/extensions/"
   git init -q "$r"
   cp -r "$repo_root/.nogging/launch-profiles" "$repo_root/.nogging/launch-prompts" "$r/.nogging/"
-  python3 - "$repo_root/.nogging/config.json" "$r/.nogging/config.json" <<'PY'
+  copy_host_config "$repo_root/.nogging/config.json" "$r/.nogging/config.json"
+  python3 - "$r/.nogging/config.json" "$r/.nogging/config.json" <<'PY'
 import json, sys
 cfg = json.load(open(sys.argv[1]))
 cfg.pop("session_launch_profile", None); cfg.pop("session_launch_prompt", None)

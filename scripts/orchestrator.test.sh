@@ -16,6 +16,7 @@
 #   - `status` is read-only and reports the unit / linger / lock / session;
 #   - `stop` is idempotent.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-fixture-config.sh"
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib/test-env.sh
@@ -107,7 +108,8 @@ make_root() {
   ln -sf "$repo_root/scripts/session-launch" "$r/scripts/session-launch"
   ln -sf "$repo_root/scripts/session-log-writer" "$r/scripts/session-log-writer"
   ln -sf "$repo_root/scripts/openspec-sandbox" "$r/scripts/openspec-sandbox"
-  python3 - "$repo_root/.nogging/config.json" "$r/.nogging/config.json" <<'PY'
+  copy_host_config "$repo_root/.nogging/config.json" "$r/.nogging/config.json"
+  python3 - "$r/.nogging/config.json" "$r/.nogging/config.json" <<'PY'
 import json, sys
 cfg = json.load(open(sys.argv[1]))
 cfg["orchestrator_poll_seconds"] = 0.2

@@ -12,6 +12,7 @@
 #     usage state is unwritable); `session cleanup` imports it into the local
 #     store, and refuses, naming a remedy, until evidence can be made durable.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-fixture-config.sh"
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 nogg="$here/nogg"
@@ -61,7 +62,8 @@ git init -q -b develop "$root"
 git -C "$root" -c user.name=Test -c user.email=test@example.org commit -q --allow-empty -m init
 cp -r "$repo_root/.nogging/launch-profiles" "$repo_root/.nogging/launch-prompts" "$root/.nogging/"
 cp "$repo_root/templates/model-selection.json" "$root/.nogging/model-selection.json"
-python3 - "$repo_root/.nogging/config.json" "$root/.nogging/config.json" <<'PY'
+copy_host_config "$repo_root/.nogging/config.json" "$root/.nogging/config.json"
+python3 - "$root/.nogging/config.json" "$root/.nogging/config.json" <<'PY'
 import json, sys
 cfg = json.load(open(sys.argv[1]))
 cfg.pop("session_launch_profile", None); cfg.pop("session_launch_prompt", None)

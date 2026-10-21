@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-fixture-config.sh"
 
 source_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 scratch=$(mktemp -d)
@@ -7,7 +8,7 @@ trap 'git -C "$repo" worktree remove --force "$plan_tree" 2>/dev/null || true; g
 repo="$scratch/repo"; remote="$scratch/origin.git"
 plan_tree="$scratch/plan"; impl_tree="$scratch/implementation"
 mkdir -p "$repo/.nogging/locks" "$repo/.nogging/state" "$repo/openspec/changes/demo" "$scratch/bin"
-cp "$source_root/.nogging/config.json" "$repo/.nogging/config.json"
+copy_host_config "$source_root/.nogging/config.json" "$repo/.nogging/config.json"
 mkdir -p "$repo/scripts"
 cp "$source_root/scripts/session-launch" "$source_root/scripts/session-log-writer" "$source_root/scripts/openspec-sandbox" "$repo/scripts/"
 cp "$source_root/scripts/nogg" "$repo/nogg"

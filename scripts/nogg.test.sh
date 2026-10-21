@@ -14,6 +14,7 @@
 # classification, bounded retry metadata, JSONL failure log, doctor reporting,
 # and a successful sync clearing the record.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-fixture-config.sh"
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib/test-env.sh
@@ -155,7 +156,7 @@ if [[ "$op_ln" -lt "$cl_ln" ]]; then echo "ok   - closed-disc: open listed befor
 # --- Scenario: acknowledging a discovery stops it being surfaced -----------
 ackroot="$work/ackroot"; mkdir -p "$ackroot/.nogging/state"
 git -C "$ackroot" init -q
-cp "$repo_root/.nogging/config.json" "$ackroot/.nogging/config.json"
+copy_host_config "$repo_root/.nogging/config.json" "$ackroot/.nogging/config.json"
 export NOGGING_ROOT="$ackroot"
 "$nogg" discoveries >"$out" 2>&1
 check "ack: closed discovery listed before acknowledgement" "SPEC-cl1  Closed before review"
@@ -177,7 +178,7 @@ unset NOGGING_ROOT
 make_root() {
   local r="$1"
   mkdir -p "$r/.nogging/state" "$r/.nogging/locks" "$r/openspec/changes/demo"
-  cp "$repo_root/.nogging/config.json" "$r/.nogging/config.json"
+  copy_host_config "$repo_root/.nogging/config.json" "$r/.nogging/config.json"
   mkdir -p "$r/scripts"
   cp "$repo_root/scripts/session-launch" "$repo_root/scripts/session-log-writer" "$repo_root/scripts/openspec-sandbox" "$r/scripts/"
   cat >"$r/openspec/changes/demo/tasks.md" <<'MD'

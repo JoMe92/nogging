@@ -34,6 +34,13 @@ and GitHub Releases for that history.
 
 - `init` and `update` install every packaged file with the executable bit it has in the package, not only the files named in an installer list. `scripts/session-pty-recorder` was created non-executable by an upgrade from `v2.2.0`, which made `doctor` fail its session-helper check (#263). A managed file that already has the packaged content but lost the bit is repaired by the next `update` (reported as `update`, `mode 0755`); `--dry-run` reports it without changing the file; `<file>.nogging-new` and `--force` overwrites are executable, and `<file>.orig` keeps the mode of the local file.
 
+- `scripts/test` no longer goes red when the host `.nogging/config.json`
+  selects the `herdr` session backend (#264): fixtures that copy the host
+  config now pin the scratch repository to `tmux` through the shipped
+  `scripts/lib/test-fixture-config.sh` helper, and
+  `scripts/fixture-backend-pin.test.sh` runs the affected suites under a herdr
+  host config.
+
 ## [3.0.0] - 2026-10-18
 
 Upgrade notes: run `npx github:JoMe92/nogging#<new-tag> update` from each

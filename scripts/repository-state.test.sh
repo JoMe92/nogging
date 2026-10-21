@@ -14,7 +14,8 @@ with tempfile.TemporaryDirectory(prefix="nogg shared state ") as directory:
     main, linked = scratch / "main checkout ", scratch / "linked checkout "
     subprocess.run(["git", "init", "-q", str(main)], check=True)
     (main / ".nogging").mkdir()
-    shutil.copy2(source / ".nogging/config.json", main / ".nogging/config.json")
+    subprocess.run(["bash", str(source / "scripts/lib/test-fixture-config.sh"),
+                    str(source / ".nogging/config.json"), str(main / ".nogging/config.json")], check=True)
     (main / ".gitignore").write_text(".nogging/state/\n.nogging/locks/\n")
     subprocess.run(["git", "-C", str(main), "add", "."], check=True)
     subprocess.run(["git", "-C", str(main), "-c", "user.name=Fixture", "-c",
