@@ -59,15 +59,22 @@ function copyFile(srcAbs, destRel, ctx, { mode } = {}) {
       curDigest,
     }) : null);
   const state = manifestStore.evaluateFileState({ curDigest, nextDigest, recordedDigest });
-  const action = state === 'preserve' && ctx.force ? 'force-overwrite' : state;
+  // An explicit mode wins; otherwise a packaged executable installs as 0755.
+  const wantMode = mode != null ? mode
+    : (fs.statSync(srcAbs).mode & 0o111) ? 0o755 : null;
+  // Content already matches but the executable bit was lost (e.g. by an earlier
+  // update): repair it, which is safe because the file equals the package.
+  const repair = state === 'unchanged' && wantMode != null && (wantMode & 0o111) !== 0
+    && (fs.statSync(destAbs).mode & 0o111) === 0;
+  const action = repair ? 'update' : state === 'preserve' && ctx.force ? 'force-overwrite' : state;
   const outputAbs = action === 'preserve' ? `${destAbs}.nogging-new` : destAbs;
-  if (action !== 'unchanged' && !ctx.dryRun) {
+  if (repair) {
+    if (!ctx.dryRun) fs.chmodSync(destAbs, fs.statSync(destAbs).mode & 0o7777 | 0o111);
+  } else if (action !== 'unchanged' && !ctx.dryRun) {
     ensureDir(path.dirname(outputAbs), ctx);
     if (action === 'force-overwrite') fs.copyFileSync(destAbs, `${destAbs}.orig`);
     fs.writeFileSync(outputAbs, next);
-  }
-  if (mode != null && action !== 'unchanged' && !ctx.dryRun) {
-    fs.chmodSync(outputAbs, mode);
+    if (wantMode != null) fs.chmodSync(outputAbs, wantMode);
   }
   if (ctx.nextInstalledManifest && action !== 'preserve') {
     ctx.nextInstalledManifest.files[destRel] = nextDigest;
@@ -75,7 +82,8 @@ function copyFile(srcAbs, destRel, ctx, { mode } = {}) {
   if (action === 'preserve' || action === 'force-overwrite') {
     (ctx.review ||= []).push({ kind: action === 'preserve' ? 'preserve' : 'force', path: destRel });
   }
-  const note = action === 'preserve' ? `upstream: ${destRel}.nogging-new`
+  const note = repair ? `mode ${(wantMode & 0o777).toString(8).padStart(4, '0')}`
+    : action === 'preserve' ? `upstream: ${destRel}.nogging-new`
     : action === 'force-overwrite' ? `backup: ${destRel}.orig` : undefined;
   ctx.log.add(action, destRel, note);
   return action;
