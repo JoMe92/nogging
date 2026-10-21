@@ -1,30 +1,30 @@
 ## 1. Verified integration contract
 
-- [ ] TASK-DRO-001 [complex] Design Decision 1: prove native Codex and tmux-owned Happier/Codex identity, authority, exact resume and complete stop in an isolated host-authorized scratch scope. Check: dated unsigned runtime-contract report with versions, verified round trip and no surviving owned remote agent; unsupported contracts block. Branch docs/.
+- [ ] TASK-DRO-001 [complex] Decision 1: retest the revised contract after explicit operator trust setup and post-setup baselines; prove retained rules, allowed commands, native/Happier exact resume, sanitized input and complete stop. Check: honest unsigned evidence with unchanged global policies; missing prerequisites remain blocked. Branch docs/.
 
 ## 2. Runtime selection and native lifecycle
 
-- [ ] TASK-DRO-002 [standard] Design Decision 2: add canonical versioned selection/checkpoint state and orchestrator start with validated agent/control, saved defaults, service enable/start and live-switch refusal. Check: isolated tests for precedence, corrupt state, linked checkouts, prerequisites and concurrent starts. Depends on DRO-001. Branch feat/.
+- [ ] TASK-DRO-002 [standard] Decision 2: add canonical selection/checkpoint state and orchestrator start; preflight exact repository/config-layer trust before any runtime spawn, validate agent/control and refuse live switching. Check: defaults, unknown trust, no implicit global trust writes, service errors and concurrent-start fixtures. Depends on DRO-001. Branch feat/.
 
-- [ ] TASK-DRO-003 [complex] Design Decision 3 and launch-profiles deltas: ship scoped Codex orchestrator authority, native launcher, shared persona and model/effort forwarding without weakening other roles or shared policies. Check: launch/resume and effective-policy fixtures, role/floor/fence isolation and helper contracts. Depends on DRO-002. Branch feat/.
+- [ ] TASK-DRO-003 [complex] Decision 3: ship the Codex host-access profile with execpolicy retained, role-scoped fence exemption and honest HOST-ACCESS label; preserve Claude FULL-ACCESS and ordinary-role boundaries. Check: effective policy/model/effort, sentinel denial plus allowed command, no rule bypass or global edits, helper contracts. Depends on DRO-002. Branch feat/.
 
-- [ ] TASK-DRO-004 [complex] Design Decision 4: generalize native supervisor, adoption, stop and restart with verified ownership and per-selection exact checkpoints. Check: both-provider crash/reboot-equivalent recovery, legacy migration, exact-ID failure, supervisor-only adoption, switch-back and stop-timeout tests. Depends on DRO-003. Branch feat/.
+- [ ] TASK-DRO-004 [complex] Decision 4: generalize supervisor, adoption, stop and restart with verified ownership and exact per-selection checkpoints; cold recovery must preflight trust. Check: provider recovery, legacy migration, exact-ID errors, supervisor-only adoption, switch-back, unknown ownership and stop timeout. Depends on DRO-003. Branch feat/.
 
 ## 3. Happier access and installed operations
 
-- [ ] TASK-DRO-005 [complex] Design Decision 5: implement tmux-owned Codex/Happier control with attributable IDs, effective policy, readiness, verified delivery and complete remote/local stop. Check: outage/auth/version/receipt/stop fixtures, detached survivors, no fallback or duplicate send, unrelated sessions untouched. Depends on DRO-004. Branch feat/.
+- [ ] TASK-DRO-005 [complex] Decision 5: implement tmux-owned Codex/Happier control with allowlisted environment, own first input and attributable IDs; reconcile explicit remote stop with owned PID/start-time termination. Check: contaminated parent, exact resume, stale activity, API/auth/version/receipt failures, no fallback or duplicate send. Depends on DRO-004. Branch feat/.
 
-- [ ] TASK-DRO-006 [standard] Design Decision 6: integrate diagnostics/status JSON, runtime inspection/delivery, honest usage attribution, installed payloads, Codex entry point and operations/security/AGENTS guides. Check: packed init/update/remove, preserved checkpoints/custom files, no-systemd and Claude without Happier. Depends on DRO-005. Branch docs/.
+- [ ] TASK-DRO-006 [standard] Decision 6: ship diagnostics/status JSON, runtime-specific authority/floor/trust state, payloads and Codex entry point; document explicit trust setup, denied-action escalation and recovery. Check: packed init/update/remove, preserved state/custom files, no-systemd and Claude without Happier. Depends on DRO-005. Branch docs/.
 
 ## 4. Integration and acceptance
 
-- [ ] TASK-DRO-007 [standard] Design Decision 8: complete cross-runtime singleton, authority, exact-recovery, transport and packed-payload regression coverage; reconcile orchestrator fence fixtures. Check: focused orchestrator/session/delivery/floor/helper/packaging suites and one isolated full scripts/test. Depends on DRO-006. Branch test/.
+- [ ] TASK-DRO-007 [standard] Decision 8: cover trust refusal before spawn, global-config immutability, sanitized initial input, retained floor, authority labels, exact recovery and local/remote stop agreement. Check: focused orchestrator/session/helper/delivery/floor/packaging suites and one isolated full scripts/test. Depends on DRO-006. Branch test/.
 
-- [ ] TASK-DRO-008 [complex] Design Decision 8: run the three-selection scratch-host lifecycle matrix, verified remote round trip, own exact recovery, restart/adoption, linked stop, repeat stop, switch-back and singleton preservation. Check: dated redacted unsigned dual-runtime acceptance report; distinguish actual reboot from equivalent checks. Depends on DRO-007. Branch test/.
+- [ ] TASK-DRO-008 [complex] Decision 8: run the three-selection host matrix after explicit trusted-fixture setup and baseline capture; prove exact resume, owned mobile round trip, restart/adoption, switching and complete stop. Check: dated unsigned evidence with policy immutability and honest authority; report missing prerequisites as blocked. Depends on DRO-007. Branch test/.
 
 ## Dependency contract
 
-Explicit Beads edges (`A <- B`): 002<-001, 003<-002, 004<-003, 005<-004, 006<-005, 007<-006, 008<-007. Only TASK-DRO-001 is initially ready. See design Decision 7 for lanes and integration prerequisites. All branches use the slug dual-runtime-orchestrator. These tasks are materialized unclaimed; implementation begins only in a separate authorized execution session.
+Explicit Beads edges (`A <- B`): 002<-001, 003<-002, 004<-003, 005<-004, 006<-005, 007<-006, 008<-007. TASK-DRO-001 remains blocked from its earlier run until explicit operator fixture preparation and the revised contract are satisfied; revising the plan does not mark it ready or complete. All eight mappings and the seven dependency edges are reconciled in place. See design Decision 7 for lanes and integration prerequisites. All branches use the slug dual-runtime-orchestrator. These tasks are materialized unclaimed; implementation begins only in a separate authorized execution session.
 
 ## Execution contract
 

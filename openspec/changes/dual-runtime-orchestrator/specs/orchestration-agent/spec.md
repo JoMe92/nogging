@@ -85,7 +85,7 @@ Runtime, authority, trust and selected-control prerequisites SHALL be checked be
 
 ### Requirement: Stop and switching preserve singleton ownership and provider history
 
-`orchestrator stop` SHALL stop/disable the canonical supervisor and terminate its owned runtime and control adapter, with a bounded graceful timeout, without deleting conversations. It SHALL be idempotent and SHALL preserve provider/control-specific exact checkpoints. It SHALL NOT affect unrelated tmux panes or Happier sessions. A partial or unverifiable termination SHALL return nonzero with retained ownership evidence and SHALL prevent a replacement start until reconciled. A switch SHALL consist of verified stop followed by explicit start; switching back SHALL use that selection's previous exact checkpoint, never another provider's ID. The existing canonical orchestrator lock and cross-namespace liveness rules SHALL apply across all selections.
+`orchestrator stop` SHALL stop/disable the canonical supervisor and terminate its owned runtime and control adapter, with a bounded graceful timeout, without deleting conversations. It SHALL be idempotent and SHALL preserve provider/control-specific exact checkpoints. It SHALL NOT affect unrelated tmux panes or Happier sessions. Successful termination SHALL require owned PID/start-time process evidence together with supported scoped remote-stop evidence and inactive remote state where applicable. A stale remote active flag alone SHALL NOT be reported as a surviving agent; a local pane exit alone SHALL NOT be reported as complete stop. A partial or unverifiable termination SHALL return nonzero with retained ownership evidence and SHALL prevent a replacement start until reconciled. A switch SHALL consist of verified stop followed by explicit start; switching back SHALL use that selection's previous exact checkpoint, never another provider's ID. The existing canonical orchestrator lock and cross-namespace liveness rules SHALL apply across all selections.
 
 #### Scenario: Stop Codex from a linked checkout
 
@@ -105,7 +105,7 @@ Runtime, authority, trust and selected-control prerequisites SHALL be checked be
 
 ### Requirement: Happier readiness and identity describe the owned Codex orchestrator
 
-Codex/happier SHALL be a supported remote-control adapter inside the managed tmux lifecycle. Startup SHALL record both the exact Happier session ID and associated Codex conversation ID from attributable evidence. Status SHALL distinguish process liveness, backend readiness and remote reachability, and expose the actual session ID plus a link only when supplied by the integration. A remote timeout SHALL report unknown/degraded state without launching another agent or selecting another session. A transport failure SHALL NOT silently fall back to native control. Operator messages SHALL have verified receipt or an explicit unverified outcome without automatic duplicate resend. Authority, persona and model/effort SHALL reach the actual Codex backend through a verified interface.
+Codex/happier SHALL be a supported remote-control adapter inside the managed tmux lifecycle. Startup SHALL record both the exact Happier session ID and associated Codex conversation ID from attributable evidence. Status SHALL distinguish process liveness, backend readiness and remote reachability, and expose the actual session ID plus a link only when supplied by the integration. A remote timeout SHALL report unknown/degraded state without launching another agent or selecting another session. A transport failure SHALL NOT silently fall back to native control. Operator messages SHALL have verified receipt or an explicit unverified outcome without automatic duplicate resend. The Codex host-access policy with retained execpolicy, persona and model/effort SHALL reach the actual backend through a verified interface. Before spawn, the adapter SHALL sanitize inherited parent session/thread, pending-first-input and lifecycle/service context using an explicit environment allowlist; only the selected launch's validated input SHALL seed the new runtime.
 
 #### Scenario: The operator opens the correct Happier session
 
@@ -121,11 +121,11 @@ Codex/happier SHALL be a supported remote-control adapter inside the managed tmu
 #### Scenario: Requested authority is not propagated
 
 - **WHEN** the adapter cannot verify the required effective backend policy
-- **THEN** startup fails with evidence and does not claim FULL-ACCESS or readiness from a Happier permission label alone
+- **THEN** startup fails with evidence and does not claim verified host authority, floor status or readiness from a Happier permission label alone
 
 ### Requirement: Runtime selection and migration remain observable and installable
 
-The installed payload SHALL include the Codex profile, shared persona, Codex orchestration entry point, validated helpers and both-runtime lifecycle documentation. Update SHALL preserve saved selection, exact checkpoints, user-global settings and locally modified managed files, and SHALL NOT start a service. Verified legacy Claude records SHALL migrate as Claude/native using their own ID. `orchestrator status` SHALL provide human-readable and versioned JSON runtime/control, ownership and readiness data; session listing, doctor and recovery SHALL expose consistent diagnostics and actual authority. Wrapped Codex token accounting SHALL remain source-attributed or explicitly unknown. Native Claude SHALL remain usable without Happier installed.
+The installed payload SHALL include the Codex profile, shared persona, Codex orchestration entry point, validated helpers and both-runtime lifecycle documentation. Update SHALL preserve saved selection, exact checkpoints, user-global settings and locally modified managed files, and SHALL NOT start a service. Verified legacy Claude records SHALL migrate as Claude/native using their own ID. `orchestrator status` SHALL provide human-readable and versioned JSON runtime/control, ownership, exact-trust preflight, runtime-specific authority, retained-floor status and readiness data; session listing, doctor and recovery SHALL expose consistent diagnostics and actual authority. Wrapped Codex token accounting SHALL remain source-attributed or explicitly unknown. Native Claude SHALL remain usable without Happier installed.
 
 #### Scenario: Upgrade preserves a stopped Codex selection
 
@@ -141,3 +141,29 @@ The installed payload SHALL include the Codex profile, shared persona, Codex orc
 
 - **WHEN** a wrapped Codex session has no attributable usage source
 - **THEN** diagnostics report unknown usage rather than zero or another session's totals
+
+
+### Requirement: Unattended runtime startup requires explicit prior workspace trust
+
+Start, cold run, full restart and cold service recovery SHALL verify that the canonical repository and required runtime configuration/hook layers are explicitly trusted before invoking Codex or Happier. Missing or unobservable trust SHALL refuse before agent launch and saved-selection changes, with a concrete operator preparation instruction. A trusted ancestor, an approved path description or a successful model reply SHALL NOT substitute for verified required trust. The operator establishes trust explicitly outside unattended startup; the launcher SHALL NOT accept dialogs, auto-trust, write global configuration or rely on Happier to create that prerequisite. Compatibility/acceptance baselines SHALL be captured after operator setup and subsequent startup SHALL preserve them. Unexpected runtime global-configuration mutation SHALL fail the launch, stop only owned processes and preserve recovery evidence without overwriting concurrent user edits.
+
+#### Scenario: Unprepared repository is refused before Happier can auto-trust it
+
+- **WHEN** the exact repository or required configuration-layer trust is missing or unknown
+- **THEN** startup reports the operator preparation needed and creates no Codex/Happier runtime or selection change
+
+#### Scenario: Explicitly prepared repository starts without policy mutation
+
+- **WHEN** required trust was established explicitly by the operator before startup
+- **THEN** a compatible runtime can initialize while global configuration and shared rules retain their post-setup baseline
+
+#### Scenario: Wrapped startup unexpectedly changes global trust
+
+- **WHEN** a runtime modifies global trust/configuration after the verified baseline
+- **THEN** the launch fails, owned processes are stopped and the difference is preserved for scoped recovery
+- **AND** concurrent user configuration is not blindly overwritten
+
+#### Scenario: Inherited parent input cannot seed the orchestrator
+
+- **WHEN** a Codex/Happier launch inherits parent session IDs, pending first input or service lifecycle variables
+- **THEN** the validated child environment excludes that context and the new runtime receives only its own validated input
