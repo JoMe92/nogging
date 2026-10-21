@@ -99,7 +99,8 @@ function changes(ctx, verbose) {
     lines.push(`  ${name.padEnd(width)}  ${countsLine(group, ctx.dryRun)}`);
     if (!verbose) continue;
     for (const e of group) {
-      lines.push(`    ${label(e.action, ctx.dryRun).padEnd(22)} ${e.path}`);
+      const repair = e.note && e.note.startsWith('mode ') ? `  (${e.note})` : '';
+      lines.push(`    ${label(e.action, ctx.dryRun).padEnd(22)} ${e.path}${repair}`);
     }
   }
   return lines;
