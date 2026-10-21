@@ -1,6 +1,6 @@
 ## 1. Installer file mode (#263)
 
-- [ ] TASK-IMT-001 [standard] Per design Decisions 1-4, 9: fsops copyFile derives the mode from the packaged source for create, update, force, .nogging-new; repairs a matching file that lost the executable bit; .orig stays mode-preserving. Failing-first scripts/installer-file-mode.test.sh (packed v2.2.0-shaped install without the recorder). CHANGELOG Fixed. Check: that suite, cli, manifest-update, manifest-legacy-upgrade; scripts/test. Branch fix/. GitHub #263.
+- [x] TASK-IMT-001 [standard] Per design Decisions 1-4, 9: fsops copyFile derives the mode from the packaged source for create, update, force, .nogging-new; repairs a matching file that lost the executable bit; .orig stays mode-preserving. Failing-first scripts/installer-file-mode.test.sh (packed v2.2.0-shaped install without the recorder). CHANGELOG Fixed. Check: that suite, cli, manifest-update, manifest-legacy-upgrade; scripts/test. Branch fix/. GitHub #263.
 
 ## 2. Fixture backend pin (#264)
 
