@@ -4,7 +4,7 @@
 
 ## 2. Fixture backend pin (#264)
 
-- [ ] TASK-IMT-002 [standard] Per design Decisions 5-9: shipped scripts/lib/test-fixture-config.sh copy_host_config pins session_backend to tmux; switch worktree-workflow, nogg and the other herdr-failing suites of Decision 6 to it. Failing-first scripts/fixture-backend-pin.test.sh runs them under a herdr host config (test-agents.sh stubs). CHANGELOG Fixed. Check: that suite; scripts/test also with a herdr host config. Branch test/. GitHub #264.
+- [x] TASK-IMT-002 [standard] Per design Decisions 5-9: shipped scripts/lib/test-fixture-config.sh copy_host_config pins session_backend to tmux; switch worktree-workflow, nogg and the other herdr-failing suites of Decision 6 to it. Failing-first scripts/fixture-backend-pin.test.sh runs them under a herdr host config (test-agents.sh stubs). CHANGELOG Fixed. Check: that suite; scripts/test also with a herdr host config. Branch test/. GitHub #264.
 
 ## Dependency contract
 
