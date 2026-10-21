@@ -20,6 +20,7 @@
 #   - Effective Claude settings JSON copy strips the `effort` key while leaving
 #     the source profile untouched.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-fixture-config.sh"
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 nogg="$here/nogg"
@@ -69,7 +70,8 @@ make_root() {
   git init -q "$r"
   cp -r "$repo_root/.nogging/launch-profiles" "$repo_root/.nogging/launch-prompts" "$r/.nogging/"
   cp "$repo_root/templates/model-selection.json" "$r/.nogging/model-selection.json"
-  python3 - "$repo_root/.nogging/config.json" "$r/.nogging/config.json" <<'PY'
+  copy_host_config "$repo_root/.nogging/config.json" "$r/.nogging/config.json"
+  python3 - "$r/.nogging/config.json" "$r/.nogging/config.json" <<'PY'
 import json, sys
 cfg = json.load(open(sys.argv[1]))
 cfg.pop("session_launch_profile", None); cfg.pop("session_launch_prompt", None)
@@ -353,7 +355,7 @@ codex_has "codex-effort-over-tier: tier model kept" "--model gpt-6.1-sol"
 codex_has "codex-effort-over-tier: launch effort wins" "--reasoning-effort low"
 codex_lacks "codex-effort-over-tier: tier effort not forwarded" "--reasoning-effort high"
 src_check "codex-effort-over-tier: tier attribution kept" \
-  "r['selection_tier']=='complex' and r['selection_tier_effort']=='high' and r['reasoning_effort']=='low' and r['reasoning_effort_source']=='launch'"
+  "r['selection_tier']=='complex' and r['selection_tier_effort']=='low' and r['reasoning_effort']=='low' and r['reasoning_effort_source']=='launch'"
 
 launch_ok "codex-tier-model-effort" --agent codex --full-access --tier complex --model gpt-6-luna --effort medium
 codex_has "codex-tier-model-effort: model forwarded" "--model gpt-6-luna"

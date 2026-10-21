@@ -212,7 +212,7 @@ A Claude or Codex session can request a reasoning effort for that launch only:
 ./scripts/nogg session launch --role lead --bead SPEC-xxx --agent codex --effort low
 ```
 
-Precedence is `--effort`, then a tier effort (when `--tier` is passed), then an
+Precedence is `--effort`, then a tier effort (a project override, else the table; when `--tier` is passed), then an
 optional effort key in the launch profile (`effort` for Claude,
 `model_reasoning_effort` for Codex), then the runtime default (no effort flag is
 passed). For Claude, allowed values are exactly `low`, `medium`, `high`, `xhigh`
@@ -269,6 +269,11 @@ model whose name carries the thinking level; Claude gets the tier model and the
 tier effort (as its native `--effort`, source `launch`; an explicit `--effort`
 beats the tier, and a helper without `claude-effort-forwarding` refuses rather
 than drop it).
+A project can override a tier's effort for Claude or Codex with a
+`tier_overrides` block in `.nogging/config.json`; precedence is explicit
+`--effort` > project override > table, `session list` shows `effort=<level>
+(project)`, and a malformed block refuses `--tier` launches (check with
+`scripts/nogg models check`).
 Pi has no table, so `--tier` with `--agent pi` refuses, as do an unknown tier
 and a missing or invalid table — all before any side effect. The record stores
 `selection_tier` and `session list` shows `tier=<tier>` in the `MODEL` cell. The
@@ -407,6 +412,79 @@ A launched session registers with Remote Control (`/rc` shows in its status
 line). It appears in the Claude app on your phone as a session you can read and
 type into, with no SSH. This is the same control surface as your other Remote
 Control sessions.
+
+## Bring a Lead branch up to date
+
+A Lead cannot write `openspec/` (the fence), so it must not run `git rebase`,
+`git merge` or `git pull` to integrate upstream: git writes files in path order,
+fails with a read-only error on the first `openspec/` path and leaves a
+half-applied tree. Run instead, from the implementation worktree:
+
+```bash
+./scripts/nogg worktree rebase [<record>] [--continue | --abort] [--allow-live-session]
+```
+
+**Who runs it.** The process that can write `openspec/` does the checkout. An
+unfenced caller (operator, orchestrator, a trusted full-access session outside a
+fence) runs the engine directly. A fenced Lead never runs git: the command sends
+one closed request (`start`, `continue` or `abort`, plus the session name) to the
+host-side sandbox broker, which runs the same engine. A direct and a brokered
+call therefore refuse identically. A session launched before the broker learned
+the `rebase` request keeps its old broker and gets a hand-off message ("predates
+rebase brokering; nothing was changed"): ask the operator to run
+`./scripts/nogg worktree rebase <record> --allow-live-session` from an unfenced
+shell, or relaunch. `--allow-live-session` is for an unfenced operator who has
+confirmed the Lead is parked; it is never part of the brokered request.
+
+`<record>` is a filename under `.nogging/state/worktrees/`; omitted, it is the
+record whose `path` is the current checkout. Only implementation records are
+accepted (a planner's `openspec/` is writable and it rebases under the planning
+lock). The base is `origin/develop` after `git fetch origin develop`, never the
+local `develop`.
+
+**Refusals**, checked in order before anything is written: the target is a
+registered implementation worktree with an existing directory; `HEAD` is on the
+recorded branch (not detached, not `main`/`develop`); no git operation is in
+progress (Nogg's own paused rebase is answered with "use `--continue` or
+`--abort`"); the tree is completely clean, untracked files included (there is no
+auto-stash, the stash stack is shared across worktrees); no live supervised
+session other than the requester works in that worktree; the branch has no merge
+commits in `origin/develop..HEAD`; the fetch succeeds. If `origin/develop` is
+already an ancestor of `HEAD` it prints `already up to date` and exits 0. The
+live-session check trusts the session name in the request, so it is an
+accident guard, not authentication.
+
+**Mechanics.** The engine writes a journal under `.nogging/state/rebase/`,
+creates `refs/nogg/rebase-backup/<branch>/<UTC-stamp>` at the previous tip,
+rebases onto `origin/develop` with the Lead identity kept, verifies that
+`origin/develop` is an ancestor of `HEAD` and the tree is clean, then prints the
+new tip, the backup ref and the restore command. That command is printed for the
+operator, never run. The engine never resolves a conflict and never runs
+`reset --hard`, `checkout --`, `clean`, `stash` or `--force`.
+
+**Conflicts.** Exit codes: 0 done or up to date, 1 refused or failed with
+nothing changed, 3 paused.
+
+- A conflict on any path under `openspec/` (or a rename into or out of it): the
+  engine runs `git rebase --abort`, verifies the tree equals the previous state,
+  names the paths and exits 1. The Lead can neither see nor edit those paths;
+  the orchestrator or operator resolves it from an unfenced shell, or a planning
+  session adjusts the upstream change.
+- A conflict only outside `openspec/`: a real git rebase is left paused (the
+  journal moves to `paused`, exit 3) and the conflicted paths are listed. Edit
+  them in your worktree, `git add` them, then run `worktree rebase --continue`;
+  later replayed commits may still write `openspec/`, so continuing also goes
+  through the writer side. A new conflict pauses again. `--abort` abandons the
+  rebase and verifies the tree equals the previous state. `--continue` and
+  `--abort` refuse when nothing is paused.
+
+**After a rebase.** History was rewritten: if the branch is already on the
+remote, the next push needs `--force-with-lease`, which only a trusted session
+can do. The command prints that note when `origin/<branch>` exists and never
+pushes.
+
+If a tree is already half-applied, see *A half-applied worktree after a failed rebase or checkout* in
+`docs/failure-recovery.md`.
 
 ## Stop and clean up
 

@@ -8,6 +8,7 @@
 # - Assert no relative scripts/ command remains in the generated settings.
 
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-fixture-config.sh"
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib/test-env.sh"
 
@@ -28,7 +29,7 @@ mkdir -p "$HOME"
 # Root containing a space
 space_root="$work/space repo root"
 mkdir -p "$space_root/.nogging/state" "$space_root/scripts"
-cp "$repo_root/.nogging/config.json" "$space_root/.nogging/config.json"
+copy_host_config "$repo_root/.nogging/config.json" "$space_root/.nogging/config.json"
 git init -q "$space_root"
 cp "$repo_root/scripts/nogg" "$space_root/scripts/"
 chmod +x "$space_root/scripts/nogg"

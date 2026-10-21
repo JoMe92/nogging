@@ -11,6 +11,7 @@
 # startup) is covered in scripts/orchestrator.test.sh, which already drives
 # that command end to end.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-fixture-config.sh"
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 nogg="$here/nogg"
@@ -43,7 +44,7 @@ export PATH="$work/bin:$PATH"
 make_root() {
   local r="$1"
   mkdir -p "$r/.nogging/state" "$r/.nogging/locks" "$r/openspec/changes/demo"
-  cp "$repo_root/.nogging/config.json" "$r/.nogging/config.json"
+  copy_host_config "$repo_root/.nogging/config.json" "$r/.nogging/config.json"
   printf '%s\n' '# Tasks' '' '- [ ] TASK-DEMO-001 Do the demo thing' >"$r/openspec/changes/demo/tasks.md"
   printf '# Execution log\n' >"$r/openspec/changes/demo/execution-log.md"
   git -C "$r" init -q

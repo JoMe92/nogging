@@ -7,6 +7,7 @@
 #   - fenced caller tested via NOGG_OPENSPEC_FENCED=1 without unshare;
 #   - clean environment unsetting inherited NOGG_*, HERDR_*, TMUX.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-fixture-config.sh"
 
 # Clean inherited environment per Decision 1
 for v in $(compgen -v | grep -E '^(NOGG_|HERDR_|TMUX)'); do
@@ -85,7 +86,8 @@ make_fixture() {
   ln -sf "$repo_root/scripts/session-launch" "$dir/scripts/session-launch"
   ln -sf "$repo_root/scripts/session-log-writer" "$dir/scripts/session-log-writer"
   ln -sf "$repo_root/scripts/openspec-sandbox" "$dir/scripts/openspec-sandbox"
-  python3 - "$repo_root/.nogging/config.json" "$dir/.nogging/config.json" <<'PY'
+  copy_host_config "$repo_root/.nogging/config.json" "$dir/.nogging/config.json"
+  python3 - "$dir/.nogging/config.json" "$dir/.nogging/config.json" <<'PY'
 import json, sys
 cfg = json.load(open(sys.argv[1]))
 cfg["orchestrator_lock_ttl_seconds"] = 3600

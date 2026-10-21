@@ -277,6 +277,69 @@ def recorded_worktree_lines():
             lines.append(f"{path.name}: recorded {branch} at {location} is missing")
             attention.append("missing recorded worktree")
     return lines, attention
+def worktree_integrity_diagnostics():
+    """Read-only half-checkout and abandoned-rebase-journal diagnostics."""
+    lines, attention = [], []
+    for record_path, record in worktree_records():
+        if not isinstance(record, dict) or record.get("kind") != "implementation":
+            continue
+        location = record.get("path")
+        if not isinstance(location, str) or not Path(location).is_dir():
+            continue
+        try:
+            result = classify_worktree_integrity(location)
+        except (OSError, RuntimeError) as exc:
+            lines.append(f"{record_path.name}: integrity check unavailable ({exc})")
+            continue
+        state = result["state"]
+        if state not in ("half-applied", "mixed"):
+            continue
+        reproducible = result["reproducible"]
+        detail = ", ".join(reproducible)
+        tracked, untracked = [], []
+        for name in reproducible:
+            probe = subprocess.run(["git", "-C", location, "ls-files", "--error-unmatch", "--", name],
+                                   text=True, capture_output=True)
+            (tracked if probe.returncode == 0 else untracked).append(name)
+        hints = []
+        if tracked:
+            hints.append("git restore --source=HEAD --staged --worktree -- "
+                         + " ".join(shlex.quote(p) for p in tracked))
+        if untracked:
+            hints.append("git clean -f -- " + " ".join(shlex.quote(p) for p in untracked))
+        hint = "; path-scoped recovery: " + " && ".join(hints) if hints else ""
+        lines.append(f"worktree {Path(location).name}: {state}; upstream-reproducible paths: {detail}{hint}")
+        attention.append(f"worktree {Path(location).name} {state}")
+    journal_dir = STATE / "rebase"
+    if journal_dir.is_dir():
+        for journal in sorted(journal_dir.glob("*.json")):
+            try:
+                entry = json.loads(journal.read_text())
+            except (ValueError, OSError):
+                lines.append(f"rebase journal {journal.name}: unreadable; preserve for inspection")
+                attention.append("unreadable rebase journal")
+                continue
+            branch, phase = entry.get("branch", "unknown"), entry.get("phase", "unknown")
+            location = next((r.get("path") for _, r in worktree_records()
+                             if isinstance(r, dict) and r.get("branch") == branch), None)
+            in_progress = False
+            rebase_merge = False
+            if location and Path(location).is_dir():
+                try:
+                    gd = subprocess.run(["git", "-C", location, "rev-parse", "--git-dir"],
+                                        text=True, capture_output=True, check=True).stdout.strip()
+                    gp = Path(gd)
+                    if not gp.is_absolute(): gp = (Path(location) / gp).resolve()
+                    in_progress = any((gp / marker).exists() for marker, _ in MIDOP_MARKERS)
+                    rebase_merge = (gp / "rebase-merge").exists()
+                except (OSError, subprocess.SubprocessError):
+                    pass
+            stale = ((phase == "running" and not in_progress)
+                     or (phase == "paused" and not rebase_merge))
+            if stale:
+                lines.append(f"rebase journal {journal.name}: stale phase={phase}; backup ref {entry.get('backup_ref', '(not recorded)')}")
+                attention.append(f"stale rebase journal {journal.name}")
+    return lines, attention
 def git_worktree_paths():
     result = run("git", "worktree", "list", "--porcelain", check=False)
     if result.returncode:
@@ -502,6 +565,338 @@ def cleanup_worktree(record_name):
     run("git", "branch", "-D", branch)
     path.unlink()
     print(f"worktree retired: {target} ({branch})")
+
+def worktree_rebase(record_name=None, mode="start", allow_live_session=False):
+    """Rebase one clean implementation worktree onto the current origin/develop.
+
+    Fenced callers send the closed request to the host-side sandbox broker;
+    unfenced callers run the engine directly.
+    """
+    if os.environ.get("NOGG_OPENSPEC_FENCED") == "1":
+        if allow_live_session:
+            raise RuntimeError("--allow-live-session is available only to an unfenced operator")
+        broker = os.environ.get("NOGG_TASK_DONE_SOCKET")
+        if not broker:
+            raise RuntimeError("worktree rebase: this session has no rebase broker; nothing was changed; ask the operator to run `./scripts/nogg worktree rebase <record> --allow-live-session` from an unfenced shell, or relaunch")
+        checkout = str(Path.cwd().resolve())
+        request = {"action": "rebase", "checkout": checkout, "mode": mode,
+                   "session": os.environ.get("NOGG_SESSION_NAME")}
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                client.settimeout(300)
+                client.connect(broker)
+                client.sendall(json.dumps(request).encode())
+                client.shutdown(socket.SHUT_WR)
+                chunks = []
+                while chunk := client.recv(65536):
+                    chunks.append(chunk)
+            response = json.loads(b"".join(chunks))
+        except (OSError, ValueError, socket.timeout) as exc:
+            raise RuntimeError("worktree rebase: this session's sandbox broker is unavailable or predates rebase brokering; nothing was changed; ask the operator to run `./scripts/nogg worktree rebase <record> --allow-live-session` from an unfenced shell, or relaunch") from exc
+        if not response.get("ok"):
+            error = response.get("error", "")
+            if "closed rebase request" in error or not response.get("status"):
+                raise RuntimeError("worktree rebase: this session's sandbox broker predates rebase brokering; nothing was changed; ask the operator to run `./scripts/nogg worktree rebase <record> --allow-live-session` from an unfenced shell, or relaunch")
+            raise RuntimeError(error or "worktree rebase request refused")
+        print(response.get("output", ""), end="")
+        if response.get("status") == "paused":
+            raise SystemExit(3)
+        return
+    state = canonical_repository_state(ROOT)
+    main = Path(state["main_checkout"])
+    worktree_state = main / scfg("state_dir", ".nogging/state") / "worktrees"
+    records = []
+    if not worktree_state.is_dir():
+        raise RuntimeError("no canonical worktree records are available")
+    for path in sorted(worktree_state.glob("*.json")):
+        try:
+            value = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        if isinstance(value, dict):
+            records.append((path, value))
+    if record_name:
+        if Path(record_name).name != record_name or not record_name.endswith(".json"):
+            raise RuntimeError("rebase requires a worktree record filename")
+        match = [(path, value) for path, value in records if path.name == record_name]
+    else:
+        caller = Path(run("git", "rev-parse", "--show-toplevel").stdout.strip()).resolve()
+        match = [(path, value) for path, value in records
+                 if isinstance(value.get("path"), str)
+                 and Path(value["path"]).resolve() == caller]
+    if len(match) != 1:
+        raise RuntimeError("could not resolve exactly one registered worktree record")
+    record_path, record = match[0]
+    target_value, branch = record.get("path"), record.get("branch")
+    if (record.get("kind") != "implementation" or record.get("state") != "allocated"
+            or not isinstance(target_value, str) or not isinstance(branch, str)):
+        raise RuntimeError("target must be an allocated implementation worktree")
+    target = Path(target_value).resolve()
+    if str(target) not in git_worktree_paths() or not target.is_dir():
+        raise RuntimeError(f"target is not a registered implementation worktree: {target}")
+    head_branch = run("git", "-C", str(target), "branch", "--show-current", check=False).stdout.strip()
+    if ((not head_branch or head_branch != branch) and mode == "start") or branch in {"main", "develop"}:
+        raise RuntimeError(f"worktree HEAD must be on recorded implementation branch {branch}")
+
+    gitdir_result = run("git", "-C", str(target), "rev-parse", "--absolute-git-dir", check=False)
+    if gitdir_result.returncode:
+        raise RuntimeError("could not resolve target worktree Git directory")
+    gitdir = Path(gitdir_result.stdout.strip())
+    operation_paths = [gitdir / name for name in
+                       ("MERGE_HEAD", "CHERRY_PICK_HEAD", "BISECT_LOG", "rebase-merge", "rebase-apply")]
+    if any(path.exists() for path in operation_paths) and mode == "start":
+        raise RuntimeError("another Git operation is in progress in the target worktree")
+    before = run("git", "-C", str(target), "rev-parse", "HEAD").stdout.strip()
+    dirty = run("git", "-C", str(target), "status", "--porcelain", check=False)
+    if dirty.returncode:
+        raise RuntimeError("could not inspect target worktree status")
+    if dirty.stdout.strip() and mode == "start":
+        paths = [line[3:] for line in dirty.stdout.splitlines()]
+        raise RuntimeError("target worktree is dirty: " + ", ".join(paths))
+
+    sessions = main / scfg("session_state_dir", ".nogging/state/sessions")
+    try:
+        for session_path in sorted(sessions.glob("*.json")) if sessions.is_dir() else []:
+            session = json.loads(session_path.read_text())
+            if not isinstance(session, dict):
+                raise ValueError("session record is not an object")
+            working_dir = session.get("working_dir")
+            if (session.get("state") in SESSION_ACTIVE_STATES and isinstance(working_dir, str)
+                    and path_is_within(working_dir, target)
+                    and session.get("name") != os.environ.get("NOGG_SESSION_NAME")
+                    and not allow_live_session):
+                name = session.get("name") or session_path.stem
+                raise RuntimeError(f"target worktree is in use by active session {name}")
+    except (OSError, ValueError, TypeError) as exc:
+        raise RuntimeError(f"cannot inspect active session records: {exc}") from exc
+
+    rebase_state = main / scfg("state_dir", ".nogging/state") / "rebase"
+    journal = rebase_state / f"{record_path.stem}.json"
+    journal_data = None
+    if mode in {"continue", "abort"}:
+        try:
+            journal_data = json.loads(journal.read_text())
+        except (OSError, ValueError):
+            raise RuntimeError("no paused Nogging rebase; nothing was changed")
+        if (journal_data.get("phase") != "paused" or journal_data.get("branch") != branch
+                or not (gitdir / "rebase-merge").exists()):
+            raise RuntimeError("no paused Nogging rebase; nothing was changed")
+        if mode == "continue" and run("git", "-C", str(target), "diff", "--name-only", "--diff-filter=U", check=False).stdout.strip():
+            raise RuntimeError("unresolved conflicts remain; resolve and stage them before --continue")
+    origin = resolve_ref("origin/develop")
+    if origin is None:
+        raise RuntimeError("origin/develop does not resolve")
+    merges = run("git", "-C", str(target), "rev-list", "--merges", f"{origin}..HEAD", check=False)
+    if merges.returncode:
+        raise RuntimeError("could not inspect implementation branch history")
+    if merges.stdout.strip():
+        raise RuntimeError("refusing to rebase a branch containing merge commits")
+
+    rebase_state = main / scfg("state_dir", ".nogging/state") / "rebase"
+    journal = rebase_state / f"{record_path.stem}.json"
+    if mode == "start" and journal.exists():
+        raise RuntimeError(f"a prior rebase journal needs recovery first: {journal}")
+
+    fetched = run("git", "-C", str(target), "fetch", "origin", "develop", check=False) if mode == "start" else None
+    if mode == "start" and fetched.returncode:
+        raise RuntimeError("could not fetch origin/develop")
+    onto = run("git", "-C", str(target), "rev-parse", "--verify", "--quiet",
+               "origin/develop^{commit}", check=False)
+    if mode == "start" and onto.returncode:
+        raise RuntimeError("origin/develop does not resolve after fetch")
+    onto_sha = onto.stdout.strip() if mode == "start" else journal_data.get("onto")
+    behind = run("git", "-C", str(target), "merge-base", "--is-ancestor", onto_sha, before,
+                 check=False)
+    if mode == "start" and behind.returncode == 0:
+        print("already up to date")
+        return
+    if mode == "start" and behind.returncode != 1:
+        raise RuntimeError("could not compare origin/develop with the implementation branch")
+
+    if mode == "start":
+        data_dir(rebase_state)
+        stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        backup_ref = f"refs/nogg/rebase-backup/{branch}/{stamp}"
+        journal_data = {"branch": branch, "before": before, "onto": onto_sha,
+                    "requester": os.environ.get("NOGG_SESSION_NAME"),
+                    "started_at": now(), "phase": "running", "backup_ref": backup_ref}
+        tmp = journal.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(journal_data, indent=2, sort_keys=True) + "\n")
+        os.replace(tmp, journal)
+        backup = run("git", "-C", str(target), "update-ref", backup_ref, before, check=False)
+        if backup.returncode:
+            journal.unlink(missing_ok=True)
+            raise RuntimeError("could not create rebase backup ref")
+    env = os.environ.copy()
+    env.pop("NOGG_OPENSPEC_FENCED", None)
+    env.update({"GIT_EDITOR": "true", "GIT_SEQUENCE_EDITOR": "true"})
+    if mode == "abort":
+        aborted = run("git", "-C", str(target), "rebase", "--abort", check=False, env=env)
+        clean = run("git", "-C", str(target), "status", "--porcelain", check=False)
+        current = run("git", "-C", str(target), "rev-parse", "HEAD", check=False)
+        if aborted.returncode or clean.returncode or clean.stdout.strip() or current.stdout.strip() != journal_data["before"]:
+            raise RuntimeError(f"abort could not verify restoration to {journal_data['before']}; inspect {journal} and {journal_data['backup_ref']}")
+        journal.unlink(missing_ok=True)
+        print(f"rebase aborted and restored {journal_data['before']}")
+        return
+    rebased = run("git", "-C", str(target), "rebase", "--continue" if mode == "continue" else "origin/develop", check=False, env=env)
+    if rebased.returncode:
+        conflicts = run("git", "-C", str(target), "diff", "--name-only", "--diff-filter=U", check=False).stdout.splitlines()
+        if any(p == "openspec" or p.startswith("openspec/") for p in conflicts):
+            run("git", "-C", str(target), "rebase", "--abort", check=False, env=env)
+            clean = run("git", "-C", str(target), "status", "--porcelain", check=False)
+            current = run("git", "-C", str(target), "rev-parse", "HEAD", check=False)
+            original_tip = journal_data["before"]
+            if clean.returncode or clean.stdout.strip() or current.stdout.strip() != original_tip:
+                journal_data["phase"] = "recovery-required"
+                journal.write_text(json.dumps(journal_data, indent=2, sort_keys=True) + "\n")
+                raise RuntimeError(f"OpenSpec conflict abort could not restore {original_tip}; inspect {journal}")
+            journal.unlink(missing_ok=True)
+            raise RuntimeError("OpenSpec rebase conflict; aborted and restored " + original_tip + "; paths: " + ", ".join(conflicts))
+        if conflicts and all(p != "openspec" and not p.startswith("openspec/") for p in conflicts):
+            journal_data["phase"] = "paused"
+            journal.write_text(json.dumps(journal_data, indent=2, sort_keys=True) + "\n")
+            raise SystemExit("code rebase conflict paused; resolve and stage paths, then run worktree rebase --continue (or --abort); paths: " + ", ".join(conflicts))
+        if mode == "continue":
+            journal_data["phase"] = "paused"
+            journal.write_text(json.dumps(journal_data, indent=2, sort_keys=True) + "\n")
+            raise SystemExit("rebase remains paused; resolve and stage conflicts, then retry --continue")
+        abort = run("git", "-C", str(target), "rebase", "--abort", check=False, env=env)
+        clean = run("git", "-C", str(target), "status", "--porcelain", check=False)
+        current = run("git", "-C", str(target), "rev-parse", "HEAD", check=False)
+        still_in_progress = any(path.exists() for path in operation_paths)
+        if clean.returncode or clean.stdout.strip() or current.stdout.strip() != before or still_in_progress:
+            journal_data["phase"] = "recovery-required"
+            tmp.write_text(json.dumps(journal_data, indent=2, sort_keys=True) + "\n")
+            os.replace(tmp, journal)
+            raise RuntimeError(f"rebase failed and automatic abort could not restore {before}; backup {journal_data['backup_ref']}")
+        journal.unlink(missing_ok=True)
+        reason = "conflict" if "CONFLICT" in (rebased.stdout + rebased.stderr).upper() else "failure"
+        raise RuntimeError(f"rebase {reason}; aborted and restored {before}; backup {journal_data['backup_ref']}")
+
+    tip = run("git", "-C", str(target), "rev-parse", "HEAD", check=False)
+    rebased_branch = run("git", "-C", str(target), "branch", "--show-current", check=False)
+    ancestor = run("git", "-C", str(target), "merge-base", "--is-ancestor", onto_sha, "HEAD", check=False)
+    clean = run("git", "-C", str(target), "status", "--porcelain", check=False)
+    operation = any(path.exists() for path in operation_paths)
+    if (tip.returncode or rebased_branch.returncode or rebased_branch.stdout.strip() != branch
+            or ancestor.returncode or clean.returncode or clean.stdout.strip() or operation):
+        journal_data["phase"] = "verification-failed"
+        tmp.write_text(json.dumps(journal_data, indent=2, sort_keys=True) + "\n")
+        os.replace(tmp, journal)
+        raise RuntimeError(f"post-rebase verification failed; inspect {journal} and backup {journal_data['backup_ref']}")
+    journal.unlink(missing_ok=True)
+    print(f"rebased {branch} onto origin/develop: {tip.stdout.strip()}")
+    print(f"backup ref: {journal_data['backup_ref']}")
+    print(f"restore command (information only): git -C {target} reset --hard {journal_data['before']}")
+
+def worktree_repair(record_name, apply=False):
+    """Safely restore only paths proven byte-identical to origin/develop."""
+    if Path(record_name).name != record_name or not record_name.endswith(".json"):
+        raise RuntimeError("repair requires a worktree record filename")
+    state = canonical_repository_state(ROOT)
+    main = Path(state["main_checkout"])
+    worktree_state = main / scfg("state_dir", ".nogging/state") / "worktrees"
+    record_path = worktree_state / record_name
+    try:
+        record = json.loads(record_path.read_text())
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"could not read worktree record {record_name}") from exc
+    if (not isinstance(record, dict) or record.get("kind") != "implementation"
+            or record.get("state") != "allocated" or not isinstance(record.get("path"), str)
+            or not isinstance(record.get("branch"), str)):
+        raise RuntimeError("target must be an allocated implementation worktree")
+    target = Path(record["path"]).resolve()
+    if not target.is_dir() or str(target) not in git_worktree_paths():
+        raise RuntimeError(f"target is not a registered implementation worktree: {target}")
+    branch = record["branch"]
+    head_branch = run("git", "-C", str(target), "branch", "--show-current", check=False)
+    if head_branch.returncode or head_branch.stdout.strip() != branch or branch in {"main", "develop"}:
+        raise RuntimeError(f"worktree HEAD must be on recorded implementation branch {branch}")
+
+    result = classify_worktree_integrity(target)
+    reproducible = result["reproducible"]
+    print(f"worktree {target.name}: {result['state']}")
+    print("restore: " + (", ".join(reproducible) if reproducible else "none"))
+    if result["other"]:
+        print("leave: " + ", ".join(result["other"]))
+    elif not reproducible:
+        print("leave: none")
+    if not apply:
+        if result["state"] == "operation-in-progress":
+            print("apply would refuse: a Git operation is in progress")
+        return
+    if result["state"] == "operation-in-progress":
+        raise RuntimeError("refusing repair: a Git operation is in progress")
+    if not reproducible:
+        print("nothing to repair")
+        return
+
+    sessions = main / scfg("session_state_dir", ".nogging/state/sessions")
+    try:
+        for session_path in sorted(sessions.glob("*.json")) if sessions.is_dir() else []:
+            session = json.loads(session_path.read_text())
+            if not isinstance(session, dict):
+                raise ValueError("session record is not an object")
+            working_dir = session.get("working_dir")
+            if (session.get("state") in SESSION_ACTIVE_STATES and isinstance(working_dir, str)
+                    and path_is_within(working_dir, target)
+                    and session.get("name") != os.environ.get("NOGG_SESSION_NAME")):
+                name = session.get("name") or session_path.stem
+                raise RuntimeError(f"target worktree is in use by active session {name}")
+    except (OSError, ValueError, TypeError) as exc:
+        raise RuntimeError(f"cannot inspect active session records: {exc}") from exc
+
+    if (os.environ.get("NOGG_OPENSPEC_FENCED") == "1"
+            and any(path == "openspec" or path.startswith("openspec/") for path in result["paths"])):
+        paths = [path for path in result["paths"]
+                 if path == "openspec" or path.startswith("openspec/")]
+        raise RuntimeError("fenced repair refuses OpenSpec paths: " + ", ".join(paths))
+
+    # Snapshot the complete working tree with a private index, preserving the
+    # real index and recording tracked edits plus untracked files.
+    temp_fd, temp_index = tempfile.mkstemp(prefix="nogg-repair-index-")
+    os.close(temp_fd)
+    env = os.environ.copy()
+    env["GIT_INDEX_FILE"] = temp_index
+    try:
+        run("git", "-C", str(target), "read-tree", "HEAD", env=env)
+        run("git", "-C", str(target), "add", "-A", "--", ".", env=env)
+        tree = run("git", "-C", str(target), "write-tree", env=env).stdout.strip()
+        before = run("git", "-C", str(target), "rev-parse", "HEAD").stdout.strip()
+        staged_tree = run("git", "-C", str(target), "write-tree").stdout.strip()
+        head_tree = run("git", "-C", str(target), "rev-parse", "HEAD^{tree}").stdout.strip()
+        staged_parent = None
+        if staged_tree != head_tree:
+            staged_parent = run("git", "-C", str(target), "-c", "user.name=Nogging Repair Backup",
+                                "-c", "user.email=nogging-repair@localhost", "commit-tree",
+                                staged_tree, "-p", before,
+                                input=f"Nogging staged index backup for {branch}\n").stdout.strip()
+        parents = ["-p", before]
+        if staged_parent:
+            parents.extend(["-p", staged_parent])
+        snapshot = run("git", "-C", str(target), "-c", "user.name=Nogging Repair Backup",
+                       "-c", "user.email=nogging-repair@localhost", "commit-tree", tree,
+                       *parents, input=f"Nogging repair backup for {branch}\n").stdout.strip()
+        stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        backup_ref = f"refs/nogg/repair-backup/{branch}/{stamp}"
+        run("git", "-C", str(target), "update-ref", backup_ref, snapshot)
+    finally:
+        Path(temp_index).unlink(missing_ok=True)
+        Path(temp_index + ".lock").unlink(missing_ok=True)
+
+    print(f"backup ref: {backup_ref}")
+    tracked, untracked = [], []
+    for name in reproducible:
+        check = run("git", "-C", str(target), "ls-files", "--error-unmatch", "--", name, check=False)
+        (tracked if check.returncode == 0 else untracked).append(name)
+    if tracked:
+        run("git", "-C", str(target), "restore", "--source=HEAD", "--staged", "--worktree",
+            "--", *tracked)
+    if untracked:
+        run("git", "-C", str(target), "clean", "-f", "--", *untracked)
+    print("repair applied")
+
 def current_branch():
     out = run("git", "branch", "--show-current", check=False).stdout.strip()
     if not out or out == "develop":
@@ -2020,6 +2415,72 @@ MIDOP_MARKERS = (
     ("CHERRY_PICK_HEAD", "cherry-pick in progress"),
     ("BISECT_LOG", "bisect in progress"),
 )
+def classify_worktree_integrity(path, upstream="origin/develop"):
+    """Classify dirty paths that exactly reproduce the fetched upstream tree.
+
+    This is deliberately read-only: path bytes, Git status and upstream blobs
+    are the only evidence. A directory-wide cleanup is never inferred.
+    """
+    path = Path(path).resolve()
+    def git(*args):
+        return subprocess.run(["git", "-C", str(path), *args], text=False,
+                              capture_output=True)
+    gd = git("rev-parse", "--git-dir")
+    if gd.returncode:
+        raise RuntimeError(f"cannot inspect worktree {path}")
+    ref = git("rev-parse", "--verify", f"{upstream}^{{tree}}")
+    if ref.returncode:
+        raise RuntimeError(f"upstream ref {upstream} does not resolve in {path}")
+    git_dir_path = Path(os.fsdecode(gd.stdout.strip()))
+    if not git_dir_path.is_absolute():
+        git_dir_path = (path / git_dir_path).resolve()
+    for marker, _reason in MIDOP_MARKERS:
+        if (git_dir_path / marker).exists():
+            return {"state": "operation-in-progress", "paths": [], "reproducible": [], "other": []}
+    status = git("status", "--porcelain=v1", "-z", "--untracked-files=all")
+    if status.returncode:
+        raise RuntimeError(f"cannot inspect worktree status at {path}")
+    records = status.stdout.split(b"\0")
+    dirty = []
+    i = 0
+    while i < len(records):
+        record = records[i]
+        i += 1
+        if not record:
+            continue
+        # Rename/copy status has a second NUL-delimited path. Classify both:
+        # the destination's bytes are the only potentially reproducible ones.
+        name = os.fsdecode(record[3:])
+        if name:
+            dirty.append(name)
+        if record[:2] and (b"R" in record[:2] or b"C" in record[:2]):
+            if i < len(records) and records[i]:
+                dirty.append(os.fsdecode(records[i]))
+                i += 1
+    if not dirty:
+        return {"state": "clean", "paths": [], "reproducible": [], "other": []}
+    reproducible, other = [], []
+    for name in sorted(set(dirty)):
+        target = path / name
+        upstream_blob = git("show", f"{upstream}:{name}")
+        expected_exists = upstream_blob.returncode == 0
+        actual_exists = target.exists() or target.is_symlink()
+        if expected_exists:
+            if target.is_symlink():
+                actual = os.fsencode(os.readlink(target))
+            elif target.is_file():
+                actual = target.read_bytes()
+            else:
+                actual = None
+            same = actual_exists and actual == upstream_blob.stdout
+        else:
+            same = not actual_exists
+        (reproducible if same else other).append(name)
+    state = ("half-applied" if reproducible and not other else
+             "mixed" if reproducible else "dirty")
+    return {"state": state, "paths": sorted(set(dirty)),
+            "reproducible": reproducible, "other": other}
+
 def git_dir():
     """The absolute path to the repository's git directory, or None when the
     working tree is not a git repository."""
@@ -3077,7 +3538,47 @@ def load_model_selection(path=None):
         raise RuntimeError(f"model-selection table {path} is invalid:\n  "
                            + "\n  ".join(errors) + f"\n{remedy}")
     return table
-def model_selection_entry(table, agent, tier):
+def tier_overrides_errors(block):
+    """Validate project tier effort overrides, naming each invalid key."""
+    errors = []
+    where = "tier_overrides"
+    if not isinstance(block, dict):
+        return [f"{where}: must be an object"]
+    for tier in sorted(block):
+        if tier not in MODEL_SELECTION_TIERS:
+            errors.append(f"{where}: unknown tier {tier!r}; choose one of "
+                          f"{', '.join(MODEL_SELECTION_TIERS)}")
+            continue
+        agents = block[tier]
+        tier_where = f"{where}.{tier}"
+        if not isinstance(agents, dict):
+            errors.append(f"{tier_where}: must be an object")
+            continue
+        for agent in sorted(agents):
+            agent_where = f"{tier_where}.{agent}"
+            if agent not in ("claude", "codex"):
+                if agent == "antigravity":
+                    errors.append(f"{agent_where}: effort is not allowed; Antigravity carries "
+                                  "effort in its model name")
+                else:
+                    errors.append(f"{tier_where}: unknown agent {agent!r}; choose claude or codex")
+                continue
+            value = agents[agent]
+            if not isinstance(value, dict):
+                errors.append(f"{agent_where}: must be an object")
+                continue
+            for key in sorted(set(value) - {"effort"}):
+                errors.append(f"{agent_where}: unknown key {key!r}")
+            if "effort" not in value:
+                errors.append(f"{agent_where}: missing key 'effort'")
+                continue
+            effort = value["effort"]
+            allowed = MODEL_SELECTION_EFFORTS[agent]
+            if not isinstance(effort, str) or effort not in allowed:
+                errors.append(f"{agent_where}.effort: {effort!r} is not one of {', '.join(allowed)}")
+    return errors
+
+def model_selection_entry(table, agent, tier, overrides=None):
     """One validated lookup as {agent, tier, model, effort}; `agy` is an alias
     for `antigravity`, whose effort lives in the model name (effort None)."""
     agent = "antigravity" if agent == "agy" else agent
@@ -3087,20 +3588,37 @@ def model_selection_entry(table, agent, tier):
     if tier not in MODEL_SELECTION_TIERS:
         raise RuntimeError(f"unknown tier {tier!r}; choose one of {', '.join(MODEL_SELECTION_TIERS)}")
     entry = table["agents"][agent][tier]
-    return {"agent": agent, "tier": tier, "model": entry["model"], "effort": entry.get("effort")}
+    table_effort = entry.get("effort")
+    effort = table_effort
+    effort_source = None if agent == "antigravity" else "table"
+    if agent in ("claude", "codex"):
+        override = (overrides or {}).get(tier, {}).get(agent, {}).get("effort")
+        if override is not None:
+            effort = override
+            effort_source = "project"
+    return {"agent": agent, "tier": tier, "model": entry["model"], "effort": effort,
+            "effort_source": effort_source, "table_effort": table_effort}
 def models_cmd(action, agent, tier, as_json, path=None):
     """`nogg models [check] [--agent A] [--tier T] [--json]`: print the table,
     a filtered view or one lookup; `check` only validates. Read-only, no probe."""
     table = load_model_selection(path)
+    overrides = CFG.get("tier_overrides", {})
+    override_errors = tier_overrides_errors(overrides)
+    if override_errors:
+        raise RuntimeError("invalid .nogging/config.json tier_overrides:\n  "
+                           + "\n  ".join(override_errors)
+                           + "\nfix the project overrides or remove the block")
     if action == "check":
         location = Path(path) if path else ROOT / MODEL_SELECTION_PATH
         print(f"model-selection table {location} is valid "
               f"(table_version {table['table_version']}, {len(MODEL_SELECTION_TIERS)} tiers x "
-              f"{len(MODEL_SELECTION_AGENTS)} agents)")
+              f"{len(MODEL_SELECTION_AGENTS)} agents, "
+              f"{sum(len(v) for v in overrides.values())} tier override"
+              f"{'s' if sum(len(v) for v in overrides.values()) != 1 else ''})")
         return
     agents = [agent] if agent else list(MODEL_SELECTION_AGENTS)
     tiers = [tier] if tier else list(MODEL_SELECTION_TIERS)
-    entries = [model_selection_entry(table, a, t) for t in tiers for a in agents]
+    entries = [model_selection_entry(table, a, t, overrides) for t in tiers for a in agents]
     if as_json:
         if agent and tier:
             print(json.dumps(entries[0], indent=2))
@@ -3116,6 +3634,8 @@ def models_cmd(action, agent, tier, as_json, path=None):
               f"researched_at={table['researched_at']}")
     for e in entries:
         effort = f" effort={e['effort']}" if e["effort"] else ""
+        if e["effort_source"] == "project":
+            effort += f" (project; table {e['table_effort']})"
         print(f"{e['tier']:<9} {e['agent']:<12} model={e['model']}{effort}")
     if not agent and not tier:
         for t in MODEL_SELECTION_TIERS:
@@ -3124,7 +3644,7 @@ def models_cmd(action, agent, tier, as_json, path=None):
 # `update`, so this constant always names the version the installed package
 # ships, even in a consumer that never receives templates/. A test pins it to
 # templates/model-selection.json; a planning session bumps both together.
-PACKAGED_MODEL_SELECTION_TABLE_VERSION = "2026-10-11"
+PACKAGED_MODEL_SELECTION_TABLE_VERSION = "2026-10-19"
 def codex_catalog_models():
     """Model slugs in the local Codex catalog (`<CODEX_HOME>/models_cache.json`).
     Returns `(slugs, None)`, or `(None, reason)` when the source is unavailable."""
@@ -3165,13 +3685,28 @@ def model_selection_notes():
     local catalog, an Antigravity table model absent from a bounded `agy
     models` probe, and an installed table older than the packaged one. An
     unavailable source is reported as unavailable, not as drift. Claude entries
-    are only format-checked (by the loader); Claude has no list command."""
+    are only format-checked (by the loader); Claude has no list command.
+    Project `tier_overrides` add two NOTEs (a malformed block, an override equal
+    to the table's effort) and never touch the drift findings: an override
+    cannot change a model."""
+    overrides = CFG.get("tier_overrides", {})
+    override_errors = tier_overrides_errors(overrides)
+    notes = []
+    if override_errors:
+        notes.append(f"model-selection: {override_errors[0]}; tier launches refuse until it is "
+                     "fixed (run `scripts/nogg models check`)")
     try:
         table = load_model_selection()
     except RuntimeError as exc:
         return [f"model-selection: {str(exc).splitlines()[0]}; `session launch --tier` refuses "
-                "until it is fixed (run `scripts/nogg models check`)"]
-    notes = []
+                "until it is fixed (run `scripts/nogg models check`)"] + notes
+    if not override_errors:
+        for tier in MODEL_SELECTION_TIERS:
+            for agent in ("claude", "codex"):
+                effort = overrides.get(tier, {}).get(agent, {}).get("effort")
+                if effort is not None and effort == table["agents"][agent][tier].get("effort"):
+                    notes.append(f"model-selection: tier_overrides.{tier}.{agent}.effort {effort} "
+                                 "equals the installed table's effort; it can be removed")
     if table["table_version"] < PACKAGED_MODEL_SELECTION_TABLE_VERSION:
         notes.append(f"model-selection: installed table_version {table['table_version']} is older "
                      f"than the packaged {PACKAGED_MODEL_SELECTION_TABLE_VERSION}; review "
@@ -3191,10 +3726,13 @@ def model_selection_notes():
     return notes
 def resolve_launch_tier(tier, agent, resume=None):
     """Resolve `session launch --tier` for an already resolved agent, before any
-    side effect. Returns `{tier, model, effort}`; refuses (with a remedy) an
-    unknown tier, a missing or invalid table, and an agent without entries
-    (Pi). An exact resume keeps the selection recorded for that conversation
-    and never re-resolves against a possibly changed table."""
+    side effect. Returns `{tier, model, effort, effort_source, table_effort}`
+    (`effort` is the effective one: a project `tier_overrides` entry, else the
+    table's); refuses (with a remedy) an unknown tier, a missing or invalid
+    table, a malformed `tier_overrides` block, and an agent without entries
+    (Pi). An exact Claude/Antigravity resume keeps the selection recorded for
+    that conversation and never re-resolves against a possibly changed table
+    or re-reads `tier_overrides`."""
     if tier not in MODEL_SELECTION_TIERS:
         raise RuntimeError(f"--tier {tier!r} is not a model-selection tier; choose one of "
                            f"{', '.join(MODEL_SELECTION_TIERS)} (see `nogg models`); launch refused")
@@ -3217,14 +3755,25 @@ def resolve_launch_tier(tier, agent, resume=None):
                                f"{rec['selection_tier']!r}; an exact resume keeps its recorded "
                                f"selection, so pass --tier {rec['selection_tier']} or drop --tier; "
                                "launch refused")
+        effort = rec.get("selection_tier_effort")
+        # Records predating the source field were table-derived.
+        source = (rec.get("selection_tier_effort_source") or "table") if effort is not None else None
         return {"tier": tier, "model": rec.get("requested_model"),
-                "effort": rec.get("selection_tier_effort")}
+                "effort": effort, "effort_source": source, "table_effort": None}
+    overrides = CFG.get("tier_overrides", {})
+    override_errors = tier_overrides_errors(overrides)
+    if override_errors:
+        raise RuntimeError("invalid .nogging/config.json tier_overrides:\n  "
+                           + "\n  ".join(override_errors)
+                           + f"\nrun scripts/nogg models check, fix or remove the block; "
+                           f"--tier {tier} launch refused")
     try:
         table = load_model_selection()
     except RuntimeError as exc:
         raise RuntimeError(f"{exc}\n--tier {tier} launch refused")
-    entry = model_selection_entry(table, agent, tier)
-    return {"tier": tier, "model": entry["model"], "effort": entry["effort"]}
+    entry = model_selection_entry(table, agent, tier, overrides)
+    return {"tier": tier, "model": entry["model"], "effort": entry["effort"],
+            "effort_source": entry["effort_source"], "table_effort": entry["table_effort"]}
 CODEX_SANDBOX_MODES = ("read-only", "workspace-write", "danger-full-access")
 CODEX_APPROVAL_POLICIES = ("on-request", "never")
 def load_codex_spec(path):
@@ -4289,23 +4838,27 @@ def _session_launch(role, bead, cwd, read_only, owner,
     # `model_reasoning_effort` over runtime default; it travels through the
     # wrapper's existing --reasoning-effort (a `-c` override, which the exact
     # resume path already requires, so a resume carries it too).
-    # Claude effort: explicit `--effort` over tier over profile `effort` over
-    # runtime default; it travels as the wrapper's `--effort` under the
+    # Claude effort: explicit `--effort` over tier (a project `tier_overrides`
+    # entry, else the table) over profile `effort` over runtime default; it travels as the wrapper's `--effort` under the
     # `claude-effort-forwarding` contract check. Antigravity's effort is part
     # of its model name.
     tier_effort = tier_selection and tier_selection["effort"]
+    tier_effort_source = tier_selection and tier_selection["effort_source"]
+    # Provenance of a tier-supplied effort: `project` for a tier_overrides
+    # entry, otherwise `launch` (the table's, recorded as before).
+    tier_reasoning_source = "project" if tier_effort_source == "project" else "launch"
     if agent == "codex" and effort is not None:
         reasoning_effort = effort
         reasoning_effort_source = "launch"
     elif agent == "codex" and tier_effort is not None:
         reasoning_effort = tier_effort
-        reasoning_effort_source = "launch"
+        reasoning_effort_source = tier_reasoning_source
     elif agent == "claude":
         reasoning_effort = selected_effort
         reasoning_effort_source = effort_source
         if effort is None and tier_effort is not None:
             reasoning_effort = tier_effort
-            reasoning_effort_source = "launch"
+            reasoning_effort_source = tier_reasoning_source
     if agent == "codex" and resume is not None:
         codex_sandbox = "read-only" if read_only else codex_spec["sandbox"]
         validate_codex_resume_options(
@@ -4521,15 +5074,18 @@ def _session_launch(role, bead, cwd, read_only, owner,
         # does not guess which model that is).
         "requested_model": selected_model, "model_source": model_source,
         "reasoning_effort": reasoning_effort,
-        # Where the requested effort came from (`launch`, `profile` or
-        # `runtime-default`); recorded for Claude and Codex only. It describes
+        # Where the requested effort came from (`launch`, `profile`,
+        # `project` or `runtime-default`); recorded for Claude and Codex only. It describes
         # the launch request, never a later interactive change.
         "reasoning_effort_source": (
             reasoning_effort_source if agent in ("claude", "codex") else None),
-        # The `--tier` this launch resolved (or null), with its table effort,
+        # The `--tier` this launch resolved (or null), with its effective effort,
         # kept so an exact resume reuses the same selection.
         "selection_tier": tier_selection and tier_selection["tier"],
         "selection_tier_effort": tier_effort,
+        # `project` when selection_tier_effort is a tier_overrides entry, `table`
+        # otherwise; null without a tier and for Antigravity (no effort).
+        "selection_tier_effort_source": tier_effort_source,
         "usage_gate": usage_gate,
         "session_pid": None, "session_pid_start": None,
         # Usage attribution snapshot (session-token-usage-tracking): each launch,
@@ -7448,6 +8004,9 @@ def recover_scan():
     # --- Durable worktree records -------------------------------------
     worktree_lines, worktree_attention = recorded_worktree_lines()
     attention.extend(worktree_attention)
+    integrity_lines, integrity_attention = worktree_integrity_diagnostics()
+    worktree_lines.extend(integrity_lines)
+    attention.extend(integrity_attention)
     section("Worktrees", worktree_lines)
 
     # --- Crashed sessions -----------------------------------------
@@ -7856,6 +8415,11 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
              "Git 2.30+, Bash 4.4+, OpenSpec 1.11.x, Beads 1.2.x, Dolt 2.3.x "
              "(docs/nogging/compatibility.md)"]
     notes.extend(mapping_health_lines())
+    try:
+        integrity_lines, _integrity_attention = worktree_integrity_diagnostics()
+        notes.extend(f"worktree integrity: {line}" for line in integrity_lines)
+    except Exception as exc:
+        notes.append(f"worktree integrity check unavailable: {exc}")
     notes.extend(artifact_notes)
     # Advisory only, like every other NOTE here: never a FAIL, never changes
     # doctor's exit code. `/plan`'s archive step (TASK-TCC-004) is what
@@ -8154,6 +8718,16 @@ def main():
     wti.add_argument("--path", help="explicit empty destination path (defaults beside the shared checkout)")
     wtc = wtsub.add_parser("cleanup", help="retire one clean, develop-integrated recorded worktree")
     wtc.add_argument("record", help="record filename under .nogging/state/worktrees/")
+    wtr = wtsub.add_parser("rebase", help="safely rebase an implementation worktree onto origin/develop")
+    wtr.add_argument("record", nargs="?", help="record filename (defaults to the caller's worktree)")
+    rebase_mode = wtr.add_mutually_exclusive_group()
+    rebase_mode.add_argument("--continue", dest="rebase_continue", action="store_true")
+    rebase_mode.add_argument("--abort", dest="rebase_abort", action="store_true")
+    wtr.add_argument("--allow-live-session", action="store_true",
+                     help="operator-confirmed override for a parked session using the worktree")
+    wtrepair = wtsub.add_parser("repair", help="dry-run or safely repair reproducible worktree paths")
+    wtrepair.add_argument("record", help="implementation worktree record filename")
+    wtrepair.add_argument("--apply", action="store_true", help="snapshot and restore reproducible paths")
     pr = sub.add_parser("pr", help="create or locate an implementation pull request")
     prsub = pr.add_subparsers(dest="pr_command", required=True)
     pro = prsub.add_parser("open", help="create or locate an open PR targeting develop")
@@ -8283,6 +8857,8 @@ def main():
         if args.worktree_command == "plan": planning_worktree(args.planning_id, args.description, args.path)
         elif args.worktree_command == "implement": implementation_worktree(args.bead_id, args.branch, args.path)
         elif args.worktree_command == "cleanup": cleanup_worktree(args.record)
+        elif args.worktree_command == "rebase": worktree_rebase(args.record, "continue" if args.rebase_continue else "abort" if args.rebase_abort else "start", args.allow_live_session)
+        elif args.worktree_command == "repair": worktree_repair(args.record, args.apply)
     elif args.command == "pr":
         if args.pr_command == "open": pull_request(args.plan, args.task, args.decision, args.validation, args.limitation)
         elif args.pr_command == "ci": pull_request_ci()

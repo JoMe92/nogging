@@ -30,6 +30,11 @@
 #   - Pi `--model` selection still reaches Pi;
 #   - an unsupported reasoning effort refuses before any tmux session or
 #     session record exists;
+#   - project tier effort overrides (TASK-TEO-006): init scaffolds an empty
+#     `tier_overrides` block, update keeps a consumer's block byte for byte,
+#     installed `models check` counts it, and installed tier launches apply it
+#     (explicit --effort > tier_overrides > table), attribute it as `project`,
+#     and refuse a malformed block before tmux or any session record;
 #   - no launch mutates the profile files or the user-global runtime settings.
 set -euo pipefail
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -92,6 +97,16 @@ with tempfile.TemporaryDirectory(prefix="nogg packed model ") as directory:
                    stdout=subprocess.DEVNULL, check=True)
     print("packed model selection: init scaffold and models check passed")
 
+    # Project tier overrides scaffold (TASK-TEO-006)
+    config_path = consumer / ".nogging/config.json"
+    scaffolded = json.loads(config_path.read_text())
+    assert scaffolded.get("tier_overrides") == {}, scaffolded.get("tier_overrides", "<missing>")
+    assert json.loads((package / "templates/nogging-config.json").read_text())["tier_overrides"] == {}
+    checked = subprocess.run([str(consumer / "scripts/nogg"), "models", "check"], cwd=consumer,
+                             env=env, text=True, capture_output=True, check=True)
+    assert "tier override" not in checked.stdout.lower() or " 0 " in checked.stdout, checked.stdout
+    print("packed model selection: init scaffolds an empty tier_overrides block")
+
     # Consumer edits survive update
     table_data = json.loads(table_file.read_text())
     table_data["agents"]["codex"]["standard"]["effort"] = "high"
@@ -111,6 +126,28 @@ with tempfile.TemporaryDirectory(prefix="nogg packed model ") as directory:
     for name in ("nogg", "session-launch"):
         assert (consumer / "scripts" / name).read_bytes() == (package / "scripts" / name).read_bytes()
     assert_effort_contract("update")
+
+    # Consumer tier_overrides survive update byte for byte
+    block = {"complex": {"codex": {"effort": "low"}, "claude": {"effort": "medium"}}}
+    consumer_config = json.loads(config_path.read_text())
+    consumer_config["tier_overrides"] = block
+    config_path.write_text(json.dumps(consumer_config, indent=2) + "\n")
+    config_before = config_path.read_bytes()
+    subprocess.run(["node", str(package / "bin/cli.js"), "update", "--no-hooks",
+                    "--no-systemd"], cwd=consumer, env=env, stdout=subprocess.DEVNULL, check=True)
+    assert config_path.read_bytes() == config_before, "update changed config.json carrying tier_overrides"
+    assert json.loads(config_path.read_text())["tier_overrides"] == block
+    counted = subprocess.run([str(consumer / "scripts/nogg"), "models", "check"], cwd=consumer,
+                             env=env, text=True, capture_output=True, check=True).stdout
+    assert "2 tier override" in counted, counted
+    entry = json.loads(subprocess.run(
+        [str(consumer / "scripts/nogg"), "models", "--agent", "codex", "--tier", "complex", "--json"],
+        cwd=consumer, env=env, text=True, capture_output=True, check=True).stdout)
+    assert (entry["effort"], entry["effort_source"]) == ("low", "project"), entry
+    assert entry["table_effort"] == json.loads(template_table.read_text())["agents"]["codex"]["complex"]["effort"]
+    print("packed model selection: update keeps tier_overrides byte for byte and models check counts it")
+    consumer_config["tier_overrides"] = {}
+    config_path.write_text(json.dumps(consumer_config, indent=2) + "\n")
 
     binaries, arguments = scratch / "stub-bin", scratch / "received-args"
     binaries.mkdir()
@@ -139,7 +176,6 @@ while True:
         binary = binaries / agent
         binary.write_text(runtime)
         binary.chmod(0o755)
-    config_path = consumer / ".nogging/config.json"
     config = json.loads(config_path.read_text())
     sock = "nogg-packed-model-" + uuid.uuid4().hex
     config.update(session_tmux_socket=sock, session_stop_grace_seconds=0.1)
@@ -194,7 +230,7 @@ while True:
                              capture_output=True, text=True)
         return out.stdout.split() if out.returncode == 0 else []
 
-    def launch(label, agent, extra, model_args, absent, source, listed, tier=None, expect_notice=None):
+    def launch(label, agent, extra, model_args, absent, source, listed, tier=None, expect_notice=None, fields=None):
         received = arguments / (agent if agent != "antigravity" else "agy")
         received.unlink(missing_ok=True)
         before = snapshot()
@@ -217,6 +253,8 @@ while True:
         assert record["model_source"] == source, (label, record)
         if tier is not None:
             assert record.get("selection_tier") == tier, (label, record)
+        for key, value in (fields or {}).items():
+            assert record.get(key) == value, (label, key, record)
         listing = subprocess.run([str(nogg), "session", "list"], cwd=consumer, env=env,
                                  text=True, capture_output=True, check=True).stdout
         row = next(line for line in listing.splitlines() if record["name"] in line)
@@ -291,8 +329,8 @@ while True:
                ["--model", "gpt-6-luna", "-c", 'model_reasoning_effort="medium"'], [], "launch",
                "gpt-6-luna effort=medium (launch) tier=standard", tier="standard")
         launch("codex complex tier", "codex", ["--tier", "complex"],
-               ["--model", "gpt-6.1-sol", "-c", 'model_reasoning_effort="high"'], [], "launch",
-               "gpt-6.1-sol effort=high (launch) tier=complex", tier="complex")
+               ["--model", "gpt-6.1-sol", "-c", 'model_reasoning_effort="low"'], [], "launch",
+               "gpt-6.1-sol effort=low (launch) tier=complex", tier="complex")
         launch("antigravity complex tier", "agy", ["--tier", "complex"],
                ["--model", "gemini-3.8-flash-high"], ["--reasoning-effort"], "launch",
                "gemini-3.8-flash-high tier=complex", tier="complex")
@@ -306,6 +344,60 @@ while True:
                ["--profile", str(profiles / "model.codex.toml"), "--tier", "routine"],
                ["--model", "gpt-6-luna", "-c", 'model_reasoning_effort="low"'], ["gpt-6-sol"], "launch",
                "gpt-6-luna effort=low (launch) tier=routine", tier="routine")
+
+        # Project tier effort overrides (TASK-TEO-006): precedence explicit --effort >
+        # tier_overrides > table, attributed `project`, never touching the model.
+        base_config = config_path.read_text()
+        def set_overrides(block):
+            data = json.loads(base_config)
+            data["tier_overrides"] = block
+            config_path.write_text(json.dumps(data))
+        try:
+            set_overrides({"complex": {"codex": {"effort": "low"}, "claude": {"effort": "medium"}}})
+            launch("codex tier override", "codex", ["--tier", "complex"],
+                   ["--model", "gpt-6.1-sol", "-c", 'model_reasoning_effort="low"'], [], "launch",
+                   "gpt-6.1-sol effort=low (project) tier=complex", tier="complex",
+                   fields={"reasoning_effort": "low", "reasoning_effort_source": "project",
+                           "selection_tier_effort": "low", "selection_tier_effort_source": "project"})
+            launch("claude tier override", "claude", ["--tier", "complex"],
+                   ["--effort", "medium"], ["--reasoning-effort"], "launch",
+                   "effort=medium (project) tier=complex", tier="complex",
+                   fields={"reasoning_effort": "medium", "reasoning_effort_source": "project",
+                           "selection_tier_effort": "medium", "selection_tier_effort_source": "project"})
+            launch("codex explicit effort beats tier override", "codex",
+                   ["--tier", "complex", "--effort", "xhigh"],
+                   ["--model", "gpt-6.1-sol", "-c", 'model_reasoning_effort="xhigh"'], [], "launch",
+                   "gpt-6.1-sol effort=xhigh (launch) tier=complex", tier="complex",
+                   fields={"reasoning_effort_source": "launch", "selection_tier_effort": "low",
+                           "selection_tier_effort_source": "project"})
+            launch("codex override applies to the tier only", "codex", ["--tier", "standard"],
+                   ["--model", "gpt-6-luna", "-c", 'model_reasoning_effort="medium"'], [], "launch",
+                   "gpt-6-luna effort=medium (launch) tier=standard", tier="standard",
+                   fields={"reasoning_effort_source": "launch", "selection_tier_effort_source": "table"})
+            launch("codex override keeps the model override", "codex",
+                   ["--tier", "complex", "--model", "gpt-6-luna"],
+                   ["--model", "gpt-6-luna", "-c", 'model_reasoning_effort="low"'], ["gpt-6.1-sol"], "launch",
+                   "gpt-6-luna effort=low (project) tier=complex", tier="complex")
+
+            # Malformed block: tier launches and models check refuse before side effects
+            set_overrides({"complex": {"codex": {"effort": "turbo"}}})
+            before, prior = snapshot(), len(records())
+            result = subprocess.run([str(nogg), "session", "launch", "--role", "lead", "--bead",
+                                     "SPEC-model", "--agent", "codex", "--tier", "complex"],
+                                    cwd=consumer, env=env, text=True, capture_output=True, timeout=60)
+            assert result.returncode != 0 and "tier_overrides.complex.codex.effort" in result.stderr, result.stderr
+            assert "models check" in result.stderr, result.stderr
+            assert len(records()) == prior and not tmux_sessions(), "malformed block created session state"
+            assert snapshot() == before
+            checked = subprocess.run([str(nogg), "models", "check"], cwd=consumer, env=env,
+                                     text=True, capture_output=True)
+            assert checked.returncode != 0 and "tier_overrides.complex.codex.effort" in checked.stdout + checked.stderr
+            # A launch without --tier never looks at the block
+            launch("malformed block ignored without tier", "codex", [], [], ["--model"],
+                   "runtime-default", "runtime-default")
+            print("packed model selection: malformed tier_overrides refused before tmux/record")
+        finally:
+            config_path.write_text(base_config)
 
         # Refusal fixtures: invalid effort, unknown tier, Pi with tier, invalid table
         before, prior = snapshot(), len(records())

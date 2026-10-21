@@ -6,6 +6,7 @@
 # tables, classified via fixture pane captures — no live agent required.
 # Covers the `Auto-update failed` false-positive regression explicitly.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-fixture-config.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/test-agents.sh"; use_agent_stubs
 
 while IFS= read -r inherited; do
@@ -126,8 +127,12 @@ got=$(printf '⏸ manual mode on\n> Ask Codex to do anything\n' | classify codex
 # TASK-SOB-002: duration parsing (pure) + watch_poll_once transition/stall
 # semantics (pure, classify_session/tmux_sessions/load_session monkeypatched)
 # ===========================================================================
+# run_py loads scripts/nogg in-process; give it a fixture root whose backend is
+# pinned so the host config's session_backend is not inherited.
+run_py_root="$(mktemp -d)"
+copy_host_config "$here/../.nogging/config.json" "$run_py_root/.nogging/config.json"
 run_py() {
-  python3 - "$nogg" <<PY
+  NOGGING_ROOT="${NOGGING_ROOT:-$run_py_root}" python3 - "$nogg" <<PY
 import sys
 from importlib.machinery import SourceFileLoader
 m = SourceFileLoader("sf_sob_watch", sys.argv[1]).load_module()
@@ -232,7 +237,7 @@ rm -f "$logf"
 # ===========================================================================
 work=$(mktemp -d)
 repo_root="$(cd "$here/.." && pwd)"
-trap 'rm -rf "$work"; rm -f "$out"' EXIT
+trap 'rm -rf "$work" "$run_py_root"; rm -f "$out"' EXIT
 export HOME="$work/home"
 mkdir -p "$HOME"
 
@@ -315,7 +320,7 @@ make_obs_root() {
   mkdir -p "$r/.nogging/state" "$r/scripts"
   git init -q "$r"
   cp "$repo_root/scripts/session-launch" "$repo_root/scripts/session-log-writer" "$repo_root/scripts/openspec-sandbox" "$r/scripts/"
-  cp "$repo_root/.nogging/config.json" "$r/.nogging/"
+  copy_host_config "$repo_root/.nogging/config.json" "$r/.nogging/config.json"
   cp -r "$repo_root/.nogging/launch-profiles" "$r/.nogging/" 2>/dev/null || true
   cp -r "$repo_root/.nogging/launch-prompts" "$r/.nogging/" 2>/dev/null || true
 }

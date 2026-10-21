@@ -147,6 +147,15 @@ the classification; the safeguard is visibility — `tier=` in `session list` an
 the reason in the notes. A Lead Agent launching an out-of-process specialist
 may pass `--tier` too, but is not required to.
 
+A Product Owner effort preference is recorded as a project `tier_overrides`
+entry through tracked work: file a `routine` Bead naming the exact key and
+value, and a Lead applies it and runs `scripts/nogg models check`. The
+orchestrator edits neither the table nor `.nogging/config.json`, and never
+replaces `--tier` with a standing `--model`/`--effort` pair. Precedence is
+explicit `--effort` > `tier_overrides` > table. Until the override has landed,
+`--tier <tier> --effort <level>` on explicit Product Owner instruction is the
+interim form and keeps `tier=<tier>`.
+
 **Explicit takeover.** Only on an explicit in-session operator instruction of
 the form `/orchestrate takeover {plan|code} <description>` does it perform one
 task directly — a planning task run as a full `plan-begin` … `plan-end`
@@ -244,6 +253,19 @@ update; it never pushes. Its mirror commit is
 trailer.
 
 ## Acceptance
+
+## Keeping a Lead branch current
+
+A Lead never integrates upstream with raw git while `openspec/` is read-only.
+It runs `./scripts/nogg worktree rebase`; the writer side (a host-side broker
+for a fenced session, the process itself for an unfenced one) performs the
+checkout, refuses on a dirty tree, an operation in progress, another live
+session or merge commits, aborts and proves the tree unchanged on an
+`openspec/` conflict, and pauses a real rebase (exit 3) on a code-only conflict
+for the Lead to resolve and `--continue`. A dirty tree the Lead did not make is
+reported with `./scripts/nogg doctor` and repaired with `worktree repair`,
+never reset. Details: `docs/running-work-in-sessions.md` and
+`docs/failure-recovery.md`.
 
 ## Requested review changes
 

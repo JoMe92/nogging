@@ -73,6 +73,9 @@ try {
 
   check('identical content stays untouched and becomes the accepted baseline', () => {
     const f = fixture({ current: 'upstream\n', recorded: 'older', mode: 0o755 });
+    // Already executable: a matching file that lost the bit is repaired instead
+    // (scripts/installer-file-mode.test.sh).
+    fs.chmodSync(f.dest, 0o755);
     const before = fs.statSync(f.dest);
     assert.strictEqual(f.run(), 'unchanged');
     const after = fs.statSync(f.dest);
@@ -129,12 +132,13 @@ try {
   });
 
   check('dry-run reports every state and leaves destinations and sidecars untouched', () => {
-    for (const [current, recorded, expected, force] of [
-      [undefined, undefined, 'create'], ['upstream\n', 'old', 'unchanged'],
+    for (const [current, recorded, expected, force, mode = 0o755] of [
+      [undefined, undefined, 'create'], ['upstream\n', 'old', 'unchanged', false, null],
+      ['upstream\n', 'old', 'update'], // matching content, executable bit missing: repair
       ['old', 'old', 'update'], ['local', 'old', 'preserve'],
       ['local', 'old', 'force-overwrite', true],
     ]) {
-      const f = fixture({ current, recorded, force, dryRun: true, mode: 0o755 });
+      const f = fixture({ current, recorded, force, dryRun: true, mode });
       fs.mkdirSync(path.dirname(f.dest), { recursive: true });
       fs.writeFileSync(`${f.dest}.nogging-new`, 'pending older upstream');
       fs.writeFileSync(`${f.dest}.orig`, 'existing backup');

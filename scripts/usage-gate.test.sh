@@ -15,6 +15,7 @@
 #   - every refusal happens before any worktree, trust, tmux or record side
 #     effect; --ignore-usage-gate, disabled and excluded launches are recorded.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-fixture-config.sh"
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 nogg="$here/nogg"
@@ -168,7 +169,8 @@ make_root() {
   git init -q "$r"
   cp -r "$repo_root/.nogging/launch-profiles" "$repo_root/.nogging/launch-prompts" "$r/.nogging/"
   cp "$repo_root/templates/model-selection.json" "$r/.nogging/model-selection.json"
-  python3 - "$repo_root/.nogging/config.json" "$r/.nogging/config.json" "${GATE_CONFIG:-}" <<'PY'
+  copy_host_config "$repo_root/.nogging/config.json" "$r/.nogging/config.json"
+  python3 - "$r/.nogging/config.json" "$r/.nogging/config.json" "${GATE_CONFIG:-}" <<'PY'
 import json, sys
 cfg = json.load(open(sys.argv[1]))
 cfg.pop("session_launch_profile", None); cfg.pop("session_launch_prompt", None)

@@ -107,7 +107,8 @@ elif command and command[0] == 'has-session':
         shutil.copy2(scripts / name, launch_root / "scripts" / name)
     for path in (scripts / "lib").iterdir():
         if path.is_file(): shutil.copy2(path, launch_root / "scripts/lib" / path.name)
-    shutil.copy2(scripts.parent / ".nogging/config.json", launch_root / ".nogging/config.json")
+    subprocess.run(["bash", str(scripts / "lib/test-fixture-config.sh"),
+                    str(scripts.parent / ".nogging/config.json"), str(launch_root / ".nogging/config.json")], check=True)
     for name in ("launch-profiles", "launch-prompts"):
         shutil.copytree(scripts.parent / ".nogging" / name, launch_root / ".nogging" / name)
     launch_tmux = launch_root / "bin/tmux"

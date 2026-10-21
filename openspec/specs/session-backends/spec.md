@@ -83,43 +83,57 @@ record, the labelled herdr pane for a herdr record.
 
 ### Requirement: The tmux backend preserves existing behaviour
 
-Moving tmux behind the seam SHALL NOT change any observable tmux behaviour,
-except for the shared-server stop rule below. The following SHALL all stay as
-before:
+The tmux backend SHALL preserve the dedicated socket, new-session environment,
+pane log, PID query, captures with and without attributes, kill-session and
+read-only attach. Its text transport SHALL preserve supplied multiline text
+as one paste when the application enables bracketed paste mode. Simultaneous
+messages SHALL NOT exchange buffer contents, and temporary buffers SHALL be
+removed after success or failure. Text transfer SHALL NOT itself send Enter;
+submit timing, verification and any retry SHALL remain supervision policy
+above the backend seam. Claude SHALL NOT receive an unconditional double Enter.
 
-- the dedicated socket;
-- `new-session` with environment;
-- the `pipe-pane` log;
-- the `display-message` PID;
-- the key sequences, including Claude's double Enter;
-- `capture-pane` with and without attributes;
-- `kill-session`;
-- `attach` with `-r`.
+The dedicated tmux server SHALL remain shared by all checkouts and the
+Orchestration Agent. Cleanup SHALL stop it only when the server's own listing
+succeeds and reports no sessions. A failed listing SHALL count as not empty.
+The fenced caller's no-server-start rule SHALL remain in force on every
+transport command. No delivery failure SHALL kill or restart the server.
 
-The dedicated tmux server is shared by every checkout of the repository and
-by the Orchestration Agent. Cleanup SHALL stop it only when the server's own
-session listing succeeds and reports no session. Retiring the current
-checkout's records SHALL NOT stop a server that still hosts any session. A
-failed listing SHALL count as not empty.
-
-The pre-existing session test suite SHALL pass unchanged, except for
-expectations that asserted a server stop while sessions remained.
+Existing tests SHALL remain green except assertions of intentionally changed
+text transport or unconditional Enter counts and the corrected shared-server
+stop rule.
 
 #### Scenario: Existing tests stay green
 
-- **WHEN** the seam has been introduced and no herdr session exists
-- **THEN** every pre-existing session, orchestrator and nudge test passes with unchanged expectations, apart from the corrected server-stop rule
+- **WHEN** the new transport is used without herdr sessions
+- **THEN** existing lifecycle tests pass with changes restricted to assertions of corrected behavior
 
 #### Scenario: Cleanup keeps a shared server that hosts other sessions
 
-- **WHEN** every record of the current checkout is retired by `session cleanup`
-- **AND** the dedicated tmux server still hosts the Orchestration Agent or another checkout's session
-- **THEN** the tmux server keeps running and no `kill-server` is issued
+- **WHEN** current-checkout cleanup finishes but another session remains on the server
+- **THEN** no kill-server is issued
 
 #### Scenario: A failed listing never stops the server
 
-- **WHEN** cleanup runs and the dedicated tmux server's session listing fails
-- **THEN** cleanup does not stop the server
+- **WHEN** cleanup cannot list the server's sessions
+- **THEN** it does not stop the server
+
+#### Scenario: An unsandboxed caller's tmux commands are unchanged
+
+- **WHEN** a caller outside the execution sandbox performs a tmux lifecycle, capture or attach operation
+- **THEN** its argv remains byte-identical to the previous behavior
+- **AND** only text transfer uses the explicitly changed paste transport specified here
+
+#### Scenario: Parallel multiline pastes are isolated
+
+- **WHEN** two sessions receive different multiline messages concurrently
+- **THEN** each receives only its own text with line breaks preserved and paste boundaries when enabled
+- **AND** no temporary paste buffer remains
+
+#### Scenario: Paste fails
+
+- **WHEN** loading or pasting a message fails
+- **THEN** no submission key is sent, temporary resources are cleaned up and the error propagates
+- **AND** the shared server remains untouched
 
 ### Requirement: Mixed backends coexist and every operation follows the record
 
@@ -410,36 +424,36 @@ launch --resume <id>`) on either backend, for Claude, Codex and Antigravity.
 
 ### Requirement: Nudge and send verification degrade safely without screen attributes
 
-The nudge and send policy SHALL be identical on both backends. When the
-backend's capture keeps SGR attributes, placeholder detection SHALL behave as
-on tmux.
+Nudge and send policy SHALL be identical on both backends. When capture keeps
+SGR attributes, placeholder detection SHALL behave as on tmux. Without
+attributes, a Claude box containing text SHALL classify as unknown, never
+as inferred operator input or a suggestion. Nudge without `--message` SHALL
+submit nothing and ask for an explicit message.
 
-When the capture does not keep SGR attributes:
-
-- a Claude prompt box holding text SHALL classify as unknown, never as input
-  or placeholder;
-- a nudge without `--message` SHALL submit nothing and SHALL ask for
-  `--message`.
-
-A `--message` nudge or a `send --verify` SHALL count as submitted when either:
-
-- the backend reports the agent working after the submit, or
-- the identifiable prompt box no longer holds the sent text.
-
-Otherwise the submit step SHALL be retried once and the operation SHALL then
-fail as unverified.
+For an explicit message, a known safe baseline and the operation's own text
+injection SHALL establish ownership before submit. A transition from a box
+known to hold that message to an empty box, or an observed new backend
+working/done transition after submit, SHALL count as delivery. An unknown
+box, a different nonempty box, or an unchanged baseline working status alone
+SHALL NOT count. A single retry SHALL be permitted only when the known box
+still holds the operation's text; otherwise the operation SHALL fail as
+unverified without speculative keys.
 
 #### Scenario: A placeholder is never executed without attributes
 
-- **WHEN** a herdr Claude pane shows a suggested placeholder and the capture has no attributes
-- **AND** `session nudge` runs without `--message`
-- **THEN** nothing is submitted and the operator is told to pass `--message`
+- **WHEN** a herdr Claude pane has no attributes and nudge has no explicit message
+- **THEN** no input is submitted and the operator is told to pass `--message`
 
 #### Scenario: An explicit message is verified by the replacement check
 
-- **WHEN** `session nudge <name> --message "…"` runs on a herdr Claude session without capture attributes
-- **AND** herdr reports the agent working after the submit
-- **THEN** the nudge is reported as verified
+- **WHEN** an explicit message is typed from a known empty baseline on herdr
+- **AND** the backend transitions to working after submit
+- **THEN** delivery is verified without an extra Enter
+
+#### Scenario: Changed nonempty text is not a receipt
+
+- **WHEN** the box changes to unrelated nonempty text after submit
+- **THEN** that change alone establishes no success and causes no speculative Enter
 
 ### Requirement: session list reports a live agent status
 

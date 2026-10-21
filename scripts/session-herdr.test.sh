@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# fixture-backend-pin: allow - herdr suite; selects its backend explicitly
 # End-to-end herdr session lifecycle through scripts/nogg (TASK-HDR-011).
 set -euo pipefail
 

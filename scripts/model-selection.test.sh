@@ -15,6 +15,7 @@
 #     mandatory tier procedure (TASK-MES-004);
 #   - init scaffolds the table and update leaves a consumer edit byte-identical.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/test-fixture-config.sh"
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$here/.." && pwd)"
@@ -32,7 +33,7 @@ make_root() {
   local r="$1"
   mkdir -p "$r/.nogging"
   git init -q "$r"
-  cp "$repo_root/.nogging/config.json" "$r/.nogging/config.json"
+  copy_host_config "$repo_root/.nogging/config.json" "$r/.nogging/config.json"
   cp "$template" "$r/.nogging/model-selection.json"
 }
 # mutate <root> <python statement over `t`>
@@ -58,6 +59,16 @@ t = json.load(open(sys.argv[1]))
 tiers = ("routine", "standard", "complex")
 assert tuple(t["tiers"]) == tiers, t["tiers"].keys()
 assert t["table_version"] and t["researched_at"]
+assert t["table_version"] == "2026-10-19", t["table_version"]
+assert t["researched_at"] == "2026-10-19", t["researched_at"]
+assert t["agents"]["codex"]["complex"] == {"model": "gpt-6.1-sol", "effort": "low"}
+# This task changes Codex only. Pin the full Claude subtree so every entry,
+# including complex opus/xhigh, remains unchanged.
+assert t["agents"]["claude"] == {
+    "routine": {"model": "claude-sonnet-5-5", "effort": "low"},
+    "standard": {"model": "claude-sonnet-5-5", "effort": "high"},
+    "complex": {"model": "claude-opus-5-5", "effort": "xhigh"},
+}, t["agents"]["claude"]
 for agent in ("claude", "codex", "antigravity"):
     for tier in tiers:
         entry = t["agents"][agent][tier]
@@ -127,7 +138,8 @@ if models "$r" --agent agy --tier complex >"$out" 2>&1 \
 if models "$r" --agent agy --tier routine --json >"$out" 2>&1 && python3 - "$out" <<'PY'
 import json, sys
 e = json.load(open(sys.argv[1]))
-assert e == {"agent": "antigravity", "tier": "routine", "model": "gemini-3.8-flash-low", "effort": None}, e
+assert e == {"agent": "antigravity", "tier": "routine", "model": "gemini-3.8-flash-low",
+             "effort": None, "effort_source": None, "table_effort": None}, e
 PY
 then ok "--json single lookup"; else bad "--json single lookup"; fi
 if models "$r" --json >"$out" 2>&1 && python3 - "$out" "$template" <<'PY'
@@ -136,7 +148,7 @@ assert json.load(open(sys.argv[1])) == json.load(open(sys.argv[2]))
 PY
 then ok "--json prints the full table"; else bad "--json prints the full table"; fi
 if models "$r" --tier complex >"$out" 2>&1 && [[ $(grep -c '^complex ' "$out") == 3 ]] \
-   && grep -q "table_version=2026-10-11" "$out"; then
+   && grep -q "table_version=2026-10-19" "$out"; then
   ok "--tier filter lists every agent's entry"; else bad "--tier filter"; fi
 if models "$r" >"$out" 2>&1 && [[ $(grep -cE '^(routine|standard|complex) ' "$out") == 9 ]]; then
   ok "full table prints nine entries"; else bad "full table prints nine entries"; fi
@@ -192,7 +204,7 @@ assert "{check}" in models_help, "models check"
 doc = (root / "docs/model-selection.md").read_text()
 for snippet in ["scripts/nogg models check", "--agent agy", "--json", "session launch",
                 "--tier standard", "explicit `--model` > tier > profile `model` > runtime default",
-                "explicit `--effort` > tier > profile `model_reasoning_effort` > runtime default",
+                "explicit `--effort` > project override > table > profile `model_reasoning_effort` > runtime default",
                 "selection_tier", "tier=<tier>", "--agent pi", "claude-effort-forwarding",
                 "quota never lowers a tier", "## Drift", "Product Owner Codex cost policy",
                 "--model gpt-6-luna", "--model gpt-6.1-sol --effort low"]:
@@ -203,7 +215,9 @@ for rel in [".nogging/launch-prompts/orchestrator.md", ".claude/commands/orchest
     for snippet in ["--tier <tier>", "scripts/nogg models --agent <agent> --tier <tier>",
                     "routine", "standard", "complex", "higher tier", "escalates one tier",
                     "quota never lowers a tier", "one-line reason", "product owner instruction",
-                    "--model gpt-6-luna", "--model gpt-6.1-sol --effort low", "honest `--tier`"]:
+                    "--model gpt-6-luna", "--model gpt-6.1-sol --effort low", "honest `--tier`",
+                    "`tier_overrides`", "tracked work", "never replaces `--tier`",
+                    "--tier <tier> --effort <level>", "interim form"]:
         assert snippet in text, f"{rel} lacks {snippet!r}"
 PY
 then ok "docs match the CLI help; orchestrator procedure stated in prompt, command and operating model"

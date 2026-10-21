@@ -1,0 +1,94 @@
+# Execution log
+
+<!-- nogg:SPEC-zad9:2026-10-18T23:40:12Z -->
+- 2026-10-18T23:56:19+00:00 — SPEC-zad9 closed for TASK-SLR-001 (Bead closed at 2026-10-18T23:40:12Z).
+  - implementation commits: 197eac51a07c, 3303e0a61751ca7d91eb16fb10855a60fbe6f7e0, 66a3eb7332c86e54547f2cfc4effecb43cf78161, 3303e0a
+  - Bead note:
+    tier complex; agent Codex, gpt-6-luna, effort medium per PO policy (Luna default)
+    progress: claimed TASK-SLR-001 after reviewing design.md and existing Bead notes; next fetch origin/develop and allocate the requested worktree.
+    progress: implementation and real-Git regression suite are complete; ./scripts/test ran to completion with unrelated environment-dependent failures (npm cache/default home and nested suite timeout), with targeted retries passing where a temporary HOME resolves the sandbox boundary; next inspect final diff, commit, push, open PR, then close and task-done.
+    commit 3303e0a61751ca7d91eb16fb10855a60fbe6f7e0; evidence: bash scripts/worktree-rebase.test.sh passed (real bare-origin/linked-worktree task tick and archive rename, safe refusals, up-to-date no-op, lead identity, conflict abort); git diff --check passed; PR https://github.com/JoMe92/nogging/pull/247 opened against develop. Full scripts/test completed with the new suite passing; remaining unrelated environment-sensitive failures are documented in the PR.
+    final commit 66a3eb7332c86e54547f2cfc4effecb43cf78161 includes the mechanical TASK-SLR-001 checkbox tick (amended from 3303e0a); validation remains bash scripts/worktree-rebase.test.sh passed and git diff --check passed; PR https://github.com/JoMe92/nogging/pull/247 contains this final commit.
+    corrected final commit SHA: 197eac51a07c15b0935123fb90b9bc1db5bff442; this commit contains scripts/nogg, the real-Git suite, and the task-done checkbox tick in tasks.md. It supersedes 66a3eb7332c86e54547f2cfc4effecb43cf78161, which did not include the unstaged tick. PR #247 is being updated to this commit.
+
+<!-- nogg:SPEC-cges:2026-10-18T23:56:25Z -->
+- 2026-10-19T02:17:39+00:00 — SPEC-cges closed for TASK-SLR-004 (Bead closed at 2026-10-18T23:56:25Z).
+  - implementation commits: da8d0096d0bd
+  - Bead note:
+    tier standard; agent Codex, gpt-6-luna, effort medium per PO policy (Luna default)
+    The origin/develop worktree allocated for TASK-SLR-004 has no worktree rebase implementation or refusal-text path (verified with rg across scripts/nogg), so this task cannot directly wire the classifier into that refusal path yet. The real-Git classifier and doctor/recover integration are implemented here; follow up by connecting the classifier when the rebase engine lands in develop.
+    progress: implemented read-only upstream-byte classifier plus doctor/recover reporting and real Git fixtures; next run the scoped suite and full scripts/test, then review, commit, push, and open PR.
+    Validation: scripts/worktree-integrity.test.sh passes; git diff --check passes. Full scripts/test ran and exercised the new suite successfully, but reported environment-specific failures: nested installed scripts/test exceeded its fixed 180s timeout; npm package tests initially could not write /home/jome/.npm and passed when rerun with npm_config_cache=/tmp/nogg-npm-cache; planning-launch-profile passed with HOME=/tmp/nogg-test-home; packed-session-launch still fails because the fixture runtime expects NOGG_OPENSPEC_FENCED=1; release-artifacts, release-smoke, public-tree, usage packed checks, payload install, and session-liveness passed with the temporary cache/home. progress: focused and full validation recorded; next commit the classifier/test, close and task-tick the Bead, amend to bundle the tick, push, open PR, and watch CI.
+    Commit da8d009: added byte-equality classification for clean/operation-in-progress/half-applied/mixed/dirty worktrees, doctor NOTE and recover attention with path-scoped restore/clean hints, plus stale rebase journal reporting. Evidence: scripts/worktree-integrity.test.sh passed; scripts/test reached and passed the new suite; environment-dependent full-suite failures and successful temporary HOME/cache reruns are recorded above.
+
+<!-- nogg:SPEC-x188:2026-10-19T00:47:29Z -->
+- 2026-10-19T02:17:40+00:00 — SPEC-x188 closed for TASK-SLR-002 (Bead closed at 2026-10-19T00:47:29Z).
+  - implementation commits: 741e34a3d20a
+  - Bead note:
+    tier standard; agent Codex, gpt-6-luna, effort medium per PO policy (Luna default)
+    progress: claimed; next read SLR-002 conflict requirements and allocate its isolated worktree from origin/develop
+    progress: implementation and both real-git rebase suites are green; full scripts/test has unrelated environment failures; next commit the focused change, close the Bead, tick its mapped task, amend, push, and open PR
+    commit 741e34a3d20a3b1062e240c3e96de0099071faaa; evidence: python3 -m py_compile scripts/nogg; scripts/worktree-rebase.test.sh and scripts/worktree-rebase-conflict.test.sh pass; git diff --check clean. scripts/test completed with unrelated environment failures: installed-diagnostics timeout; npm cache/log write failures in package/packed/public-tree/smoke/payload suites; Antigravity trust write refused by sandbox; legal and release-artifacts suites failed.
+
+<!-- nogg:SPEC-qxh7:2026-10-19T03:10:21Z -->
+- 2026-10-19T05:29:22+00:00 — SPEC-qxh7 closed for TASK-SLR-005 (Bead closed at 2026-10-19T03:10:21Z).
+  - implementation commits: e24595acbff6, 419974991f32d49a6efeb3dfc30168f263125ab6
+  - Bead note:
+    tier standard; agent Codex, gpt-6-luna, effort medium per PO policy (Luna default)
+    progress: task and Decision 8 reviewed; next fetch current origin/develop and allocate the dedicated implementation worktree under .nogging/state/checkouts/SPEC-qxh7.
+    orchestrator 2026-10-19 04:2x (develop after #249): a stale REGISTERED worktree whose directory was gone (/tmp/nogging-spec-abb2, git 'prunable', record implementation--spec-abb2.json still present) made EVERY new fenced Lead launch fail with 'OpenSpec filesystem boundary requires a real directory: /tmp/nogging-spec-abb2/openspec; execution refused' (scripts/openspec-sandbox:23), reported only as 'agent exited with status 2'. 'nogg worktree cleanup <record>' refused ('not available for safe cleanup'); 'git worktree prune' fixed it. For TASK-SLR-005 (worktree repair): cover this case - detect registered-but-missing worktrees and offer prune plus record retirement in dry-run/--apply; and the sandbox wrapper should skip or name missing worktrees instead of failing the launch.
+    progress: implemented repair command with dry-run, private-index backup ref, path-scoped restore/clean, foreign-session and operation refusals, and fenced OpenSpec protection; real-Git regression passes. Next run scoped checks and full scripts/test, then inspect, commit, push, open PR, record evidence, and close.
+    Non-blocking discovery: the full scripts/test run included environment-sensitive failures outside this task. npm-pack failures passed on rerun with npm_config_cache=/tmp/nogg-npm-cache; planning-launch-profile passed with HOME=/tmp/nogg-test-home. installed-diagnostics still times out after its fixed 180-second nested scripts/test run, and session-liveness-acceptance had an unrelated fixture assertion. The task-specific scripts/worktree-repair.test.sh passes; no repair-scope change is suggested.
+    progress: implementation and real-Git repair regression are complete; npm/cache-related failures were isolated and several passed on rerun. Next finalize validation, commit the task, push the branch, open the develop PR, then close and task-tick the Bead.
+    Commit 419974991f32d49a6efeb3dfc30168f263125ab6: implemented dry-run/apply repair with private-index snapshots of worktree and index state, path-scoped restore/clean, operation and foreign-session refusals, and fenced OpenSpec protection. Evidence: scripts/worktree-repair.test.sh passed against real linked Git worktrees; git diff --check passed; scripts/test ran and included the new test, with unrelated environment failures/timeouts recorded above.
+    Final commit e24595acbff6d6ff6bc30f678e885f8d292ccc00 includes the TASK-SLR-005 checkbox tick in tasks.md alongside implementation. The Bead is closed. Evidence remains scripts/worktree-repair.test.sh passed; git diff --check passed.
+    Non-blocking discovery from the existing Orchestrator note: a registered implementation worktree whose directory is missing can leave stale Git metadata that breaks later fenced launches. The note requests worktree repair to report/prune that registration and retire its record, plus the OpenSpec sandbox wrapper to name or skip missing worktrees. Decision 8 specifies repair of an existing worktree's reproducible dirty paths and does not define missing-worktree pruning or sandbox launch behavior. This execution completes Decision 8; route the broader behavior through planning before implementation.
+    Non-blocking workflow discovery: this host's gh pr checks rejects --json (verified: unknown flag), so scripts/nogg pr ci interprets its usage output as no reported checks even while PR #250 has active GitHub runs. Required checks can be monitored with gh pr checks --required --watch; the Nogging helper's gh CLI compatibility should be fixed separately.
+    PR #250 is open against develop from perf/safe-lead-rebase at e24595acbff6d6ff6bc30f678e885f8d292ccc00. GitHub reports all checks pass or skip, including both script-tests runs (13m19s and 13m21s); checked with gh pr checks 250. PR remains open for user review. Nogging pr ci could not parse this host's gh checks output because gh pr checks does not support --json; tracked as a separate discovery.
+
+<!-- nogg:SPEC-ipmb:2026-10-19T03:16:31Z -->
+- 2026-10-19T05:29:22+00:00 — SPEC-ipmb closed for TASK-SLR-003 (Bead closed at 2026-10-19T03:16:31Z).
+  - implementation commits: 80d55b6fbea6c91c8750b242f08f693e98eb4c73, 037034f24696652f693bb54fb0c18b352344962e
+  - Bead note:
+    tier complex; agent Codex, gpt-6-luna, effort medium per PO policy (Luna default)
+    progress: reviewed TASK-SLR-003 notes and Decisions 2/6; confirming prerequisites on origin/develop, then allocating isolated checkout under .nogging/state/checkouts/SPEC-ipmb.
+    progress: added closed rebase request handling and broker contract; focused real-Git broker/client regression passes. Next run related broker/rebase suites and full scripts/test, fix any task-scoped failures, then commit/push and open PR.
+    Non-blocking discovery: safe-lead-rebase Decision 3/6 and the required old-broker hand-off direct operators to , but the current rebase parser and engine have no such option, so that recovery command fails at argument parsing. Evidence: scripts/nogg rebase parser only has --continue/--abort, and worktree_rebase refuses any other active session. Suggested follow-up: support this explicit unfenced operator override while keeping it out of the closed fenced broker request.
+    progress: full scripts/test completed; broker/rebase/task-done suites passed, with unrelated environment failures recorded. Packaging failures mostly pass with a writable temporary HOME; completing specific reruns, then final diff and delivery.
+    Correction to discovery note: the missing option is `--allow-live-session` on `worktree rebase <record>`. This is documented in design Decision 3 and referenced in the missing/old broker hand-off in Decision 6.
+    progress: focused broker, rebase and task-done suites pass after adding the documented unfenced operator override; full-suite environment failures and reruns are recorded in this turn. Next commit implementation, close and tick TASK-SLR-003, then push and open PR.
+    commit 80d55b6fbea6c91c8750b242f08f693e98eb4c73; evidence: worktree-rebase-broker, task-done-broker, task-done-mixed-broker, worktree-rebase and worktree-rebase-conflict suites passed; Python compile and git diff --check passed. Full scripts/test completed with unrelated environment failures in legal, npm/home writes, Antigravity settings writes, release artifacts, and a packed session-launch namespace check; npm dependent reruns with a temporary HOME cleared package-manifest, packed Antigravity/model/token/usage, public-tree, release smoke, session liveness and payload install checks.
+    Final commit after required task tick: 037034f24696652f693bb54fb0c18b352344962e; evidence: commit includes the TASK-SLR-003 checkbox tick; focused broker, task-done and rebase suites passed; full-suite environment failures and successful npm reruns are summarized in the prior evidence note.
+
+<!-- nogg:SPEC-ipmb:2026-10-19T06:02:31Z -->
+- 2026-10-19T06:22:42+00:00 — SPEC-ipmb closed for TASK-SLR-003 (Bead closed at 2026-10-19T06:02:31Z).
+  - implementation commits: cdf9cec9b7d4, 948c81b6563f, 80d55b6fbea6c91c8750b242f08f693e98eb4c73, 037034f24696652f693bb54fb0c18b352344962e, cdf9cec013b201c9d4c20adbb0faedfae3adf81e, fc38f9e
+  - Bead note:
+    tier complex; agent Codex, gpt-6-luna, effort medium per PO policy (Luna default)
+    progress: reviewed TASK-SLR-003 notes and Decisions 2/6; confirming prerequisites on origin/develop, then allocating isolated checkout under .nogging/state/checkouts/SPEC-ipmb.
+    progress: added closed rebase request handling and broker contract; focused real-Git broker/client regression passes. Next run related broker/rebase suites and full scripts/test, fix any task-scoped failures, then commit/push and open PR.
+    Non-blocking discovery: safe-lead-rebase Decision 3/6 and the required old-broker hand-off direct operators to , but the current rebase parser and engine have no such option, so that recovery command fails at argument parsing. Evidence: scripts/nogg rebase parser only has --continue/--abort, and worktree_rebase refuses any other active session. Suggested follow-up: support this explicit unfenced operator override while keeping it out of the closed fenced broker request.
+    progress: full scripts/test completed; broker/rebase/task-done suites passed, with unrelated environment failures recorded. Packaging failures mostly pass with a writable temporary HOME; completing specific reruns, then final diff and delivery.
+    Correction to discovery note: the missing option is `--allow-live-session` on `worktree rebase <record>`. This is documented in design Decision 3 and referenced in the missing/old broker hand-off in Decision 6.
+    progress: focused broker, rebase and task-done suites pass after adding the documented unfenced operator override; full-suite environment failures and reruns are recorded in this turn. Next commit implementation, close and tick TASK-SLR-003, then push and open PR.
+    commit 80d55b6fbea6c91c8750b242f08f693e98eb4c73; evidence: worktree-rebase-broker, task-done-broker, task-done-mixed-broker, worktree-rebase and worktree-rebase-conflict suites passed; Python compile and git diff --check passed. Full scripts/test completed with unrelated environment failures in legal, npm/home writes, Antigravity settings writes, release artifacts, and a packed session-launch namespace check; npm dependent reruns with a temporary HOME cleared package-manifest, packed Antigravity/model/token/usage, public-tree, release smoke, session liveness and payload install checks.
+    Final commit after required task tick: 037034f24696652f693bb54fb0c18b352344962e; evidence: commit includes the TASK-SLR-003 checkbox tick; focused broker, task-done and rebase suites passed; full-suite environment failures and successful npm reruns are summarized in the prior evidence note.
+    orchestrator 2026-10-19 07:5x: PR #251 conflicted with merged #250 (both change scripts/nogg). Ran 'nogg worktree rebase' on the stopped session's worktree: it paused with a code-only conflict in scripts/nogg (first real use of SLR-001). Bead reopened so a Lead can resolve the conflict, finish the rebase and push to the same PR; close again after the push.
+    Commit cdf9cec013b201c9d4c20adbb0faedfae3adf81e; evidence: rebase onto fc38f9e (origin/develop) preserved both worktree repair and fenced rebase broker; scripts/worktree-rebase-broker.test.sh, scripts/worktree-rebase.test.sh, scripts/worktree-rebase-conflict.test.sh, scripts/worktree-repair.test.sh, scripts/task-done-broker.test.sh, and scripts/task-done-mixed-broker.test.sh passed; push --force-with-lease updated chore/safe-lead-rebase for PR 251. Full scripts/test was not awaited per operator direction.
+
+<!-- nogg:SPEC-b17p:2026-10-19T10:40:58Z -->
+- 2026-10-19T10:56:01+00:00 — SPEC-b17p closed for TASK-SLR-006 (Bead closed at 2026-10-19T10:40:58Z).
+  - implementation commits: e0a2e1eefa20, 934c95dc4daf
+  - Bead note:
+    tier standard; Codex Luna effort medium per PO policy; Claude fallback if the usage gate refuses
+    commit 934c95d; scripts/pre-rebase-guard.test.sh red first then green (real git rebase + pull --rebase, bare origin, install-hooks); package-manifest, manifest-store/update/doctor/legacy-upgrade, session-payload-install, runtime-guidance-docs, install-surface-consistency, planning-docs, nogging-identity pass; cli.test.sh slow on loaded Pi, left to CI
+    orchestrator 2026-10-19 12:4x: PR #253 fails CI (package.json and the payload manifest do not ship scripts/hooks/pre-rebase and its test; installed-diagnostics self-tests fail). The Lead session died in the orchestrator restart; Bead reopened, continuing on Claude (Codex weekly gated). Close again after the push.
+    commit e0a2e1e (on 934c95d); CI failure cause: pre-rebase-guard.test.sh ran source-only package.json/manifest checks inside the installed consumer copy (no package.json, bin/lib/manifest.js), failing installed-diagnostics self-tests. Gated those checks on a source checkout. Verified: test green from source (28 ok) and from a fresh nogg init consumer (skip line, rc 0); package-manifest, manifest-store, session-payload-install pass. package.json and manifest.js already shipped hook+test correctly. develop unchanged, no rebase needed; pushed to PR 253.
+
+<!-- nogg:SPEC-cwve:2026-10-19T11:00:40Z -->
+- 2026-10-19T11:10:55+00:00 — SPEC-cwve closed for TASK-SLR-007 (Bead closed at 2026-10-19T11:00:40Z).
+  - implementation commits: 59ec3f122d6f9314688d7cb10cd080ebe28728b9
+  - Bead note:
+    tier routine; Claude (Codex weekly 86% + TEO-001 reservation exceeds the 92% cap)
+    tier routine; Claude. Docs + CHANGELOG + test extension. session-delivery-docs.test.sh asserted Unreleased empty while v3.0.0 untagged (v3.0.0 is tagged), dropped that stale assertion.
+    commit 59ec3f122d6f9314688d7cb10cd080ebe28728b9; evidence: runtime-guidance-docs, session-delivery-docs, planning-docs, security-docs, installation-docs, install-surface-consistency pass; PR https://github.com/JoMe92/nogging/pull/256

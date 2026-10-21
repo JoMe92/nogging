@@ -9,6 +9,47 @@ and GitHub Releases for that history.
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-10-21
+
+### Added
+
+- Project effort overrides: a `tier_overrides` block in `.nogging/config.json`
+  changes the effort of one tier and agent (Claude, Codex) with precedence
+  explicit `--effort` > override > table. `models` shows `(project; table X)`,
+  `session list` shows `(project)`, `models check` validates the block, and
+  `doctor` NOTEs a malformed or redundant override. Apart from the Codex
+  complex default listed under Changed, the shipped table is unchanged.
+- `nogg worktree rebase` brings an implementation branch up to date with
+  `origin/develop` on the side that can write `openspec/` (directly when
+  unfenced, through the sandbox broker for a fenced Lead), with ordered
+  refusals, a journal, a backup ref and `--continue`/`--abort`: an `openspec/`
+  conflict aborts with the tree proven unchanged, a code-only conflict pauses
+  (exit 3).
+- A read-only worktree-integrity classifier reported by `doctor` and `recover`,
+  and `nogg worktree repair <record> [--apply]` to restore a half-applied
+  checkout (#241) without losing local edits.
+- `scripts/hooks/pre-rebase` refuses a raw `git rebase` or `git pull --rebase`
+  that would replay an `openspec/` change onto a read-only tree; the launch
+  prompts tell Leads to use `nogg worktree rebase`.
+
+### Changed
+
+- The shipped Codex `complex` default is now `gpt-6.1-sol` at effort `low`
+  (was `high`; `table_version` `2026-10-19`). The Claude defaults are
+  unchanged. A project that wants the previous effort sets it with a
+  `tier_overrides` entry.
+
+### Fixed
+
+- `init` and `update` install every packaged file with the executable bit it has in the package, not only the files named in an installer list. `scripts/session-pty-recorder` was created non-executable by an upgrade from `v2.2.0`, which made `doctor` fail its session-helper check (#263). A managed file that already has the packaged content but lost the bit is repaired by the next `update` (reported as `update`, `mode 0755`); `--dry-run` reports it without changing the file; `<file>.nogging-new` and `--force` overwrites are executable, and `<file>.orig` keeps the mode of the local file.
+
+- `scripts/test` no longer goes red when the host `.nogging/config.json`
+  selects the `herdr` session backend (#264): fixtures that copy the host
+  config now pin the scratch repository to `tmux` through the shipped
+  `scripts/lib/test-fixture-config.sh` helper, and
+  `scripts/fixture-backend-pin.test.sh` runs the affected suites under a herdr
+  host config.
+
 ## [3.0.0] - 2026-10-18
 
 Upgrade notes: run `npx github:JoMe92/nogging#<new-tag> update` from each

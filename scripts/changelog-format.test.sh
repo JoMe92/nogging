@@ -95,14 +95,15 @@ PY
 out=$(check_changelog "$root/CHANGELOG.md")
 if [[ -z "$out" ]]; then pass "CHANGELOG.md is structurally valid"; else fail_ "CHANGELOG.md: $out"; fi
 
-# Release migration assertions belong to the newest release section. An
-# Unreleased entry can be any well-formed change and must not duplicate them.
-release=$(awk '/^## \[[0-9]/{if(f)exit; f=1; next} f' "$root/CHANGELOG.md")
+# The 3.0.0 migration assertions belong to the [3.0.0] section, which stays the
+# major release that carries them after later minors. An Unreleased entry can
+# be any well-formed change and must not duplicate them.
+release=$(awk '/^## \[3\.0\.0\]/{f=1; next} /^## \[/{f=0} f' "$root/CHANGELOG.md")
 n=$(grep -c '^- \*\*BREAKING\*\*' <<<"$release" || true)
-if [[ "$n" == 3 ]]; then pass "newest release lists three BREAKING bullets"; else fail_ "newest release lists $n BREAKING bullets, expected 3"; fi
-grep -q '^Upgrade notes:' <<<"$release" && pass "newest release has an Upgrade notes paragraph" || fail_ "newest release lacks an Upgrade notes paragraph"
+if [[ "$n" == 3 ]]; then pass "3.0.0 release lists three BREAKING bullets"; else fail_ "3.0.0 release lists $n BREAKING bullets, expected 3"; fi
+grep -q '^Upgrade notes:' <<<"$release" && pass "3.0.0 release has an Upgrade notes paragraph" || fail_ "3.0.0 release lacks an Upgrade notes paragraph"
 for needle in '--force' '--profile trusted' '--full-access' 'KeyError' 'release every reservation'; do
-  grep -qF -- "$needle" <<<"$release" && pass "newest release names migration detail: $needle" || fail_ "newest release lacks: $needle"
+  grep -qF -- "$needle" <<<"$release" && pass "3.0.0 release names migration detail: $needle" || fail_ "3.0.0 release lacks: $needle"
 done
 unrel=$(awk '/^## \[Unreleased\]/{f=1;next} /^## \[/{f=0} f' "$root/CHANGELOG.md")
 if grep -n '^## \[[0-9]' <<<"$unrel" >/dev/null; then fail_ "Unreleased contains a version heading"; else pass "Unreleased contains no version heading"; fi

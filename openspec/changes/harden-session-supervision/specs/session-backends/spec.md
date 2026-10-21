@@ -2,33 +2,33 @@
 
 ### Requirement: The tmux backend preserves existing behaviour
 
-Moving tmux behind the seam SHALL NOT change any observable tmux behaviour,
-except for the shared-server stop rule below and the sandbox start rule in
-*The shared tmux server is started only outside the OpenSpec sandbox*. The
-following SHALL all stay as before for a caller outside the sandbox:
+The tmux backend SHALL preserve the dedicated socket, new-session environment,
+pane log, PID query, captures with and without attributes, kill-session and
+read-only attach, except for the shared-server stop rule below and the sandbox
+start rule in *The shared tmux server is started only outside the OpenSpec
+sandbox*. Its text transport SHALL preserve supplied multiline text
+as one paste when the application enables bracketed paste mode. Simultaneous
+messages SHALL NOT exchange buffer contents, and temporary buffers SHALL be
+removed after success or failure. Text transfer SHALL NOT itself send Enter;
+submit timing, verification and any retry SHALL remain supervision policy
+above the backend seam. Claude SHALL NOT receive an unconditional double Enter.
 
-- the dedicated socket;
-- `new-session` with environment;
-- the `pipe-pane` log;
-- the `display-message` PID;
-- the key sequences, including Claude's double Enter;
-- `capture-pane` with and without attributes;
-- `kill-session`;
-- `attach` with `-r`.
+The dedicated tmux server SHALL remain shared by all checkouts and the
+Orchestration Agent. Cleanup SHALL stop it only when the server's own listing
+succeeds and reports no sessions. Retiring the current checkout's records
+SHALL NOT stop a server that still hosts any session. A failed listing SHALL
+count as not empty. The fenced caller's no-server-start rule SHALL remain in
+force on every transport command. No delivery failure SHALL kill or restart
+the server.
 
-The dedicated tmux server is shared by every checkout of the repository and
-by the Orchestration Agent. Cleanup SHALL stop it only when the server's own
-session listing succeeds and reports no session. Retiring the current
-checkout's records SHALL NOT stop a server that still hosts any session. A
-failed listing SHALL count as not empty.
-
-The pre-existing session test suite SHALL pass unchanged, except for
-expectations that asserted a server stop while sessions remained.
+Existing tests SHALL remain green except assertions of intentionally changed
+text transport or unconditional Enter counts and the corrected shared-server
+stop rule.
 
 #### Scenario: Existing tests stay green
 
-- **WHEN** the seam has been introduced and no herdr session exists
-- **THEN** every pre-existing session, orchestrator and nudge test passes with unchanged expectations, apart from the corrected server-stop rule
+- **WHEN** the new transport is used without herdr sessions
+- **THEN** existing lifecycle tests pass with changes restricted to assertions of corrected behavior, including the corrected server-stop rule
 
 #### Scenario: Cleanup keeps a shared server that hosts other sessions
 
@@ -43,8 +43,21 @@ expectations that asserted a server stop while sessions remained.
 
 #### Scenario: An unsandboxed caller's tmux commands are unchanged
 
-- **WHEN** a caller outside the OpenSpec execution sandbox runs any tmux backend operation
-- **THEN** the tmux argv is byte-identical to the argv before this change
+- **WHEN** a caller outside the OpenSpec execution sandbox performs a tmux lifecycle, capture or attach operation
+- **THEN** its argv remains byte-identical to the previous behavior
+- **AND** only text transfer uses the explicitly changed paste transport specified here
+
+#### Scenario: Parallel multiline pastes are isolated
+
+- **WHEN** two sessions receive different multiline messages concurrently
+- **THEN** each receives only its own text with line breaks preserved and paste boundaries when enabled
+- **AND** no temporary paste buffer remains
+
+#### Scenario: Paste fails
+
+- **WHEN** loading or pasting a message fails
+- **THEN** no submission key is sent, temporary resources are cleaned up and the error propagates
+- **AND** the shared server remains untouched
 
 ## ADDED Requirements
 
