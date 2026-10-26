@@ -2,7 +2,7 @@
   "name": "nogg",
   "version": "3.1.0",
   "private": true,
-  "description": "Nogging — the structural layer for agentic software development",
+  "description": "Structure for a team of agents: role boundaries, planning and Git-evidenced execution for Claude Code, Codex, Pi and Antigravity, built on OpenSpec and Beads.",
   "main": "bin/cli.js",
   "bin": {
     "nogg": "bin/cli.js"
@@ -117,7 +117,13 @@
     "beads",
     "codex",
     "openspec",
-    "software-delivery"
+    "software-delivery",
+    "agentic-coding",
+    "multi-agent",
+    "claude-code",
+    "ai-agents",
+    "spec-driven-development",
+    "cli"
   ],
   "author": "Jonas Meier",
   "license": "ISC",
