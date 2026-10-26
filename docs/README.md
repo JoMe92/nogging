@@ -1,7 +1,7 @@
 # Documentation
 
 An index of everything under `docs/`. Start at the top-level
-[`README.md`](../README.md) if you haven't yet — it covers the concept,
+[`README.md`](https://github.com/JoMe92/nogging#readme) if you haven't yet — it covers the concept,
 quick start, and safety warning. This page is for finding the right guide
 once you're past that.
 
@@ -44,12 +44,12 @@ For anyone cutting a release or proving one is ready.
 | [Releasing Nogging](releasing.md) | The repeatable procedure for tagging a release candidate or final release |
 | [Acceptance runbook](acceptance.md) | The reproducible end-to-end procedure a release must pass before sign-off |
 | [Acceptance report template](acceptance-report-template.md) | Copy this into `acceptance/<date>-<host>.md` for each run |
-| [`acceptance/`](acceptance/) | The dated, signed acceptance reports produced by that runbook |
+| [`acceptance/`](https://github.com/JoMe92/nogging/tree/main/docs/acceptance) | The dated, signed acceptance reports produced by that runbook |
 | [Public cutover checklist](public-cutover.md) | The owner-executed, not-yet-run checklist for going public |
 
 ## Assets
 
-[`brand/`](brand/) holds the logo, banner, social card, and the diagrams
+[`brand/`](https://github.com/JoMe92/nogging/tree/main/docs/brand) holds the logo, banner, social card, and the diagrams
 embedded in the top-level README.
 
 ---

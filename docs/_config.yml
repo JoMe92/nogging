@@ -1,0 +1,43 @@
+title: Nogging
+description: >-
+  Structure for a team of agents: role boundaries, planning and Git-evidenced
+  execution for Claude Code, Codex, Pi and Antigravity, built on OpenSpec and
+  Beads.
+url: https://jome92.github.io
+baseurl: /nogging
+
+# GitHub Pages builds this directory from main:/docs with its own pinned Jekyll;
+# there is no build workflow.
+theme: jekyll-theme-cayman
+
+plugins:
+  - jekyll-seo-tag
+  - jekyll-sitemap
+  - jekyll-relative-links
+  - jekyll-titles-from-headings
+  - jekyll-optional-front-matter
+  - jekyll-readme-index
+
+# Resolve [text](page.md) links and promote README.md to the site index.
+relative_links:
+  enabled: true
+  collections: false
+optional_front_matter:
+  remove_originals: true
+readme_index:
+  remove_originals: true
+
+titles_from_headings:
+  enabled: true
+  strip_title: true
+  collections: false
+
+defaults:
+  - scope:
+      path: ""
+    values:
+      layout: default
+      image: /brand/nogging-social-card.png
+
+twitter:
+  card: summary_large_image
