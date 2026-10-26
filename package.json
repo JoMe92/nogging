@@ -125,7 +125,7 @@
     "spec-driven-development",
     "cli"
   ],
-  "author": "Jonas Meier",
+  "author": "Jonas (JoMe92)",
   "license": "ISC",
   "devDependencies": {
     "@fission-ai/openspec": "^1.14.3"
