@@ -15,13 +15,22 @@ Nogging release.
 - Installer entry point: `npx github:JoMe92/nogging#<tag>`
 - Generated service prefix: `nogg-`
 
-### GitHub metadata for the owner
+### GitHub metadata
 
-- Description: `Nogging — the structural layer for agentic software development.`
-- Topics: `agentic-development`, `ai-agents`, `beads`, `developer-tools`,
-  `openspec`
-- Visibility: remain private until the separate release-readiness and human
-  acceptance process authorizes a change
+- Description: `Structure for a team of agents: role boundaries, planning and
+  Git-evidenced execution for Claude Code, Codex, Pi and Antigravity, built on
+  OpenSpec and Beads.`
+- Topics (20): `agentic-coding`, `agentic-development`, `ai-agents`,
+  `ai-coding`, `beads`, `claude-code`, `cli`, `codex`, `coding-agents`,
+  `developer-tools`, `devtools`, `git`, `llm`, `multi-agent`, `openai-codex`,
+  `openspec`, `orchestration`, `software-engineering`,
+  `spec-driven-development`, `workflow-automation`
+- Visibility: public since v3.0.0
+
+_Historical:_ before v3.0.0 the repository was private, carried an earlier
+one-line description, and had five topics
+(`agentic-development`, `ai-agents`, `beads`, `developer-tools`, `openspec`).
+That wording and the private-until-release-readiness decision are superseded.
 
 Nogging is **structure for a team of agents**: it turns autonomous coding
 agents into a disciplined team — a Planning Agent, a Lead Agent, and
