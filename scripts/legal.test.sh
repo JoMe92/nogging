@@ -11,7 +11,7 @@ fail() {
 
 test -f LICENSE || fail "root LICENSE is missing"
 grep -qx 'ISC License' LICENSE || fail "LICENSE is not the canonical ISC text"
-grep -q 'Copyright (c) 2026 Jonas Meier' LICENSE || fail "copyright identity is missing"
+grep -q 'Copyright (c) 2026 Jonas (JoMe92)' LICENSE || fail "copyright identity is missing"
 
 node -e '
   const pkg = require("./package.json");

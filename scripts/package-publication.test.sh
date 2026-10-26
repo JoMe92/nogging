@@ -15,7 +15,7 @@ const expected = {
   name: 'nogg',
   private: true,
   homepage: 'https://github.com/JoMe92/nogging#readme',
-  author: 'Jonas Meier',
+  author: 'Jonas (JoMe92)',
 };
 for (const [key, value] of Object.entries(expected)) {
   if (pkg[key] !== value) throw new Error(`${key} must be ${JSON.stringify(value)}`);
