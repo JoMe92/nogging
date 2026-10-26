@@ -41,7 +41,7 @@ Sources and detail: [docs/comparison.md](docs/comparison.md).
 
 From nothing to a closed first Bead. Each step links to its details below.
 
-1. Install the toolchain and Nogging on a fresh machine, pinned to a release: `curl -fsSL https://raw.githubusercontent.com/JoMe92/nogging/v3.1.0/scripts/bootstrap | bash` ([details](#install)).
+1. Install the toolchain and Nogging on a fresh machine, pinned to a release: `curl -fsSL https://raw.githubusercontent.com/JoMe92/nogging/v3.1.1/scripts/bootstrap | bash` ([details](#install)).
 2. Check that the machine is ready: `./scripts/nogg doctor` ([details](#install)).
 3. Plan a change with the Planning Agent: `/plan` in Claude Code ([details](#plan-a-change)).
 4. Find the work the plan created: `bd ready` ([details](#launch-a-lead)).
@@ -61,7 +61,7 @@ whole toolchain (Node via `nvm`, the agent CLIs, `bd`, Dolt, `git`/`tmux`/`gh`)
 and then runs `init` for you; on a terminal it offers a short wizard:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/JoMe92/nogging/v3.1.0/scripts/bootstrap | bash
+curl -fsSL https://raw.githubusercontent.com/JoMe92/nogging/v3.1.1/scripts/bootstrap | bash
 ```
 
 Always pin a tagged release in that URL, never `main`/`develop`. Add
@@ -79,7 +79,7 @@ existing Git repository instead. The command is pinned because the initial
 distribution is GitHub-only:
 
 ```bash
-npx github:JoMe92/nogging#v3.1.0 init --no-systemd
+npx github:JoMe92/nogging#v3.1.1 init --no-systemd
 ./scripts/nogg doctor
 ./scripts/nogg validate
 ```
@@ -95,8 +95,8 @@ one is missing, and merges the guard, `.gitignore`, `CLAUDE.md` and
 `AGENTS.md` idempotently. It never touches `openspec/changes/`, `.beads/`, or
 your `package.json`.
 
-Refresh with `npx github:JoMe92/nogging#v3.1.0 update`; remove the managed
-payload with `npx github:JoMe92/nogging#v3.1.0 remove`.
+Refresh with `npx github:JoMe92/nogging#v3.1.1 update`; remove the managed
+payload with `npx github:JoMe92/nogging#v3.1.1 remove`.
 
 The full reference is in [docs/installation.md](docs/installation.md).
 

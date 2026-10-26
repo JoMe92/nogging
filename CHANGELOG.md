@@ -9,6 +9,32 @@ and GitHub Releases for that history.
 
 ## [Unreleased]
 
+## [3.1.1] - 2026-10-26
+
+### Added
+
+- `docs/` is now a Jekyll GitHub Pages site (`docs/_config.yml`), with new
+  `docs/faq.md` and `docs/comparison.md` pages.
+- `CITATION.cff` for citing Nogging, and a Discussions contact link in the
+  issue template.
+- A square social card, `docs/brand/nogging-social-card-square.png`
+  (1080x1080).
+
+### Changed
+
+- New tagline "Structure for a team of agents." across the README banner,
+  the social card and the logo.
+- `package.json` description and keywords and `docs/project-identity.md` are
+  aligned with the new GitHub description and 20 topics.
+- README reworked for first-time visitors: keyword intro, badges, "Why
+  Nogging?", "How it compares", FAQ, image alt texts and a Discussions link.
+- Stale private-repository and 2.0.x statements removed from the docs.
+
+### Security
+
+- `zod` updated to 4.6.7, clearing GHSA-mrhx-c7xc-m3w5.
+- `actions/setup-python` updated to v7.1.0.
+
 ## [3.1.0] - 2026-10-21
 
 ### Added
