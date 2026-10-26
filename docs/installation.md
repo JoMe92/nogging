@@ -10,9 +10,7 @@ npx github:JoMe92/nogging#v3.1.0 init --no-systemd
 
 `--no-systemd` skips the systemd units; leave it off only after reviewing the
 safety warning in the README. Always pin a released tag; do not install an
-unpinned default branch. Until the
-owner completes public-release acceptance, the repository remains private and
-the command requires GitHub access. Once public, the same pinned command needs
+unpinned default branch. The repository is public, so the pinned command needs
 no private-repository credential.
 
 ## Fresh machine: `scripts/bootstrap`
