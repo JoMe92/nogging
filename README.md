@@ -1,16 +1,41 @@
-![Nogging](docs/brand/nogging-banner.png)
+![Nogging banner: the Nogging wordmark and the tagline "Structure for a team of agents."](docs/brand/nogging-banner.png)
 
 # Nogging
 
 [![Nogging validation](https://github.com/JoMe92/nogging/actions/workflows/nogging-validate.yml/badge.svg?branch=main)](https://github.com/JoMe92/nogging/actions/workflows/nogging-validate.yml)
+[![Latest release](https://img.shields.io/github/v/release/JoMe92/nogging)](https://github.com/JoMe92/nogging/releases/latest)
+[![License: ISC](https://img.shields.io/badge/license-ISC-blue)](LICENSE)
+[![Node.js 18 or newer](https://img.shields.io/badge/node-%3E%3D18-339933)](docs/compatibility.md)
+[![Works with Claude Code, Codex, Pi and Antigravity (experimental)](https://img.shields.io/badge/works%20with-Claude%20Code%20%7C%20Codex%20%7C%20Pi%20%7C%20Antigravity%20%28experimental%29-informational)](docs/compatibility.md#agent-integrations)
 
 **Structure for a team of agents.**
 
-Nogging gives coding agents (Claude Code, Codex, Pi, Antigravity) a team structure with a defined role and write boundary for each. A Planning Agent writes the approved plan in OpenSpec, a Lead Agent executes it as Beads tasks with Git evidence, and a sync mirrors that evidence back into the plan. The command and installed state are named `nogg`.
+Nogging is a spec-driven, multi-agent workflow for AI coding agents such as Claude Code, Codex, Pi and Antigravity (experimental). A Planning Agent writes the approved plan in OpenSpec, a Lead Agent executes it as Beads tasks with Git evidence, and a sync mirrors that evidence back into the plan; the command and installed state are named `nogg`.
 
 > Nogging is a **public release**. Read the [safety warning](#safety-warning)
 > and the [security and threat model](docs/security-model.md) before you enable
 > `--full-access` or background services.
+
+## Why Nogging?
+
+- **Problem:** several agents on one repository overwrite each other and the plan. **Solution:** one [Git worktree](docs/worktree-workflow.md) and one claimed Bead per agent.
+- **Problem:** an agent "fixes" the specification to match its code. **Solution:** only a planning session writes `openspec/`; execution roles are fenced out ([boundaries](#non-negotiable-boundaries)).
+- **Problem:** a run dies and the state is lost. **Solution:** claims, notes and worktree records persist, with [documented recovery](docs/failure-recovery.md).
+- **Problem:** "done" is a claim, not a record. **Solution:** every closed Bead carries a commit and an evidence note that sync mirrors into OpenSpec.
+- **Problem:** you use more than one agent CLI. **Solution:** the same loop for Claude Code, Codex and Pi, with Antigravity experimental.
+
+## How it compares
+
+Nogging builds on OpenSpec and Beads rather than competing with them.
+
+| Alternative | What it gives you | What Nogging adds |
+| --- | --- | --- |
+| [spec-kit](https://github.com/github/spec-kit) | Spec-driven chat commands from `/speckit-specify` to `/speckit-implement` | Role and write boundaries, durable task ownership, Git evidence |
+| [OpenSpec](https://github.com/Fission-AI/OpenSpec) alone | Per-change proposal, specs, design and `tasks.md` | Tasks become claimable Beads; evidence is mirrored back |
+| [Beads](https://github.com/gastownhall/beads) alone | A Dolt-backed dependency-graph tracker for agents | The approved-spec side and the planning/execution split |
+| [Claude Code subagents](https://code.claude.com/docs/en/sub-agents) | Specialists with their own context and tool allowlist | A plan, claims, worktrees and Codex/Pi support; Nogging ships six subagents itself |
+
+Sources and detail: [docs/comparison.md](docs/comparison.md).
 
 ## Quick Guide
 
@@ -70,8 +95,8 @@ one is missing, and merges the guard, `.gitignore`, `CLAUDE.md` and
 `AGENTS.md` idempotently. It never touches `openspec/changes/`, `.beads/`, or
 your `package.json`.
 
-- Refresh a repository with `npx github:JoMe92/nogging#v3.1.0 update`.
-- Remove the managed payload with `npx github:JoMe92/nogging#v3.1.0 remove`.
+Refresh with `npx github:JoMe92/nogging#v3.1.0 update`; remove the managed
+payload with `npx github:JoMe92/nogging#v3.1.0 remove`.
 
 The full reference is in [docs/installation.md](docs/installation.md).
 
@@ -147,6 +172,20 @@ discoveries with `/discovery-review`, and archive the change when
 
 ![Working with it day to day: a worked example that reads OpenSpec and Beads, plans a change in a locked planning worktree, implements one Bead in a supervised session, and lets the sync timer mirror the closed work back into OpenSpec as evidence](docs/brand/nogging-daily-workflow.png)
 
+## FAQ
+
+**How do I run several coding agents on one repo?** Give each its own worktree and Bead; claims stop two agents taking one task. See [Worktree workflow](docs/worktree-workflow.md).
+
+**How do I stop an AI agent from editing the plan?** Only a planning session holds the lock that opens `openspec/`; execution roles are fenced out. See [the OpenSpec write boundary](docs/architecture.md#the-openspec-write-boundary).
+
+**Does it work with Codex?** Yes, and with Claude Code and Pi; Antigravity is experimental. See [Using Nogging with Codex](docs/using-with-codex.md).
+
+**Does it replace an agent runtime?** No. It supervises the agent CLIs you already have. See [Vision and architecture](docs/vision-and-architecture.md).
+
+**Which OS?** Linux. macOS and Windows are not claimed. See the [compatibility matrix](docs/compatibility.md).
+
+More in [docs/faq.md](docs/faq.md). Questions and show-and-tell go to [GitHub Discussions](https://github.com/JoMe92/nogging/discussions) (Q&A, Show and tell).
+
 ## Safety warning
 
 Nogging installs repository instructions and Git hooks, can run a persistent
@@ -174,14 +213,13 @@ existing Git repository, OpenSpec installation, or Beads tracker.
 
 ## Supported environments
 
-- **Platform:** Linux is the supported host. Bash, Git, Python, Node.js,
+- **Platform:** Linux is the supported host; Bash, Git, Python, Node.js,
   OpenSpec, Beads, and Dolt are required for the complete workflow.
-- **Agents:** payloads and guidance are included for Claude Code, Codex, and
-  Pi. Their permission and sandbox guarantees differ.
-- **Optional host features:** systemd provides background sync and tmux
-  or herdr provides supervised sessions. Use `--no-systemd` when neither is wanted.
-- **Other systems:** macOS, Windows, other service managers, and unlisted agent
-  versions are not currently claimed as supported.
+- **Agents:** Claude Code, Codex, and Pi, with differing permission and sandbox
+  guarantees; Antigravity is experimental.
+- **Optional:** systemd for background sync, tmux or herdr for supervised
+  sessions (`--no-systemd` skips the former). macOS, Windows, and other service
+  managers are not claimed.
 
 See the [compatibility policy and matrix](docs/compatibility.md) for minimum
 versions, supported combinations, and evidence. `./scripts/nogg doctor` checks
@@ -205,11 +243,9 @@ LLM process. The Main Worker and specialist agents must never edit `openspec/`.
 
 ### Roles
 
-The **Product Owner** decides what is built. The **Planning Agent** turns that
-into an OpenSpec change. The **Lead Agent** (Main Worker) executes the Beads
-tasks and may delegate to six specialists (architect, UI/UX designer, backend
-and frontend engineers, code reviewer, test runner). The optional
-**Orchestration Agent** drives Planning and Lead sessions from above.
+The **Product Owner** decides what is built; the **Planning Agent** turns that
+into an OpenSpec change; the **Lead Agent** executes the Beads tasks and may
+delegate to six specialists; an optional **Orchestration Agent** drives both.
 
 ### Non-negotiable boundaries
 
@@ -231,40 +267,29 @@ mechanical subset of that runbook runs unattended as the `acceptance` CI job.
 
 ![What runs on top of what: four callers — the Product Owner, an agent session, the sync timer, and Git hooks — reach the single scripts/nogg CLI, which shells out to OpenSpec, Beads, Git, Dolt, tmux, herdr, and systemd and stores state in openspec/, .beads/, .git/, and .nogging/](docs/brand/nogging-tool-map.png)
 
-Go deeper in [Vision and architecture](docs/vision-and-architecture.md), the
-[operating model](docs/operating-model.md) and the
-[architecture reference](docs/architecture.md).
+Go deeper in [Vision and architecture](docs/vision-and-architecture.md).
 
 ## Documentation
 
 Full index, grouped by concepts / using Nogging / releasing and maintaining:
 [docs/README.md](docs/README.md).
 
-| Need | Guide |
-| --- | --- |
-| Concepts and architecture | [Vision and architecture](docs/vision-and-architecture.md) |
-| Data contracts and safety layers | [Architecture](docs/architecture.md) |
-| Install, update, and remove | [Installation](docs/installation.md) |
-| Roles and delivery workflow | [Operating model](docs/operating-model.md) |
-| Isolated Git worktrees | [Worktree workflow](docs/worktree-workflow.md) |
-| Supervised agent sessions | [Running work in sessions](docs/running-work-in-sessions.md) |
-| Security boundaries and safe disable | [Security and threat model](docs/security-model.md) |
-| Supported versions and platforms | [Compatibility matrix](docs/compatibility.md) |
-| Codex integration | [Using Nogging with Codex](docs/using-with-codex.md) |
-| Pi integration | [Using Nogging with Pi](docs/using-with-pi.md) |
-| Experimental Antigravity integration | [Using Nogging with Antigravity](docs/using-with-antigravity.md) |
-| Interrupted-run recovery | [Failure recovery](docs/failure-recovery.md) |
-| Acceptance procedure | [Acceptance runbook](docs/acceptance.md) |
-| Contributions and conduct | [Contributing](CONTRIBUTING.md) and [Code of Conduct](CODE_OF_CONDUCT.md) |
-| Vulnerability reporting | [Security policy](SECURITY.md) |
+Start with [Installation](docs/installation.md), the [operating model](docs/operating-model.md),
+[Running work in sessions](docs/running-work-in-sessions.md) and the
+[Security and threat model](docs/security-model.md). Agent guides:
+[Codex](docs/using-with-codex.md), [Pi](docs/using-with-pi.md),
+[Antigravity (experimental)](docs/using-with-antigravity.md). Also:
+[How Nogging compares](docs/comparison.md), [FAQ](docs/faq.md),
+[Architecture](docs/architecture.md), [Failure recovery](docs/failure-recovery.md),
+[Acceptance runbook](docs/acceptance.md), [Contributing](CONTRIBUTING.md),
+[Code of Conduct](CODE_OF_CONDUCT.md) and the [Security policy](SECURITY.md).
 
 ## Developing Nogging
 
 Clone the repository, run `./scripts/install-hooks`, and run the suite with
 `scripts/test` (also `npm test`). The CI job reference is in
 [CONTRIBUTING.md](CONTRIBUTING.md#tests-and-ci); maintainers cutting a release
-follow [docs/releasing.md](docs/releasing.md). The badge at the top of this file
-tracks the `main` branch.
+follow [docs/releasing.md](docs/releasing.md).
 
 ## Inspiration and related projects
 

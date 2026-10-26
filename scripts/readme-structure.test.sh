@@ -45,13 +45,51 @@ def first(pred):
             return i
     return -1
 
-banner = first(lambda l: l.startswith("![Nogging](docs/brand/nogging-banner.png)"))
+banner = first(lambda l: l.startswith("![") and l.endswith("(docs/brand/nogging-banner.png)"))
 title = first(lambda l: l == "# Nogging")
 badge = first(lambda l: l.startswith("[![Nogging validation]"))
 tagline = first(lambda l: l == "**Structure for a team of agents.**")
 head = [banner, title, badge, tagline]
 if min(head) < 0 or head != sorted(head):
     fail(f"head order is not banner, title, badge, tagline: {head}")
+
+# --- discoverability (SPEC-wuvb): badges, keywords, alt text, FAQ, Discussions
+head_text = "\n".join(prose[:first(lambda l: l.startswith("## "))])
+for needle in ("img.shields.io/github/v/release/JoMe92/nogging", "license-ISC",
+               "works%20with-Claude%20Code%20%7C%20Codex%20%7C%20Pi%20%7C%20Antigravity"):
+    if needle not in head_text:
+        fail(f"head lacks the badge: {needle}")
+if "npmjs" in readme or "npm/v/" in readme:
+    fail("README carries an npm badge although the package is not published")
+import json
+engine = json.loads((root / "package.json").read_text())["engines"]["node"]
+node_min = re.sub(r"\D", "", engine.split(".")[0])
+if f"node-%3E%3D{node_min}-" not in head_text:
+    fail(f"Node badge does not match package.json engines ({engine})")
+keywords = ["multi-agent", "AI coding agents", "Claude Code", "Codex", "spec-driven",
+            "OpenSpec", "Beads", "Git"]
+after_tagline = "\n".join(prose[tagline + 1:tagline + 6])
+for k in keywords:
+    if k not in after_tagline:
+        fail(f"lines after the tagline lack the keyword: {k}")
+if not re.search(r"Antigravity \(experimental\)", after_tagline):
+    fail("Antigravity is not marked experimental right after the tagline")
+for m in re.finditer(r"!\[([^\]]*)\]\(docs/brand/", readme):
+    if len(m.group(1).split()) < 3:
+        fail(f"README image alt text is not descriptive: {m.group(1)!r}")
+for m in re.finditer(r"!\[([^\]]*)\]\(", readme):
+    if not m.group(1).strip():
+        fail("README image without alt text")
+for heading in ("Why Nogging?", "How it compares", "FAQ"):
+    if heading not in [l[3:].strip() for l in prose if l.startswith("## ")]:
+        fail(f"missing section: ## {heading}")
+if "https://github.com/JoMe92/nogging/discussions" not in readme:
+    fail("README does not link GitHub Discussions")
+cfg = (root / ".github/ISSUE_TEMPLATE/config.yml").read_text()
+if "https://github.com/JoMe92/nogging/discussions" not in cfg:
+    fail("issue template config lacks the Discussions contact link")
+if len(lines) > 310:
+    fail(f"README is {len(lines)} lines; move depth into docs/ (limit about 300)")
 
 # --- intro paragraph: at most three sentences, before any ## heading -------
 first_h2 = first(lambda l: l.startswith("## "))

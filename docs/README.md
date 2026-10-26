@@ -15,6 +15,8 @@ What Nogging is and why it's built the way it is.
 | [Architecture](architecture.md) | Exact data contracts, safety gates, session supervision, the OpenSpec write boundary |
 | [Operating model](operating-model.md) | The five roles, the change lifecycle, and how planning and execution hand off |
 | [Project identity](project-identity.md) | The canonical name, repository, and identifiers — the source of truth the README must match |
+| [How Nogging compares](comparison.md) | spec-kit, OpenSpec alone, Beads alone and plain Claude Code subagents, with sources |
+| [FAQ](faq.md) | Short answers: several agents on one repo, protecting the plan, Codex, supported OS |
 
 ## Using Nogging
 
