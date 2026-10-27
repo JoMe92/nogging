@@ -1,6 +1,6 @@
 ## 1. Engine and definitions (feat/)
 
-- [ ] TASK-SCL-001 [standard] Pure schedule engine module.
+- [x] TASK-SCL-001 [standard] Pure schedule engine module.
   Per design Decisions 1 and 3: add scripts/lib/loop_schedule.py with no I/O.
   It parses and validates a schedule object (`every` m/h/d/w with its `start`
   forms, `at`, `days`, `windows`, `grace`) and raises ValueError naming the
