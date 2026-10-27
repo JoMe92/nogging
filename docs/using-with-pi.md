@@ -159,6 +159,8 @@ are reported back to the Lead Agent as discoveries.
 
 ## Known limitations
 
+- **herdr backend.** Pi can run with `--backend herdr`. It passed the offline
+  `scripts/session-pty-recorder` check; live herdr acceptance is pending.
 - **No native sandbox, at either authority level.** See *Launch authority
   levels* above — this is the load-bearing limitation of running Nogging
   under Pi and is stated here plainly rather than assumed away: `restricted`
