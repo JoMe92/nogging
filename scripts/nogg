@@ -5522,7 +5522,7 @@ def session_log(name, follow):
         print(f"(no log recorded yet at {lp})"); return
     if follow:
         os.execvp("tail", ["tail", "-n", "+1", "-F", str(lp)])
-    sys.stdout.write(lp.read_text())
+    sys.stdout.write(lp.read_text(encoding="utf-8", errors="replace"))   # rotation or a TUI may leave invalid UTF-8
 # --- session observability: watch -------------------------------------
 # `watch` polls each tracked session's pane, classifies it per-agent
 # (Decision 1), and emits one event per state transition plus `stalled`
@@ -7737,7 +7737,7 @@ def orchestrator_status():
     lp = Path(rec.get("log_path") or "")
     if lp.exists():
         print("  last log lines:")
-        for ln in lp.read_text().splitlines()[-15:]:
+        for ln in lp.read_text(encoding="utf-8", errors="replace").splitlines()[-15:]:
             print(f"    {ln}")
 def terminate_orchestrator_session(exit_reason="stopped by operator"):
     name = orchestrator_session_name()
