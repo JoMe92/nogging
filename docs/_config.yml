@@ -222,6 +222,12 @@ defaults:
       nav_order: 4
       description: Run and maintain a Nogging installation - recover from failures, read usage limits, and account for token use across supervised agent sessions.
   - scope:
+      path: "troubleshooting.md"
+    values:
+      parent: Operations
+      nav_order: 1
+      description: Fix the common Nogging failures - doctor findings, a held planning lock, Dolt reachability, tmux and session trouble, sync and worktree cleanup.
+  - scope:
       path: "failure-recovery.md"
     values:
       parent: Operations
