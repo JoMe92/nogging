@@ -102,10 +102,10 @@ Nogging starts and owns a dedicated headless herdr server on demand:
   Nogging verifies this and refuses startup if the path cannot fit.
 - **Agent detection:** Panes run with `HERDR_AGENT=<agent>` so that herdr's
   detection manifest correctly identifies the agent process through the wrapper.
-- **Pi:** `--agent pi` can use `--backend herdr`. Pi was verified offline under
-  `scripts/session-pty-recorder` (TUI render and input, log capture, resize,
-  SIGTERM and exit status, logging failure); live herdr acceptance is pending.
-  Agents outside the recorder-verified set are still refused with
+- **Pi:** `--agent pi` can use `--backend herdr`. Pi on herdr passed a live
+  run on 2026-10-27: launch on herdr, kickoff, a complete Bead with PR, and
+  log capture — including reading logs split by rotation (#304). Agents
+  outside the recorder-verified set are still refused with
   `use --backend tmux`.
 
 ### Host-namespace server start and fenced refusal
