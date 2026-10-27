@@ -69,6 +69,14 @@ require(not any(rel in excluded_files or rel.startswith("acceptance/") for rel, 
         "an excluded page is being treated as published")
 
 descriptions = {}
+# Real tracking IDs belong only on Project & maintainers pages. Placeholders
+# in samples stay; anything else that looks like a Bead or task ID, a weakness
+# code or a design decision number is a leak of internal planning.
+maintainer_pages = {"project.md"} | {
+    path for path, fields in metadata.items() if fields.get("parent") == "Project & maintainers"}
+placeholder_ids = {"SPEC-x", "SPEC-xx", "SPEC-xxx", "SPEC-yyy", "SPEC-abc", "SPEC-abc123", "TASK-ID"}
+real_id = re.compile(r"\b(?:SPEC-[0-9a-z]{2,}|TASK-[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+)\b")
+internal_ref = re.compile(r"\b(?:W[0-9]{1,2}\b|[Dd]esign [Dd]ecision \d+|Decision \d+\b)")
 site_only = {"index.md", "404.md", "getting-started.md", "concepts.md", "guides.md", "operations.md", "reference.md", "project.md"}
 email = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I)
 image_re = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)(?:\s+[^)]*)?\)")
@@ -77,6 +85,11 @@ for rel, page in published:
     text = page.read_text()
     frontmatter = text.startswith("---\n")
     require(not frontmatter or rel in site_only, f"unexpected front matter in published page {rel}")
+    if rel not in maintainer_pages:
+        for found in real_id.findall(text):
+            require(found in placeholder_ids, f"real tracking ID {found} in published page {rel}")
+        for found in internal_ref.findall(text):
+            require(False, f"internal planning reference {found!r} in published page {rel}")
     fields = metadata.get(rel)
     require(fields is not None, f"{rel} has no _config.yml defaults placement")
     if fields is not None:
@@ -241,6 +254,37 @@ footer_custom = docs / "_includes" / "footer_custom.html"
 footer_text = footer_custom.read_text() if footer_custom.is_file() else ""
 require("Nogging is released under the ISC License" in footer_text, "footer must say Nogging is released under the ISC License")
 require("Copyright" not in footer_text, "footer must not copy the LICENSE copyright line")
+
+# commands.md headings must match the live scripts/nogg --help output (offline).
+import subprocess
+
+def help_choices(*words):
+    out = subprocess.run([str(root / "scripts" / "nogg"), *words, "--help"],
+                         capture_output=True, text=True, check=False)
+    usage = out.stdout.split("\n\n", 1)[0]
+    found = re.search(r"\{([^}]+)\}", " ".join(usage.split()))
+    return found.group(1).split(",") if found else []
+
+commands_page = docs / "commands.md"
+if not commands_page.exists():
+    errors.append("docs/commands.md is missing")
+else:
+    headings = {2: [], 3: []}
+    in_fence = False
+    for line in commands_page.read_text().splitlines():
+        if line.startswith("```"):
+            in_fence = not in_fence
+        match = None if in_fence else re.match(r"(#{2,3}) (.+?)\s*$", line)
+        if match:
+            headings[len(match.group(1))].append(match.group(2))
+    top = help_choices()
+    require(bool(top), "scripts/nogg --help lists no subcommands")
+    require(headings[2] == top, f"commands.md ## headings {headings[2]} differ from nogg --help {top}")
+    expected_sub = [f"{command} {sub}" for command in ("worktree", "pr", "orchestrator", "session")
+                    for sub in help_choices(command)]
+    actual_sub = headings[3]
+    require(actual_sub == expected_sub,
+            f"commands.md ### headings {actual_sub} differ from nogg --help {expected_sub}")
 
 if errors:
     for error in errors:

@@ -45,9 +45,6 @@ systems.
 pre-release identity, not a current qualifier, runtime, package, account,
 website, or installation dependency.
 
-[Agent Console](https://github.com/JoMe92/agent-console) is an optional sibling
-project for orchestration and UI. Nogging works without Agent Console.
-
 ## Inspiration and independence
 
 Nogging is conceptually inspired by

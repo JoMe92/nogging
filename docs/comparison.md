@@ -26,7 +26,7 @@ and `/speckit-implement`. It is MIT licensed. Both projects are spec-driven.
 The difference is what surrounds the spec. Nogging does not define its own
 spec format: it uses OpenSpec for intent and Beads for executable work, and
 makes the boundary between them explicit (see
-[Non-negotiable boundaries](https://github.com/JoMe92/nogging#non-negotiable-boundaries).
+[Non-negotiable boundaries](https://github.com/JoMe92/nogging#non-negotiable-boundaries)).
 
 Source: <https://github.com/github/spec-kit>.
 

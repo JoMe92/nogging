@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Every install pin names the package.json version: github:JoMe92/nogging#<tag>
 # and raw.githubusercontent.com/JoMe92/nogging/<tag>/ in README.md and
-# docs/installation.md, and NOGGING_TAG in scripts/bootstrap. A <tag> or
-# <new-tag> placeholder is allowed; a bare main or develop is not. Offline.
+# docs/installation.md, and NOGGING_TAG in scripts/bootstrap. The same rule
+# holds for every docs/*.md page. A <tag>, <new-tag> or vX.Y.Z placeholder is
+# allowed; a bare main or develop is not. Offline.
 set -euo pipefail
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -22,10 +23,11 @@ from pathlib import Path
 root = Path(sys.argv[1])
 version = json.loads((root / "package.json").read_text())["version"]
 want = "v" + version
-PLACEHOLDERS = {"<tag>", "<new-tag>"}
+PLACEHOLDERS = {"<tag>", "<new-tag>", "vX.Y.Z"}
 
 npx = re.compile(r"github:JoMe92/nogging#([^\s`'\")]+)")
 raw = re.compile(r"raw\.githubusercontent\.com/JoMe92/nogging/([^/\s`'\")]+)/")
+bare = re.compile(r"github:JoMe92/nogging(?![#\w/.-])")
 tag_var = re.compile(r'^NOGGING_TAG="([^"]*)"', re.M)
 
 def problems(name, text):
@@ -33,6 +35,8 @@ def problems(name, text):
     refs = [(m.group(1), "github:JoMe92/nogging#") for m in npx.finditer(text)]
     refs += [(m.group(1), "raw.githubusercontent.com/JoMe92/nogging/") for m in raw.finditer(text)]
     refs += [(m.group(1), "NOGGING_TAG") for m in tag_var.finditer(text)]
+    for _ in bare.finditer(text):
+        out.append(f"{name}: github:JoMe92/nogging names no tag")
     for ref, kind in refs:
         if ref.startswith("$"):  # a shell variable, pinned by NOGGING_TAG itself
             continue
@@ -52,6 +56,15 @@ for rel in ("README.md", "docs/installation.md", "scripts/bootstrap"):
     found, n = problems(rel, (root / rel).read_text())
     check(f"{rel}: {n} pin(s) equal {want}" if not found else f"{rel}: " + "; ".join(found), not found and n > 0)
 
+# Every other docs page may carry no pin at all, but any it carries must be
+# the current tag or a placeholder.
+docs_pages = sorted(p for p in (root / "docs").glob("*.md") if p.name != "installation.md")
+stale = []
+for page in docs_pages:
+    found, _ = problems(page.relative_to(root).as_posix(), page.read_text())
+    stale += found
+check(f"{len(docs_pages)} docs pages pin only {want} or a placeholder" if not stale else "; ".join(stale), not stale)
+
 # The check itself must catch a partial bump, a bare branch and a bad variable.
 bad = [
     "npx github:JoMe92/nogging#v0.0.1 init",
@@ -59,6 +72,7 @@ bad = [
     "curl https://raw.githubusercontent.com/JoMe92/nogging/develop/scripts/bootstrap",
     'NOGGING_TAG="v0.0.1"',
     'NOGGING_TAG="<tag>"',
+    "npx github:JoMe92/nogging init",
 ]
 for i, text in enumerate(bad, 1):
     check(f"rejects stale or unpinned sample {i}", bool(problems("sample", text)[0]))

@@ -27,7 +27,7 @@ In addition to the usual target-repo prerequisites (`bd`/Beads, `python3`,
 
 ## What the installer places under `.codex/`
 
-`npx github:JoMe92/nogging init` (or `update`) runs a `mergeCodex` step that:
+`npx github:JoMe92/nogging#<tag> init` (or `update`) runs a `mergeCodex` step that:
 
 | Path | Behaviour |
 | --- | --- |
@@ -377,3 +377,5 @@ discovered automatically or invoked by name (`$openspec-propose`).
   section has the Claude-vs-Codex summary).
 - `docs/operating-model.md` — roles, the delegation model, session supervision.
 - `docs/installation.md` — the installer and what it writes.
+- [Using Nogging with Claude Code](https://jome92.github.io/nogging/using-with-claude-code/) — the same
+  loop from the default agent.
