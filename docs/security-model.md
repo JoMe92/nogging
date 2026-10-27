@@ -226,7 +226,7 @@ Beads keeps every Bead — titles, descriptions, notes, `bd remember` memories,
 and the audit event history — in a local Dolt database. When `bd init` wires
 up synchronization, it points that database's Dolt sync remote at the
 project's own Git remote by default: pushed data lands on the Git remote as
-`refs/dolt/data` plus a `dolt_remote_info` branch, right next to the source
+`refs/dolt/data` plus a `__dolt_remote_info__` branch, right next to the source
 code. The `owner` field of a Bead records the Git `user.email` configured when
 the Bead was created. Nogging does not configure this remote; it is Beads'
 default.
@@ -239,13 +239,27 @@ the published refs.
 
 For a public project:
 
-1. **Keep the Beads database in a separate private repository.** Create one
-   and give it an initial commit — Dolt Git remotes need an existing branch
-   — for example:
+1. **Keep the Beads database in a separate private repository.** Dolt Git
+   remotes need an existing branch, so the new repository needs one initial
+   commit — but create the repository itself empty and author that commit
+   locally: the host's auto-seed option (`gh repo create --add-readme`)
+   writes its commit with your account's email address unless email privacy
+   is enabled, which is exactly the leak this section warns about. Seed it
+   from a scratch directory with a privacy-safe identity:
 
    ```bash
-   gh repo create <name>-beads --private --add-readme
+   gh repo create <name>-beads --private
+   cd "$(mktemp -d)"
+   git init -b main
+   echo "Beads database" > README.md
+   git add README.md
+   git -c user.name=<your-name> -c user.email=<your-noreply-address> commit -m "Initial commit"
+   git push git+ssh://git@<host>/<you>/<name>-beads.git main
    ```
+
+   Also turn on your host's email-privacy setting (on GitHub, block command
+   line pushes that expose your email address) so an accidental push cannot
+   publish the account address.
 
    Then repoint Beads and push the existing database to it:
 
@@ -275,7 +289,7 @@ sensitive, commit, and push to the private remote. Then delete the published
 refs from the public repository:
 
 ```bash
-git push <public-remote> --delete refs/dolt/data refs/heads/dolt_remote_info
+git push <public-remote> --delete refs/dolt/data refs/heads/__dolt_remote_info__
 ```
 
 Be honest about the limits of that cleanup: anyone who fetched the refs
