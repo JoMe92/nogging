@@ -42,7 +42,7 @@ In addition to the usual target-repo prerequisites (`bd`/Beads, `python3`,
 
 ## What the installer places under `.pi/`
 
-`npx github:JoMe92/nogging init` (or `update`) ships two directories,
+`npx github:JoMe92/nogging#<tag> init` (or `update`) ships two directories,
 copied verbatim on every `init`/`update`:
 
 | Path | Behaviour |

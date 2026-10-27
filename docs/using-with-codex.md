@@ -27,7 +27,7 @@ In addition to the usual target-repo prerequisites (`bd`/Beads, `python3`,
 
 ## What the installer places under `.codex/`
 
-`npx github:JoMe92/nogging init` (or `update`) runs a `mergeCodex` step that:
+`npx github:JoMe92/nogging#<tag> init` (or `update`) runs a `mergeCodex` step that:
 
 | Path | Behaviour |
 | --- | --- |

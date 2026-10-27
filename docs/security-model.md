@@ -50,9 +50,8 @@ requests a single planning or code takeover.
   the permission mode — `bypassPermissions` has no classifier reviewing
   actions beyond what those deny. A project that wants the `auto`-mode
   classifier's extra review back can set its own copy of `trusted` to `auto`,
-  trading away the unattended reliability `--full-access` otherwise promises
-  (see `design.md`, Decision 1, for why that tradeoff was rejected as the
-  shipped default).
+  trading away the unattended reliability `--full-access` otherwise promises.
+  Nogging ships `bypassPermissions` as the default for that reason.
 - **Codex:** restricted sessions use Codex's sandbox with outbound network off;
   trusted sessions use workspace-write with approvals disabled and network on.
   The repository execpolicy floor loads only after Codex trusts the `.codex/`
@@ -61,6 +60,11 @@ requests a single planning or code takeover.
   sandbox. The project guard extension enforces only the command floor and the
   OpenSpec boundary. Supervised Pi explicitly loads the extension with run-scoped approval; no standing trust change is required. Treat Pi
   restricted mode as materially weaker than Claude or Codex restricted mode.
+
+- **Antigravity (experimental):** the guard keeps the command floor and the
+  OpenSpec boundary but there is no validated filesystem or network sandbox.
+  Treat it as the weakest of the supported agents and review its first sessions
+  closely.
 
 Antigravity's guard treats `search_web` as guarded, read-only network access,
 alongside `read_url_content`: trusted permits a non-empty query, while
@@ -135,7 +139,7 @@ diagnostic and do not use an unprofiled fallback. An allow rule does not overrid
 an explicit deny, an ask rule or a vendor policy.
 
 Observed on installed Claude 2.1.296 in `--permission-mode auto` with inert
-stubs (issue #52): with these effective settings, `./scripts/nogg session
+stubs: with these effective settings, `./scripts/nogg session
 launch` ran in every probe, while the classifier denied a direct `codex exec`
 fallback in one of three runs. Classifier verdicts are not deterministic, and
 without the rules it allowed both in three runs. The scoped rules make the
@@ -187,8 +191,9 @@ associated Bead grants no execution authority. Execution roles stay fenced
 from `openspec/` even while some planner holds the lock. `session stop`,
 cleanup and recovery never release a lock owned by another live session.
 Recovery names the stale owner before it closes the boundary. A planner
-retires its clean, integrated worktree before `plan-end` and runs
-`plan-end` from a surviving canonical checkout.
+runs `plan-end` from its planning worktree, and only then retires its clean,
+integrated worktree from the surviving canonical checkout (`plan-end` always
+precedes worktree retirement).
 
 ## Network, filesystem, and credentials
 
@@ -204,6 +209,16 @@ inherits the service environment and can outlive the terminal that enabled it.
 Inspect generated units and environment sources; do not place secrets directly
 in unit files. Session logs under `.nogging/state/sessions/` may contain prompts
 and command output, so protect and review them before sharing or publishing.
+
+### Runtime state grants
+
+Runtime state grants are configured with `agent_state_roots` in
+`.nogging/config.json`. Declaration does not grant access: a Bead label
+`agent-state:antigravity` or launch option `--agent-state antigravity` selects
+Antigravity state for a related session. Codex receives those existing
+HOME-contained directories as sandbox writable roots. Records and listings
+show the source and paths. Treat granting credential-bearing state as write
+access to those credentials. See [Codex runtime state grants](using-with-codex.md).
 
 ## Safe enablement
 
@@ -255,12 +270,3 @@ a prudent final step.
 
 Follow [Nogging’s security policy](https://github.com/JoMe92/nogging/blob/develop/SECURITY.md). Do not put a suspected vulnerability,
 credential, private URL, or sensitive log in a public issue.
-
-
-Runtime state grants are configured with `agent_state_roots` in
-`.nogging/config.json`. Declaration does not grant access: a Bead label
-`agent-state:antigravity` or launch option `--agent-state antigravity` selects
-Antigravity state for a related session. Codex receives those existing
-HOME-contained directories as sandbox writable roots. Records and listings
-show the source and paths. Treat granting credential-bearing state as write
-access to those credentials. See [Codex runtime state grants](using-with-codex.md).
