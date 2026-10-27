@@ -316,6 +316,72 @@ else:
     for line in entries:
         require(bool(re.search(r"\]\([^)]+\)", line)), f"glossary entry has no link: {line[:50]}")
 
+# Landing page install source (design Decision 7): docs/_data/install.yml,
+# README.md and docs/installation.md carry byte-identical bootstrap and init
+# lines, and no other published page carries a pinned bootstrap or init line.
+install_file = docs / "_data" / "install.yml"
+install = {}
+if not install_file.is_file():
+    errors.append("docs/_data/install.yml is missing")
+else:
+    for key, value in re.findall(r"(?m)^(tag|bootstrap|init):[ \t]+(\S.*?)\s*$", install_file.read_text()):
+        install[key] = value
+    for key in ("tag", "bootstrap", "init"):
+        require(bool(install.get(key)), f"docs/_data/install.yml has no {key} key")
+if all(install.get(key) for key in ("tag", "bootstrap", "init")):
+    surfaces = {"docs/_data/install.yml": install,
+                "README.md": (root / "README.md").read_text().splitlines(),
+                "docs/installation.md": (docs / "installation.md").read_text().splitlines()}
+    for key in ("bootstrap", "init"):
+        want_line = install[key]
+        for name in ("README.md", "docs/installation.md"):
+            require(want_line in surfaces[name],
+                    f"{name} has no line equal to install.yml {key}: {want_line!r}")
+        require(install["tag"] in want_line, f"install.yml {key} does not name the tag {install['tag']}")
+    pinned_bootstrap = re.compile(r"raw\.githubusercontent\.com/JoMe92/nogging/v[0-9][^/\s]*/scripts/bootstrap\b[^\n]*\|\s*bash")
+    pinned_init = re.compile(r"github:JoMe92/nogging#v[0-9][^\s`]*\s+init\s+--no-systemd")
+    for rel, page in published:
+        if rel == "installation.md":
+            continue
+        for number, line in enumerate(page.read_text().splitlines(), 1):
+            if pinned_bootstrap.search(line) or pinned_init.search(line):
+                errors.append(f"{rel} line {number} carries a pinned install line; use <tag> or link the installation guide")
+
+# Landing page copy (docs/index.md plus _layouts/home.html): tagline, install
+# values, experimental labelling, Linux-only claims, key links, safety order,
+# diagram alt text and a single h1.
+landing_parts = [docs / "index.md", docs / "_layouts" / "home.html"]
+for part in landing_parts:
+    require(part.is_file(), f"landing page source docs/{part.relative_to(docs).as_posix()} is missing")
+if all(part.is_file() for part in landing_parts):
+    landing = "\n".join(part.read_text() for part in landing_parts)
+    landing_lines = landing.splitlines()
+    require("Structure for a team of agents." in landing, "landing page is missing the tagline")
+    for key in ("bootstrap", "init"):
+        require(f"site.data.install.{key}" in landing, f"landing page does not render site.data.install.{key}")
+    for number, line in enumerate(landing_lines, 1):
+        if "antigravity" in line.lower() and "experimental" not in line.lower():
+            errors.append(f"landing page line {number} names Antigravity without marking it experimental")
+        if re.search(r"macOS|Windows|\bMac ", line) and not re.search(r"\bnot\b|\bno\b|unsupported", line, re.I):
+            errors.append(f"landing page line {number} makes a platform support claim: {line.strip()[:60]}")
+    require("Linux only" in landing, "landing page must say Linux only")
+    for needle in ("/installation/", "/security-model/", "/first-change/", "/compatibility/",
+                   "github.com/JoMe92/nogging", "/releases", "/discussions"):
+        require(needle in landing, f"landing page has no link to {needle}")
+    security_at = landing.find("/security-model/")
+    full_access_at = landing.lower().find("full access")
+    require(full_access_at < 0 or 0 <= security_at < full_access_at,
+            "landing page must link the security model before it mentions full access")
+    diagram_tags = re.findall(r"<img\b[^>]*>", landing)
+    diagram_tags = [tag for tag in diagram_tags if "brand/nogging-" in tag]
+    require(len(diagram_tags) == 2, f"landing page must embed exactly 2 diagrams, found {len(diagram_tags)}")
+    for tag in diagram_tags:
+        alt = re.search(r'\balt="([^"]*)"', tag)
+        require(alt is not None and len(alt.group(1).strip()) >= 40,
+                f"landing diagram needs alt text of at least 40 characters: {tag[:70]}")
+    h1_count = len(re.findall(r"<h1\b", landing)) + len(re.findall(r"(?m)^# ", landing))
+    require(h1_count == 1, f"landing page must have exactly one h1, found {h1_count}")
+
 if errors:
     for error in errors:
         print(f"FAIL: {error}", file=sys.stderr)

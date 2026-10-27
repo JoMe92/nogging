@@ -271,6 +271,7 @@ Go deeper in [Vision and architecture](docs/vision-and-architecture.md).
 
 ## Documentation
 
+Read it as a website at [jome92.github.io/nogging](https://jome92.github.io/nogging/).
 Full index, grouped by concepts / using Nogging / releasing and maintaining:
 [docs/README.md](docs/README.md).
 

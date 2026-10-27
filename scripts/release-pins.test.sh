@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Every install pin names the package.json version: github:JoMe92/nogging#<tag>
 # and raw.githubusercontent.com/JoMe92/nogging/<tag>/ in README.md and
-# docs/installation.md, and NOGGING_TAG in scripts/bootstrap. The same rule
+# docs/installation.md, and NOGGING_TAG in scripts/bootstrap. The landing
+# page's single install source docs/_data/install.yml carries the same pins
+# and a tag key that equals the version. The same rule
 # holds for every docs/*.md page. A <tag>, <new-tag> or vX.Y.Z placeholder is
 # allowed; a bare main or develop is not. Offline.
 set -euo pipefail
@@ -56,6 +58,14 @@ for rel in ("README.md", "docs/installation.md", "scripts/bootstrap"):
     found, n = problems(rel, (root / rel).read_text())
     check(f"{rel}: {n} pin(s) equal {want}" if not found else f"{rel}: " + "; ".join(found), not found and n > 0)
 
+# The landing page's install data: its tag key, bootstrap and init lines.
+install_rel = "docs/_data/install.yml"
+install_text = (root / install_rel).read_text()
+found, n = problems(install_rel, install_text)
+tag_key = re.search(r'(?m)^tag:\s*(\S+)\s*$', install_text)
+check(f"{install_rel}: {n} pin(s) equal {want}" if not found else f"{install_rel}: " + "; ".join(found), not found and n > 0)
+check(f"{install_rel}: tag key equals {want}", tag_key is not None and tag_key.group(1) == want)
+
 # Every other docs page may carry no pin at all, but any it carries must be
 # the current tag or a placeholder.
 docs_pages = sorted(p for p in (root / "docs").glob("*.md") if p.name != "installation.md")
@@ -78,6 +88,7 @@ for i, text in enumerate(bad, 1):
     check(f"rejects stale or unpinned sample {i}", bool(problems("sample", text)[0]))
 good = f"npx github:JoMe92/nogging#<tag> --version\nnpx github:JoMe92/nogging#<new-tag> update\nnpx github:JoMe92/nogging#{want} init\nNOGGING_TAG=\"{want}\""
 check("accepts placeholders and the current tag", not problems("sample", good)[0])
+check("rejects a stale install.yml tag key", re.search(r'(?m)^tag:\s*(\S+)\s*$', "tag: v0.0.1").group(1) != want)
 
 sys.exit(1 if failed else 0)
 PY
