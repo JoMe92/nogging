@@ -8,6 +8,13 @@ performs size-based rotation: when appending would push the active file past
 <log>.1, existing <log>.N shift to <log>.(N+1), and anything past <depth> is
 dropped. Memory remains bounded by chunk size and no generation exceeds max-bytes.
 
+Rotation never splits a UTF-8 character: a cut that would land inside a
+multi-byte sequence moves back to the sequence's lead byte, and an incomplete
+sequence at the end of a read is held back (at most 3 bytes) until the next
+read completes it, or until EOF. A generation may therefore be a few bytes
+shorter than max-bytes. Bytes are never altered, so non-UTF-8 input is
+still recorded exactly.
+
 Usage: session-log-writer <log-path> <max-bytes> <depth>
 """
 import errno
@@ -42,6 +49,36 @@ def rotate(log_path: Path, depth: int) -> None:
 
     if log_path.exists():
         log_path.replace(log_path.with_name(f"{log_path.name}.1"))
+
+
+def is_continuation(byte: int) -> bool:
+    return 0x80 <= byte <= 0xBF
+
+
+def incomplete_tail(data: bytes) -> int:
+    """Length of a trailing, not yet complete UTF-8 sequence in data (0-3)."""
+    for i in range(1, min(3, len(data)) + 1):
+        b = data[-i]
+        if is_continuation(b):
+            continue
+        if b < 0xC0:
+            return 0
+        need = 2 if b < 0xE0 else 3 if b < 0xF0 else 4 if b < 0xF8 else 1
+        return i if need > i else 0
+    return 0
+
+
+def char_boundary(data: bytes, limit: int) -> int:
+    """Largest n <= limit that does not cut a UTF-8 character in data.
+
+    Falls back to limit when no boundary lies within 3 bytes (not UTF-8)."""
+    for back in range(0, 4):
+        n = limit - back
+        if n < 0:
+            break
+        if n >= len(data) or not is_continuation(data[n]):
+            return n
+    return limit
 
 
 def open_log(log_path: Path) -> int:
@@ -94,6 +131,39 @@ def main() -> None:
     try:
         fd = open_log(log_path)
         current_size = os.fstat(fd).st_size
+        pending = b""
+
+        def write_chunk(remaining: bytes) -> None:
+            nonlocal fd, current_size
+            while remaining:
+                room = max_bytes - current_size
+                if room <= 0:
+                    rotate_log()
+                    room = max_bytes
+
+                if len(remaining) <= room:
+                    to_write = len(remaining)
+                else:
+                    to_write = char_boundary(remaining, room)
+                    if to_write == 0:
+                        if current_size > 0:
+                            rotate_log()  # the cut character starts the next generation
+                            continue
+                        to_write = room
+
+                write_all(fd, remaining[:to_write])
+                current_size += to_write
+                remaining = remaining[to_write:]
+
+        def rotate_log() -> None:
+            nonlocal fd, current_size
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            rotate(log_path, depth)
+            fd = open_log(log_path)
+            current_size = 0
 
         while True:
             try:
@@ -106,23 +176,15 @@ def main() -> None:
             if not chunk:
                 break  # EOF
 
-            remaining = chunk
-            while remaining:
-                room = max_bytes - current_size
-                if room <= 0:
-                    try:
-                        os.close(fd)
-                    except OSError:
-                        pass
-                    rotate(log_path, depth)
-                    fd = open_log(log_path)
-                    current_size = 0
-                    room = max_bytes
+            remaining = pending + chunk
+            hold = incomplete_tail(remaining)
+            pending = remaining[len(remaining) - hold:] if hold else b""
+            if hold:
+                remaining = remaining[:-hold]
+            write_chunk(remaining)
 
-                to_write = min(len(remaining), room)
-                write_all(fd, remaining[:to_write])
-                current_size += to_write
-                remaining = remaining[to_write:]
+        if pending:
+            write_chunk(pending)
 
         try:
             os.close(fd)
