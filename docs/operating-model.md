@@ -436,7 +436,7 @@ writes no such file (its `effective_settings_path` is null) — the floor is the
 `session_launch_profile` / `session_launch_prompt` config key still wins over
 the directory default.
 
-From any plain SSH shell (no `TERM`, no tmux client needed):
+From any plain SSH shell (no `TERM`, no tmux client needed). This table is partial; the [full command reference](https://jome92.github.io/nogging/commands/) lists every `nogg` subcommand:
 
 | Command | What it does |
 | --- | --- |

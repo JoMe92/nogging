@@ -124,6 +124,37 @@ for rel, page in published:
         elif target_path.suffix:
             require(target_path.exists(), f"published link from {rel} points to missing asset: {target}")
 
+# commands.md headings must match the live scripts/nogg --help output (offline).
+import subprocess
+
+def help_choices(*words):
+    out = subprocess.run([str(root / "scripts" / "nogg"), *words, "--help"],
+                         capture_output=True, text=True, check=False)
+    usage = out.stdout.split("\n\n", 1)[0]
+    found = re.search(r"\{([^}]+)\}", " ".join(usage.split()))
+    return found.group(1).split(",") if found else []
+
+commands_page = docs / "commands.md"
+if not commands_page.exists():
+    errors.append("docs/commands.md is missing")
+else:
+    headings = {2: [], 3: []}
+    in_fence = False
+    for line in commands_page.read_text().splitlines():
+        if line.startswith("```"):
+            in_fence = not in_fence
+        match = None if in_fence else re.match(r"(#{2,3}) (.+?)\s*$", line)
+        if match:
+            headings[len(match.group(1))].append(match.group(2))
+    top = help_choices()
+    require(bool(top), "scripts/nogg --help lists no subcommands")
+    require(headings[2] == top, f"commands.md ## headings {headings[2]} differ from nogg --help {top}")
+    expected_sub = [f"{command} {sub}" for command in ("worktree", "pr", "orchestrator", "session")
+                    for sub in help_choices(command)]
+    actual_sub = headings[3]
+    require(actual_sub == expected_sub,
+            f"commands.md ### headings {actual_sub} differ from nogg --help {expected_sub}")
+
 if errors:
     for error in errors:
         print(f"FAIL: {error}", file=sys.stderr)

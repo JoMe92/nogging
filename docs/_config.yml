@@ -224,6 +224,12 @@ defaults:
       nav_order: 5
       description: Command, configuration, glossary, and architecture references.
   - scope:
+      path: "commands.md"
+    values:
+      parent: Reference
+      nav_order: 1
+      description: Every nogg subcommand with its purpose, common forms, role, and guide.
+  - scope:
       path: "architecture.md"
     values:
       parent: Reference
