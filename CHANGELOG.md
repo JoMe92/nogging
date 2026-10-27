@@ -9,6 +9,31 @@ and GitHub Releases for that history.
 
 ## [Unreleased]
 
+### Added
+
+- A branded documentation site: the Just the Docs theme in Nogging colours
+  with light and dark mode, self-hosted Poppins for the wordmark and
+  headings, a landing page with a pinned quick start, sidebar sections and
+  search, and new pages: Your first change, Claude Code guide, command
+  reference, configuration reference and glossary. Internal pages are
+  excluded from the site (#281 #288 #289 #291 #292 #293 #294 #296).
+- An offline docs-site test suite (`scripts/docs-site.test.sh`) and a
+  container build for the site (`scripts/docs-site-build`) (#289 #293).
+- `THIRD_PARTY_NOTICES.md` carries the full MIT texts for the OpenSpec and
+  Beads skill material and entries for Poppins (OFL 1.1) and Just the Docs
+  (MIT) (#293).
+
+### Changed
+
+- The owner surname removed from `LICENSE` and `package.json`; the copyright
+  holder is now "Jonas (JoMe92)" (#279).
+- Agent Console sibling-project references removed (#287).
+
+### Fixed
+
+- Documentation consistency: pinned installer lines, stale facts and
+  internal IDs removed (#291).
+
 ## [3.1.1] - 2026-10-26
 
 ### Added
