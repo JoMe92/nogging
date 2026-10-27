@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+serve=false
+case "${1:-}" in
+  "") ;;
+  --serve) serve=true ;;
+  --help|-h)
+    printf 'Usage: scripts/docs-site-build [--serve]\nBuild the docs site in a temporary GitHub Pages container and check local links and anchors.\n--serve starts a local preview at http://127.0.0.1:4000/nogging/\n'
+    exit 0
+    ;;
+  *) printf 'Unknown option: %s\n' "$1" >&2; exit 2 ;;
+esac
+
+if ! command -v docker >/dev/null 2>&1; then
+  echo 'docs-site-build: docker is required' >&2
+  exit 1
+fi
+
+versions=$(python3 - <<'PY'
+import json
+from urllib.request import urlopen
+with urlopen("https://pages.github.com/versions.json", timeout=20) as response:
+    versions = json.load(response)
+print(versions["ruby"])
+print(versions["github-pages"])
+PY
+)
+ruby_version=$(sed -n '1p' <<<"$versions")
+pages_version=$(sed -n '2p' <<<"$versions")
+if [[ ! $ruby_version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ || ! $pages_version =~ ^[0-9]+$ ]]; then
+  echo 'docs-site-build: invalid Ruby or github-pages version from pages.github.com/versions.json' >&2
+  exit 1
+fi
+
+build_dir=$(mktemp -d "${TMPDIR:-/tmp}/nogging-docs-site.XXXXXX")
+cleanup() { rm -rf -- "$build_dir"; }
+trap cleanup EXIT
+bundle_cache="/tmp/nogging-docs-site-bundle-${ruby_version}-${pages_version}"
+mkdir -p "$bundle_cache"
+cat >"$build_dir/Gemfile" <<EOF
+source 'https://rubygems.org'
+gem 'github-pages', '= $pages_version'
+gem 'rake'
+EOF
+mkdir -p "$build_dir/bundle"
+mkdir -p "$build_dir/gems"
+
+container_args=(--rm --user "$(id -u):$(id -g)" -v "$root/docs:/src:ro" -v "$build_dir:/build" -v "$bundle_cache:/bundle" -w /build "ruby:$ruby_version")
+if $serve; then
+  docker run --rm -p 127.0.0.1:4000:4000 "${container_args[@]:1}" bash -lc \
+    'gem install bundler rake --install-dir /build/gems --bindir /build/gems/bin --no-document && export GEM_HOME=/build/gems GEM_PATH=/build/gems:/usr/local/bundle PATH=/build/gems/bin:/usr/local/bundle/bin:$PATH && BUNDLE_PATH=/bundle bundle install && BUNDLE_PATH=/bundle bundle exec jekyll serve --host 0.0.0.0 --port 4000 --source /src --destination /build/site'
+  exit $?
+fi
+
+docker run "${container_args[@]}" bash -lc \
+  'gem install bundler rake --install-dir /build/gems --bindir /build/gems/bin --no-document && export GEM_HOME=/build/gems GEM_PATH=/build/gems:/usr/local/bundle PATH=/build/gems/bin:/usr/local/bundle/bin:$PATH && BUNDLE_PATH=/bundle bundle install && BUNDLE_PATH=/bundle bundle exec jekyll build --source /src --destination /build/site'
+
+python3 - "$build_dir/site" <<'PY'
+from html.parser import HTMLParser
+from pathlib import Path
+from urllib.parse import unquote, urlsplit
+import sys
+
+site = Path(sys.argv[1]).resolve()
+baseurl = "/nogging"
+errors = []
+
+class Page(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.ids = set()
+        self.links = []
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if attrs.get("id"):
+            self.ids.add(attrs["id"])
+        if tag in {"a", "link"} and attrs.get("href"):
+            self.links.append((attrs["href"], tag))
+        if tag in {"img", "script", "source"} and attrs.get("src"):
+            self.links.append((attrs["src"], tag))
+
+def target_for(current, url):
+    parsed = urlsplit(url)
+    if parsed.scheme or parsed.netloc or url.startswith("//"):
+        return None, parsed.fragment
+    raw = unquote(parsed.path)
+    if not raw:
+        return current, parsed.fragment
+    if raw.startswith(baseurl + "/"):
+        raw = raw[len(baseurl) + 1:]
+    elif raw == baseurl:
+        raw = ""
+    elif raw.startswith("/"):
+        raw = raw.lstrip("/")
+    else:
+        raw = str((current.parent.relative_to(site) / raw))
+    candidate = (site / raw).resolve()
+    if candidate.is_dir():
+        candidate = candidate / "index.html"
+    elif not candidate.suffix:
+        candidate = candidate / "index.html"
+    return candidate, parsed.fragment
+
+for html in sorted(site.rglob("*.html")):
+    parser = Page()
+    parser.feed(html.read_text(errors="replace"))
+    for url, tag in parser.links:
+        target, fragment = target_for(html, url)
+        if target is None:
+            continue
+        if not target.exists():
+            errors.append(f"{html.relative_to(site)}: broken {tag} target {url}")
+            continue
+        if fragment and target.suffix == ".html":
+            target_parser = parser if target == html else Page()
+            if target != html:
+                target_parser.feed(target.read_text(errors="replace"))
+            if fragment not in target_parser.ids:
+                errors.append(f"{html.relative_to(site)}: missing anchor #{fragment} in {url}")
+
+if errors:
+    for error in errors:
+        print(f"FAIL: {error}", file=sys.stderr)
+    raise SystemExit(1)
+print(f"PASS: built site; checked links and anchors in {len(list(site.rglob('*.html')))} HTML pages")
+PY

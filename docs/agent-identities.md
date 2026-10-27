@@ -81,7 +81,7 @@ illustrative fragment for `personas.lead`, with a fictitious App ID:
 ```json
 {
   "name": "Nogging Lead",
-  "email": "lead@nogging.bot",
+  "email": "github-noreply-address",
   "github_app": {
     "app_id": 123456,
     "private_key_path": "/home/DELIVERY_USER/.config/nogging/bot-identities/lead.pem"

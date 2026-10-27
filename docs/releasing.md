@@ -90,7 +90,7 @@ a release candidate or a final release.
     needs the full acceptance evidence (install, upgrade, rollback, uninstall,
     every supported agent path) described in
     [docs/acceptance.md](acceptance.md), filled in from
-    [docs/acceptance-report-template.md](acceptance-report-template.md).
+    [acceptance-report-template.md](https://github.com/JoMe92/nogging/blob/develop/docs/acceptance-report-template.md).
     That report — not this checklist — is what a human signs.
 
 ## Rollback
