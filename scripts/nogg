@@ -2977,6 +2977,7 @@ def normalize_role(role):
     if role == "lead": return "lead", "lead"
     if role == "planning": return "planning", "planning"
     if role == "orchestrator": return "orchestrator", "orchestrator"
+    if role == "loop": return "loop", "loop"
     if role.startswith("specialist:"):
         t = role.split(":", 1)[1]
         if t: return f"specialist:{t}", f"spec-{t}"
@@ -4578,7 +4579,7 @@ def planning_launch_authority(arg1, arg2=None, arg3=None, arg4=False, *, role=No
     Raises when role is 'planning', agent is 'codex' or 'antigravity', and
     neither --profile nor --full-access was given.
     """
-    if arg1 in ("planning", "lead", "orchestrator") or str(arg1).startswith("specialist:"):
+    if arg1 in ("planning", "lead", "orchestrator", "loop") or str(arg1).startswith("specialist:"):
         r = arg1 if role is None else role
         a = arg2 if agent is None else agent
         p = arg3 if profile is None else profile
@@ -4619,7 +4620,7 @@ launch_profile_line = session_launch_profile_line
 
 def session_launch_notes(role_or_agent, agent_or_profile=None, profile_label=None, *, role=None, agent=None, profile=None, full_access=False):
     """Return NOTE lines for launch output."""
-    if role_or_agent in ("planning", "lead", "orchestrator") or str(role_or_agent).startswith("specialist:"):
+    if role_or_agent in ("planning", "lead", "orchestrator", "loop") or str(role_or_agent).startswith("specialist:"):
         r = role_or_agent if role is None else role
         a = agent_or_profile if agent is None else agent
         p = profile_label if profile is None else profile
@@ -4738,11 +4739,71 @@ def remove_process_identity_receipt(receipt_path):
     except OSError:
         pass
 
+LOOP_AUTHORITIES = ("restricted", "trusted")
+# A loop run never drives sessions or manages loops, whatever the project's own
+# Bash allow rules say (deny beats allow in every Claude settings source).
+LOOP_DENY = [f"Bash({prefix}nogg {command}:*)"
+             for prefix in ("./scripts/", "scripts/")
+             for command in ("session launch", "session send", "session kickoff", "session stop",
+                             "loop add", "loop approve", "loop remove", "loop pause", "loop resume",
+                             "loop edit", "loop run-now", "loop tick")]
+LOOP_NAME_MAX = 40
+LOOP_RUN_ID_RE = re.compile(r"[A-Za-z0-9._:-]{1,128}")
+LOOP_KICKOFF_MAX = 256 * 1024
+LOOP_LAUNCH_KEYS = {"name", "run_id", "kickoff_message", "authority"}
+LOOP_CLI_REFUSAL = ("--role loop is internal to the loop scheduler and is not a public launch role; "
+                    "start a scheduled loop with `nogg loop run-now <name>`")
+def loop_launch_request(role, loop, *, bead, cwd, profile, prompt, full_access, resume,
+                        planning_id, description, agent_state, ignore_usage_gate):
+    """Validate the internal-only `loop` role request and return it normalised,
+    or None for every other role. The loop role never takes a Bead, a caller
+    profile or prompt, a working directory, a resume, `--full-access`, an
+    agent-state grant or the usage-gate bypass: its authority is exactly the
+    configured `restricted` (default) or `trusted` level, its prompt is always
+    `loop`, and it always runs in the main checkout. Raises before any side
+    effect."""
+    if role != "loop":
+        if loop is not None:
+            raise RuntimeError("loop launch data is valid only with the internal loop role")
+        return None
+    if not isinstance(loop, dict):
+        raise RuntimeError(LOOP_CLI_REFUSAL)
+    unknown = sorted(set(loop) - LOOP_LAUNCH_KEYS)
+    if unknown:
+        raise RuntimeError(f"loop launch refused: unsupported key {unknown[0]!r}")
+    for key, flag in (("bead", bead), ("cwd", cwd), ("profile", profile), ("prompt", prompt),
+                      ("resume", resume), ("planning-id", planning_id), ("description", description)):
+        if flag is not None:
+            raise RuntimeError(f"loop launch refused: a loop run takes no {key} (its authority, prompt "
+                               f"and main-checkout working directory are fixed)")
+    for key, flag in (("full-access", full_access), ("agent-state", agent_state),
+                      ("ignore-usage-gate", ignore_usage_gate)):
+        if flag:
+            raise RuntimeError(f"loop launch refused: a loop run takes no {key} (its authority, prompt "
+                               f"and main-checkout working directory are fixed)")
+    name = loop.get("name")
+    if not isinstance(name, str) or len(name) > LOOP_NAME_MAX:
+        raise RuntimeError(f"loop launch refused: loop name must be a kebab-case string of at most {LOOP_NAME_MAX} characters")
+    require_kebab(name, "loop name")
+    run_id = loop.get("run_id")
+    if not isinstance(run_id, str) or not LOOP_RUN_ID_RE.fullmatch(run_id):
+        raise RuntimeError("loop launch refused: run_id must be 1-128 characters from A-Z a-z 0-9 . _ : -")
+    message = loop.get("kickoff_message")
+    if (not isinstance(message, str) or not message.strip() or "\0" in message
+            or len(message) > LOOP_KICKOFF_MAX):
+        raise RuntimeError("loop launch refused: a loop run needs a caller-supplied kickoff message "
+                           "(non-empty, no NUL, at most 256 KiB)")
+    authority = loop.get("authority", "restricted")
+    if authority not in LOOP_AUTHORITIES:
+        raise RuntimeError(f"loop launch refused: authority must be one of "
+                           f"{', '.join(LOOP_AUTHORITIES)}, got {authority!r}")
+    return {"name": name, "run_id": run_id, "kickoff_message": message, "authority": authority}
+
 def _session_launch(role, bead, cwd, read_only, owner,
                    profile=None, prompt=None, full_access=False, agent=None,
                    resume=None, kickoff=False, planning_id=None, description=None,
                    model=None, agent_state=(), tier=None, effort=None,
-                   ignore_usage_gate=False, complexity=None, backend=None):
+                   ignore_usage_gate=False, complexity=None, backend=None, loop=None):
     """Start a supervised agent session for a Bead.
 
     `resume` names the exact prior conversation: Claude and Codex use
@@ -4757,6 +4818,13 @@ def _session_launch(role, bead, cwd, read_only, owner,
     the read-only `bd show` inside bead_records(); it never claims, starts, or
     otherwise changes a Bead. Claiming stays a deliberate in-session action
     the operator directs (see .nogging/session-launch-prompt.md)."""
+    loop = loop_launch_request(
+        role, loop, bead=bead, cwd=cwd, profile=profile, prompt=prompt, full_access=full_access,
+        resume=resume, planning_id=planning_id, description=description,
+        agent_state=agent_state, ignore_usage_gate=ignore_usage_gate)
+    if loop:
+        # Fixed by the role: restricted/trusted only, the loop prompt, the main checkout.
+        profile, prompt, cwd = loop["authority"], "loop", str(ORCHESTRATOR_HOME)
     agent = resolve_agent(agent)
     require_agent_binary(agent)
     if agent == "codex" and resume is not None:
@@ -4802,10 +4870,12 @@ def _session_launch(role, bead, cwd, read_only, owner,
         bead = bead or None
     elif planning_id is not None or description is not None:
         raise RuntimeError("--planning-id and --description require --role planning")
-    if is_orchestrator:
+    if is_orchestrator or loop:
         bead = None
     elif not bead and not is_planning:
         raise RuntimeError("--bead is required for every execution role (optional for planning and orchestrator)")
+    if loop and agent not in ("claude", "codex", "pi", "antigravity"):
+        raise RuntimeError(f"loop launch refused: unsupported agent {agent!r}")
     # Execution roles remain fenced even while another session plans.
     # The wrapper enters the Linux mount boundary before dispatching any tool.
     openspec_readonly = (
@@ -4883,9 +4953,9 @@ def _session_launch(role, bead, cwd, read_only, owner,
             openspec_readonly = False
     records = bead_records(bead) if bead else []
     grants = session_state_grants(bead, agent_state, records)
-    if not is_orchestrator and bead and not records:
+    if not is_orchestrator and not loop and bead and not records:
         raise RuntimeError(f"Bead {bead} does not exist or cannot be read; launch refused without agent-state grants")
-    if not is_orchestrator and not is_planning:
+    if not is_orchestrator and not is_planning and not loop:
         blocking = unmet_dependencies(bead)
         if blocking:
             raise RuntimeError(
@@ -4933,6 +5003,10 @@ def _session_launch(role, bead, cwd, read_only, owner,
         settings_out = base_settings if floor_lifted else merge_floor(base_settings)
         if openspec_readonly:
             settings_out = deny_openspec_writes(settings_out)
+        if loop:
+            perms = settings_out.setdefault("permissions", {})
+            perms["deny"] = list(perms.get("deny") or []) + [
+                r for r in LOOP_DENY if r not in (perms.get("deny") or [])]
         settings_out = merge_observability_hooks(settings_out)
         effective_settings_path = str(effective_path)
         inner[1:1] = ["--settings", effective_settings_path]
@@ -5010,7 +5084,7 @@ def _session_launch(role, bead, cwd, read_only, owner,
     # Name collision checks themselves call tmux: defer them until the full
     # emitted argv and both helpers have passed interface negotiation.
     if not is_orchestrator:
-        name = gen_session_name(role_slug, planning_id if is_planning else bead,
+        name = gen_session_name(role_slug, loop["name"] if loop else planning_id if is_planning else bead,
                                  backend_name)
         rec_path, log_path = sdir / f"{name}.json", sdir / f"{name}.log"
         if agent == "claude":
@@ -5025,6 +5099,8 @@ def _session_launch(role, bead, cwd, read_only, owner,
                 raise RuntimeError(
                     f"a live orchestrator session already exists: {rec['name']} "
                     f"(use `orchestrator run` to adopt it)")
+        elif loop:
+            continue    # nonce-unique names; concurrency is the scheduler's run policy
         elif (is_planning and rec.get("role") == "planning"
               and rec.get("planning_id") == planning_id
               and rec.get("state") in SESSION_ACTIVE_STATES and rec.get("name") in live):
@@ -5068,6 +5144,7 @@ def _session_launch(role, bead, cwd, read_only, owner,
             and Path(prompt_path).is_file()),
         "antigravity_initial_turn": agent == "antigravity",
         "planning_id": planning_id, "description": description,
+        "loop_name": loop and loop["name"], "loop_run_id": loop and loop["run_id"],
         "agent_state_grants": grants,
         # Requested model and where it came from (`launch`, `profile`, or
         # `runtime-default` with a null model: the runtime picks, and Nogging
@@ -5191,7 +5268,7 @@ def _session_launch(role, bead, cwd, read_only, owner,
               f"--full-access (or an explicit --profile/--prompt) for "
               f"unattended operation.")
     if kickoff:
-        session_kickoff(name)
+        session_kickoff(name, loop["kickoff_message"] if loop else None)
     else:
         print(f"  kickoff: this session will not act until you send it a first "
               f"message — run `nogg session kickoff {name}` or attach and type "
@@ -5200,6 +5277,7 @@ def _session_launch(role, bead, cwd, read_only, owner,
         warning = tmux_sandboxed_warning()
         if warning:
             print(f"WARN: {warning}")
+    return name
 
 def reconciled_state(rec, live):
     """The state to report: an active record whose backend session has vanished is
@@ -5279,7 +5357,7 @@ def session_list():
         if rec.get("name") in unknown:
             state += " (unknown)"
         print(f"{rec.get('name',''):<40}  {(rec.get('bead_id') or '-'):<10}  "
-              f"{rec.get('role',''):<24}  {rec.get('started_at',''):<20}  "
+              f"{_role_display(rec):<24}  {rec.get('started_at',''):<20}  "
               f"{state:<16}  {str(rec.get('owner','')):<16}  "
               f"{_agent_display(rec):<8}  "
               f"{_profile_display(rec):<12}  "
@@ -5309,6 +5387,10 @@ def herdr_orphans(recs):
         return [(substrate, ref) for ref in orphans], foreign_count
     except (RuntimeError, AttributeError, KeyError, TypeError):
         return [], 0
+def _role_display(rec):
+    """`session list` ROLE cell: a loop run shows as `loop:<name>`."""
+    role = rec.get("role", "")
+    return f"loop:{rec['loop_name']}" if role == "loop" and rec.get("loop_name") else role
 def _profile_display(rec):
     """`session list` PROFILE cell: a session that actually ran with the command
     floor lifted shows as `FULL-ACCESS` (a distinct token, not a profile name);
@@ -7206,6 +7288,8 @@ def _kickoff_message(name, rec, message=None):
     if message:
         return message
     role = rec.get("role") or "lead"  # legacy records were Lead sessions
+    if role == "loop":
+        raise RuntimeError(f"kickoff: {name} is a loop run; its kickoff is the caller-supplied loop message")
     if role == "planning":
         planning_id = require_kebab(rec.get("planning_id"), "planning ID")
         description = require_kebab(rec.get("description"), "planning description")
@@ -8876,6 +8960,8 @@ def session_cmd(args):
             raise RuntimeError("herdr backend does not support server recovery") from exc
         print(f"herdr server ({scfg('session_herdr_session', 'nogging')}): running (owned)")
     elif args.session_command == "launch":
+        if args.role == "loop":
+            raise RuntimeError(LOOP_CLI_REFUSAL)   # before any side effect
         session_launch(args.role, args.bead, args.cwd, args.read_only, args.owner,
                        args.profile, args.prompt, args.full_access, args.agent,
                        resume=args.resume, kickoff=args.kickoff, planning_id=args.planning_id, description=args.description,
