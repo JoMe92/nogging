@@ -207,6 +207,12 @@ systemctl --user enable --now "$PWD/systemd/nogg-sync-<slug>.timer"
 explicit opt-in (marked `(optional)` in the next steps); review the generated
 unit before doing so.
 
+If your repository is public, note that `bd init` points Beads' Dolt sync
+remote at the project's own Git remote, which publishes all Beads data —
+Bead titles, notes, memories and owner identities, including their history —
+alongside the code. Point Beads at a separate private repository instead; see
+[Beads data and privacy](security-model.md#beads-data-and-privacy).
+
 Confirm the pinned package version before changing an installation:
 
 ```bash
