@@ -150,6 +150,12 @@ defaults:
       nav_order: 3
       description: Guides for using Nogging with supported agents and session tools.
   - scope:
+      path: "using-with-claude-code.md"
+    values:
+      parent: Guides
+      nav_order: 1
+      description: Run Nogging workflows from Claude Code, the default agent.
+  - scope:
       path: "using-with-codex.md"
     values:
       parent: Guides

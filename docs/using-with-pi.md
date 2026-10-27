@@ -176,3 +176,5 @@ are reported back to the Lead Agent as discoveries.
   section has the Claude-vs-Codex-vs-Pi summary).
 - `docs/operating-model.md` — roles, the delegation model, session supervision.
 - `docs/installation.md` — the installer and what it writes.
+- [Using Nogging with Claude Code](https://jome92.github.io/nogging/using-with-claude-code/) — the same
+  loop from the default agent.
