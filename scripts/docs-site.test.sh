@@ -3,6 +3,7 @@ set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 python3 - "$root" <<'PY'
+import hashlib
 from pathlib import Path
 import re
 import sys
@@ -79,6 +80,12 @@ real_id = re.compile(r"\b(?:SPEC-[0-9a-z]{2,}|TASK-[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+
 internal_ref = re.compile(r"\b(?:W[0-9]{1,2}\b|[Dd]esign [Dd]ecision \d+|Decision \d+\b)")
 site_only = {"index.md", "404.md", "getting-started.md", "concepts.md", "guides.md", "operations.md", "reference.md", "project.md"}
 email = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I)
+# The owner's surname must not exist anywhere in the repository, including in
+# this guard: the guard itself must not publish the name it rejects. Each
+# published page is tokenized into words, every lowercased word is hashed and
+# compared against this constant hex digest of the lowercased surname, so the
+# check keeps its behaviour without spelling the name out in plain text.
+owner_surname_digest = "d6627d040cd79d6f6843ef39994bd931c9bf0e4d925db3e629b4f53204fbbd96"
 image_re = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)(?:\s+[^)]*)?\)")
 link_re = re.compile(r"(?<!!)\[([^\]]+)\]\(([^)\s]+)(?:\s+[^)]*)?\)")
 for rel, page in published:
@@ -105,7 +112,9 @@ for rel, page in published:
     require("{{" not in clean and "{%" not in clean, f"Liquid delimiters outside code in {rel}")
     privacy_text = text.replace("git@github.com:", "git-at-github.com:")
     require(not email.search(privacy_text), f"email address in published page {rel}")
-    require(not re.search(r"\bMeier\b", text, re.I), f"owner surname in published page {rel}")
+    require(not any(hashlib.sha256(word.lower().encode()).hexdigest() == owner_surname_digest
+                    for word in re.findall(r"\w+", text)),
+            f"owner surname in published page {rel}")
 
     for alt, target in image_re.findall(text):
         require(bool(alt.strip()), f"image in {rel} has no alt text: {target}")
@@ -403,6 +412,19 @@ require(not re.search(r"\d+\.\d+\.\d+\)", guides["model-selection.md"].split("##
         "model-selection.md Sources section pins tool versions that drift from the compatibility matrix")
 require("automatic-model-and-effort-selection" not in guides["model-selection.md"], "model-selection.md names an internal change")
 require("](architecture.md)" in guides["using-with-herdr.md"][:1500], "using-with-herdr.md intro must point at architecture.md")
+
+for key, pattern in (("lang: en", r"(?m)^lang: en$"),
+                     ("square-card logo", r"(?m)^logo: /brand/nogging-social-card-square\.png$"),
+                     ("large social card default image", r"(?m)^      image: /brand/nogging-social-card\.png$"),
+                     ("summary_large_image twitter card", r"(?ms)^twitter:\n  card: summary_large_image$")):
+    require(bool(re.search(pattern, config)), f"search metadata missing: {key}")
+require(bool(re.search(r"(?m)^      path: \"404\.md\"\n    values:\n(?:      .*\n)*?      sitemap: false$", config)),
+        "404 page must carry sitemap: false")
+require("Antigravity is experimental" in config.split("url:", 1)[0], "site description must mark Antigravity experimental")
+robots = docs / "robots.txt"
+require(robots.is_file() and "Sitemap: https://jome92.github.io/nogging/sitemap.xml" in robots.read_text(),
+        "docs/robots.txt must name the sitemap")
+require(not (docs / "llms.txt").exists() and not (root / "llms.txt").exists(), "llms.txt must not exist")
 
 if errors:
     for error in errors:

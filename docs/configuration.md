@@ -129,7 +129,7 @@ An optional object. Every key is optional, and the defaults are:
 | `stale_seconds` | number | `600` | Age after which an observation counts as unknown. |
 | `on_unknown` | string | `warn` | `warn` launches with a warning when usage is unknown; `deny` refuses with exit 75. |
 | `size_multipliers` | object | `{"small": 0.5, "medium": 1, "large": 2}` | Scale for the estimate of a Bead labelled `size:<name>`. |
-| `exclude_roles` | array of strings | `["planning", "orchestrator"]` | Roles that skip the gate: any of `lead`, `specialist`, `planning`, `orchestrator`. |
+| `exclude_roles` | array of strings | `["planning", "orchestrator"]` | Roles that skip the gate: any of `lead`, `specialist`, `planning`, `orchestrator`, `loop`. The internal `loop` role (scheduled loop runs) is gated unless listed. |
 
 Unknown keys and out-of-range or mistyped values refuse every launch until
 they are fixed. The semantics are in

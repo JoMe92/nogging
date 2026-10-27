@@ -18,6 +18,7 @@ module.exports = {
     'scripts/nogg',
     'scripts/nogg_usage.py',
     'scripts/lib/session_backend.py',
+    'scripts/lib/loop_schedule.py',
     'scripts/lib/session_backend_tmux.py',
     'scripts/lib/session_backend_herdr.py',
     'scripts/lib/session_codex_delivery.py',

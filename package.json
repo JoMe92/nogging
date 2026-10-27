@@ -1,6 +1,6 @@
 {
   "name": "nogg",
-  "version": "3.1.1",
+  "version": "3.2.0",
   "private": true,
   "description": "Structure for a team of agents: role boundaries, planning and Git-evidenced execution for Claude Code, Codex, Pi and Antigravity, built on OpenSpec and Beads.",
   "main": "bin/cli.js",
@@ -37,6 +37,7 @@
     "scripts/nogg",
     "scripts/nogg_usage.py",
     "scripts/lib/session_backend.py",
+    "scripts/lib/loop_schedule.py",
     "scripts/lib/session_backend_tmux.py",
     "scripts/lib/session_backend_herdr.py",
     "scripts/lib/session_codex_delivery.py",
