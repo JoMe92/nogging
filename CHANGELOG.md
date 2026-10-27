@@ -9,6 +9,8 @@ and GitHub Releases for that history.
 
 ## [Unreleased]
 
+## [3.2.0] - 2026-10-27
+
 ### Added
 
 - A branded documentation site: the Just the Docs theme in Nogging colours
@@ -22,17 +24,23 @@ and GitHub Releases for that history.
 - `THIRD_PARTY_NOTICES.md` carries the full MIT texts for the OpenSpec and
   Beads skill material and entries for Poppins (OFL 1.1) and Just the Docs
   (MIT) (#293).
+- Pi can run on the herdr backend (#299).
+- How to watch all herdr sessions at once with `herdr --session nogging`
+  (#303).
 
 ### Changed
 
 - The owner surname removed from `LICENSE` and `package.json`; the copyright
   holder is now "Jonas (JoMe92)" (#279).
 - Agent Console sibling-project references removed (#287).
+- Internal groundwork for scheduled loops (no user-facing command yet).
 
 ### Fixed
 
 - Documentation consistency: pinned installer lines, stale facts and
   internal IDs removed (#291).
+- Session logs stay readable when log rotation splits a UTF-8 character;
+  rotation now cuts on character boundaries (#304).
 
 ## [3.1.1] - 2026-10-26
 
