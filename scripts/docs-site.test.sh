@@ -382,6 +382,28 @@ if all(part.is_file() for part in landing_parts):
     h1_count = len(re.findall(r"<h1\b", landing)) + len(re.findall(r"(?m)^# ", landing))
     require(h1_count == 1, f"landing page must have exactly one h1, found {h1_count}")
 
+# --- agent guide consistency (agent guides) ---
+guides = {name: (docs / name).read_text() for name in (
+    "using-with-codex.md", "using-with-pi.md", "using-with-antigravity.md",
+    "using-with-herdr.md", "agent-identities.md", "model-selection.md")}
+for name, text in guides.items():
+    require(not re.search(r"\bin this change\b|\bin this release\b", text), f"{name} has stale change or release wording")
+    require(not re.search(r"(?<![\w/])issue\s+#\d+", text), f"{name} cites an internal issue number")
+    require("blob/develop" not in text, f"{name} links blob/develop")
+    require("tool-agnostic-write-boundary" not in text, f"{name} names an internal spec capability")
+require("unlinked. or" not in guides["using-with-codex.md"], "using-with-codex.md keeps the broken prompts-link sentence")
+require("(Experimental)" in guides["using-with-antigravity.md"].splitlines()[0], "using-with-antigravity.md H1 must say Experimental")
+require("**experimental**" in guides["using-with-antigravity.md"][:1200], "using-with-antigravity.md intro must say experimental")
+for name in ("using-with-codex.md", "using-with-pi.md"):
+    require(not re.search(r"`docs/(?!nogging/)[a-z-]+\.md`", guides[name]),
+            f"{name} names a docs/ path that does not exist in a consumer copy")
+require("not yet implemented" not in guides["agent-identities.md"] and "Once Tier 2 is implemented" not in guides["agent-identities.md"],
+        "agent-identities.md still describes the credential helper as unimplemented")
+require(not re.search(r"\d+\.\d+\.\d+\)", guides["model-selection.md"].split("## Sources", 1)[-1]),
+        "model-selection.md Sources section pins tool versions that drift from the compatibility matrix")
+require("automatic-model-and-effort-selection" not in guides["model-selection.md"], "model-selection.md names an internal change")
+require("](architecture.md)" in guides["using-with-herdr.md"][:1500], "using-with-herdr.md intro must point at architecture.md")
+
 if errors:
     for error in errors:
         print(f"FAIL: {error}", file=sys.stderr)

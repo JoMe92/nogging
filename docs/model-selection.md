@@ -1,6 +1,8 @@
 # Model selection
 
-Nogging ships a researched rule table that maps a task's complexity **tier** to
+This page is for operators and Product Owners who want to know which model and
+effort level Nogging picks for a session, and how to inspect or adjust that
+choice. Nogging ships a researched rule table that maps a task's complexity **tier** to
 a model, and where the runtime supports it an effort level, for each supported
 agent runtime. The orchestrator classifies a task into a tier and looks the
 answer up; it does not research models again at launch.
@@ -175,8 +177,8 @@ It takes model and effort from the table, never from live research, and applies
 the escalation rules: when unsure, the higher tier; a relaunch after a failed or
 stalled attempt escalates one tier; quota never lowers a tier. The procedure is
 stated in `.nogging/launch-prompts/orchestrator.md`, the `/orchestrate` command
-and `docs/operating-model.md` *Orchestration*, so a fresh orchestrator applies
-it without memory of earlier conversations. A Lead Agent that launches an
+and the *Orchestration* section of the [operating model](operating-model.md),
+so a fresh orchestrator applies it without memory of earlier conversations. A Lead Agent that launches an
 out-of-process specialist may pass `--tier` too, but is not required to.
 
 ### Product Owner Codex cost policy
@@ -201,7 +203,7 @@ agents whose same-tier entry fits, **which** agent runs it. The orchestrator
 never lowers a tier to dodge a limit: on a usage-limit denial it waits for the
 limiting reset, or launches the same tier on another agent. A resumed session
 keeps its recorded agent, model and tier; switching model is not a limit
-workaround. See `docs/usage-limits.md`.
+workaround. See the [usage limits guide](https://jome92.github.io/nogging/usage-limits/).
 
 ## Drift
 
@@ -217,9 +219,9 @@ planning session.
 
 ## Rationale
 
-The research was done once, in the planning session of 2026-10-11. Most
-benchmark and price figures are vendor-reported or come from aggregators, so
-treat them as directional.
+The table was researched once and revised on 2026-10-19 (the `table_version`
+above). Most benchmark and price figures are vendor-reported or come from
+aggregators, so treat them as directional.
 
 **Claude.** Sonnet 5.5 is the workhorse: it leads Opus 5.5 on Terminal-Bench
 4.0 (70.6% vs 66.4%) at half the price ($2 / $10 vs $4 / $20 per million input
@@ -238,7 +240,7 @@ catalog default is medium and its coding score is much weaker than Sol's
 (BenchLM about 51 vs 67), so lowering effort compounds that weakness on
 anything beyond mechanical work. `complex` moves to `gpt-6.1-sol` (the
 catalog's "latest workhorse"), rather than the costlier frontier
-`gpt-6-astra`. Per the Product Owner decision on 2026-10-19, it keeps that
+`gpt-6-astra`. The Product Owner's Codex cost policy keeps that
 model but uses `low` effort. Effort reaches Codex as its `model_reasoning_effort`.
 
 **Antigravity.** Gemini 3.8 Flash is used at all three tiers: it beats 3.1 Pro
@@ -249,11 +251,10 @@ Antigravity are older and draw on a separate quota group, so they are excluded.
 
 ## Sources
 
-- Live probes on the delivery host: `claude --help` (Claude Code 2.1.296),
-  the Codex model catalog `~/.codex/models_cache.json` (Codex CLI 0.162.1),
-  and `agy models` (Antigravity 1.3.3).
+- Live probes at research time: `claude --help`, the Codex model catalog
+  `~/.codex/models_cache.json` and `agy models`. The tool versions Nogging is
+  validated with are in the [compatibility matrix](compatibility.md).
 - Vendor pricing and benchmark pages, the Artificial Analysis Intelligence
-  Index and the BenchLM coding row, as summarized in the planning design of the
-  `automatic-model-and-effort-selection` change.
-- `docs/usage-limits.md` in the Nogging repository for the Antigravity quota
-  groups.
+  Index and the BenchLM coding row.
+- The [usage limits guide](https://jome92.github.io/nogging/usage-limits/) for
+  the Antigravity quota groups.

@@ -1,9 +1,10 @@
 # Using Nogging with herdr (Experimental)
 
-Nogging supports **herdr** (`https://herdr.dev/`) as a second, switchable
-session backend for supervised agent sessions alongside tmux. The herdr
-backend is **experimental** in this release; **tmux remains the default and
-permanent fallback**.
+This page is for operators who want to run supervised agent sessions on
+**herdr** (`https://herdr.dev/`) instead of tmux. Nogging supports herdr as a
+second, switchable session backend. The herdr backend is **experimental**;
+**tmux remains the default and permanent fallback**. For how session backends
+work internally, see [Architecture](architecture.md).
 
 The Orchestration Agent always runs on tmux, regardless of the configured
 session backend (`orchestrator run` pins to tmux and refuses `--backend herdr`).
