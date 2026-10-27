@@ -31,6 +31,17 @@ titles_from_headings:
 
 search_enabled: true
 color_scheme: nogging
+callouts_level: quiet
+callouts:
+  note:
+    title: Note
+    color: nogging-note
+  warning:
+    title: Warning
+    color: nogging-warning
+  experimental:
+    title: Experimental
+    color: nogging-experimental
 
 exclude:
   - README.md

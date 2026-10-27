@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 986 758" width="986" height="758">
+  <title>Nogging</title>
+  <rect x="66" y="94" width="78" height="600" rx="8" fill="#22301F"/>
+  <rect x="456" y="124" width="78" height="630" rx="8" fill="#22301F"/>
+  <g fill="#97B190" fill-opacity="0.95">
+    <rect x="-202" y="-38.5" width="404" height="77" rx="8" transform="translate(208 351) rotate(-4.9)"/>
+    <rect x="-201" y="-38.5" width="402" height="77" rx="8" transform="translate(599 499) rotate(4.1)"/>
+  </g>
+  <rect x="261" y="4" width="78" height="630" rx="8" fill="#7E9C7E"/>
+  <rect x="651" y="34" width="78" height="630" rx="8" fill="#7E9C7E"/>
+  <rect x="-191" y="-38.5" width="382" height="77" rx="8" transform="translate(787 192) rotate(-4)" fill="#97B190" fill-opacity="0.95"/>
+  <rect x="846" y="154" width="78" height="570" rx="8" fill="#22301F"/>
+</svg>

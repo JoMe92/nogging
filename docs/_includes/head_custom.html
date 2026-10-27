@@ -1,0 +1,55 @@
+<style id="nogging-theme-critical">html[data-nogging-theme="dark"]{color-scheme:dark;background-color:#141B13;}</style>
+<script>
+/* Nogging colour scheme, chosen before first paint: the stored choice, then
+   the OS preference, then light. The theme compresses this page onto one
+   line, so this script uses only block comments and ends every statement
+   with a semicolon. Browser storage is touched only inside try blocks. */
+(function () {
+  var KEY = "nogging-theme";
+  var root = document.documentElement;
+  var jtd = window.jtd;
+  if (!jtd || typeof jtd.setTheme !== "function") { return; }
+  function readStored() { try { var v = window.localStorage.getItem(KEY); return (v === "dark" || v === "light") ? v : null; } catch (e) { return null; } }
+  function writeStored(mode) { try { window.localStorage.setItem(KEY, mode); } catch (e) { /* no storage: the choice lasts for this page view */ } }
+  var mq = null;
+  try { mq = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null; } catch (e) { mq = null; }
+  function current() { return root.getAttribute("data-nogging-theme") === "dark" ? "dark" : "light"; }
+  function syncButton() { var b = document.getElementById("nogging-theme-toggle"); if (b) { b.setAttribute("aria-pressed", current() === "dark" ? "true" : "false"); } }
+  function apply(mode) {
+    if (mode === current()) { syncButton(); return; }
+    root.setAttribute("data-nogging-theme", mode);
+    jtd.setTheme(mode === "dark" ? "nogging-dark" : "nogging");
+    syncButton();
+  }
+  var initial = readStored() || ((mq && mq.matches) ? "dark" : "light");
+  root.setAttribute("data-nogging-theme", initial);
+  if (initial === "dark") { jtd.setTheme("nogging-dark"); }
+  if (mq) {
+    var onSystem = function (e) { if (!readStored()) { apply(e.matches ? "dark" : "light"); } };
+    if (mq.addEventListener) { mq.addEventListener("change", onSystem); } else if (mq.addListener) { mq.addListener(onSystem); }
+  }
+  window.addEventListener("storage", function (e) { if (e.key === KEY && (e.newValue === "dark" || e.newValue === "light")) { apply(e.newValue); } });
+  window.addEventListener("pageshow", function (e) { if (e.persisted) { var s = readStored(); if (s) { apply(s); } } });
+  jtd.onReady(function () {
+    var b = document.getElementById("nogging-theme-toggle");
+    if (b) { syncButton(); b.addEventListener("click", function () { var next = current() === "dark" ? "light" : "dark"; apply(next); writeStored(next); }); }
+    function markScrollable() {
+      var els = document.querySelectorAll(".main-content div.highlight, .main-content figure.highlight > pre, .main-content .table-wrapper");
+      for (var i = 0; i < els.length; i++) {
+        var el = els[i]; var scrolls = el.scrollWidth > el.clientWidth + 1;
+        if (scrolls && !el.hasAttribute("tabindex")) { el.setAttribute("tabindex", "0"); el.setAttribute("data-nogging-scroll", ""); }
+        else if (!scrolls && el.hasAttribute("data-nogging-scroll")) { el.removeAttribute("tabindex"); el.removeAttribute("data-nogging-scroll"); }
+      }
+    }
+    markScrollable();
+    window.addEventListener("load", markScrollable);
+    var t = null; window.addEventListener("resize", function () { clearTimeout(t); t = setTimeout(markScrollable, 150); });
+  });
+})();
+</script>
+<link rel="preload" href="{{ '/assets/fonts/poppins-latin-400-normal.woff2' | relative_url }}" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="{{ '/assets/fonts/poppins-latin-600-normal.woff2' | relative_url }}" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="{{ '/assets/fonts/poppins-latin-700-normal.woff2' | relative_url }}" as="font" type="font/woff2" crossorigin>
+<link rel="icon" href="{{ '/assets/images/favicon.ico' | relative_url }}" sizes="32x32">
+<link rel="icon" href="{{ '/assets/images/favicon.svg' | relative_url }}" type="image/svg+xml">
+<link rel="apple-touch-icon" href="{{ '/assets/images/apple-touch-icon.png' | relative_url }}">

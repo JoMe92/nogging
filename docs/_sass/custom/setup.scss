@@ -1,0 +1,39 @@
+// Nogging setup: compiled after the theme's support files and before any
+// colour scheme.
+//
+// Font stacks have no !default: the theme's support/_variables.scss already
+// set them with !default, so these plain assignments replace them.
+$body-font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans", "Helvetica Neue", Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+$mono-font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", "DejaVu Sans Mono", monospace;
+$nogging-brand-font-family: "Poppins", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+
+// Every Nogging token with its light value. The nogging and nogging-dark
+// schemes set their own values; these defaults keep the theme's own
+// just-the-docs-light.css and -dark.css builds (which also run custom.scss
+// and the callouts) compiling.
+$nogging-text-secondary: #4A5B4C !default;
+$nogging-sage: #7E9C7E !default;
+$nogging-sage-light: #97B190 !default;
+$nogging-accent-strong: #5E7D5E !default;
+$nogging-focus-color: #5E7D5E !default;
+$nogging-code-rule: #7E9C7E !default;
+$nogging-blockquote-rule: #97B190 !default;
+$nogging-table-header-bg: #E9EDE6 !default;
+$nogging-toggle-bg: transparent !default;
+$nogging-toggle-hover-bg: #E1E7DD !default;
+$nogging-toggle-ring: transparent !default;
+$nogging-selection-bg: #97B190 !default;
+$nogging-mark-image: "nogging-mark.svg" !default;
+$nogging-note-000: #B9C9B4 !default;
+$nogging-note-300: #3D5C3A !default;
+$nogging-note-bg: #EEF2EC !default;
+$nogging-warning-000: #E3CB98 !default;
+$nogging-warning-300: #8C5A00 !default;
+$nogging-warning-bg: #FAF3E6 !default;
+$nogging-experimental-000: #D6C9DD !default;
+$nogging-experimental-300: #6A4A78 !default;
+$nogging-experimental-bg: #F4F0F6 !default;
+$nogging-syntax-comment: #4A5B4C !default;
+$nogging-syntax-keyword: #A40E26 !default;
+$nogging-syntax-name: #6639BA !default;
+$nogging-syntax-error: #A40E26 !default;
