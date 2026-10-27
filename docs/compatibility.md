@@ -69,8 +69,8 @@ skipped.
 Current evidence entry points:
 
 - [CI workflow](https://github.com/JoMe92/nogging/actions/workflows/nogging-validate.yml)
-- [Acceptance runbook](https://github.com/JoMe92/nogging/blob/develop/docs/acceptance.md)
-- [Latest recorded Raspberry Pi acceptance](https://github.com/JoMe92/nogging/blob/develop/docs/acceptance/2026-09-14-raspberrypi.md)
+- [Acceptance runbook](https://github.com/JoMe92/nogging/blob/main/docs/acceptance.md)
+- [Latest recorded Raspberry Pi acceptance](https://github.com/JoMe92/nogging/blob/main/docs/acceptance/2026-09-14-raspberrypi.md)
 - [Codex integration evidence and limitations](using-with-codex.md)
 - [Pi integration evidence and limitations](using-with-pi.md)
 - [Antigravity integration evidence and limitations](using-with-antigravity.md)
