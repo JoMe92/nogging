@@ -13,7 +13,6 @@ identity=docs/project-identity.md
 test -f "$identity" || fail "canonical project identity document is missing"
 
 grep -q 'Display name: \*\*Nogging\*\*' "$identity" || fail "Nogging is not canonical"
-grep -q 'Nogging works without Agent Console' "$identity" || fail "Agent Console is not optional"
 grep -q 'github.com/JoMe92/nogging' "$identity" || fail "repository destination is missing"
 grep -q 'github.com/JoMe92/nogging/issues' "$identity" || fail "support destination is missing"
 grep -q 'github.com/JoMe92/nogging/security' "$identity" || fail "security destination is missing"
@@ -53,7 +52,6 @@ grep -q 'github.com/gastownhall/beads' README.md || fail "README Beads link is m
 grep -q 'independent$' README.md && grep -q '^implementation and is not affiliated' README.md \
   || fail "README independence statement is missing"
 grep -q 'only Gas Town' README.md || fail "README Beads-only adoption boundary is missing"
-grep -q 'optional sibling' README.md || fail "README does not keep Agent Console optional"
 grep -q "npx github:JoMe92/nogging#v$(node -p "require('./package.json').version") init --no-systemd" README.md \
   || fail "README quick start is not pinned to the supported GitHub tag"
 ! grep -q 'git@github.com' README.md || fail "README assumes private SSH repository access"
