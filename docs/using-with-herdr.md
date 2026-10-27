@@ -292,6 +292,17 @@ Herdr does not currently provide an interactive read-only client. Therefore:
 - The refusal directs the operator to use `session log --follow <name>` instead.
 - Nogging never silently attaches read-write when read-only was requested.
 
+To watch every herdr-backed session pane at once, open the herdr client on
+Nogging's dedicated session (client namespace `session_herdr_session`, default
+`nogging`; `herdr --session nogging status` reports the running server):
+
+```bash
+herdr --session nogging
+```
+
+Typing into a pane types into that agent; to follow a single session
+read-only, use `session log --follow <name>` instead.
+
 ---
 
 ## Live agent status (`AGENT_STATUS`)
