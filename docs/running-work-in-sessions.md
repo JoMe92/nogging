@@ -868,7 +868,8 @@ these are the defaults:
 `pi`, `antigravity`) with an optional `default`. A Bead labelled
 `size:<name>` scales only its reservation estimate by the matching multiplier;
 conflicting or unconfigured size labels refuse the launch. `exclude_roles`
-takes `lead`, `specialist`, `planning` and `orchestrator`. Unknown keys and
+takes `lead`, `specialist`, `planning`, `orchestrator` and `loop` (the
+internal role of scheduled loop runs, gated unless listed). Unknown keys and
 out-of-range or mistyped values refuse every launch until fixed.
 
 Missing, stale, malformed or unsupported usage (Pi and Antigravity have no
