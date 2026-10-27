@@ -5,32 +5,56 @@ description: >-
   Beads.
 url: https://jome92.github.io
 baseurl: /nogging
-
-# GitHub Pages builds this directory from main:/docs with its own pinned Jekyll;
-# there is no build workflow.
-theme: jekyll-theme-cayman
+permalink: pretty
+remote_theme: just-the-docs/just-the-docs@v0.12.0
 
 plugins:
+  - jekyll-remote-theme
+  - jekyll-include-cache
   - jekyll-seo-tag
   - jekyll-sitemap
   - jekyll-relative-links
-  - jekyll-titles-from-headings
   - jekyll-optional-front-matter
-  - jekyll-readme-index
+  - jekyll-titles-from-headings
 
-# Resolve [text](page.md) links and promote README.md to the site index.
 relative_links:
   enabled: true
   collections: false
+
 optional_front_matter:
-  remove_originals: true
-readme_index:
   remove_originals: true
 
 titles_from_headings:
   enabled: true
-  strip_title: true
+  strip_title: false
   collections: false
+
+search_enabled: true
+color_scheme: nogging
+
+exclude:
+  - README.md
+  - acceptance/
+  - acceptance-report-template.md
+  - public-cutover.md
+
+aux_links:
+  GitHub repository: https://github.com/JoMe92/nogging
+  Releases: https://github.com/JoMe92/nogging/releases
+  Discussions: https://github.com/JoMe92/nogging/discussions
+aux_links_new_tab: true
+
+nav_external_links:
+  - title: Contributing
+    url: https://github.com/JoMe92/nogging/blob/develop/CONTRIBUTING.md
+  - title: Code of Conduct
+    url: https://github.com/JoMe92/nogging/blob/develop/CODE_OF_CONDUCT.md
+  - title: Security policy
+    url: https://github.com/JoMe92/nogging/blob/develop/SECURITY.md
+  - title: Changelog
+    url: https://github.com/JoMe92/nogging/blob/develop/CHANGELOG.md
+  - title: Releases
+    url: https://github.com/JoMe92/nogging/releases
 
 defaults:
   - scope:
@@ -38,6 +62,192 @@ defaults:
     values:
       layout: default
       image: /brand/nogging-social-card.png
+  - scope:
+      path: "index.md"
+    values:
+      layout: home
+      nav_exclude: true
+      description: Nogging documentation for planning, working, and shipping with agents.
+  - scope:
+      path: "404.md"
+    values:
+      nav_exclude: true
+      permalink: /404.html
+      description: Find the Nogging documentation page you need.
+  - scope:
+      path: "getting-started.md"
+    values:
+      title: Getting started
+      has_children: true
+      nav_order: 1
+      description: Install Nogging, check compatibility, and make your first change.
+  - scope:
+      path: "installation.md"
+    values:
+      parent: Getting started
+      nav_order: 1
+      description: Install Nogging into another repository and understand what it changes.
+  - scope:
+      path: "compatibility.md"
+    values:
+      parent: Getting started
+      nav_order: 2
+      description: Supported operating systems, tools, versions, and agent integrations.
+  - scope:
+      path: "faq.md"
+    values:
+      parent: Getting started
+      nav_order: 4
+      description: Answers to common questions about Nogging and its supported workflows.
+  - scope:
+      path: "concepts.md"
+    values:
+      title: Concepts
+      has_children: true
+      nav_order: 2
+      description: Understand Nogging’s architecture, roles, boundaries, and workflow.
+  - scope:
+      path: "vision-and-architecture.md"
+    values:
+      parent: Concepts
+      nav_order: 1
+      description: The problem Nogging solves and the architecture behind its workflow.
+  - scope:
+      path: "operating-model.md"
+    values:
+      parent: Concepts
+      nav_order: 2
+      description: Roles, lifecycle, and handoffs in a Nogging project.
+  - scope:
+      path: "worktree-workflow.md"
+    values:
+      parent: Concepts
+      nav_order: 3
+      description: How isolated Git worktrees keep agent changes independent.
+  - scope:
+      path: "security-model.md"
+    values:
+      parent: Concepts
+      nav_order: 4
+      description: Nogging’s authority levels, protections, and security limits.
+  - scope:
+      path: "comparison.md"
+    values:
+      parent: Concepts
+      nav_order: 5
+      description: How Nogging compares with other specification and agent workflows.
+  - scope:
+      path: "guides.md"
+    values:
+      title: Guides
+      has_children: true
+      nav_order: 3
+      description: Guides for using Nogging with supported agents and session tools.
+  - scope:
+      path: "using-with-codex.md"
+    values:
+      parent: Guides
+      nav_order: 2
+      description: Run Nogging workflows from OpenAI Codex.
+  - scope:
+      path: "using-with-pi.md"
+    values:
+      parent: Guides
+      nav_order: 3
+      description: Run Nogging workflows from Pi.
+  - scope:
+      path: "using-with-antigravity.md"
+    values:
+      parent: Guides
+      nav_order: 4
+      description: Experimental guide to running Nogging from Antigravity.
+  - scope:
+      path: "running-work-in-sessions.md"
+    values:
+      parent: Guides
+      nav_order: 5
+      description: Start, monitor, steer, and recover supervised agent sessions.
+  - scope:
+      path: "using-with-herdr.md"
+    values:
+      parent: Guides
+      nav_order: 6
+      description: Experimental guide to hosting supervised sessions with herdr.
+  - scope:
+      path: "model-selection.md"
+    values:
+      parent: Guides
+      nav_order: 7
+      description: Select an agent model and effort level for a Nogging session.
+  - scope:
+      path: "agent-identities.md"
+    values:
+      parent: Guides
+      nav_order: 8
+      description: Configure GitHub identities for Nogging agent personas.
+  - scope:
+      path: "operations.md"
+    values:
+      title: Operations
+      has_children: true
+      nav_order: 4
+      description: Troubleshoot, recover, and monitor a Nogging installation.
+  - scope:
+      path: "failure-recovery.md"
+    values:
+      parent: Operations
+      nav_order: 2
+      description: Diagnose and recover from interrupted Nogging workflows.
+  - scope:
+      path: "usage-limits.md"
+    values:
+      parent: Operations
+      nav_order: 3
+      description: How Nogging detects agent usage limits and reset times.
+  - scope:
+      path: "token-usage.md"
+    values:
+      parent: Operations
+      nav_order: 4
+      description: Understand token usage accounting across agent sessions.
+  - scope:
+      path: "reference.md"
+    values:
+      title: Reference
+      has_children: true
+      nav_order: 5
+      description: Command, configuration, glossary, and architecture references.
+  - scope:
+      path: "architecture.md"
+    values:
+      parent: Reference
+      nav_order: 4
+      description: Detailed contracts, boundaries, and safety gates in Nogging.
+  - scope:
+      path: "project.md"
+    values:
+      title: Project & maintainers
+      has_children: true
+      nav_order: 6
+      description: Project policies and release information for Nogging maintainers.
+  - scope:
+      path: "releasing.md"
+    values:
+      parent: Project & maintainers
+      nav_order: 1
+      description: Prepare and publish a Nogging release.
+  - scope:
+      path: "acceptance.md"
+    values:
+      parent: Project & maintainers
+      nav_order: 2
+      description: Run the acceptance procedure before signing off a release.
+  - scope:
+      path: "project-identity.md"
+    values:
+      parent: Project & maintainers
+      nav_order: 3
+      description: Canonical project names, repositories, and public identifiers.
 
 twitter:
   card: summary_large_image

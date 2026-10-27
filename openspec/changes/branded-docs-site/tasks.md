@@ -1,6 +1,6 @@
 ## 1. Site foundation and brand (feat/, UI)
 
-- [ ] TASK-BDS-001 [standard] Theme, information architecture, site suite and local build tool.
+- [x] TASK-BDS-001 [standard] Theme, information architecture, site suite and local build tool.
   Per design Decisions 2, 3, 4 and 11: first a build spike: the pinned Just
   the Docs remote_theme (v0.12.0 or newer, record the tag) must build on the
   github-pages gem with search and a custom scheme; otherwise record a

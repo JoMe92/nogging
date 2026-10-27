@@ -43,7 +43,7 @@ no network. That subset also runs from `scripts/test` (via
   ```bash
   target="$(mktemp -d)"
   git -C "$target" init -q
-  git -C "$target" config user.email acceptance@example.invalid
+  git -C "$target" config user.email acceptance-at-example.invalid
   git -C "$target" config user.name "Nogging Acceptance"
   ```
   Leave `core.hooksPath` at its default so the Nogging boundary hooks bind

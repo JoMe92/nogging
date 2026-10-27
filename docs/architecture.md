@@ -28,8 +28,8 @@ discovery additionally sets the Bead status to `blocked`. The mechanical sync
 finds pending discoveries by the `discovery` label alone and never parses the
 note. It reads the full Bead status set, not the non-closed default, so a
 discovery closed before a planning session reviews it still surfaces. A
-planning session records a review with `scripts/nogg discoveries --ack
-<id>...`; the acknowledgement ledger
+planning session records a review with `scripts/nogg discoveries --ack <id>`;
+the acknowledgement ledger
 (`.nogging/state/acknowledged-discoveries.json`) then hides that Bead, open or
 closed. The ledger lives in the main checkout and is shared across linked
 worktrees. Legacy IDs merge under a short lock with recovery snapshots and

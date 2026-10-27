@@ -68,6 +68,6 @@ than redone. See [Failure recovery](failure-recovery.md).
 In [GitHub Discussions](https://github.com/JoMe92/nogging/discussions)
 (categories Q&A and Show and tell). Bugs and feature requests go to
 [Issues](https://github.com/JoMe92/nogging/issues/new/choose); vulnerabilities
-follow the [security policy](../SECURITY.md).
+follow the [security policy](https://github.com/JoMe92/nogging/blob/develop/SECURITY.md).
 
-Back to the [README](../README.md) or the [documentation index](README.md).
+Back to the [README](https://github.com/JoMe92/nogging#readme) or the [documentation index](index.md).
