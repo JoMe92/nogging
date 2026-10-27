@@ -110,7 +110,7 @@
   not change scripts/nogg. Check: site suite; commands and
   runtime-guidance-docs suites; nogg validate. Branch test/.
 
-- [ ] TASK-BDS-008 [standard] Troubleshooting page.
+- [x] TASK-BDS-008 [standard] Troubleshooting page.
   Per design Decision 8 (new page troubleshooting.md): write symptom, cause
   and fix entries for the listed failures (doctor FAIL and WARN, held
   planning lock, unreachable Dolt server, sandboxed or missing tmux server,
