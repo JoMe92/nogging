@@ -168,6 +168,36 @@ else:
     require(actual_sub == expected_sub,
             f"commands.md ### headings {actual_sub} differ from nogg --help {expected_sub}")
 
+# configuration.md covers every config template key and every literal scfg() key; glossary.md terms.
+config_page = docs / "configuration.md"
+if not config_page.exists():
+    errors.append("docs/configuration.md is missing")
+else:
+    import json
+    text = config_page.read_text()
+    template_keys = set(json.loads((root / "templates" / "nogging-config.json").read_text()))
+    scfg_keys = set(re.findall(r"""scfg\(\s*["']([a-z_]+)["']""", (root / "scripts" / "nogg").read_text()))
+    for lib_file in (root / "scripts" / "lib").glob("*.py"):
+        scfg_keys |= set(re.findall(r"""scfg\(\s*["']([a-z_]+)["']""", lib_file.read_text()))
+    required = template_keys | scfg_keys | {"usage_gate", "tier_overrides", "multi_machine", "sync_protected_branches"}
+    for key in sorted(required):
+        require(f"`{key}`" in text, f"configuration.md does not document config key {key}")
+
+glossary_page = docs / "glossary.md"
+if not glossary_page.exists():
+    errors.append("docs/glossary.md is missing")
+else:
+    gtext = glossary_page.read_text()
+    for term in ("Product Owner", "Planning Agent", "Lead Agent", "Main Worker", "specialist",
+                 "Orchestration Agent", "change", "task ID", "Bead", "claim", "discovery",
+                 "evidence note", "materialize", "sync", "writer", "sentinel", "fence",
+                 "planning lock", "worktree record", "LIMBO", "tier", "authority level",
+                 "restricted", "trusted", "full access", "command floor", "acceptance report"):
+        require(term in gtext, f"glossary.md is missing term: {term}")
+    entries = [line for line in gtext.splitlines() if line.startswith("- **")]
+    for line in entries:
+        require(bool(re.search(r"\]\([^)]+\)", line)), f"glossary entry has no link: {line[:50]}")
+
 if errors:
     for error in errors:
         print(f"FAIL: {error}", file=sys.stderr)

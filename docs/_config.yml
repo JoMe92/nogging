@@ -236,6 +236,18 @@ defaults:
       nav_order: 1
       description: Every nogg subcommand with its purpose, common forms, role, and guide.
   - scope:
+      path: "configuration.md"
+    values:
+      parent: Reference
+      nav_order: 2
+      description: Every .nogging/config.json key with its type, default, and effect.
+  - scope:
+      path: "glossary.md"
+    values:
+      parent: Reference
+      nav_order: 3
+      description: One-line definitions of Nogging terms, each with a link.
+  - scope:
       path: "architecture.md"
     values:
       parent: Reference
