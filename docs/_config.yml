@@ -1,36 +1,76 @@
 title: Nogging
 description: >-
-  Structure for a team of agents: role boundaries, planning and Git-evidenced
-  execution for Claude Code, Codex, Pi and Antigravity, built on OpenSpec and
-  Beads.
+  Nogging gives teams of AI coding agents clear roles, OpenSpec plans and
+  Git-evidenced work for Claude Code, Codex and Pi. Antigravity is experimental.
 url: https://jome92.github.io
 baseurl: /nogging
-
-# GitHub Pages builds this directory from main:/docs with its own pinned Jekyll;
-# there is no build workflow.
-theme: jekyll-theme-cayman
+lang: en
+logo: /brand/nogging-social-card-square.png
+social:
+  name: Nogging
+  links:
+    - https://github.com/JoMe92/nogging
+permalink: pretty
+remote_theme: just-the-docs/just-the-docs@v0.12.0
 
 plugins:
+  - jekyll-remote-theme
+  - jekyll-include-cache
   - jekyll-seo-tag
   - jekyll-sitemap
   - jekyll-relative-links
-  - jekyll-titles-from-headings
   - jekyll-optional-front-matter
-  - jekyll-readme-index
+  - jekyll-titles-from-headings
 
-# Resolve [text](page.md) links and promote README.md to the site index.
 relative_links:
   enabled: true
   collections: false
+
 optional_front_matter:
-  remove_originals: true
-readme_index:
   remove_originals: true
 
 titles_from_headings:
   enabled: true
-  strip_title: true
+  strip_title: false
   collections: false
+
+search_enabled: true
+color_scheme: nogging
+callouts_level: quiet
+callouts:
+  note:
+    title: Note
+    color: nogging-note
+  warning:
+    title: Warning
+    color: nogging-warning
+  experimental:
+    title: Experimental
+    color: nogging-experimental
+
+exclude:
+  - README.md
+  - acceptance/
+  - acceptance-report-template.md
+  - public-cutover.md
+
+aux_links:
+  GitHub repository: https://github.com/JoMe92/nogging
+  Releases: https://github.com/JoMe92/nogging/releases
+  Discussions: https://github.com/JoMe92/nogging/discussions
+aux_links_new_tab: true
+
+nav_external_links:
+  - title: Contributing
+    url: https://github.com/JoMe92/nogging/blob/develop/CONTRIBUTING.md
+  - title: Code of Conduct
+    url: https://github.com/JoMe92/nogging/blob/develop/CODE_OF_CONDUCT.md
+  - title: Security policy
+    url: https://github.com/JoMe92/nogging/blob/develop/SECURITY.md
+  - title: Changelog
+    url: https://github.com/JoMe92/nogging/blob/develop/CHANGELOG.md
+  - title: Releases
+    url: https://github.com/JoMe92/nogging/releases
 
 defaults:
   - scope:
@@ -38,6 +78,223 @@ defaults:
     values:
       layout: default
       image: /brand/nogging-social-card.png
+  - scope:
+      path: "index.md"
+    values:
+      layout: home
+      nav_exclude: true
+      description: Nogging gives teams of AI coding agents clear roles, OpenSpec plans and Git-evidenced work for Claude Code, Codex and Pi. Install it and run your first change.
+  - scope:
+      path: "404.md"
+    values:
+      nav_exclude: true
+      permalink: /404.html
+      sitemap: false
+      description: The page you asked for is not in the Nogging documentation. Search the docs or go back to the home page to find installation, guides and reference.
+  - scope:
+      path: "getting-started.md"
+    values:
+      title: Getting started
+      has_children: true
+      nav_order: 1
+      description: Install Nogging, check which systems and agents it supports, and run your first planned change with agents. Start here if you are new to the project.
+  - scope:
+      path: "installation.md"
+    values:
+      parent: Getting started
+      nav_order: 1
+      description: Step-by-step install of Nogging into an existing Git repository, with the pinned installer command, the files it adds, and how to verify the result.
+  - scope:
+      path: "compatibility.md"
+    values:
+      parent: Getting started
+      nav_order: 2
+      description: Which operating systems, tool versions and agents Nogging supports. Linux only, with Antigravity and herdr marked experimental.
+  - scope:
+      path: "first-change.md"
+    values:
+      parent: Getting started
+      nav_order: 3
+      description: Walk from a ready repository to your first closed Bead, step by step.
+  - scope:
+      path: "faq.md"
+    values:
+      parent: Getting started
+      nav_order: 4
+      description: Quick answers about Nogging - what it changes in your repository, which agents it works with, how it relates to OpenSpec and Beads, and common problems.
+  - scope:
+      path: "concepts.md"
+    values:
+      title: Concepts
+      has_children: true
+      nav_order: 2
+      description: Learn how Nogging structures agent work - planning and lead roles, authority boundaries, worktrees and the security model, with a comparison to alternatives.
+  - scope:
+      path: "vision-and-architecture.md"
+    values:
+      parent: Concepts
+      nav_order: 1
+      description: Why a team of AI agents needs structure, and how Nogging combines OpenSpec plans, Beads tasks and Git evidence into one planning and delivery workflow.
+  - scope:
+      path: "operating-model.md"
+    values:
+      parent: Concepts
+      nav_order: 2
+      description: How Nogging assigns work to planning, lead and specialist agents, which handoffs happen between them, and how a change moves from plan to merged pull request.
+  - scope:
+      path: "worktree-workflow.md"
+    values:
+      parent: Concepts
+      nav_order: 3
+      description: How Nogging gives each agent its own Git worktree and branch so parallel AI coding tasks stay isolated, reviewable and safe to merge.
+  - scope:
+      path: "security-model.md"
+    values:
+      parent: Concepts
+      nav_order: 4
+      description: Nogging security and threat model - what it installs, authority levels, the OpenSpec boundary, credentials, safe enablement and how to remove it.
+  - scope:
+      path: "comparison.md"
+    values:
+      parent: Concepts
+      nav_order: 5
+      description: Compare Nogging with spec-kit, OpenSpec alone, Beads alone and plain Claude Code subagents to decide which fits your team and repository.
+  - scope:
+      path: "guides.md"
+    values:
+      title: Guides
+      has_children: true
+      nav_order: 3
+      description: Task guides for running Nogging with Claude Code, Codex, Pi, Antigravity and herdr, choosing models, and managing supervised agent sessions.
+  - scope:
+      path: "using-with-claude-code.md"
+    values:
+      parent: Guides
+      nav_order: 1
+      description: Run Nogging workflows from Claude Code, the default agent.
+  - scope:
+      path: "using-with-codex.md"
+    values:
+      parent: Guides
+      nav_order: 2
+      description: Set up and run Nogging with OpenAI Codex - launch Codex sessions, pick models and effort, resume work, and handle usage limits.
+  - scope:
+      path: "using-with-pi.md"
+    values:
+      parent: Guides
+      nav_order: 3
+      description: Set up and run Nogging with the Pi coding agent - launch Pi sessions, configure models, and work through planned changes.
+  - scope:
+      path: "using-with-antigravity.md"
+    values:
+      parent: Guides
+      nav_order: 4
+      description: Experimental guide to running Nogging agent sessions in Antigravity, including setup, current limits and known gaps.
+  - scope:
+      path: "running-work-in-sessions.md"
+    values:
+      parent: Guides
+      nav_order: 5
+      description: Start, watch, steer, stop and recover supervised Nogging agent sessions from the command line, including logs and kickoff messages.
+  - scope:
+      path: "using-with-herdr.md"
+    values:
+      parent: Guides
+      nav_order: 6
+      description: Experimental guide to hosting Nogging agent sessions in herdr panes - setup, how sessions appear, and what is not yet supported.
+  - scope:
+      path: "model-selection.md"
+    values:
+      parent: Guides
+      nav_order: 7
+      description: Choose the agent, model and effort level for a Nogging session, and see how task tiers and overrides map to Claude, Codex and Pi models.
+  - scope:
+      path: "agent-identities.md"
+    values:
+      parent: Guides
+      nav_order: 8
+      description: Give each Nogging agent persona its own GitHub App identity, with registration, private key storage, installation and persona configuration steps.
+  - scope:
+      path: "operations.md"
+    values:
+      title: Operations
+      has_children: true
+      nav_order: 4
+      description: Run and maintain a Nogging installation - recover from failures, read usage limits, and account for token use across supervised agent sessions.
+  - scope:
+      path: "failure-recovery.md"
+    values:
+      parent: Operations
+      nav_order: 2
+      description: Fix interrupted Nogging work - startup failures, modified files, failed syncs, diverged Dolt histories, stuck sessions and a downed herdr server.
+  - scope:
+      path: "usage-limits.md"
+    values:
+      parent: Operations
+      nav_order: 3
+      description: How to read 5-hour and weekly usage limits and reset times for OpenAI Codex, Claude Code and Antigravity before launching long agent runs.
+  - scope:
+      path: "token-usage.md"
+    values:
+      parent: Operations
+      nav_order: 4
+      description: Query the local record of tokens used by supervised Nogging sessions by time window, model, task and complexity. Token counts only, no prices.
+  - scope:
+      path: "reference.md"
+    values:
+      title: Reference
+      has_children: true
+      nav_order: 5
+      description: Reference for Nogging commands, configuration keys, glossary terms and architecture contracts, for looking up exact behavior.
+  - scope:
+      path: "commands.md"
+    values:
+      parent: Reference
+      nav_order: 1
+      description: Every nogg subcommand with its purpose, common forms, role, and guide.
+  - scope:
+      path: "configuration.md"
+    values:
+      parent: Reference
+      nav_order: 2
+      description: Every .nogging/config.json key with its type, default, and effect.
+  - scope:
+      path: "glossary.md"
+    values:
+      parent: Reference
+      nav_order: 3
+      description: One-line definitions of Nogging terms, each with a link.
+  - scope:
+      path: "architecture.md"
+    values:
+      parent: Reference
+      nav_order: 4
+      description: Detailed Nogging architecture reference - component contracts, session and worktree boundaries, state files and the safety gates that guard agents.
+  - scope:
+      path: "project.md"
+    values:
+      title: Project & maintainers
+      has_children: true
+      nav_order: 6
+      description: Maintainer documentation for Nogging - how to release, run acceptance checks and keep project names and identifiers consistent.
+  - scope:
+      path: "releasing.md"
+    values:
+      parent: Project & maintainers
+      nav_order: 1
+      description: Maintainer checklist for releasing Nogging - checks before tagging, building the docs site, publishing the release and verifying the install command.
+  - scope:
+      path: "acceptance.md"
+    values:
+      parent: Project & maintainers
+      nav_order: 2
+      description: Run the Nogging acceptance procedure on a real host before a release, record the results and understand what a human must sign off.
+  - scope:
+      path: "project-identity.md"
+    values:
+      parent: Project & maintainers
+      nav_order: 3
+      description: Canonical Nogging project names, repository and package identifiers, and wording rules, for maintainers keeping documentation consistent.
 
 twitter:
   card: summary_large_image

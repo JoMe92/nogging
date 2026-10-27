@@ -3,7 +3,8 @@
 A practical guide to `scripts/nogg session` — starting a Claude Code
 session on the delivery host, watching it, steering it, and shutting it down.
 
-For the design and internals see the *Session supervision* sections of
+For every `nogg` subcommand see the
+[command reference](https://jome92.github.io/nogging/commands/). For the design and internals see the *Session supervision* sections of
 `operating-model.md` and `architecture.md`. For a session that crashed or hung
 see `failure-recovery.md`.
 
@@ -14,7 +15,7 @@ supervised session** on the host — Claude Code by default, or Codex with `--ag
 codex` (see *Choosing the agent*) — using a switchable session backend (`tmux` by
 default, or `herdr` with `--backend herdr` or `session_backend`; see
 `using-with-herdr.md`). On tmux, a dedicated tmux server socket (`tmux -L
-nogg`) isolates sessions from the operator's personal tmux. Compared with running
+nogging`) isolates sessions from the operator's personal tmux. Compared with running
 the agent in your terminal:
 
 - **It keeps running when you leave.** Close the SSH connection, shut the
@@ -25,9 +26,9 @@ the agent in your terminal:
   records the Bead, role, start time, working directory and lifecycle state,
   and survives a crash or a restart of whatever launched it.
 - **It is fenced in.** By default the launch profile (`restricted`) denies
-  `git push`, remote Dolt sync, destructive shell commands and outbound
-  network. It can edit files, run tests and commit locally; it cannot push or
-  reach the network. A broader profile is a deliberate flag on the command
+  `git push`, remote Dolt sync, destructive shell commands, `curl`, `wget` and
+  `WebFetch`. It can edit files, run tests and commit locally; it cannot push or
+  fetch from the network. A broader profile is a deliberate flag on the command
   line (see *Running with broader authority*), and a small command floor holds
   no matter which profile is chosen.
 
@@ -99,7 +100,7 @@ briefing file.
 
 ## Start a planning session
 
-Codex and Antigravity planning launches must name their authority with
+Codex and Antigravity (experimental) planning launches must name their authority with
 `--profile <name>` or `--full-access`; otherwise Nogging refuses before any
 session or worktree side effect. Every successful launch prints its effective
 `profile=` and `prompt=`. Restricted Codex additionally prints a NOTE that its
@@ -162,8 +163,8 @@ agents, resolved differently:
 
 | Level | Claude | Codex |
 | --- | --- | --- |
-| `restricted` (default) | `restricted.json` settings — deny `git push`, Dolt sync, destructive shell, network | `--sandbox workspace-write --ask-for-approval on-request`, network access off |
-| `trusted` | `trusted.json` — `bypassPermissions`, allows `git push`/`merge`/… | `--sandbox workspace-write --ask-for-approval never`, network access off |
+| `restricted` (default) | `restricted.json` settings — deny `git push`, Dolt sync, `git config`, `systemctl`, `curl`/`wget`, `WebFetch` and the command floor | `--sandbox workspace-write --ask-for-approval on-request`, network access off |
+| `trusted` | `trusted.json` — `bypassPermissions`, allows `git push`/`merge`/… | `--sandbox workspace-write --ask-for-approval never`, network access **on** (so a trusted Codex session can push) |
 
 So a Codex session is governed by Codex's own **sandbox mode** and **approval
 policy** rather than a Claude `permissions` file — there is no per-session
@@ -382,8 +383,8 @@ a whole change unattended — commit per Bead, push its branch, merge to
 
 - **`trusted`** starts in `bypassPermissions` and allows `git push`, `git merge`,
   `git switch`, `git rebase`, `bd`, `openspec` (read commands), `npx` and
-  `scripts/*`. It still denies `sudo`, `systemctl`, `curl`/`wget` and
-  `WebFetch`.
+  `scripts/*`. It denies only the command floor (see below); it does not deny
+  `systemctl`, `curl`, `wget` or `WebFetch`.
 - **`autonomous`** is the system prompt that authorises the session to execute
   one named change end to end and fast-forward-merge it to `develop` (no PR),
   while keeping every hard rule: never edit `openspec/`, work only that
@@ -567,6 +568,8 @@ orchestrate-only-by-default scope.
 
 ## Quick reference
 
+This table covers the session and orchestrator commands. The [full command reference](https://jome92.github.io/nogging/commands/) lists every `nogg` subcommand.
+
 | Command | Effect |
 | --- | --- |
 | `session launch --role <r> [--backend <b::tmux|herdr>] [--bead <id>] [--planning-id <id> --description <d>] [--cwd <p>] [--read-only] [--owner <o>] [--agent <claude\|codex>] [--profile <n>] [--prompt <n>] [--full-access]` | start a supervised session; no Beads change |
@@ -600,7 +603,11 @@ overridable with `session_launch_profile_dir` / `session_launch_prompt_dir`; a
 `session_launch_profile` / `session_launch_prompt` key still pins a single file
 and wins over the directory default.
 
-## This repository’s autonomous Claude configuration
+## This repository’s autonomous Claude configuration (maintainers)
+
+*This section is for Nogging maintainers. It describes the Nogging repository’s
+own checkout, not what a consumer project receives; your project chooses its
+own defaults in `.nogging/config.json`.*
 
 This checkout opts into autonomous Claude operation at the Product Owner’s
 request. `.nogging/config.json` selects the trusted Claude profile and the
@@ -611,7 +618,7 @@ Codex and Pi retain their own profile defaults; the configured prompt is
 shared. Planning sessions retain their planning prompt. Existing running
 sessions keep their launch settings; these changes apply on a new launch.
 
-The trusted Claude profile uses `bypassPermissions` and no longer denies
+The trusted Claude profile uses `bypassPermissions` and does not deny
 WebFetch, curl, wget or systemctl. The fixed Nogging command floor and
 execution OpenSpec write boundary still apply. This grants tool authority,
 while the autonomous prompt keeps work scoped to the assigned change and
@@ -801,6 +808,36 @@ reservation ledger is strictly host-local, and other machines or external
 tools consuming the account's quota are only observed once local usage snapshots
 update.
 
+Configure it with the optional `usage_gate` object in `.nogging/config.json`;
+these are the defaults:
+
+```json
+"usage_gate": {
+  "enabled": true,
+  "cap_percent": 92,
+  "estimate_percent": 5,
+  "stale_seconds": 600,
+  "on_unknown": "warn",
+  "size_multipliers": {"small": 0.5, "medium": 1, "large": 2},
+  "exclude_roles": ["planning", "orchestrator"]
+}
+```
+
+`estimate_percent` may instead be an object per agent (`claude`, `codex`,
+`pi`, `antigravity`) with an optional `default`. A Bead labelled
+`size:<name>` scales only its reservation estimate by the matching multiplier;
+conflicting or unconfigured size labels refuse the launch. `exclude_roles`
+takes `lead`, `specialist`, `planning`, `orchestrator` and `loop` (the
+internal role of scheduled loop runs, gated unless listed). Unknown keys and
+out-of-range or mistyped values refuse every launch until fixed.
+
+Missing, stale, malformed or unsupported usage (Pi has no
+source yet; Antigravity, which is experimental, is read from its `agy` probe) is unknown, never zero: the launch warns and continues, or exits 75
+with `"on_unknown": "deny"`. A known window over the cap denies even when the
+other window is unknown. `--ignore-usage-gate` launches without admission; it
+warns and is recorded as `usage_gate.decision: "ignored"` on the session
+record, alongside `admitted`, `unknown-admitted`, `disabled` or `excluded`.
+
 The shared reservation ledger (`ledger.json`) uses a single top-level token
 map with integer per-entry `schema_version: 1` on new pending entries. Missing
 versions represent legacy entries (both unversioned tmux and backend-neutral
@@ -830,51 +867,6 @@ incorporating tolerant decoding is required before relying on mixed-version oper
 Downgrading or running unpatched versions (such as v2.2.0) alongside newer
 versioned writers is unsupported because unpatched readers crash on backend-neutral
 or versioned shapes (`KeyError: 'tmux'`).
-
-### Direct test execution and environment isolation
-
-Direct test invocations (such as running `scripts/*.test.sh` directly from a
-terminal or from within a supervised session) isolate their execution
-environment by sourcing `scripts/lib/test-env.sh`.
-
-This removes inherited `NOGG_*` session environment variables (such as
-`NOGG_SESSION_ROLE`, `NOGG_SESSION_NAME`, `NOGG_OPENSPEC_FENCED`, and
-`NOGG_TASK_DONE_SOCKET`) and `NOGGING_ROOT` before imports, fixtures, or child
-processes run. This ensures that direct test runs:
-- Never accidentally contact a live operator's task-done broker socket or emit ticks.
-- Never inherit execution roles that cause false OpenSpec write refusals during planning tests.
-- Never inherit planning roles that grant unauthorized OpenSpec writes during guard tests.
-- Always retain unrelated environment variables, custom quota fixtures, and npm cache settings.
-Fixtures explicitly configure any required session variables after sourcing `test-env.sh`.
-
-Configure it with the optional `usage_gate` object in `.nogging/config.json`;
-these are the defaults:
-
-```json
-"usage_gate": {
-  "enabled": true,
-  "cap_percent": 92,
-  "estimate_percent": 5,
-  "stale_seconds": 600,
-  "on_unknown": "warn",
-  "size_multipliers": {"small": 0.5, "medium": 1, "large": 2},
-  "exclude_roles": ["planning", "orchestrator"]
-}
-```
-
-`estimate_percent` may instead be an object per agent (`claude`, `codex`,
-`pi`, `antigravity`) with an optional `default`. A Bead labelled
-`size:<name>` scales only its reservation estimate by the matching multiplier;
-conflicting or unconfigured size labels refuse the launch. `exclude_roles`
-takes `lead`, `specialist`, `planning` and `orchestrator`. Unknown keys and
-out-of-range or mistyped values refuse every launch until fixed.
-
-Missing, stale, malformed or unsupported usage (Pi and Antigravity have no
-source yet) is unknown, never zero: the launch warns and continues, or exits 75
-with `"on_unknown": "deny"`. A known window over the cap denies even when the
-other window is unknown. `--ignore-usage-gate` launches without admission; it
-warns and is recorded as `usage_gate.decision: "ignored"` on the session
-record, alongside `admitted`, `unknown-admitted`, `disabled` or `excluded`.
 
 ### Learned estimates and usage history
 
@@ -930,3 +922,19 @@ When launch admission is denied (exit code 75):
 - Model switching is explicitly prohibited as a limit workaround; the
   orchestrator must wait for the limiting window to reset rather than switching
   models to bypass account or bucket quotas.
+
+## Direct test execution and environment isolation
+
+Direct test invocations (such as running `scripts/*.test.sh` directly from a
+terminal or from within a supervised session) isolate their execution
+environment by sourcing `scripts/lib/test-env.sh`.
+
+This removes inherited `NOGG_*` session environment variables (such as
+`NOGG_SESSION_ROLE`, `NOGG_SESSION_NAME`, `NOGG_OPENSPEC_FENCED`, and
+`NOGG_TASK_DONE_SOCKET`) and `NOGGING_ROOT` before imports, fixtures, or child
+processes run. This ensures that direct test runs:
+- Never accidentally contact a live operator's task-done broker socket or emit ticks.
+- Never inherit execution roles that cause false OpenSpec write refusals during planning tests.
+- Never inherit planning roles that grant unauthorized OpenSpec writes during guard tests.
+- Always retain unrelated environment variables, custom quota fixtures, and npm cache settings.
+Fixtures explicitly configure any required session variables after sourcing `test-env.sh`.

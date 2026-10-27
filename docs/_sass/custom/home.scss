@@ -1,0 +1,675 @@
+// Landing page (_layouts/home.html). Every rule is scoped under .home, the
+// body class of that layout. Colours come from the active scheme tokens;
+// the only literal colour is the diagram fade, because the diagram PNGs are
+// light in both schemes.
+// stylelint-disable selector-no-type, selector-max-type, selector-max-id, selector-max-specificity, selector-no-qualifying-type
+
+.home {
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  img {
+    max-width: 100%;
+    height: auto;
+  }
+
+  a:focus-visible,
+  button:focus-visible,
+  .home-tile:focus-visible,
+  .btn:focus-visible {
+    outline: 2px solid $nogging-focus-color;
+    outline-offset: 2px;
+  }
+
+  // Layout
+
+  .home-container {
+    max-width: 60rem;
+    padding-right: 1rem;
+    padding-left: 1rem;
+    margin-right: auto;
+    margin-left: auto;
+
+    @include mq(sm) {
+      padding-right: 1.5rem;
+      padding-left: 1.5rem;
+    }
+
+    @include mq(md) {
+      padding-right: 2rem;
+      padding-left: 2rem;
+    }
+  }
+
+  .home-section {
+    padding-top: 3rem;
+    padding-bottom: 3rem;
+
+    @include mq(md) {
+      padding-top: 4.5rem;
+      padding-bottom: 4.5rem;
+    }
+
+    h2 {
+      margin: 0 0 1.5rem;
+      font-size: 1.5rem;
+      line-height: 1.2;
+      color: $body-heading-color;
+    }
+  }
+
+  .home-section-intro,
+  .home-panel-intro,
+  .home-lead p,
+  .home-figure figcaption,
+  .home-platform {
+    max-width: 44rem;
+  }
+
+  .home-section-intro {
+    margin: 0 0 2rem;
+  }
+
+  // Top bar
+
+  .home-topbar {
+    background-color: $body-background-color;
+    border-bottom: 1px solid $border-color;
+  }
+
+  .home-nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 3.5rem;
+  }
+
+  .home-nav-end {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem 1rem;
+  }
+
+  // The theme's search box and results, so the site search works from the
+  // landing page (just-the-docs.js needs #search-input on every page).
+  .home-search {
+    position: relative;
+    flex: 1 1 auto;
+    height: 2.5rem;
+    min-width: 0;
+    max-width: 18rem;
+    margin-inline: 0.75rem;
+
+    // The theme sizes these for its own header; the landing page bar gives
+    // the box a fixed height and a visible outline at every width.
+    .search {
+      position: relative !important;
+      width: 100% !important;
+      height: 100% !important;
+      padding: 0;
+    }
+
+    .search-input-wrap {
+      position: absolute;
+      width: 100%;
+      max-width: none;
+      height: 100% !important;
+      border: 1px solid $border-color;
+      border-radius: 0.25rem;
+      box-shadow: none;
+    }
+
+    .search-input {
+      padding: 0 0.5rem 0 2.25rem;
+      font-size: 0.875rem;
+      background-color: $body-background-color;
+    }
+
+    .search-label {
+      padding-left: 0.625rem;
+    }
+
+    .search-results {
+      top: 100%;
+      width: 100%;
+      min-width: 16rem;
+      max-height: 60vh !important;
+    }
+  }
+
+  .home-nav-link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.75rem;
+    font-family: $nogging-brand-font-family;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: $link-color;
+    text-decoration: none;
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+
+  @media (max-width: 31.24rem) {
+    .home-nav-optional {
+      display: none;
+    }
+  }
+
+  // 1 Hero
+
+  .home-hero {
+    padding-bottom: 2rem;
+  }
+
+  h1 {
+    margin: 0 0 1rem;
+    font-weight: 600;
+    color: $body-heading-color;
+  }
+
+  .home-wordmark {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+    font-family: $nogging-brand-font-family;
+    font-size: 1.75rem;
+    font-weight: 700;
+    line-height: 1.15;
+    text-transform: lowercase;
+    letter-spacing: -0.01em;
+
+    @include mq(md) {
+      font-size: 2rem;
+    }
+  }
+
+  .home-mark {
+    display: block;
+    flex: 0 0 auto;
+    height: 3.25rem;
+    aspect-ratio: 986 / 758;
+    background-image: url("../images/#{$nogging-mark-image}");
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: contain;
+  }
+
+  .home-tagline {
+    display: block;
+    font-family: $nogging-brand-font-family;
+    font-size: 2rem;
+    font-weight: 600;
+    line-height: 1.15;
+    letter-spacing: -0.015em;
+
+    @include mq(sm) {
+      font-size: 2.25rem;
+    }
+
+    @include mq(md) {
+      font-size: 2.75rem;
+    }
+  }
+
+  .home-lead p {
+    margin: 0 0 1.5rem;
+    font-size: 1.0625rem;
+    line-height: 1.6;
+
+    @include mq(md) {
+      font-size: 1.1875rem;
+    }
+  }
+
+  .home-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+
+  .btn {
+    min-height: 2.75rem;
+    padding: 0.75rem 1.5rem;
+    margin: 0;
+    font-family: $nogging-brand-font-family;
+    font-size: 1rem;
+    font-weight: 600;
+    line-height: 1.25;
+    text-align: center;
+    text-decoration: none;
+  }
+
+  .home-actions .btn {
+    flex: 1 1 0;
+
+    @include mq(sm) {
+      flex: 0 0 auto;
+    }
+  }
+
+  // 2 Quick start
+
+  .home-quickstart {
+    padding-top: 0;
+  }
+
+  .home-panel {
+    padding: 1rem;
+    background-color: $sidebar-color;
+    border: 1px solid $border-color;
+    border-radius: 8px;
+
+    @include mq(sm) {
+      padding: 1.5rem;
+    }
+
+    h2 {
+      margin-bottom: 0.5rem;
+    }
+  }
+
+  .home-panel-intro {
+    margin: 0 0 1.25rem;
+    color: $nogging-text-secondary;
+  }
+
+  .home-steps {
+    padding-left: 1.5rem;
+    margin: 0 0 1rem;
+    list-style: decimal;
+
+    > li {
+      padding-left: 0.25rem;
+      margin: 0 0 1.25rem;
+    }
+  }
+
+  .home-step-label {
+    margin: 0 0 0.5rem;
+    font-weight: 600;
+  }
+
+  .home-step-hint {
+    margin: 0.5rem 0 0;
+    color: $nogging-text-secondary;
+  }
+
+  .home-panel-more {
+    margin: 0;
+  }
+
+  .home-cmd-box {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    align-items: stretch;
+
+    @include mq(sm) {
+      flex-direction: row;
+      align-items: flex-start;
+    }
+
+    pre {
+      flex: 1 1 auto;
+      min-width: 0;
+      padding: 0.75rem 1rem;
+      margin: 0;
+      overflow: visible;
+      font-family: $mono-font-family;
+      font-size: 0.875rem;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      user-select: all;
+      background-color: $body-background-color;
+      border: 1px solid $border-color;
+      border-left: 3px solid $nogging-code-rule;
+      border-radius: 0;
+    }
+
+    code {
+      padding: 0;
+      font-size: inherit;
+      line-height: inherit;
+      white-space: inherit;
+      overflow-wrap: inherit;
+      background: none;
+      border: 0;
+      border-radius: 0;
+    }
+  }
+
+  .home-copy {
+    display: inline-flex;
+    flex: 0 0 auto;
+    gap: 0.375rem;
+    align-items: center;
+    justify-content: center;
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+    padding: 0 0.875rem;
+    margin: 0;
+    font-family: $nogging-brand-font-family;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: $body-text-color;
+    cursor: pointer;
+    background-color: $base-button-color;
+    border: 0;
+    border-radius: 0.25rem;
+    box-shadow: inset 0 0 0 1px $nogging-accent-strong;
+    appearance: none;
+
+    &[hidden] {
+      display: none;
+    }
+
+    &:hover,
+    &:active {
+      background-color: $feedback-color;
+      box-shadow: inset 0 0 0 2px $nogging-accent-strong;
+    }
+
+    &[data-copied] {
+      color: $nogging-note-300;
+      background-color: $nogging-note-bg;
+      box-shadow: inset 0 0 0 1px $nogging-note-300;
+    }
+
+    @include mq(sm) {
+      width: auto;
+    }
+  }
+
+  .home-cmd-box .home-copy {
+    width: 100%;
+
+    @include mq(sm) {
+      width: auto;
+    }
+  }
+
+  .home-copy-icon {
+    display: block;
+    width: 1rem;
+    height: 1rem;
+    fill: currentColor;
+  }
+
+  .home-copy-icon-check,
+  .home-copy[data-copied] .home-copy-icon-copy {
+    display: none;
+  }
+
+  .home-copy[data-copied] .home-copy-icon-check {
+    display: block;
+  }
+
+  // 3 Why Nogging
+
+  .home-cards,
+  .home-tiles {
+    padding: 0;
+    margin: 0;
+    list-style: none;
+  }
+
+  .home-cards {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 1rem;
+
+    > li {
+      grid-column: span 6;
+      min-width: 0;
+      margin: 0;
+    }
+
+    @include mq(sm) {
+      > li {
+        grid-column: span 3;
+      }
+
+      > li:last-child {
+        grid-column: span 6;
+      }
+    }
+
+    @include mq(lg) {
+      > li {
+        grid-column: span 2;
+      }
+
+      > li:nth-child(n + 4) {
+        grid-column: span 3;
+      }
+    }
+  }
+
+  .home-card {
+    padding: 1.25rem;
+    background-color: $sidebar-color;
+    border: 1px solid $border-color;
+    border-left: 3px solid $nogging-sage;
+    border-radius: 8px;
+
+    h3 {
+      margin: 0 0 0.75rem;
+      font-size: 1.0625rem;
+      font-weight: 600;
+      line-height: 1.3;
+      color: $body-heading-color;
+    }
+
+    p {
+      margin: 0 0 0.75rem;
+    }
+
+    p:last-child {
+      margin-bottom: 0;
+    }
+  }
+
+  .home-eyebrow {
+    display: block;
+    margin-bottom: 0.125rem;
+    font-family: $body-font-family;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: $nogging-text-secondary;
+  }
+
+  // 4 How it works
+
+  .home-figure {
+    margin: 0 0 2.5rem;
+
+    h3 {
+      margin: 0 0 0.75rem;
+      font-size: 1.125rem;
+      color: $body-heading-color;
+    }
+
+    figcaption {
+      margin: 0.75rem 0 1rem;
+      color: $nogging-text-secondary;
+    }
+
+    .home-figure-link {
+      display: inline-flex;
+      align-items: center;
+    }
+  }
+
+  .home-frame {
+    border: 1px solid $border-color;
+    border-radius: 8px;
+    overflow: hidden;
+
+    img {
+      display: block;
+      width: 100%;
+    }
+  }
+
+  .home-crop {
+    position: relative;
+    max-height: 20rem;
+
+    @include mq(md) {
+      max-height: 30rem;
+    }
+
+    &::after {
+      position: absolute;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      height: 4rem;
+      pointer-events: none;
+      content: "";
+      background: linear-gradient(rgba(246, 246, 244, 0), #F6F6F4);
+    }
+  }
+
+  .home-more {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.5rem;
+    margin: 0;
+  }
+
+  // 5 Works with, 7 Community: link tiles
+
+  .home-tiles {
+    display: grid;
+    gap: 1rem;
+
+    > li {
+      min-width: 0;
+      margin: 0;
+    }
+  }
+
+  .home-tiles-4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+
+    @include mq(md) {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+  }
+
+  .home-tiles-3 {
+    grid-template-columns: minmax(0, 1fr);
+
+    @include mq(sm) {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+  }
+
+  .home-tile {
+    display: flex;
+    flex-direction: column;
+    flex-wrap: wrap;
+    gap: 0.25rem 0.5rem;
+    height: 100%;
+    padding: 1rem;
+    color: $body-text-color;
+    text-decoration: none;
+    background-color: $sidebar-color;
+    border: 1px solid $border-color;
+    border-radius: 8px;
+
+    &:hover,
+    &:active {
+      background-color: $feedback-color;
+      border-color: $nogging-accent-strong;
+    }
+  }
+
+  .home-tiles-4 .home-tile {
+    align-items: flex-start;
+  }
+
+  .home-tile-name {
+    font-family: $nogging-brand-font-family;
+    font-weight: 600;
+    color: $body-heading-color;
+  }
+
+  .home-tile-desc {
+    color: $nogging-text-secondary;
+  }
+
+  .home-pill {
+    display: inline-block;
+    padding: 0.125rem 0.5rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    line-height: 1.4;
+    color: $nogging-experimental-300;
+    background-color: $nogging-experimental-bg;
+    border: 1px solid $nogging-experimental-000;
+    border-radius: 9999px;
+  }
+
+  .home-platform {
+    margin: 1.5rem 0 0;
+  }
+
+  // 6 Safety
+
+  .home-callout {
+    max-width: 44rem;
+    padding: 1rem;
+    background-color: $nogging-warning-bg;
+    border-left: 4px solid $nogging-warning-300;
+    border-radius: 0 8px 8px 0;
+
+    p {
+      margin: 0;
+    }
+  }
+
+  // Footer
+
+  .home-footer {
+    padding: 2rem 0;
+    border-top: 1px solid $border-color;
+
+    .main-content {
+      max-width: none;
+      padding: 0;
+      margin: 0;
+    }
+  }
+
+  // Motion
+
+  @media (prefers-reduced-motion: no-preference) {
+    .home-tile,
+    .home-copy {
+      transition: background-color 150ms, box-shadow 150ms;
+    }
+  }
+}
+
+// Dark scheme: the diagrams stay light, so soften them a little.
+html[data-nogging-theme="dark"] .home img {
+  filter: brightness(0.92);
+}

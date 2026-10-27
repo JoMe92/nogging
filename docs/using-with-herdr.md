@@ -1,9 +1,10 @@
 # Using Nogging with herdr (Experimental)
 
-Nogging supports **herdr** (`https://herdr.dev/`) as a second, switchable
-session backend for supervised agent sessions alongside tmux. The herdr
-backend is **experimental** in this release; **tmux remains the default and
-permanent fallback**.
+This page is for operators who want to run supervised agent sessions on
+**herdr** (`https://herdr.dev/`) instead of tmux. Nogging supports herdr as a
+second, switchable session backend. The herdr backend is **experimental**;
+**tmux remains the default and permanent fallback**. For how session backends
+work internally, see [Architecture](architecture.md).
 
 The Orchestration Agent always runs on tmux, regardless of the configured
 session backend (`orchestrator run` pins to tmux and refuses `--backend herdr`).
@@ -101,6 +102,11 @@ Nogging starts and owns a dedicated headless herdr server on demand:
   Nogging verifies this and refuses startup if the path cannot fit.
 - **Agent detection:** Panes run with `HERDR_AGENT=<agent>` so that herdr's
   detection manifest correctly identifies the agent process through the wrapper.
+- **Pi:** `--agent pi` can use `--backend herdr`. Pi on herdr passed a live
+  run on 2026-10-27: launch on herdr, kickoff, a complete Bead with PR, and
+  log capture — including reading logs split by rotation (#304). Agents
+  outside the recorder-verified set are still refused with
+  `use --backend tmux`.
 
 ### Host-namespace server start and fenced refusal
 The dedicated herdr server must run in the host's PID namespace so that its
@@ -285,6 +291,17 @@ Herdr does not currently provide an interactive read-only client. Therefore:
 - `session attach <name> --read-only` on a herdr session is **refused**.
 - The refusal directs the operator to use `session log --follow <name>` instead.
 - Nogging never silently attaches read-write when read-only was requested.
+
+To watch every herdr-backed session pane at once, open the herdr client on
+Nogging's dedicated session (client namespace `session_herdr_session`, default
+`nogging`; `herdr --session nogging status` reports the running server):
+
+```bash
+herdr --session nogging
+```
+
+Typing into a pane types into that agent; to follow a single session
+read-only, use `session log --follow <name>` instead.
 
 ---
 

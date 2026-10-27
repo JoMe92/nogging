@@ -1,11 +1,18 @@
 # Installing Nogging into another repository
 
+This page is for anyone adding Nogging to a repository: it covers the pinned
+install, the one-line bootstrap for a fresh machine, what `init` writes, and how
+to update, roll back and remove the payload. When the install is done, continue
+with [Your first change](first-change.md).
+
 Nogging ships as a small Node CLI. Run it from the root of the git repository
-you want to adopt the operating model.
+you want to adopt the operating model. The target repository needs a `develop`
+branch and an `origin` remote: worktrees are allocated from a freshly fetched
+`origin/develop`, and pull requests target `develop`.
 
 ```bash
 cd /path/to/your-repo
-npx github:JoMe92/nogging#v3.1.1 init --no-systemd
+npx github:JoMe92/nogging#v3.2.0 init --no-systemd
 ```
 
 `--no-systemd` skips the systemd units; leave it off only after reviewing the
@@ -21,7 +28,7 @@ provisions the whole stack — pinned to the versions in the
 [compatibility matrix](compatibility.md) — and then runs `init` for you:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/JoMe92/nogging/v3.1.1/scripts/bootstrap | bash
+curl -fsSL https://raw.githubusercontent.com/JoMe92/nogging/v3.2.0/scripts/bootstrap | bash
 ```
 
 Always pin a tagged release in that URL, never `main`/`develop`, for the same
@@ -37,7 +44,7 @@ Download the script first, then run it, to get a guided, Nogging-styled
 terminal wizard instead:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/JoMe92/nogging/v3.1.1/scripts/bootstrap -o bootstrap
+curl -fsSL https://raw.githubusercontent.com/JoMe92/nogging/v3.2.0/scripts/bootstrap -o bootstrap
 bash bootstrap
 ```
 
@@ -118,12 +125,13 @@ command above.
 
 | Class | Paths | Behaviour |
 | --- | --- | --- |
-| Tool files | `scripts/nogg`, `scripts/session-launch`, `scripts/session-log-writer`, `scripts/install-hooks`, `scripts/test`, shipped `scripts/*.test.sh`, `scripts/hooks/*`, `.agents/skills/**` | copied verbatim; tracked in `.nogging/installed-manifest.json`; unmodified files update cleanly, locally modified files preserved as `<file>.nogging-new` (or overwritten to `<file>.orig` with `--force`); runtime helpers installed executable |
-| Reference docs | `docs/nogging/{operating-model,architecture,compatibility,failure-recovery,security-model,using-with-codex,using-with-pi,worktree-workflow}.md` | copied verbatim; tracked in manifest; locally modified files preserved as `<file>.nogging-new` |
+| Tool files | `scripts/nogg`, `scripts/session-launch`, `scripts/session-log-writer`, `scripts/install-hooks`, `scripts/test`, shipped `scripts/*.test.sh`, `scripts/hooks/*`, `.agents/skills/**` (Beads and OpenSpec skills) | copied verbatim; tracked in `.nogging/installed-manifest.json`; unmodified files update cleanly, locally modified files preserved as `<file>.nogging-new` (or overwritten to `<file>.orig` with `--force`); runtime helpers installed executable |
+| Reference docs | `docs/nogging/{operating-model,architecture,compatibility,failure-recovery,security-model,using-with-codex,using-with-pi,using-with-antigravity,using-with-herdr,worktree-workflow,model-selection,token-usage}.md` (twelve pages) | copied verbatim; tracked in manifest; locally modified files preserved as `<file>.nogging-new` |
 | Scaffold | `openspec/config.yaml`, `openspec/project.md`, `.nogging/config.json` | written **only when absent** — never overwritten |
 | Merged | `.claude/settings.json`, `.gitignore`, `CLAUDE.md`, `AGENTS.md`, `.codex/hooks.json` | edited idempotently; your other content is preserved (a `bd`-written `.codex/hooks.json` is never clobbered) |
 | Codex payload | `.codex/rules/nogging.rules`, `.codex/prompts/{plan,discovery-review,sync-now}.md` | copied verbatim; tracked in manifest; locally modified files preserved as `<file>.nogging-new` (or overwritten with `--force`); only relevant if you run the loop from Codex — see [`docs/using-with-codex.md`](using-with-codex.md) |
 | Pi payload | `.pi/prompts/{plan,discovery-review,sync-now}.md`, `.pi/extensions/nogging-guard.ts` | copied verbatim; tracked in manifest; locally modified files preserved as `<file>.nogging-new` (or overwritten with `--force`); only relevant if you run the loop from Pi — see [`docs/using-with-pi.md`](using-with-pi.md) |
+| Antigravity payload (experimental) | `.agents/skills/nogging-{plan,discovery-review,sync-now}/`, the `nogging-guard` and `nogging-observability` groups in `.agents/hooks.json`, `scripts/hooks/agy-guard` | skills and guard copied verbatim and tracked in manifest; `.agents/hooks.json` is merged by named group, so your other hooks are kept; only relevant if you run the loop from Antigravity — see [`docs/using-with-antigravity.md`](using-with-antigravity.md) |
 | Rendered | `systemd/nogg-sync-<slug>.service` and `.timer`, `systemd/nogg-orchestrator-<slug>.service` | generated with this repo's absolute path; `<slug>` is the sanitized repo directory name |
 
 `.nogging/config.json` records `name` (your repo's directory name) and
@@ -345,9 +353,9 @@ The complete support classification and evidence links are in the
 
 ## Caveat: `core.hooksPath`
 
-The three Git hooks (`pre-commit`, `commit-msg`, and `pre-push`) only run from `.git/hooks`. If
+The four Git hooks (`pre-commit`, `commit-msg`, `pre-push`, and `pre-rebase`) only run from `.git/hooks`. If
 `core.hooksPath` is set elsewhere — the Beads integration points it at
-`.beads/hooks` — Git ignores `.git/hooks` and those two Nogging hooks do not
+`.beads/hooks` — Git ignores `.git/hooks` and those Nogging hooks do not
 fire. `init` detects this and prints a warning; the hook sources stay in
 `scripts/hooks/` for you to wire into the active hooks directory. The
 `PreToolUse` OpenSpec guard in `.claude/settings.json` is unaffected.

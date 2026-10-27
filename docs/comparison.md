@@ -26,7 +26,7 @@ and `/speckit-implement`. It is MIT licensed. Both projects are spec-driven.
 The difference is what surrounds the spec. Nogging does not define its own
 spec format: it uses OpenSpec for intent and Beads for executable work, and
 makes the boundary between them explicit (see
-[Non-negotiable boundaries](../README.md#non-negotiable-boundaries)).
+[Non-negotiable boundaries](https://github.com/JoMe92/nogging#non-negotiable-boundaries)).
 
 Source: <https://github.com/github/spec-kit>.
 
@@ -50,7 +50,7 @@ documentation does not describe a dedicated spec or planning-document feature.
 Nogging adopts Beads as its only tracker and adds the approved specification
 that tasks are derived from, the planning/execution split and the write
 boundary between them. Nogging is independent of the Beads maintainers; see
-[Inspiration and related projects](../README.md#inspiration-and-related-projects).
+[Inspiration and related projects](https://github.com/JoMe92/nogging#inspiration-and-related-projects).
 
 Source: <https://github.com/gastownhall/beads>.
 
@@ -77,4 +77,4 @@ Source: <https://code.claude.com/docs/en/sub-agents>.
 - You want several agents, possibly from different vendors, to work one repo
   from an approved plan with enforced roles and Git evidence: that is Nogging.
 
-Back to the [README](../README.md) or the [documentation index](README.md).
+Back to the [README](https://github.com/JoMe92/nogging#readme) or the [documentation index](index.md).

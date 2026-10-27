@@ -437,7 +437,7 @@ def inspect_usage(agent, *, source=None, now=None, stale_after=600, model=None):
 
 GATE_KEYS = ('enabled', 'cap_percent', 'estimate_percent', 'stale_seconds',
              'on_unknown', 'size_multipliers', 'exclude_roles')
-GATE_ROLES = ('lead', 'planning', 'orchestrator', 'specialist')
+GATE_ROLES = ('lead', 'planning', 'orchestrator', 'specialist', 'loop')
 GATE_AGENTS = ('claude', 'codex', 'pi', 'antigravity')
 
 

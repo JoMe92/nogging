@@ -8,6 +8,7 @@
 #   - a no-LF stream through an open pipe grows live before EOF;
 #   - 3 MiB no-LF stream with 1 MiB limit: every generation is <= 1 MiB and depth is respected;
 #   - byte-exact content (ANSI escapes, raw binary, invalid UTF-8, null bytes);
+#   - rotation never splits a UTF-8 character; `session log` / `--follow` tolerate invalid UTF-8;
 #   - cleanup archives the active log and all rotated generations under the same timestamp.
 set -euo pipefail
 
@@ -259,6 +260,101 @@ def test_byte_exact_content():
     print("ok - byte-exact content preserved across escapes, controls, nulls, and non-UTF-8")
 
 
+def _run_writer(log_file, max_bytes, depth, chunks):
+    proc = subprocess.Popen([str(writer_bin), str(log_file), str(max_bytes), str(depth)],
+                            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    for chunk in chunks:
+        proc.stdin.write(chunk)
+        proc.stdin.flush()
+        time.sleep(0.002)  # keep reads separate so a character can straddle two reads
+    proc.stdin.close()
+    assert proc.wait(timeout=10) == 0, proc.stderr.read()
+
+
+def _generations(log_file, depth):
+    return [log_file.with_name(f"{log_file.name}.{i}") for i in range(depth, 0, -1)] + [log_file]
+
+
+def test_rotation_never_splits_utf8_character():
+    text = ("a\u00e9\u20ac\U0001F600\u2588" * 40 + "\n").encode("utf-8")  # 1-4 byte characters
+    for max_bytes in (4, 7, 10, 64, 101, 600):
+        for split in (1, 2, 3, 5, 64):  # read sizes, so characters straddle reads too
+            with tempfile.TemporaryDirectory(prefix="test-utf8-") as tmp:
+                log_file = Path(tmp) / "u.log"
+                data = text
+                depth = len(data) + 5
+                _run_writer(log_file, max_bytes, depth, [data[i:i + split] for i in range(0, len(data), split)])
+                pieces = [p.read_bytes() for p in _generations(log_file, depth) if p.exists()]
+                for piece in pieces:
+                    assert len(piece) <= max_bytes, f"generation over bound: {len(piece)} > {max_bytes}"
+                    piece.decode("utf-8")  # strict: raises if a character was split
+                assert b"".join(pieces) == data, f"content lost (max={max_bytes}, split={split})"
+    # Non-UTF-8 input is still recorded byte-exactly and keeps the bound.
+    with tempfile.TemporaryDirectory(prefix="test-utf8-bin-") as tmp:
+        log_file = Path(tmp) / "b.log"
+        data = bytes(range(256)) * 20
+        _run_writer(log_file, 100, 100, [data[i:i + 37] for i in range(0, len(data), 37)])
+        pieces = [p.read_bytes() for p in _generations(log_file, 100) if p.exists()]
+        assert all(len(p) <= 100 for p in pieces) and b"".join(pieces) == data
+    print("ok - rotation never splits a UTF-8 character and loses no bytes")
+
+
+def test_session_log_reads_invalid_utf8():
+    with tempfile.TemporaryDirectory(prefix="test-readlog-") as tmp:
+        tmp_dir = Path(tmp)
+        repo = tmp_dir / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        (repo / ".nogging").mkdir()
+        (repo / ".nogging/config.json").write_text(json.dumps({
+            "beads_command": "bd", "session_state_dir": ".nogging/state/sessions"}))
+        state_dir = repo / ".nogging/state/sessions"
+        state_dir.mkdir(parents=True)
+        scripts = repo / "scripts"
+        scripts.mkdir()
+        shutil.copy2(nogg_bin, scripts / "nogg")
+        (scripts / "nogg").chmod(0o755)
+        shutil.copytree(repo_root / "scripts/lib", scripts / "lib")
+        stub_bin = tmp_dir / "bin"
+        stub_bin.mkdir()
+        for stub in ("bd", "tmux"):
+            (stub_bin / stub).write_text("#!/bin/sh\nexit 0\n")
+            (stub_bin / stub).chmod(0o755)
+
+        name = "test-session-readlog"
+        log_file = state_dir / f"{name}.log"
+        # A rotated piece as the old writer left it: starts with a continuation byte, ends mid-character.
+        log_file.write_bytes(b"\x80\x80tail-of-char \xe2\x82\xac ok\n")
+        (state_dir / f"{name}.json").write_text(json.dumps({
+            "name": name, "role": "lead", "state": "running", "log_path": str(log_file), "owner": "test"}))
+        env = {**os.environ, "PATH": f"{stub_bin}:{os.environ.get('PATH', '')}", "NOGGING_ROOT": str(repo)}
+
+        res = subprocess.run([str(scripts / "nogg"), "session", "log", name],
+                             cwd=str(repo), env=env, capture_output=True)
+        assert res.returncode == 0, f"session log failed: {res.stderr!r}"
+        out = res.stdout.decode("utf-8")  # the output itself must be valid UTF-8
+        assert "tail-of-char \u20ac ok" in out and "\ufffd" in out
+
+        proc = subprocess.Popen([str(scripts / "nogg"), "session", "log", name, "--follow"],
+                                cwd=str(repo), env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            deadline = time.time() + 5
+            got = b""
+            os.set_blocking(proc.stdout.fileno(), False)
+            while time.time() < deadline and b"ok" not in got:
+                try:
+                    got += proc.stdout.read(4096) or b""
+                except BlockingIOError:
+                    pass
+                time.sleep(0.05)
+            assert proc.poll() is None, f"--follow aborted: {proc.stderr.read()!r}"
+            assert b"tail-of-char" in got
+        finally:
+            proc.kill()
+            proc.wait()
+    print("ok - session log and --follow read a log that starts or ends mid-character")
+
+
 def test_cleanup_archiving_all_generations():
     with tempfile.TemporaryDirectory(prefix="test-cleanup-") as tmp:
         tmp_dir = Path(tmp)
@@ -362,6 +458,8 @@ if __name__ == "__main__":
     test_no_lf_live_growth()
     test_3mib_bound_and_rotation()
     test_byte_exact_content()
+    test_rotation_never_splits_utf8_character()
+    test_session_log_reads_invalid_utf8()
     test_cleanup_archiving_all_generations()
     print("All session-log-writer tests passed.")
 PY

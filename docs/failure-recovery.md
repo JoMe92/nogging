@@ -56,12 +56,13 @@ CLI itself or grant additional authority.
 ### Older vendored session helpers
 
 If a vendored Nogging copy shows older session symptoms, update the copy to
-3.0.0 or later. The reliable-session-input fixes from #207, #216 and #218
-shipped in 3.0.0: #207 recognizes Claude's `[Pasted text #N]` as this
-operation's pending paste only when its composer was verified empty first;
-#216 waits for Claude and Antigravity startup readiness before sending input;
-and #218 delivers and verifies kickoff, requiring fresh receipt evidence after
-a Codex queue accepts a message. An unconfirmed outcome is unverified, not
+3.0.0 or later. The reliable-session-input fixes shipped in 3.0.0 (changelog
+items #207, #216 and #218): Nogging
+recognizes Claude's `[Pasted text #N]` as this operation's pending paste only
+when its composer was verified empty first; it waits for Claude and
+Antigravity (experimental) startup readiness before sending input; and it
+delivers and verifies kickoff, requiring fresh receipt evidence after a Codex
+queue accepts a message. An unconfirmed outcome is unverified, not
 delivered. The launch-name and Codex delivery safeguards also require a Nogging
 update containing the launch-name/Codex-delivery change; changing only the
 agent CLI does not install them. Use the repository's pinned Nogging `update`
@@ -211,7 +212,7 @@ local and safe to delete.
 Bead state is durable the moment a `bd` command returns. `bd` auto-commits every
 mutating command (`create`, `update`, `claim`, `close`, …) to Dolt *history* —
 each is its own Dolt commit (`bd: close SPEC-x`), not a change left sitting in
-the working set. Verified against this repo's shared Dolt server: the `issues`
+the working set. Verified against a shared Dolt server: the `issues`
 table working set stays clean while `dolt_log` grows one commit per write.
 
 So the in-scope interruptions — a process crash, token exhaustion, an SSH drop —
@@ -441,7 +442,7 @@ limit clears — no operator action required.
 
 **Switching models does not clear this.** A usage limit observed in
 production is account-wide, not per-model: picking a cheaper or faster model
-does not bypass it (confirmed twice in production, GitHub issue #20).
+does not bypass it (confirmed twice in production).
 `resume-when-ready` dismisses a residual "switch model?" prompt by keeping the
 current model, never by switching to one. If a session is stuck on a usage
 limit, wait it out (or run `resume-when-ready`) — do not spend a session-cycle
@@ -482,6 +483,9 @@ manages shared quota headroom across repositories.
 
 ## Direct test execution isolation and setup diagnostics
 
+*Maintainers only: this applies when you run the Nogging repository's own
+`scripts/**/*.test.sh` suites, which a consumer project does not have.*
+
 Direct test scripts (`scripts/**/*.test.sh`) source `scripts/lib/test-env.sh` to
 strip `NOGG_*` and `NOGGING_ROOT` from the calling environment.
 
@@ -499,7 +503,7 @@ strip `NOGG_*` and `NOGGING_ROOT` from the calling environment.
 ## A half-applied worktree after a failed rebase or checkout
 
 **Symptom.** A Lead's `git rebase`, `git merge` or `git pull` hit a read-only
-`openspec/` (#241). Files sorted before `openspec/` were already written from
+`openspec/`. Files sorted before `openspec/` were already written from
 upstream, but the index and `HEAD` did not move and no `rebase-merge/` or
 `rebase-apply/` exists, so neither `git rebase --abort` nor a plain reset knows
 about it. `git status` shows many modified files nobody edited.
@@ -600,6 +604,9 @@ timestamps. Retry `discoveries`; never infer acknowledgements from Bead status.
 An interrupted replacement leaves the previous ledger usable; retry normally.
 
 ## Non-task follow-ups and trace-preserving mapping repair
+
+*Planning sessions and maintainers only: this repairs the OpenSpec-to-Beads
+mapping, and `openspec/` is writable only in a planning session.*
 
 Use a regular materialized Bead for work that implements an approved task.
 For related work that has no approved checkbox, create an explicit non-task

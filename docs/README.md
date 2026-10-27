@@ -1,62 +1,78 @@
 # Documentation
 
-An index of everything under `docs/`. Start at the top-level
-[`README.md`](https://github.com/JoMe92/nogging#readme) if you haven't yet — it covers the concept,
-quick start, and safety warning. This page is for finding the right guide
-once you're past that.
+Use this index to browse Nogging's documentation on GitHub. The published
+documentation site is available at <https://jome92.github.io/nogging/>.
+
+## Getting started
+
+| Guide | Covers |
+| --- | --- |
+| [Installation](installation.md) | Install Nogging into another repository and understand what it changes |
+| [Compatibility](compatibility.md) | Supported operating systems, tools, versions, and agent integrations |
+| [Your first change](https://jome92.github.io/nogging/first-change/) | Follow a first change from plan to review |
+| [FAQ](faq.md) | Short answers to common questions about Nogging |
 
 ## Concepts
 
-What Nogging is and why it's built the way it is.
+| Guide | Covers |
+| --- | --- |
+| [Vision and architecture](vision-and-architecture.md) | The problem Nogging solves and its architecture |
+| [Operating model](operating-model.md) | Roles, lifecycle, and handoffs |
+| [Worktree workflow](worktree-workflow.md) | How isolated Git worktrees keep agent changes independent |
+| [Security and threat model](security-model.md) | Authority levels, protections, and security limits |
+| [How Nogging compares](comparison.md) | Nogging compared with other specification and agent workflows |
+
+## Guides
 
 | Guide | Covers |
 | --- | --- |
-| [Vision and architecture](vision-and-architecture.md) | What Nogging is for; the architecture as built today |
-| [Architecture](architecture.md) | Exact data contracts, safety gates, session supervision, the OpenSpec write boundary |
-| [Operating model](operating-model.md) | The five roles, the change lifecycle, and how planning and execution hand off |
-| [Project identity](project-identity.md) | The canonical name, repository, and identifiers — the source of truth the README must match |
-| [How Nogging compares](comparison.md) | spec-kit, OpenSpec alone, Beads alone and plain Claude Code subagents, with sources |
-| [FAQ](faq.md) | Short answers: several agents on one repo, protecting the plan, Codex, supported OS |
+| [Using Nogging with Claude Code](https://jome92.github.io/nogging/using-with-claude-code/) | Run Nogging workflows from Claude Code |
+| [Using Nogging with Codex](using-with-codex.md) | Run Nogging workflows from OpenAI Codex |
+| [Using Nogging with Pi](using-with-pi.md) | Run Nogging workflows from Pi |
+| [Using Nogging with Antigravity](using-with-antigravity.md) | Experimental Antigravity integration |
+| [Running work in sessions](running-work-in-sessions.md) | Start, monitor, and steer supervised agent sessions |
+| [Using Nogging with herdr](using-with-herdr.md) | Experimental herdr session backend |
+| [Model selection](model-selection.md) | Choose a model and effort level for a session |
+| [Agent identities](agent-identities.md) | Configure GitHub identities for agent personas |
 
-## Using Nogging
-
-Installing it, running it day to day, and its guarantees.
-
-| Guide | Covers |
-| --- | --- |
-| [Installation](installation.md) | `init`, `update`, flags, and what gets touched in your repo |
-| [Compatibility matrix](compatibility.md) | Supported OS, tool versions, and agent integrations, with evidence |
-| [Agent identities](agent-identities.md) | Per-persona GitHub App registration, key storage, and optional Tier-2 setup |
-| [Worktree workflow](worktree-workflow.md) | Why every planning and implementation run gets its own Git worktree |
-| [Running work in sessions](running-work-in-sessions.md) | `scripts/nogg session` — starting, watching, and steering a supervised agent session |
-| [Model selection](model-selection.md) | The tier → model/effort table, `nogg models`, `session launch --tier`, and the research behind it |
-| [Security and threat model](security-model.md) | What Nogging does and doesn't protect against; authority levels |
-| [Failure recovery](failure-recovery.md) | `doctor`, `audit`, and recovering from an interrupted run |
-| [Using Nogging with Codex](using-with-codex.md) | What's specific to running the loop from OpenAI Codex |
-| [Using Nogging with Pi](using-with-pi.md) | What's specific to running the loop from Pi |
-| [Using Nogging with Antigravity](using-with-antigravity.md) | Experimental agy 1.3.2 integration, authority and acceptance limits |
-| [Reading usage limits](usage-limits.md) | How the orchestrator reads 5h and weekly limits for Codex, Claude, and agy |
-
-## Releasing and maintaining
-
-For anyone cutting a release or proving one is ready.
+## Operations
 
 | Guide | Covers |
 | --- | --- |
-| [Releasing Nogging](releasing.md) | The repeatable procedure for tagging a release candidate or final release |
-| [Acceptance runbook](acceptance.md) | The reproducible end-to-end procedure a release must pass before sign-off |
-| [Acceptance report template](acceptance-report-template.md) | Copy this into `acceptance/<date>-<host>.md` for each run |
-| [`acceptance/`](https://github.com/JoMe92/nogging/tree/main/docs/acceptance) | The dated, signed acceptance reports produced by that runbook |
-| [Public cutover checklist](public-cutover.md) | The owner-executed, not-yet-run checklist for going public |
+| [Troubleshooting](https://jome92.github.io/nogging/troubleshooting/) | Diagnose common installation and workflow problems |
+| [Failure recovery](failure-recovery.md) | Recover from interrupted work and inspect project health |
+| [Usage limits](usage-limits.md) | How Nogging detects agent usage limits and reset times |
+| [Token usage](token-usage.md) | Understand token accounting across agent sessions |
+
+## Reference
+
+| Guide | Covers |
+| --- | --- |
+| [Commands](https://jome92.github.io/nogging/commands/) | Nogging command reference |
+| [Configuration](https://jome92.github.io/nogging/configuration/) | Configuration keys and defaults |
+| [Glossary](https://jome92.github.io/nogging/glossary/) | Terms used in Nogging documentation |
+| [Architecture](architecture.md) | Detailed contracts, boundaries, and safety gates |
+
+## Project & maintainers
+
+| Guide | Covers |
+| --- | --- |
+| [Releasing Nogging](releasing.md) | Prepare and publish a release |
+| [Acceptance runbook](acceptance.md) | Run the release acceptance procedure |
+| [Project identity](project-identity.md) | Canonical project names, repositories, and identifiers |
+| [Contributing](../CONTRIBUTING.md) | Contribution process |
+| [Code of Conduct](../CODE_OF_CONDUCT.md) | Community expectations |
+| [Security policy](../SECURITY.md) | Report a security issue |
+| [Changelog](../CHANGELOG.md) | Release history |
+| [Releases](https://github.com/JoMe92/nogging/releases) | Published releases |
+
+## Internal
+
+The `acceptance/` directory and `acceptance-report-template.md` contain
+internal release records and templates. The public cutover checklist is
+historical: the project went public with v3.0.0. These files remain in the
+repository but are not part of the published documentation site.
 
 ## Assets
 
-[`brand/`](https://github.com/JoMe92/nogging/tree/main/docs/brand) holds the logo, banner, social card, and the diagrams
-embedded in the top-level README.
-
----
-
-Product planning history — naming research, identity decisions, and internal
-audit/status snapshots — lives in the private
-[`JoMe92/rooftree`](https://github.com/JoMe92/rooftree) companion repository,
-not here.
+[`brand/`](brand/) holds the logo, banner, social card, and project diagrams.

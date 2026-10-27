@@ -1,0 +1,495 @@
+// Nogging theme overrides (design Decision 5). Compiled last, after the
+// theme modules and the callouts. Colours come from the active scheme
+// (color_schemes/nogging.scss or nogging-dark.scss); defaults for the
+// Nogging tokens live in custom/setup.scss.
+// stylelint-disable selector-no-type, selector-max-type, selector-max-id, selector-max-specificity, selector-no-qualifying-type
+
+// Self-hosted Poppins (SIL OFL 1.1, assets/fonts/OFL.txt). URLs are relative
+// to the compiled stylesheet in assets/css/.
+@font-face {
+  font-family: "Poppins";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../fonts/poppins-latin-400-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Poppins";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("../fonts/poppins-latin-500-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Poppins";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("../fonts/poppins-latin-600-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Poppins";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("../fonts/poppins-latin-700-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+// Typography: Poppins for the wordmark, headings and navigation only.
+
+h1,
+.text-alpha {
+  font-family: $nogging-brand-font-family;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+h2,
+.text-beta,
+#toctitle {
+  font-family: $nogging-brand-font-family;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+h3,
+.text-gamma {
+  font-family: $nogging-brand-font-family;
+  font-weight: 600;
+}
+
+h4,
+.text-delta {
+  font-family: $nogging-brand-font-family;
+  font-weight: 500;
+}
+
+h5,
+h6,
+.text-epsilon,
+.text-zeta {
+  font-family: $nogging-brand-font-family;
+  font-weight: 500;
+}
+
+.site-nav {
+  font-family: $nogging-brand-font-family;
+
+  .nav-list-link {
+    font-weight: 400;
+  }
+}
+
+.nav-category {
+  font-family: $nogging-brand-font-family;
+  font-weight: 600;
+}
+
+.aux-nav .site-button {
+  font-family: $nogging-brand-font-family;
+  font-weight: 500;
+}
+
+.breadcrumb-nav {
+  font-family: $nogging-brand-font-family;
+  font-weight: 400;
+}
+
+code {
+  font-size: 0.875em;
+}
+
+// Header: the theme's text title becomes the wordmark, with the mark drawn
+// before it. site.logo stays unset.
+
+.site-title {
+  font-family: $nogging-brand-font-family;
+  font-weight: 700;
+  color: $body-heading-color;
+  text-transform: lowercase;
+  letter-spacing: -0.01em;
+  line-height: 1;
+  font-size: 1.375rem !important;
+
+  @include mq(sm) {
+    font-size: 1.5rem !important;
+  }
+
+  // The theme's root font size is 14px below sm and 16px above, so the
+  // mark is about 36x28 px on a phone and 42x32 px on a desktop.
+  &::before {
+    content: "";
+    flex: 0 0 auto;
+    width: 2.6rem;
+    height: 2rem;
+    margin-right: 0.5rem;
+    background-image: url("../images/#{$nogging-mark-image}");
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: contain;
+  }
+}
+
+// Theme toggle (header_custom.html). Hidden until the head script has set
+// data-nogging-theme, so it never shows without JavaScript.
+
+.nogging-theme-toggle {
+  display: none;
+}
+
+html[data-nogging-theme] .nogging-theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  flex: 0 0 auto;
+  width: 2.5rem;
+  height: 2.5rem;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: $link-color;
+  cursor: pointer;
+  background-color: $nogging-toggle-bg;
+  border: 0;
+  border-radius: $border-radius;
+  box-shadow: inset 0 0 0 1px $nogging-toggle-ring;
+  appearance: none;
+
+  &:hover {
+    background-color: $nogging-toggle-hover-bg;
+  }
+
+  @include mq(md) {
+    align-self: center;
+    margin: 0 0.5rem;
+  }
+}
+
+.nogging-theme-toggle-icon {
+  display: block;
+  width: 1.25rem;
+  height: 1.25rem;
+  fill: currentColor;
+}
+
+// Phone: the theme hides .main-header below md. Keep it in the page with no
+// height so the toggle can sit in the top bar, right of the menu button.
+@media (max-width: 49.99rem) {
+  html[data-nogging-theme] #menu-button {
+    margin-right: 3rem;
+  }
+
+  html[data-nogging-theme] .side-bar + .main .main-header:not(.nav-open) {
+    display: block;
+    height: 0;
+    border-bottom: 0;
+
+    > .search,
+    > .aux-nav {
+      display: none;
+    }
+  }
+
+  html[data-nogging-theme] .side-bar + .main .nogging-theme-toggle {
+    position: absolute;
+    top: 0.625rem;
+    right: 0.5rem;
+  }
+}
+
+// Links
+
+a:not([class]) {
+  text-decoration-color: rgba($link-color, 0.55);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+
+  &:hover {
+    text-decoration-color: $link-color;
+    text-decoration-thickness: 2px;
+  }
+}
+
+// Focus
+
+:focus-visible {
+  outline: 2px solid $nogging-focus-color;
+  outline-offset: 2px;
+}
+
+.site-title:focus-visible,
+.site-button:focus-visible,
+.nav-list .nav-list-item .nav-list-link:focus-visible,
+.nav-list .nav-list-item .nav-list-expander:focus-visible,
+.search-result:focus-visible,
+.search-input:focus-visible {
+  outline: 2px solid $nogging-focus-color;
+  outline-offset: -2px;
+}
+
+.btn:focus-visible,
+.btn-outline:focus-visible {
+  outline: 2px solid $nogging-focus-color;
+  outline-offset: 2px;
+  box-shadow: none;
+}
+
+// Code blocks: tinted panel with a sage rule; long lines scroll inside the
+// block; the copy button is always visible.
+
+div.highlighter-rouge,
+figure.highlight {
+  margin-bottom: 1rem;
+  background-color: $code-background-color;
+  border-radius: $border-radius;
+
+  > button {
+    top: 0.375rem;
+    right: 0.375rem;
+    width: 1rem;
+    height: 1rem;
+    padding: 0.5rem;
+    opacity: 1;
+    background-color: $code-background-color;
+    border: 1px solid $border-color;
+    border-radius: 4px;
+
+    svg {
+      display: block;
+      width: 1rem;
+      height: 1rem;
+      fill: $nogging-text-secondary;
+    }
+
+    &:hover {
+      background-color: $feedback-color;
+
+      svg {
+        fill: $body-text-color;
+      }
+    }
+
+    &:focus {
+      outline: none;
+    }
+
+    &:focus-visible {
+      outline: 2px solid $nogging-focus-color;
+      outline-offset: 2px;
+    }
+  }
+}
+
+div.highlighter-rouge div.highlight,
+figure.highlight pre {
+  overflow-x: auto;
+  padding: 0.75rem 1rem;
+  border: 1px solid $border-color;
+  border-left: 3px solid $nogging-code-rule;
+}
+
+div.highlighter-rouge pre.highlight,
+div.highlighter-rouge pre.highlight code,
+figure.highlight pre,
+figure.highlight pre code {
+  line-height: 1.5;
+}
+
+:not(pre, figure) > code {
+  padding: 0.1em 0.3em;
+  border-radius: 3px;
+  overflow-wrap: anywhere;
+}
+
+// In a table cell, "anywhere" would shrink the column below the longest word
+// and split identifiers mid-word; there the table scrolls inside its wrapper.
+td code,
+th code {
+  overflow-wrap: break-word;
+}
+
+// Tables
+
+.table-wrapper {
+  box-shadow: none;
+  border: 1px solid $border-color;
+}
+
+.highlight .table-wrapper {
+  border: 0;
+}
+
+thead th {
+  background-color: $nogging-table-header-bg;
+  font-weight: 600;
+}
+
+// Callouts (site.callouts in _config.yml): tinted, flat.
+
+p.note,
+blockquote.note,
+p.note-title,
+blockquote.note-title {
+  background-color: $nogging-note-bg;
+  box-shadow: none;
+}
+
+p.warning,
+blockquote.warning,
+p.warning-title,
+blockquote.warning-title {
+  background-color: $nogging-warning-bg;
+  box-shadow: none;
+}
+
+p.experimental,
+blockquote.experimental,
+p.experimental-title,
+blockquote.experimental-title {
+  background-color: $nogging-experimental-bg;
+  box-shadow: none;
+}
+
+// Blockquotes
+
+.main-content blockquote:not([class]) {
+  border-left: 3px solid $nogging-blockquote-rule;
+  color: $nogging-text-secondary;
+}
+
+// Navigation
+
+.nav-list .nav-list-item .nav-list-link.active {
+  box-shadow: inset 3px 0 0 $nogging-accent-strong;
+}
+
+// The theme's #959396 grey falls below 4.5:1 on the Nogging surfaces.
+.main-content ol > li::before,
+.main-content ul > li::before,
+.breadcrumb-nav-list-item::after,
+.search-label .search-icon {
+  color: $nogging-text-secondary;
+}
+
+// Buttons
+
+.btn {
+  font-family: $body-font-family;
+}
+
+.btn-primary {
+  color: #fff;
+  background-color: $btn-primary-color;
+  background-image: none;
+
+  &:hover {
+    color: #fff;
+    background-color: darken($btn-primary-color, 4%);
+    background-image: none;
+  }
+}
+
+.btn-outline {
+  box-shadow: inset 0 0 0 2px $nogging-accent-strong;
+
+  &:hover,
+  &:active {
+    box-shadow: inset 0 0 0 3px $nogging-accent-strong;
+  }
+}
+
+// Search
+
+.search-input::placeholder {
+  color: $nogging-text-secondary;
+  opacity: 1;
+}
+
+.search-result-doc.search-result-doc-parent {
+  opacity: 1;
+  color: $nogging-text-secondary;
+}
+
+// Footer (footer_custom.html)
+
+.nogging-footer {
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: $nogging-text-secondary;
+
+  p {
+    margin: 0 0 0.5rem;
+  }
+}
+
+.main-content .nogging-footer-links ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  padding: 0;
+  margin: 0 0 0.5rem;
+  list-style: none;
+}
+
+.main-content .nogging-footer-links li {
+  margin: 0;
+}
+
+.main-content .nogging-footer-links li::before {
+  content: none;
+}
+
+// Narrow screens: content never widens the page.
+
+.main-content pre:not(.highlight) {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+@media (max-width: 31.24rem) {
+  .main-content dl {
+    display: block;
+  }
+
+  .main-content dt {
+    text-align: left;
+  }
+
+  .main-content dd {
+    margin-left: 1rem;
+  }
+}
+
+// Misc
+
+::selection {
+  color: $body-text-color;
+  background-color: $nogging-selection-bg;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
+@media print {
+  .site-title {
+    font-size: 1rem !important;
+  }
+
+  .nogging-theme-toggle,
+  html[data-nogging-theme] .nogging-theme-toggle {
+    display: none !important;
+  }
+}
+
+@import "./home";

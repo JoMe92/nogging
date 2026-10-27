@@ -1,5 +1,9 @@
 # Worktree-based agent workflow
 
+This page explains how agent runs are isolated in Git worktrees: one worktree
+and one branch per planning or implementation run. It is for operators and for
+agents following the workflow.
+
 Every planning and implementation run owns one Git worktree and one branch.
 The shared checkout is an integration surface, not an agent workspace.
 
@@ -52,7 +56,10 @@ scripts/nogg pr open --plan <change> --task <task-id> \
 The PR record stores the earliest initial CI inspection time. After that time,
 inspect required checks with `scripts/nogg pr ci`. Failed checks remain on
 the same branch for diagnosis and repair; `ready_for_user_review` means stop
-and ask the user to review. It never means self-merge.
+and ask the user to review. In the default pull-request flow it never means
+self-merge. The one exception is an explicit `--full-access` launch for a named
+change, which authorises the session to integrate that change into `develop`
+itself; without that grant the agent leaves the merge to the user.
 
 After user-directed integration, `worktree cleanup <record.json>` removes only
 the exact clean worktree whose branch is contained in `develop`.

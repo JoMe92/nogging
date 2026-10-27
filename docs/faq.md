@@ -35,7 +35,7 @@ See [Using Nogging with Codex](using-with-codex.md),
 ## Does it replace an agent runtime?
 
 No. Nogging launches and supervises the agent CLIs you already have (Claude
-Code, Codex, Pi, Antigravity) and gives them roles, a plan, a task tracker and
+Code, Codex, Pi and, experimentally, Antigravity) and gives them roles, a plan, a task tracker and
 an evidence trail. It is not an agent runtime, hosted service or model
 provider. See [Vision and architecture](vision-and-architecture.md).
 
@@ -50,7 +50,7 @@ The exact tool versions are in the [compatibility matrix](compatibility.md).
 Bash, Git, Python, Node.js 18 or newer, OpenSpec, Beads and Dolt; tmux and
 systemd are optional. `scripts/bootstrap` provisions them on a fresh machine,
 and `./scripts/nogg doctor` reports what is missing. See
-[Installation](installation.md).
+[Installation](installation.md), then follow [Your first change](first-change.md).
 
 ## Is it safe to run agents with full access?
 
@@ -68,6 +68,6 @@ than redone. See [Failure recovery](failure-recovery.md).
 In [GitHub Discussions](https://github.com/JoMe92/nogging/discussions)
 (categories Q&A and Show and tell). Bugs and feature requests go to
 [Issues](https://github.com/JoMe92/nogging/issues/new/choose); vulnerabilities
-follow the [security policy](../SECURITY.md).
+follow the [security policy](https://github.com/JoMe92/nogging/blob/main/SECURITY.md).
 
-Back to the [README](../README.md) or the [documentation index](README.md).
+Back to the [README](https://github.com/JoMe92/nogging#readme) or the [documentation index](index.md).

@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="{{ site.lang | default: 'en-US' }}">
+{% include head.html %}
+<body class="home">
+<a class="skip-to-main" href="#main-content">Skip to main content</a>
+{% include icons/icons.html %}
+
+<header class="home-topbar">
+  <div class="home-container home-topbar-inner">
+    <nav class="home-nav" aria-label="Primary">
+      <a class="home-nav-link" href="{{ '/getting-started/' | relative_url }}">Documentation</a>
+      {%- if site.search_enabled != false %}
+      <div class="home-search">{% include components/search_header.html %}</div>
+      {%- endif %}
+      <div class="home-nav-end">
+        <a class="home-nav-link" href="https://github.com/JoMe92/nogging">GitHub</a>
+        <a class="home-nav-link home-nav-optional" href="https://github.com/JoMe92/nogging/releases">Releases</a>
+        <a class="home-nav-link home-nav-optional" href="https://github.com/JoMe92/nogging/discussions">Discussions</a>
+        {% include header_custom.html %}
+      </div>
+    </nav>
+  </div>
+</header>
+
+<main id="main-content">
+
+  <section class="home-section home-hero" aria-labelledby="home-title">
+    <div class="home-container">
+      <h1 id="home-title"><span class="home-wordmark"><span class="home-mark" aria-hidden="true"></span>nogging</span><span class="sr-only">: </span><span class="home-tagline">Structure for a team of agents.</span></h1>
+      <div class="home-lead">
+        {{ content }}
+      </div>
+      <div class="home-actions">
+        <a class="btn btn-primary" href="{{ '/installation/' | relative_url }}">Get started</a>
+        <a class="btn btn-outline" href="https://github.com/JoMe92/nogging">View on GitHub</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="home-section home-quickstart" aria-labelledby="home-quickstart-title">
+    <div class="home-container">
+      <div class="home-panel">
+        <h2 id="home-quickstart-title">Quick start</h2>
+        <p class="home-panel-intro">Pinned to {{ site.data.install.tag | escape }}. Linux with Node.js 18 or newer.</p>
+        <ol class="home-steps">
+          <li>
+            <p class="home-step-label">Fresh machine: install the toolchain and Nogging</p>
+            <div class="home-cmd-box">
+              <pre><code id="home-cmd-bootstrap">{{ site.data.install.bootstrap | escape }}</code></pre>
+              <button type="button" class="home-copy" hidden data-target="home-cmd-bootstrap" data-done="Copied bootstrap command" aria-label="Copy bootstrap command">
+                <svg class="home-copy-icon home-copy-icon-copy" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+                <svg class="home-copy-icon home-copy-icon-check" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+                <span class="home-copy-label">Copy</span>
+              </button>
+              <span class="sr-only home-copy-status" role="status" aria-live="polite"></span>
+            </div>
+          </li>
+          <li>
+            <p class="home-step-label">Toolchain already installed: add Nogging to your repository</p>
+            <div class="home-cmd-box">
+              <pre><code id="home-cmd-init">{{ site.data.install.init | escape }}</code></pre>
+              <button type="button" class="home-copy" hidden data-target="home-cmd-init" data-done="Copied init command" aria-label="Copy init command">
+                <svg class="home-copy-icon home-copy-icon-copy" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+                <svg class="home-copy-icon home-copy-icon-check" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+                <span class="home-copy-label">Copy</span>
+              </button>
+              <span class="sr-only home-copy-status" role="status" aria-live="polite"></span>
+            </div>
+            <p class="home-step-hint">Run it in your repository.</p>
+          </li>
+        </ol>
+        <p class="home-panel-more"><a href="{{ '/first-change/' | relative_url }}">Your first change &rarr;</a></p>
+      </div>
+    </div>
+  </section>
+
+  <section class="home-section" aria-labelledby="home-why-title">
+    <div class="home-container">
+      <h2 id="home-why-title">Why Nogging?</h2>
+      <ul class="home-cards">
+        <li class="home-card">
+          <h3>Agents overwrite each other</h3>
+          <p><span class="home-eyebrow">Problem</span>Several agents on one repository overwrite each other and the plan.</p>
+          <p><span class="home-eyebrow">Solution</span>One <a href="{{ '/worktree-workflow/' | relative_url }}">Git worktree</a> and one claimed Bead per agent.</p>
+        </li>
+        <li class="home-card">
+          <h3>Agents rewrite the spec</h3>
+          <p><span class="home-eyebrow">Problem</span>An agent &ldquo;fixes&rdquo; the specification to match its code.</p>
+          <p><span class="home-eyebrow">Solution</span>Only a planning session writes <code>openspec/</code>; execution roles are fenced out (<a href="{{ '/operating-model/' | relative_url }}">boundaries</a>).</p>
+        </li>
+        <li class="home-card">
+          <h3>Runs die, state is lost</h3>
+          <p><span class="home-eyebrow">Problem</span>A run dies and the state is lost.</p>
+          <p><span class="home-eyebrow">Solution</span>Claims, notes and worktree records persist, with <a href="{{ '/failure-recovery/' | relative_url }}">documented recovery</a>.</p>
+        </li>
+        <li class="home-card">
+          <h3>&ldquo;Done&rdquo; is only a claim</h3>
+          <p><span class="home-eyebrow">Problem</span>&ldquo;Done&rdquo; is a claim, not a record.</p>
+          <p><span class="home-eyebrow">Solution</span>Every closed Bead carries a commit and an evidence note that sync mirrors into OpenSpec.</p>
+        </li>
+        <li class="home-card">
+          <h3>More than one agent CLI</h3>
+          <p><span class="home-eyebrow">Problem</span>You use more than one agent CLI.</p>
+          <p><span class="home-eyebrow">Solution</span>The same loop for Claude Code, Codex and Pi, with Antigravity (experimental).</p>
+        </li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="home-section" aria-labelledby="home-how-title">
+    <div class="home-container">
+      <h2 id="home-how-title">How it works</h2>
+      <p class="home-section-intro">One plan, one task per agent, and evidence that flows back.</p>
+
+      <figure class="home-figure">
+        <h3>Who talks to whom</h3>
+        <div class="home-frame">
+          <img src="{{ '/brand/nogging-communication-model.png' | relative_url }}" width="1242" height="1006" loading="lazy" alt="Diagram &ldquo;Who talks to whom&rdquo;: the Product Owner works with one agent session that has a Planning Agent and a Main Worker. Both can call six read-only specialists. Planning writes intent to OpenSpec, the Main Worker claims and closes Beads and commits to Git, and execution never writes openspec/. A sync timer mirrors closed Beads back into OpenSpec.">
+        </div>
+        <figcaption>The Product Owner works with one agent session in two personas, Planning and Lead (Main Worker in the diagram), which can call six read-only specialists. Only planning writes intent to OpenSpec; execution claims Beads and commits to Git; a mechanical sync timer mirrors the evidence back.</figcaption>
+        <a class="btn btn-outline home-figure-link" href="{{ '/brand/nogging-communication-model.png' | relative_url }}">Open full-size diagram (PNG)</a>
+      </figure>
+
+      <figure class="home-figure">
+        <h3>Day to day</h3>
+        <div class="home-frame home-crop">
+          <img src="{{ '/brand/nogging-daily-workflow.png' | relative_url }}" width="1240" height="3221" loading="lazy" alt="Tall diagram &ldquo;Working with it, day to day&rdquo;: a dark-mode example in five numbered steps. See what already exists, plan a change in its own worktree under a lock, implement one Bead and close it with evidence, let sync mirror the evidence, and a command reference grouped as Setup, Planning, Sessions and Work and proof.">
+        </div>
+        <figcaption>A worked example in four steps: see what already exists, plan a change under a lock, implement one Bead, then let the sync mirror the evidence back into the plan. The preview shows the top of the diagram.</figcaption>
+        <a class="btn btn-outline home-figure-link" href="{{ '/brand/nogging-daily-workflow.png' | relative_url }}">Open full-size diagram (PNG)</a>
+      </figure>
+
+      <p class="home-more">
+        <a href="{{ '/concepts/' | relative_url }}">Learn the concepts</a>
+        <a href="{{ '/operating-model/' | relative_url }}">Read the operating model</a>
+      </p>
+    </div>
+  </section>
+
+  <section class="home-section" aria-labelledby="home-works-title">
+    <div class="home-container">
+      <h2 id="home-works-title">Works with</h2>
+      <ul class="home-tiles home-tiles-4">
+        <li><a class="home-tile" href="{{ '/using-with-claude-code/' | relative_url }}"><span class="home-tile-name">Claude Code</span></a></li>
+        <li><a class="home-tile" href="{{ '/using-with-codex/' | relative_url }}"><span class="home-tile-name">Codex</span></a></li>
+        <li><a class="home-tile" href="{{ '/using-with-pi/' | relative_url }}"><span class="home-tile-name">Pi</span></a></li>
+        <li><a class="home-tile" href="{{ '/using-with-antigravity/' | relative_url }}"><span class="home-tile-name">Antigravity</span> <span class="home-pill">Experimental</span></a></li>
+      </ul>
+      <p class="home-platform"><strong>Linux only.</strong> Nogging supports Linux hosts only. <a href="{{ '/compatibility/' | relative_url }}">See the compatibility matrix</a></p>
+    </div>
+  </section>
+
+  <section class="home-section" aria-labelledby="home-safety-title">
+    <div class="home-container">
+      <h2 id="home-safety-title">Safety</h2>
+      <div class="home-callout">
+        <p>Nogging installs repository instructions and Git hooks, and can launch coding agents with filesystem, network and shell access. Read the <a href="{{ '/security-model/' | relative_url }}">security model</a> before you enable full access or background services, and start with restricted authority.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="home-section" aria-labelledby="home-community-title">
+    <div class="home-container">
+      <h2 id="home-community-title">Community</h2>
+      <ul class="home-tiles home-tiles-3">
+        <li><a class="home-tile" href="https://github.com/JoMe92/nogging/releases/latest"><span class="home-tile-name">Releases</span><span class="home-tile-desc">Every tagged version, with notes.</span></a></li>
+        <li><a class="home-tile" href="https://github.com/JoMe92/nogging/discussions"><span class="home-tile-name">Discussions</span><span class="home-tile-desc">Ask questions and share ideas.</span></a></li>
+        <li><a class="home-tile" href="https://github.com/JoMe92/nogging/blob/develop/CONTRIBUTING.md"><span class="home-tile-name">Contributing</span><span class="home-tile-desc">How to propose a change.</span></a></li>
+      </ul>
+    </div>
+  </section>
+
+</main>
+
+<footer class="home-footer">
+  <div class="home-container">
+    <div class="main-content">
+      {% include footer_custom.html %}
+    </div>
+  </div>
+</footer>
+
+<script>
+(function () {
+  var buttons = document.querySelectorAll(".home-copy");
+  if (!buttons.length) { return; }
+  var canClipboard = false;
+  var canExec = false;
+  try { canClipboard = !!(navigator.clipboard && typeof navigator.clipboard.writeText === "function"); } catch (e) { canClipboard = false; }
+  try { canExec = !!(document.queryCommandSupported && document.queryCommandSupported("copy")); } catch (e) { canExec = false; }
+  if (!canClipboard && !canExec) { return; }
+
+  function selectCode(code) {
+    try {
+      var range = document.createRange();
+      range.selectNodeContents(code);
+      var selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+    } catch (e) { /* the text stays selectable by hand */ }
+  }
+
+  function setup(button) {
+    var code = document.getElementById(button.getAttribute("data-target"));
+    var status = button.parentNode.querySelector(".home-copy-status");
+    var label = button.querySelector(".home-copy-label");
+    var timer = null;
+    if (!code || !status || !label) { return; }
+    button.hidden = false;
+
+    function say(message) { status.textContent = message; }
+    function reset() {
+      button.removeAttribute("data-copied");
+      label.textContent = "Copy";
+      say("");
+    }
+    function done() {
+      button.setAttribute("data-copied", "true");
+      label.textContent = "Copied";
+      say(button.getAttribute("data-done"));
+      if (timer) { clearTimeout(timer); }
+      timer = setTimeout(reset, 2000);
+    }
+    function fail() {
+      selectCode(code);
+      say("Press Ctrl+C to copy");
+    }
+    function fallback() {
+      var ok = false;
+      selectCode(code);
+      try { ok = !!document.execCommand("copy"); } catch (e) { ok = false; }
+      if (ok) { done(); } else { fail(); }
+    }
+
+    button.addEventListener("click", function () {
+      var text = code.textContent;
+      if (canClipboard) {
+        try {
+          navigator.clipboard.writeText(text).then(done, fallback);
+          return;
+        } catch (e) { /* fall through to the older copy path */ }
+      }
+      fallback();
+    });
+  }
+
+  for (var i = 0; i < buttons.length; i++) { setup(buttons[i]); }
+})();
+</script>
+{%- if site.search_enabled != false %}
+{% include components/search_footer.html %}
+{%- endif %}
+</body>
+</html>

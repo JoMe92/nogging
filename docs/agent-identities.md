@@ -6,10 +6,12 @@ Nogging persona. Tier 1 uses the persona's Git author name and email from
 credentials. You can adopt Tier 2 for individual personas and leave the others
 on Tier 1 by omitting their `github_app` blocks.
 
-This guide covers registration and host preparation. Tier-2 credential minting
-and worktree wiring are separate implementation tasks; this documentation alone
-does not enable App authentication. Confirm that your installed version supports
-`scripts/nogg credential-helper <slug>` before activating a configuration.
+This guide covers registering the Apps, preparing the host and configuring the
+personas. Nogging mints the credentials itself through
+`scripts/nogg credential-helper <slug>`, and a worktree allocated for a persona
+with a `github_app` block is wired to use it (see *Configure the persona*).
+Confirm that your installed version provides the helper (`scripts/nogg --help`)
+before activating a configuration.
 
 ## Register one App per persona
 
@@ -81,7 +83,7 @@ illustrative fragment for `personas.lead`, with a fictitious App ID:
 ```json
 {
   "name": "Nogging Lead",
-  "email": "lead@nogging.bot",
+  "email": "github-noreply-address",
   "github_app": {
     "app_id": 123456,
     "private_key_path": "/home/DELIVERY_USER/.config/nogging/bot-identities/lead.pem"
@@ -104,14 +106,17 @@ Failures return non-zero with no credential output. When wiring the helper
 manually, clear inherited credential helpers first so Git cannot continue to
 an ambient personal credential after a failure.
 
-Once Tier 2 is implemented, allocate a fresh persona worktree through Nogging so
-its identity and credential helper are scoped to that worktree. App installation
-tokens authenticate HTTPS remotes, not SSH. Avoid changing a shared remote in a
-way that disrupts other worktrees. Git author attribution and push authentication
-are separate: setting `user.email` alone does not authenticate as the App.
+Allocate persona worktrees through Nogging. For a persona with a `github_app`
+block, allocation sets the worktree-scoped Git identity to the App's bot
+address, rewrites the worktree's `origin` to HTTPS and installs
+`scripts/nogg credential-helper <slug>` as its only credential helper, so the
+identity and the helper are scoped to that worktree and a shared remote
+configuration is left alone. App installation tokens authenticate HTTPS
+remotes, not SSH. Git author attribution and push authentication are separate:
+setting `user.email` alone does not authenticate as the App.
 
-The intended helper mints short-lived installation tokens without storing them;
-missing keys or failed exchanges must fail closed without personal-credential
-fallback. Do not run the helper directly into a terminal or log because its
+The helper mints short-lived installation tokens without storing them; missing
+keys or failed exchanges fail closed, with no fallback to a personal
+credential. Do not run the helper directly into a terminal or log because its
 successful credential-protocol output contains a token. Verify through an
-authorized Git operation once the helper and worktree integration are available.
+authorized Git operation, such as a push from the persona's worktree.

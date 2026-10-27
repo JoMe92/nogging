@@ -28,7 +28,9 @@ a release candidate or a final release.
    version matches.
 
 4. **Bump the pinned install tag** to `vX.Y.Z` in `README.md`,
-   `docs/installation.md` and `NOGGING_TAG` in `scripts/bootstrap`. This was
+   `docs/installation.md`, the landing page's install data
+   `docs/_data/install.yml` (its `tag`, `bootstrap` and `init` values) and
+   `NOGGING_TAG` in `scripts/bootstrap`. This was
    missed across three prior releases before `v2.0.1`, leaving the documented
    quick start pointed at a stale tag — don't skip it. Run
    `scripts/release-pins.test.sh`: it reads the version from `package.json` and
@@ -90,7 +92,7 @@ a release candidate or a final release.
     needs the full acceptance evidence (install, upgrade, rollback, uninstall,
     every supported agent path) described in
     [docs/acceptance.md](acceptance.md), filled in from
-    [docs/acceptance-report-template.md](acceptance-report-template.md).
+    [acceptance-report-template.md](https://github.com/JoMe92/nogging/blob/develop/docs/acceptance-report-template.md).
     That report — not this checklist — is what a human signs.
 
 ## Rollback

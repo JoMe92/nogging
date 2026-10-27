@@ -1,0 +1,56 @@
+// Nogging light colour scheme (design Decision 5).
+// Compiled after the theme's light.scss. Every token is a literal #RRGGBB
+// value on its own line: scripts/docs-site.test.sh parses these lines and
+// recomputes WCAG contrast for each text, link and code pair (4.5:1 or more).
+// This file is standalone; nogging-dark.scss does not import it.
+
+// Theme tokens
+$color-scheme: light;
+$body-background-color: #F6F6F4;
+$sidebar-color: #E9EDE6;
+$code-background-color: #E9EDE6;
+$base-button-color: #E9EDE6;
+$feedback-color: #E1E7DD;
+$table-background-color: #F6F6F4;
+$search-background-color: #F6F6F4;
+$body-text-color: #22301F;
+$body-heading-color: #22301F;
+$code-linenumber-color: #22301F;
+$link-color: #3D5C3A;
+$btn-primary-color: #3D5C3A;
+$nav-child-link-color: #4A5B4C;
+$search-result-preview-color: #4A5B4C;
+$border-color: #CCD6C8;
+
+// Nogging tokens (defaults with the same light values live in custom/setup.scss)
+$nogging-text-secondary: #4A5B4C;
+$nogging-sage: #7E9C7E;
+$nogging-sage-light: #97B190;
+$nogging-accent-strong: #5E7D5E;
+$nogging-focus-color: #5E7D5E;
+$nogging-code-rule: #7E9C7E;
+$nogging-blockquote-rule: #97B190;
+$nogging-table-header-bg: #E9EDE6;
+$nogging-toggle-bg: transparent;
+$nogging-toggle-hover-bg: #E1E7DD;
+$nogging-toggle-ring: transparent;
+$nogging-selection-bg: #97B190;
+$nogging-mark-image: "nogging-mark.svg";
+$nogging-note-000: #B9C9B4;
+$nogging-note-300: #3D5C3A;
+$nogging-note-bg: #EEF2EC;
+$nogging-warning-000: #E3CB98;
+$nogging-warning-300: #8C5A00;
+$nogging-warning-bg: #FAF3E6;
+$nogging-experimental-000: #D6C9DD;
+$nogging-experimental-300: #6A4A78;
+$nogging-experimental-bg: #F4F0F6;
+$nogging-syntax-comment: #4A5B4C;
+$nogging-syntax-keyword: #A40E26;
+$nogging-syntax-name: #6639BA;
+
+// Syntax highlighting: the theme's github-light comment (#6E7781), name
+// (#8250DF) and keyword (#CF222E) colours fall below 4.5:1 on #E9EDE6.
+.highlight .c, .highlight .ch, .highlight .cm, .highlight .cp, .highlight .cpf, .highlight .c1, .highlight .cs { color: $nogging-syntax-comment; font-style: italic; } // 6.13:1
+.highlight .err, .highlight .k, .highlight .gr, .highlight .kd, .highlight .kn, .highlight .kp, .highlight .kr, .highlight .kt { color: $nogging-syntax-keyword; } // 6.64:1
+.highlight .n, .highlight .ne, .highlight .nx, .highlight .ow { color: $nogging-syntax-name; } // 6.20:1

@@ -2,9 +2,9 @@
 
 Nogging is tool-neutral. `AGENTS.md` is the canonical instruction file for
 every agent runtime, and the mechanical bridge (`scripts/nogg`) is the same
-whichever agent runs it. This page covers what is specific to running the
-Nogging loop from **Pi** (`https://pi.dev/`, package
-`@earendil-works/pi-coding-agent`) instead of Claude Code or Codex.
+whichever agent runs it. This page is for users who run the Nogging loop from
+**Pi** (`https://pi.dev/`, package `@earendil-works/pi-coding-agent`) instead
+of Claude Code or Codex, and covers what is specific to that setup.
 
 Everything verified below was checked hands-on against the installed
 `@earendil-works/pi-coding-agent@0.85.0` package (source and shipped example
@@ -42,7 +42,7 @@ In addition to the usual target-repo prerequisites (`bd`/Beads, `python3`,
 
 ## What the installer places under `.pi/`
 
-`npx github:JoMe92/nogging init` (or `update`) ships two directories,
+`npx github:JoMe92/nogging#<tag> init` (or `update`) ships two directories,
 copied verbatim on every `init`/`update`:
 
 | Path | Behaviour |
@@ -159,20 +159,24 @@ are reported back to the Lead Agent as discoveries.
 
 ## Known limitations
 
+- **herdr backend.** Pi can run with `--backend herdr`. It passed a live run
+  on 2026-10-27: launch on herdr, kickoff, a complete Bead with PR, and log
+  capture — including reading logs split by rotation (#304).
 - **No native sandbox, at either authority level.** See *Launch authority
   levels* above — this is the load-bearing limitation of running Nogging
   under Pi and is stated here plainly rather than assumed away: `restricted`
   for Pi is floor-only, not network- or filesystem-isolated.
 - **No Pi CI job** — there is none, and none is needed: the mechanical CI
   subset (`invariants`, `acceptance`) is already agent-neutral.
-- **Skills auto-discovery was not verified for Pi in this change.** Codex's
-  `.agents/skills/**/SKILL.md` auto-loading was hands-on confirmed in an
-  earlier change; the equivalent for Pi was out of scope here and should not
-  be assumed until checked.
+- **Skills auto-discovery is not verified for Pi.** Codex's
+  `.agents/skills/**/SKILL.md` auto-loading was confirmed hands-on, but the
+  equivalent for Pi was not checked and should not be assumed until it is.
 
 ## See also
 
 - `AGENTS.md` — the canonical, tool-neutral instruction file (its *Tool notes*
   section has the Claude-vs-Codex-vs-Pi summary).
-- `docs/operating-model.md` — roles, the delegation model, session supervision.
-- `docs/installation.md` — the installer and what it writes.
+- [Operating model](operating-model.md) — roles, the delegation model, session supervision.
+- [Installation guide](https://jome92.github.io/nogging/installation/) — the installer and what it writes.
+- [Using Nogging with Claude Code](https://jome92.github.io/nogging/using-with-claude-code/) — the same
+  loop from the default agent.
