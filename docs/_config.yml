@@ -94,6 +94,12 @@ defaults:
       nav_order: 2
       description: Supported operating systems, tools, versions, and agent integrations.
   - scope:
+      path: "first-change.md"
+    values:
+      parent: Getting started
+      nav_order: 3
+      description: Walk from a ready repository to your first closed Bead, step by step.
+  - scope:
       path: "faq.md"
     values:
       parent: Getting started
