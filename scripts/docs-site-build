@@ -3,15 +3,31 @@ set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 serve=false
+shots_dir=
+# Pinned screenshot toolchain: the Playwright image (tag and digest) and the
+# matching npm packages it runs with.
+playwright_image='mcr.microsoft.com/playwright:v1.64.1-noble@sha256:47b510dd9230bf0b9bfc9b20102241e577ea7a99334ab4c3ca19f19770e9b8ea'
+playwright_version=1.64.1
+axe_version=4.14.0
 case "${1:-}" in
   "") ;;
   --serve) serve=true ;;
+  --screenshots)
+    [[ -n ${2:-} ]] || { printf 'docs-site-build: --screenshots needs a directory\n' >&2; exit 2; }
+    shots_dir=$(realpath -m -- "$2")
+    if [[ $shots_dir == "$root" || $shots_dir == "$root"/* ]]; then
+      printf 'docs-site-build: the screenshot directory must be outside the repository: %s\n' "$shots_dir" >&2
+      exit 2
+    fi
+    shift
+    ;;
   --help|-h)
-    printf 'Usage: scripts/docs-site-build [--serve]\nBuild the docs site in a temporary GitHub Pages container and check local links and anchors.\n--serve starts a local preview at http://127.0.0.1:4000/nogging/\n'
+    printf 'Usage: scripts/docs-site-build [--serve | --screenshots <dir>]\nBuild the docs site in a temporary GitHub Pages container and check local links and anchors.\n--serve starts a local preview at http://127.0.0.1:4000/nogging/\n--screenshots <dir> also captures the landing page, a guide and the 404 page at 375x812 and\n  1280x800 in light and dark into <dir> (outside the repository), and fails on any serious or\n  critical axe-core finding, a horizontal page scroll, a wrong scheme, a script error, an\n  off-site request or a theme toggle that does not switch and remember the scheme.\n'
     exit 0
     ;;
   *) printf 'Unknown option: %s\n' "$1" >&2; exit 2 ;;
 esac
+[[ $# -le 1 ]] || { printf 'Unknown option: %s\n' "$2" >&2; exit 2; }
 
 if ! command -v docker >/dev/null 2>&1; then
   echo 'docs-site-build: docker is required' >&2
@@ -126,3 +142,166 @@ if errors:
     raise SystemExit(1)
 print(f"PASS: built site; checked links and anchors in {len(list(site.rglob('*.html')))} HTML pages")
 PY
+
+[[ -n $shots_dir ]] || exit 0
+
+# Screenshots and accessibility scan of the built site, in the pinned
+# Playwright container. Only the screenshot directory is writable.
+mkdir -p -- "$shots_dir"
+pw_cache="/tmp/nogging-docs-site-playwright-${playwright_version}-axe-${axe_version}"
+mkdir -p "$pw_cache"
+cat >"$build_dir/shots.cjs" <<'JS'
+const fs = require('fs');
+const http = require('http');
+const path = require('path');
+const { chromium } = require('playwright');
+
+const site = '/site';
+const out = '/out';
+const baseurl = '/nogging';
+const pages = [
+  ['landing', `${baseurl}/`],
+  ['guide', `${baseurl}/running-work-in-sessions/`],
+  ['404', `${baseurl}/no-such-page/`],
+];
+const viewports = [[375, 812], [1280, 800]];
+const schemes = ['light', 'dark'];
+const types = {
+  '.html': 'text/html; charset=utf-8', '.css': 'text/css', '.js': 'text/javascript',
+  '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png',
+  '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.xml': 'application/xml', '.txt': 'text/plain',
+};
+
+function fileFor(url) {
+  const pathname = decodeURIComponent(new URL(url, 'http://localhost').pathname);
+  if (pathname !== baseurl && !pathname.startsWith(`${baseurl}/`)) return null;
+  let file = path.join(site, path.normalize(pathname.slice(baseurl.length) || '/'));
+  if (file !== site && !file.startsWith(`${site}/`)) return null;
+  if (fs.existsSync(file) && fs.statSync(file).isDirectory()) file = path.join(file, 'index.html');
+  return fs.existsSync(file) ? file : null;
+}
+
+const server = http.createServer((req, res) => {
+  const file = fileFor(req.url);
+  if (!file) {
+    res.writeHead(404, { 'content-type': types['.html'] });
+    res.end(fs.readFileSync(path.join(site, '404.html')));
+    return;
+  }
+  res.writeHead(200, { 'content-type': types[path.extname(file)] || 'application/octet-stream' });
+  fs.createReadStream(file).pipe(res);
+});
+
+(async () => {
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const axeSource = fs.readFileSync(require.resolve('axe-core/axe.min.js'), 'utf8');
+  const browser = await chromium.launch({ chromiumSandbox: false });
+  const failures = [];
+  const report = [];
+  const sheet = (page) => page.evaluate(() => document.querySelector('link[rel="stylesheet"]').getAttribute('href'));
+  // Every context refuses off-site requests and every page reports script errors.
+  const openContext = async (options) => {
+    const context = await browser.newContext(options);
+    await context.route('**/*', (route) => {
+      const url = route.request().url();
+      if (url.startsWith(`${origin}/`) || url.startsWith('data:')) return route.continue();
+      failures.push(`off-site request ${url}`);
+      return route.abort();
+    });
+    context.on('page', (page) => page.on('pageerror', (error) => failures.push(`script error on ${page.url()}: ${error.message}`)));
+    return context;
+  };
+  for (const scheme of schemes) {
+    for (const [width, height] of viewports) {
+      const context = await openContext({ viewport: { width, height }, colorScheme: scheme });
+      for (const [name, url] of pages) {
+        const label = `${name} ${width}x${height} ${scheme}`;
+        const page = await context.newPage();
+        await page.goto(origin + url, { waitUntil: 'networkidle' });
+        await page.evaluate(() => document.fonts.ready);
+        const state = await page.evaluate(() => ({
+          stylesheet: document.querySelector('link[rel="stylesheet"]').getAttribute('href'),
+          scrollWidth: document.documentElement.scrollWidth,
+          innerWidth: window.innerWidth,
+        }));
+        if (/-dark\.css$/.test(state.stylesheet) !== (scheme === 'dark')) {
+          failures.push(`${label}: wrong scheme stylesheet ${state.stylesheet}`);
+        }
+        if (state.scrollWidth > state.innerWidth) {
+          failures.push(`${label}: horizontal page scroll (${state.scrollWidth}px > ${state.innerWidth}px)`);
+        }
+        await page.screenshot({ path: path.join(out, `${name}-${width}x${height}-${scheme}.png`), fullPage: true });
+        await page.addScriptTag({ content: axeSource });
+        const result = await page.evaluate(() => window.axe.run(document, { resultTypes: ['violations'] }));
+        for (const violation of result.violations) {
+          const targets = violation.nodes.slice(0, 5).map((node) => node.target.join(' '));
+          report.push({ page: label, id: violation.id, impact: violation.impact, help: violation.help, targets });
+          if (violation.impact === 'serious' || violation.impact === 'critical') {
+            failures.push(`${label}: axe ${violation.impact} ${violation.id} (${violation.help}) at ${targets.join(', ')}`);
+          }
+        }
+        if (name === 'guide' && width < 800) {
+          // The phone menu opens without widening the page and keeps the toggle reachable.
+          await page.click('#menu-button');
+          const menu = await page.evaluate(() => ({
+            open: document.getElementById('menu-button').getAttribute('aria-expanded') === 'true',
+            scrollWidth: document.documentElement.scrollWidth,
+            innerWidth: window.innerWidth,
+          }));
+          if (!menu.open) failures.push(`${label}: the menu button did not open the menu`);
+          if (menu.scrollWidth > menu.innerWidth) {
+            failures.push(`${label} menu open: horizontal page scroll (${menu.scrollWidth}px > ${menu.innerWidth}px)`);
+          }
+          if (!(await page.isVisible('#nogging-theme-toggle'))) failures.push(`${label} menu open: the theme toggle is hidden`);
+          await page.screenshot({ path: path.join(out, `${name}-${width}x${height}-${scheme}-menu.png`) });
+        }
+        await page.close();
+      }
+      await context.close();
+    }
+  }
+  // The header toggle switches the scheme and remembers it across a reload;
+  // with storage blocked it still switches, and the page still works.
+  for (const [width, height] of viewports) {
+    for (const blocked of [false, true]) {
+      const label = `toggle ${width}x${height}${blocked ? ' with storage blocked' : ''}`;
+      const context = await openContext({ viewport: { width, height }, colorScheme: 'light' });
+      if (blocked) {
+        await context.addInitScript(() => Object.defineProperty(window, 'localStorage', {
+          configurable: true,
+          get() { throw new DOMException('storage blocked', 'SecurityError'); },
+        }));
+      }
+      const page = await context.newPage();
+      await page.goto(origin + pages[1][1], { waitUntil: 'networkidle' });
+      await page.click('#nogging-theme-toggle', { timeout: 5000 }).catch((error) => failures.push(`${label}: ${error.message.split('\n')[0]}`));
+      await page.waitForLoadState('networkidle');
+      const pressed = await page.getAttribute('#nogging-theme-toggle', 'aria-pressed');
+      if (!/-dark\.css$/.test(await sheet(page)) || pressed !== 'true') failures.push(`${label}: the toggle did not switch to dark`);
+      await page.reload({ waitUntil: 'networkidle' });
+      if (/-dark\.css$/.test(await sheet(page)) === blocked) {
+        failures.push(`${label}: ${blocked ? 'a choice was remembered without storage' : 'the choice was not remembered after a reload'}`);
+      }
+      await context.close();
+    }
+  }
+  await browser.close();
+  server.close();
+  fs.writeFileSync(path.join(out, 'axe-report.json'), `${JSON.stringify(report, null, 2)}\n`);
+  if (failures.length) {
+    for (const failure of failures) console.error(`FAIL: ${failure}`);
+    process.exit(1);
+  }
+  console.log(`PASS: ${pages.length * viewports.length * schemes.length + schemes.length} screenshots in ${out}; no serious or critical axe-core finding`);
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+JS
+
+docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -e npm_config_cache=/deps/.npm -e NODE_PATH=/deps/node_modules \
+  -v "$build_dir/site:/site:ro" -v "$build_dir/shots.cjs:/shots.cjs:ro" -v "$pw_cache:/deps" -v "$shots_dir:/out" \
+  -w /deps "$playwright_image" bash -c \
+  "test -f /deps/node_modules/.nogging-ready || { npm install --no-save --no-audit --no-fund 'playwright@$playwright_version' 'axe-core@$axe_version' && touch /deps/node_modules/.nogging-ready; }; node /shots.cjs"
+printf 'screenshots: %s\n' "$shots_dir"

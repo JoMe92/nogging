@@ -137,6 +137,124 @@ for rel, page in published:
         elif target_path.suffix:
             require(target_path.exists(), f"published link from {rel} points to missing asset: {target}")
 
+# Brand assets load only from the site itself: no CDN, font service or other
+# off-site script, stylesheet, font or image in includes, Sass, assets or pages.
+offsite = re.compile(r"""(?ix)
+    <script[^>]*\bsrc\s*=\s*["']?(?:https?:)?//
+  | <link[^>]*\bhref\s*=\s*["']?(?:https?:)?//
+  | @import\s+(?:url\()?\s*["']?(?:https?:)?//
+  | url\(\s*["']?(?:https?:)?//
+  | <(?:image|use)[^>]*\bhref\s*=\s*["']?(?:https?:)?//
+""")
+site_sources = [p for pattern in ("_includes/**/*", "_layouts/**/*", "_sass/**/*.scss", "assets/**/*.scss",
+                                  "assets/**/*.css", "assets/**/*.js", "**/*.svg")
+                for p in docs.glob(pattern) if p.is_file()]
+for source in sorted(set(site_sources)) + [page for _, page in published]:
+    rel = source.relative_to(docs).as_posix()
+    match = offsite.search(source.read_text())
+    require(match is None, f"{rel} loads an off-site asset: {match.group(0) if match else ''}")
+
+# Every local asset an include or a Sass file references exists. Sass URLs are
+# relative to the compiled stylesheets in assets/css/.
+for include in sorted(docs.glob("_includes/**/*.html")):
+    for target in re.findall(r"""['"](/[^'"{}]+)['"]\s*\|\s*(?:relative_url|absolute_url)""", include.read_text()):
+        require((docs / target.lstrip("/")).is_file(),
+                f"{include.relative_to(docs).as_posix()} references a missing asset: {target}")
+for sass in sorted(docs.glob("_sass/**/*.scss")) + sorted(docs.glob("assets/**/*.scss")):
+    for target in re.findall(r"""url\(\s*["']?([^"')\s]+)""", sass.read_text()):
+        if re.match(r"(?i)^(data:|#|https?:|//)", target) or "#{" in target:
+            continue
+        resolved = (docs / target.lstrip("/")) if target.startswith("/") else (docs / "assets" / "css" / target)
+        require(resolved.resolve().is_file(), f"{sass.relative_to(docs).as_posix()} references a missing asset: {target}")
+
+# The head script reads and writes browser storage only inside try blocks, so a
+# page with blocked storage still renders.
+head_custom = docs / "_includes" / "head_custom.html"
+require(head_custom.is_file(), "docs/_includes/head_custom.html is missing")
+if head_custom.is_file():
+    head_text = head_custom.read_text()
+    for needle in ("prefers-color-scheme", "jtd.setTheme"):
+        require(needle in head_text, f"head_custom.html does not use {needle}")
+    stack = []
+    for token in re.finditer(r"\btry\s*\{|\{|\}|\b(?:local|session)Storage\b", head_text):
+        word = token.group(0)
+        if word.startswith("try"):
+            stack.append("try")
+        elif word == "{":
+            stack.append("block")
+        elif word == "}":
+            if stack:
+                stack.pop()
+        elif "try" not in stack:
+            line = head_text.count("\n", 0, token.start()) + 1
+            errors.append(f"head_custom.html line {line} uses {word} outside a try block")
+
+# Brand colours (design Decision 5): every text, link and code token pair in
+# both schemes keeps WCAG 2.1 AA contrast. Tokens are literal #RRGGBB lines.
+def luminance(colour):
+    channels = [int(colour[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+    linear = [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in channels]
+    return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+def contrast(first, second):
+    high, low = sorted((luminance(first), luminance(second)), reverse=True)
+    return (high + 0.05) / (low + 0.05)
+
+text_pairs = [
+    ("body-text-color", "body-background-color"), ("body-text-color", "sidebar-color"),
+    ("body-text-color", "code-background-color"), ("body-text-color", "feedback-color"),
+    ("body-text-color", "table-background-color"), ("body-text-color", "search-background-color"),
+    ("body-text-color", "nogging-table-header-bg"),
+    ("body-heading-color", "body-background-color"), ("body-heading-color", "sidebar-color"),
+    ("code-linenumber-color", "code-background-color"),
+    ("link-color", "body-background-color"), ("link-color", "sidebar-color"),
+    ("link-color", "code-background-color"), ("link-color", "feedback-color"),
+    ("nav-child-link-color", "sidebar-color"), ("nav-child-link-color", "feedback-color"),
+    ("search-result-preview-color", "search-background-color"),
+    ("nogging-text-secondary", "body-background-color"), ("nogging-text-secondary", "sidebar-color"),
+    ("#FFFFFF", "btn-primary-color"),
+]
+for callout in ("note", "warning", "experimental"):
+    text_pairs += [(f"nogging-{callout}-300", f"nogging-{callout}-bg"),
+                   ("body-text-color", f"nogging-{callout}-bg"), ("link-color", f"nogging-{callout}-bg")]
+scheme_pairs = {
+    "nogging": text_pairs + [(f"nogging-syntax-{kind}", "code-background-color")
+                             for kind in ("comment", "keyword", "name")],
+    "nogging-dark": text_pairs + [("nogging-syntax-error", "code-background-color")],
+}
+schemes = {}
+for scheme, pairs in scheme_pairs.items():
+    scheme_file = docs / "_sass" / "color_schemes" / f"{scheme}.scss"
+    entry = docs / "assets" / "css" / f"just-the-docs-{scheme}.scss"
+    require(entry.is_file(), f"colour scheme {scheme} has no assets/css/{entry.name} entry")
+    if not scheme_file.is_file():
+        errors.append(f"colour scheme file _sass/color_schemes/{scheme}.scss is missing")
+        continue
+    tokens = dict(re.findall(r"(?m)^\$([a-z0-9-]+):\s*(#[0-9A-Fa-f]{6})\s*;", scheme_file.read_text()))
+    schemes[scheme] = tokens
+    for fg, bg in pairs:
+        colours = [name if name.startswith("#") else tokens.get(name) for name in (fg, bg)]
+        if None in colours:
+            missing = [name for name, colour in zip((fg, bg), colours) if colour is None]
+            errors.append(f"{scheme}: token ${missing[0]} is not a literal #RRGGBB value")
+            continue
+        ratio = contrast(*colours)
+        require(ratio >= 4.5, f"{scheme}: {fg} {colours[0]} on {bg} {colours[1]} has contrast {ratio:.2f}:1, below 4.5:1")
+if head_custom.is_file() and "nogging-dark" in schemes:
+    critical = re.search(r"data-nogging-theme=\"dark\"\]\{[^}]*background-color:\s*(#[0-9A-Fa-f]{6})", head_custom.read_text())
+    require(critical is not None and critical.group(1).upper() == schemes["nogging-dark"].get("body-background-color", "").upper(),
+            "head_custom.html dark first-paint background must equal nogging-dark $body-background-color")
+
+# Brand assets: Poppins with its licence, the mark in both variants, favicons.
+for asset in ["assets/fonts/OFL.txt", "assets/images/nogging-mark.svg", "assets/images/nogging-mark-dark.svg",
+              "assets/images/favicon.svg", "assets/images/favicon.ico", "assets/images/apple-touch-icon.png"] + [
+              f"assets/fonts/poppins-latin-{weight}-normal.woff2" for weight in (400, 500, 600, 700)]:
+    require((docs / asset).is_file() and (docs / asset).stat().st_size > 0, f"brand asset docs/{asset} is missing or empty")
+footer_custom = docs / "_includes" / "footer_custom.html"
+footer_text = footer_custom.read_text() if footer_custom.is_file() else ""
+require("Nogging is released under the ISC License" in footer_text, "footer must say Nogging is released under the ISC License")
+require("Copyright" not in footer_text, "footer must not copy the LICENSE copyright line")
+
 # commands.md headings must match the live scripts/nogg --help output (offline).
 import subprocess
 

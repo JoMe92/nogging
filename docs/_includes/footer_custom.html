@@ -1,0 +1,14 @@
+<div class="nogging-footer">
+  <p class="nogging-footer-license">Nogging is released under the ISC License.</p>
+  <nav class="nogging-footer-links" aria-label="Project">
+    <ul>
+      <li><a href="https://github.com/JoMe92/nogging">GitHub</a></li>
+      <li><a href="https://github.com/JoMe92/nogging/blob/develop/SECURITY.md">Security policy</a></li>
+      <li><a href="https://github.com/JoMe92/nogging/discussions">Discussions</a></li>
+    </ul>
+  </nav>
+  {%- assign nogging_install = site.data.install -%}
+  {%- if nogging_install and nogging_install.tag %}
+  <p class="nogging-footer-version">Current release: <a href="https://github.com/JoMe92/nogging/releases/tag/{{ nogging_install.tag | uri_escape }}">{{ nogging_install.tag | escape }}</a></p>
+  {%- endif %}
+</div>

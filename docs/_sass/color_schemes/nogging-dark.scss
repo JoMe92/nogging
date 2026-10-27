@@ -1,0 +1,56 @@
+// Nogging dark colour scheme (design Decision 5).
+// Compiled after the theme's light.scss. Every token is a literal #RRGGBB
+// value on its own line: scripts/docs-site.test.sh parses these lines and
+// recomputes WCAG contrast for each text, link and code pair (4.5:1 or more).
+// $body-background-color must equal the first-paint colour in
+// _includes/head_custom.html. This file does not import nogging.scss.
+
+// Theme tokens
+$color-scheme: dark;
+$body-background-color: #141B13;
+$sidebar-color: #1D261C;
+$code-background-color: #1D261C;
+$table-background-color: #1D261C;
+$search-background-color: #1D261C;
+$feedback-color: #283527;
+$base-button-color: #283527;
+$body-text-color: #E6EBE3;
+$body-heading-color: #E6EBE3;
+$code-linenumber-color: #E6EBE3;
+$link-color: #A9C3A2;
+$nav-child-link-color: #B8C9B3;
+$search-result-preview-color: #B8C9B3;
+$btn-primary-color: #3D5C3A;
+$border-color: #33402F;
+
+// Nogging tokens
+$nogging-text-secondary: #B8C9B3;
+$nogging-sage: #7E9C7E;
+$nogging-sage-light: #97B190;
+$nogging-accent-strong: #97B190;
+$nogging-focus-color: #97B190;
+$nogging-code-rule: #7E9C7E;
+$nogging-blockquote-rule: #7E9C7E;
+$nogging-table-header-bg: #283527;
+$nogging-toggle-bg: #283527;
+$nogging-toggle-hover-bg: #313F2F;
+$nogging-toggle-ring: #7E9C7E;
+$nogging-selection-bg: #3D5C3A;
+$nogging-mark-image: "nogging-mark-dark.svg";
+$nogging-note-000: #3A4A37;
+$nogging-note-300: #97B190;
+$nogging-note-bg: #1C2A1B;
+$nogging-warning-000: #5A4520;
+$nogging-warning-300: #E8B45A;
+$nogging-warning-bg: #2A2215;
+$nogging-experimental-000: #4A3A52;
+$nogging-experimental-300: #C9A8D6;
+$nogging-experimental-bg: #241E28;
+$nogging-syntax-error: #FFA198;
+
+// Syntax highlighting: github-dark, with the two tokens that fall below
+// 4.5:1 on #1D261C raised.
+@import "./vendor/accessible-pygments/github-dark";
+
+.highlight .err { color: $nogging-syntax-error; } // 8.02:1
+.highlight .w { color: $code-linenumber-color; } // vendored #6E7681 is 3.40:1
