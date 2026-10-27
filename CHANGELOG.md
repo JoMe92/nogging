@@ -18,7 +18,8 @@ and GitHub Releases for that history.
   headings, a landing page with a pinned quick start, sidebar sections and
   search, and new pages: Your first change, Claude Code guide, command
   reference, configuration reference and glossary. Internal pages are
-  excluded from the site (#281 #288 #289 #291 #292 #293 #294 #296).
+  excluded from the site (#281 #288 #289 #290 #291 #292 #293 #294 #296
+  #302).
 - An offline docs-site test suite (`scripts/docs-site.test.sh`) and a
   container build for the site (`scripts/docs-site-build`) (#289 #293).
 - `THIRD_PARTY_NOTICES.md` carries the full MIT texts for the OpenSpec and
@@ -27,6 +28,9 @@ and GitHub Releases for that history.
 - Pi can run on the herdr backend (#299).
 - How to watch all herdr sessions at once with `herdr --session nogging`
   (#303).
+- Security guidance: keep the Beads database in a separate private
+  repository for public projects, set a private-safe Git identity before
+  creating Beads, and how to move data that was already published (#306).
 
 ### Changed
 
