@@ -85,7 +85,7 @@ npx github:JoMe92/nogging#v3.1.1 init --no-systemd
 ```
 
 `init` creates the Beads tracker by default and prints a readiness verdict. It
-does not require a website or Agent Console. Remove `--no-systemd` only after
+does not require a website. Remove `--no-systemd` only after
 reviewing the [safety warning](#safety-warning). The unscoped npm name `nogg`
 belongs to another project, so this package is private and is installed from
 a GitHub tag only.
@@ -299,6 +299,3 @@ implementation and is not affiliated with or endorsed by the Gas Town or Beads
 maintainers. [Beads](https://github.com/gastownhall/beads) is the only Gas Town
 ecosystem component currently adopted; Nogging does not include Gas Town
 runtime components.
-
-[Agent Console](https://github.com/JoMe92/agent-console) is an optional sibling
-project for orchestration and UI. Nogging works without it.
