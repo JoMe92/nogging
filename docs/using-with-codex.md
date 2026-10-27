@@ -2,8 +2,9 @@
 
 Nogging is tool-neutral. `AGENTS.md` is the canonical instruction file for
 every agent runtime, and the mechanical bridge (`scripts/nogg`) is the same
-whichever agent runs it. This page covers what is specific to running the
-Nogging loop from **OpenAI Codex** instead of Claude Code.
+whichever agent runs it. This page is for users who run the Nogging loop from
+**OpenAI Codex** instead of Claude Code, and covers what is specific to that
+setup.
 
 Everything verified below was checked against **codex-cli 0.148.0**. Codex moves
 fast; where a detail is version-dependent it is called out so you can re-check.
@@ -203,11 +204,11 @@ either:
   ./scripts/nogg codex-prompts-link --unlink # remove the nogging-* links
   ```
 
-  It symlinks each `.codex/prompts/*.md` to
+  The helper symlinks each `.codex/prompts/*.md` to
   `${CODEX_HOME:-~/.codex}/prompts/nogging-<name>.md`, repoints a stale link,
   and reports (without clobbering) a real file that is in the way. It is
   **opt-in** — `npx … init`/`update` never writes into `$HOME`. `scripts/nogg
-  doctor` prints a NOTE when the prompts are present but unlinked. or
+  doctor` prints a NOTE when the prompts are present but unlinked; or
 - run the `scripts/nogg` steps directly (the prompt files are just the
   script sequence plus a persona); or
 - use the auto-loaded `.agents/skills/` OpenSpec skills (see *Skills*) — the
@@ -305,19 +306,19 @@ Nogging accepts a matching identity receipt from the launch wrapper. If neither
 source proves the identity, a planning launch fails before kickoff and cleans
 up the created session; launch it from an unsandboxed shell.
 
-The reliable-input fixes described in `docs/running-work-in-sessions.md`
-shipped in Nogging 3.0.0. The safeguards in this section, together with the
-session-name and failed-launch cleanup fixes, require a Nogging update that
-contains the launch-name and Codex-delivery change. If your repository vendors
-an older copy, update it before relying on them.
+The reliable-input fixes described in the
+[sessions guide](https://jome92.github.io/nogging/running-work-in-sessions/) shipped in Nogging 3.0.0. The safeguards in this section, together with the
+session-name and failed-launch cleanup fixes, need a Nogging release that
+includes them. If your repository vendors an older copy, run `update` before
+relying on them.
 
 ## A Codex session hit its usage limit
 
 `scripts/nogg session watch` and `scripts/nogg session resume-when-ready` work
 the same way for a Codex session as for a Claude one (the `codex` adapter has
 its own pattern table). **Switching models does not clear a genuine
-account-wide usage limit** — this was confirmed twice in production (GitHub
-issue #20) and holds regardless of which agent hit the limit. Do not retry
+account-wide usage limit** — this was confirmed twice in production and holds
+regardless of which agent hit the limit. Do not retry
 with a different model as a workaround; wait it out, or run
 `resume-when-ready <name>`, which dismisses a residual "switch model?" prompt
 by keeping the current model rather than switching.
@@ -361,7 +362,7 @@ discovered automatically or invoked by name (`$openspec-propose`).
 - **No per-tool write hook.** Claude Code has a `PreToolUse` hook that rejects
   `Edit`/`Write` under `openspec/`. Codex has no equivalent. For Codex the
   OpenSpec write boundary is held by:
-  1. the **filesystem write guard** (`tool-agnostic-write-boundary`) — the
+  1. the **filesystem write guard** — the
      `.nogging/locks/openspec.readonly` sentinel that `plan-begin`/`plan-end`
      toggle;
   2. the **execpolicy floor** (`.codex/rules/nogging.rules`);
@@ -375,7 +376,7 @@ discovered automatically or invoked by name (`$openspec-propose`).
 
 - `AGENTS.md` — the canonical, tool-neutral instruction file (its *Tool notes*
   section has the Claude-vs-Codex summary).
-- `docs/operating-model.md` — roles, the delegation model, session supervision.
-- `docs/installation.md` — the installer and what it writes.
+- [Operating model](operating-model.md) — roles, the delegation model, session supervision.
+- [Installation guide](https://jome92.github.io/nogging/installation/) — the installer and what it writes.
 - [Using Nogging with Claude Code](https://jome92.github.io/nogging/using-with-claude-code/) — the same
   loop from the default agent.

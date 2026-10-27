@@ -1,12 +1,14 @@
-# Using Nogging with Antigravity
+# Using Nogging with Antigravity (Experimental)
 
-The optional `agy` integration uses the same Beads, Git and OpenSpec workflow
-as other Nogging agents. The investigated Linux runtimes are **agy 1.3.2**
-(core) and **agy 1.3.3** (quota). Unsigned core and quota live evidence is
-recorded in the
-[core acceptance report](https://github.com/JoMe92/nogging/blob/develop/docs/acceptance/2026-10-10-antigravity-core.md);
+This page is for users who want to run Nogging sessions from Google
+Antigravity (`agy`). The integration is **experimental** and optional: it uses
+the same Beads, Git and OpenSpec workflow as other Nogging agents, and every
+other agent path works without it. The investigated Linux runtimes are
+**agy 1.3.2** (core) and **agy 1.3.3** (quota). Unsigned core and quota live
+evidence is recorded in the
+[core acceptance report](https://github.com/JoMe92/nogging/blob/main/docs/acceptance/2026-10-10-antigravity-core.md);
 human acceptance is separate and not declared here. See the
-[contract investigation](https://github.com/JoMe92/nogging/blob/develop/docs/acceptance/antigravity-contract-investigation.md)
+[contract investigation](https://github.com/JoMe92/nogging/blob/main/docs/acceptance/antigravity-contract-investigation.md)
 for sanitized live evidence and unsupported contracts.
 
 ## Launch and prerequisites
