@@ -1,14 +1,5 @@
-# Structure for a team of agents
+---
+title: Nogging
+---
 
-Nogging gives agent teams a shared plan, clear roles, and a Git-backed record
-of completed work. Choose a section to get started, understand the workflow,
-or find an operational reference.
-
-## Start here
-
-- [Getting started](getting-started.md)
-- [Concepts](concepts.md)
-- [Guides](guides.md)
-- [Operations](operations.md)
-- [Reference](reference.md)
-- [Project & maintainers](project.md)
+Nogging is a spec-driven, multi-agent workflow for AI coding agents such as Claude Code, Codex, Pi and Antigravity (experimental). A Planning Agent writes the approved plan in OpenSpec, a Lead Agent executes it as Beads tasks with Git evidence, and a sync mirrors that evidence back into the plan; the command and installed state are named `nogg`.
