@@ -41,9 +41,10 @@ def same_namespace(namespace):
 
 class HerdrBackend:
     name = "herdr"
-    # All three gated runtimes passed recorder, status and ANSI capture on 0.9.5.
+    # claude, codex and antigravity passed recorder, status and ANSI capture on 0.9.5;
+    # pi passed the offline recorder check (SPEC-g010), live herdr acceptance pending.
     capabilities = Capabilities(capture_attributes=True, agent_status=True)
-    _RECORDER_AGENTS = frozenset({"claude", "codex", "antigravity"})
+    _RECORDER_AGENTS = frozenset({"claude", "codex", "antigravity", "pi"})
     _CONFIG = ("[session]\nresume_agents_on_restore = false\n"
                "[update]\nversion_check = false\nmanifest_check = false\n"
                "[experimental]\npane_history = false\n")
