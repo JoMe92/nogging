@@ -1,22 +1,29 @@
 # Operating model
 
+This page describes how a Nogging project runs day to day: who does what, how
+a change moves from planning to an accepted result, and how agent sessions are
+supervised. It is for the Product Owner and for anyone operating or extending
+the delivery loop. For the vision see
+[Vision and architecture](https://jome92.github.io/nogging/vision-and-architecture/); for the data contracts
+see [Architecture](architecture.md).
+
 ## Roles
 
 - **Product Owner:** describes desired outcomes, decides ambiguities, accepts and archives changes.
-- **Orchestration Agent:** an always-on session above Planning and the Main Worker that drives the delivery loop — reads the whole state and launches, steers and stops Planning and Lead sessions. Orchestrate-only by default; see *Orchestration* below.
+- **Orchestration Agent:** an always-on session above Planning and the Lead Agent that drives the delivery loop — reads the whole state and launches, steers and stops Planning and Lead sessions. Orchestrate-only by default; see *Orchestration* below.
 - **Planning Agent:** works only in a deliberate planning session; writes OpenSpec and creates/reconciles Beads.
-- **Main Worker:** selects `bd ready`, delegates isolated implementation work, validates, commits, records evidence and closes Beads.
-- **Specialists:** work only on a claimed Bead and report results to the Main Worker.
+- **Main Worker:** the role name of the **Lead Agent**, the session that implements a change. It selects `bd ready`, delegates isolated implementation work, validates, commits, records evidence and closes Beads. This page says Lead Agent from here on.
+- **Specialists:** work only on a claimed Bead and report results to the Lead Agent.
 - **Sync timer:** polls every 30 seconds and mirrors facts only.
 
 The role hierarchy is **Product Owner → Orchestration Agent → {Planning Agent,
-Lead Agent} → Specialists**. Planning and the Main Worker still connect only
+Lead Agent} → Specialists**. Planning and the Lead Agent still connect only
 through the shared OpenSpec/Beads state; the Orchestration Agent is the agent
 that holds the loop the Product Owner would otherwise hold by hand.
 
 ## Delegation model and the Lead Agent knowledge path
 
-The Main Worker session runs as the **Lead Agent** persona. It has full
+The Lead Agent session is the persona of the top-level implementation session. It has full
 read/write on Beads but **read-only** access to OpenSpec — only the Planning
 Agent writes there. It never implements in the shared `develop` checkout: after
 claiming a Bead it allocates a dedicated worktree from updated `develop`, on a
@@ -94,7 +101,7 @@ sandbox).
 ## Orchestration
 
 The **Orchestration Agent** is a third session persona, above the Planning Agent
-and the Main Worker. It runs always-on as a supervised
+and the Lead Agent. It runs always-on as a supervised
 `nogg-orchestrator-<slug>` tmux session (the Orchestration Agent is pinned to
 tmux and always runs on tmux, even if herdr is configured as the default backend) that a rendered systemd **user service**
 keeps alive across a crash or a host reboot, resuming its own conversation with
@@ -252,8 +259,6 @@ update; it never pushes. Its mirror commit is
 `chore(sync): mirror Beads execution evidence` with a `Nogging-Writer: sync`
 trailer.
 
-## Acceptance
-
 ## Keeping a Lead branch current
 
 A Lead never integrates upstream with raw git while `openspec/` is read-only.
@@ -274,6 +279,8 @@ that does not materially alter architecture, interfaces, or scope creates and
 resolves a Bead on the existing implementation branch and restores green CI.
 A large or uncertain change starts a new planning session in a dedicated
 planning worktree; it is not implemented directly on the existing PR branch.
+
+## Acceptance
 
 A change is not **accepted** just because its Beads are closed and CI is green.
 Acceptance is an explicit, human act recorded in a signed report.
@@ -361,7 +368,8 @@ The `restricted` / `trusted` authority levels are **tool-neutral** and resolve
 per agent: for `claude` to the existing `.nogging/launch-profiles/<level>.json`
 settings file; for `codex` to `.nogging/launch-profiles/<level>.codex.toml`,
 mapped onto Codex's model — `--sandbox workspace-write`, `--ask-for-approval`
-`on-request` (`restricted`) or `never` (`trusted`), and network access off.
+`on-request` (`restricted`) or `never` (`trusted`). Network access is off for
+`restricted` and on for `trusted`, so a trusted Codex Lead can push its branch.
 A Codex session has no per-session `permissions` file; its command floor is the
 repo's `.codex/rules/` execpolicy directory (shipped by `codex-onboarding`),
 and `session launch` warns when that floor file is missing but still starts.
@@ -381,7 +389,7 @@ OpenSpec guard, with no validated filesystem/network sandbox. Sandbox requests
 refuse. Guard validation and narrowly scoped atomic workspace trust precede
 launch. Stop captures exact conversation IDs; resume never selects latest.
 Specialists are separate supervised sessions on one already-claimed Bead and
-never claim, close, re-status, commit or write OpenSpec. The Main Worker owns
+never claim, close, re-status, commit or write OpenSpec. The Lead Agent owns
 all evidence and lifecycle changes. See [the Antigravity guide](using-with-antigravity.md)
 for installed skills, first-turn/kickoff handling and pending acceptance/quota
 support. The Orchestration Agent remains Claude-only.
@@ -395,8 +403,8 @@ session runs under. A bare name resolves under `.nogging/launch-profiles/` /
 flag the behaviour is exactly as before this existed: `restricted` +
 no-autonomous-claim. Two profiles ship: `restricted` (the default) and
 `trusted` (`bypassPermissions`; allows `git push`/`merge`/`switch`/`rebase`, `bd`,
-`openspec`, `npx`, `scripts/*`; still denies `sudo`, `systemctl`, `curl`/
-`wget`, `WebFetch`). Each has a `<level>.codex.toml` sibling for a Codex launch
+`openspec`, `npx`, `scripts/*`; still denies `rm -rf`, `sudo`, `dd`, `mkfs`,
+`shutdown` and `reboot`). Each has a `<level>.codex.toml` sibling for a Codex launch
 (see *The agent is selectable*). `--full-access` is shorthand for `--profile
 trusted --prompt autonomous`, the pairing that authorises a session to execute
 one named change end to end and fast-forward-merge it to `develop`.

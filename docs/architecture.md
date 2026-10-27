@@ -1,5 +1,10 @@
 # Architecture
 
+This page describes how Nogging is built: the data contracts, the state and
+safety rules of the mechanical sync, session supervision and the OpenSpec write
+boundary. It is for contributors and for operators who want to know exactly what
+is enforced and where.
+
 Nogging deliberately separates semantic decisions from mechanical state
 reconciliation. It is not a general-purpose ALM system.
 
@@ -86,7 +91,7 @@ working tree is not a safe place to write:
 A skip is a **no-op, not a failure**: it prints `sync: skipped (<reason>)`,
 exits 0, writes no `sync-failure.json`, applies no backoff, and leaves
 `last-success.json` untouched, so the next tick simply retries once the reason
-clears. This is weakness **W5** from the crash-resilience handoff — the timer
+clears. This closes a real failure mode: the timer
 firing every 30 s used to drop a `chore(sync)` commit onto whatever branch
 `HEAD` pointed at, including mid-`git switch` during an integration.
 
@@ -248,7 +253,7 @@ independently; it still obeys every specialist boundary rule.
 
 ### The Orchestration Agent and the command floor
 
-The **Orchestration Agent** is a fourth supervised session persona, above
+The **Orchestration Agent** is a third supervised session persona, above
 Planning and the Lead Agent (see `docs/operating-model.md`). Mechanically it is
 an ordinary supervised session — a durable record, an append-only log, listed by
 `session list` — with four differences:
@@ -330,7 +335,7 @@ to an execution agent of any tool. Three parts:
   and exits `2` to block the call when the path is under `openspec/` and the
   sentinel is present, or `.nogging/locks/planning.lock` is absent, or that
   lock's `created_at` is older than `planning_lock_ttl_seconds` — the same
-  staleness rule `lock()` applies (closes crash-resilience weakness W6, an
+  staleness rule `lock()` applies (this closes an
   asymmetric hole where a stale lock blocked `plan-begin` yet still permitted
   edits). It is the fast in-model signal a Claude session sees before the
   sandbox would surface an `EACCES`; it does nothing for other tools, for `Bash`
@@ -351,7 +356,7 @@ and `git commit --no-verify` skips it.
 `scripts/hooks/commit-msg` checks the subject line: Conventional Commit shape
 (every commit, planning and sync included), and — unless the commit is a writer
 commit — a real Beads issue-ID token
-(`\[[A-Z][A-Z0-9]*-[0-9a-z]+\]`, e.g. `[SPEC-7ec]`; a bare `[]` or `[BEAD-XXX]`
+(`\[[A-Z][A-Z0-9]*-[0-9a-z]+\]`, e.g. `[SPEC-xxx]`; a bare `[]` or `[BEAD-XXX]`
 fails). A commit is a writer commit when `NOGGING_WRITER` is `planning` or
 `sync` **or** its message body carries a `Nogging-Writer: planning` /
 `Nogging-Writer: sync` trailer. The two forms are exact parity: the
@@ -384,7 +389,7 @@ into the active hooks directory by `scripts/install-hooks`. Where
 | Layer | Runs | Blocks | Left for the next layer or review |
 | --- | --- | --- | --- |
 | Pre-edit boundary — sentinel + per-session read-only root | before the edit, tool-agnostically (Claude *and* Codex) | a launched execution session of any tool persisting a change under `openspec/changes/` or `openspec/specs/` outside a planning session | an edit by a process outside a launched session (a plain editor, `sed -i` in a bare shell), caught when committed |
-| `PreToolUse` guard | before the edit, Claude Code only | the same as a fast in-model signal, and a stale planning lock (W6) | Bash writes, non–Claude-Code edits, a missing `jq` |
+| `PreToolUse` guard | before the edit, Claude Code only | the same as a fast in-model signal, and a stale planning lock | Bash writes, non–Claude-Code edits, a missing `jq` |
 | `pre-commit` | before the commit | staged `openspec/` paths from an execution writer | `--no-verify` or an uninstalled hook: the commit lands Bead-less and visible to review |
 | `commit-msg` | before the commit | an execution commit naming no real Beads ID | `--no-verify`: caught by the CI `invariants` job, then review |
 | CI `invariants` job | on every pull request | a non-conforming head branch, or any introduced non-merge commit that fails the `commit-msg` rule | a branch pushed with no PR yet; a deliberate history rewrite before review |
@@ -415,10 +420,10 @@ before any write. The broker is not an authentication boundary.
 
 ### CI backstop: the `invariants` job
 
-Because `core.hooksPath` points Git at `.beads/hooks` in this repository (and
-may in a fresh install once Beads diverts it), `.git/hooks/commit-msg` and
+Because `core.hooksPath` points Git at `.beads/hooks` (as the Beads integration does,
+in this project's own checkout and possibly in a fresh install), `.git/hooks/commit-msg` and
 `.git/hooks/pre-push` do not run here. The `invariants` job in
-`.github/workflows/nogg-validate.yml` is the enforced backstop: on every
+`.github/workflows/nogging-validate.yml` is the enforced backstop: on every
 `pull_request` it runs `scripts/check-branch-name` against the head branch and
 re-runs `scripts/hooks/commit-msg` over every non-merge commit the PR
 introduces (`git rev-list --no-merges origin/<base>..HEAD`, each
@@ -432,10 +437,10 @@ the branch, or the commit by SHA and subject.
 - **Delivery.** The Git hooks run only where `scripts/install-hooks` has put
   them *and* Git actually reads them. When `core.hooksPath` is set — as the
   Beads integration does, pointing it at `.beads/hooks` — Git ignores
-  `.git/hooks/` and no Nogging hook runs (observed 2026-08-31). The CI
+  `.git/hooks/` and no Nogging hook runs. The CI
   `invariants` job is the authoritative backstop for branch and commit
-  discipline in that case. Reconciling the two hook paths is tracked as a
-  discovery on SPEC-7ec.
+  discipline in that case. Reconciling the two hook paths is a known open
+  item.
 - **Server-side, PR-only.** The `invariants` job runs on `pull_request`, so a
   branch pushed without an open PR is unchecked until one opens, and a commit
   made locally with only `NOGGING_WRITER` set and no trailer passes locally

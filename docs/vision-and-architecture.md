@@ -1,10 +1,12 @@
 # Vision and architecture
 
-This document states what Nogging is for and describes the
-architecture as it is built today.
+This page states what Nogging is for and describes the architecture as it is
+built today. It is for anyone deciding whether the model fits them, and for
+contributors who want the big picture before the details.
 
-For the day-to-day process see `operating-model.md`; for the data contracts and
-the write-boundary enforcement see `architecture.md`.
+For the day-to-day process see [Operating model](operating-model.md); for the
+data contracts and the write-boundary enforcement see
+[Architecture](architecture.md).
 
 ## Goal
 
@@ -63,7 +65,7 @@ A single dependency-light Python script. It contains no LLM call and makes no
 product decision. Subcommands:
 
 - `plan-begin` / `plan-end` — acquire and release the planning lock.
-- `validate` / `audit` — the invariants in `architecture.md`.
+- `validate` / `audit` — the invariants in [Architecture](architecture.md).
 - `materialize <change>` — create one Bead per task, each labelled
   `openspec:change:<id>` and `openspec:task:<id>`. Idempotent.
 - `sync` — one reconciliation pass under an exclusive lock: check the task box
@@ -83,7 +85,7 @@ layers cover Bash writes and non–Claude-Code editors.
 
 ### Distribution: the installer
 
-`npx github:JoMe92/nogging init` installs the whole structure into a target
+`npx github:JoMe92/nogging#<tag> init` installs the whole structure into a target
 git repository in one command; `update` refreshes it; `doctor` reports
 readiness. The CLI is a zero-dependency Node program (`bin/`), published from
 this repository — no npm-registry release, no build step. It writes files by
@@ -110,8 +112,7 @@ ready` or the list of missing prerequisites. Target-owned content
   session; the Main Worker claims Beads, delegates, commits, closes.
 - **Specialists** — six real subagents (`architect`, `ui-ux-designer`,
   `backend-engineer`, `frontend-engineer`, `code-reviewer`, `test-runner`)
-  invoked through the Task tool, each scoped to one claimed Bead. *(Planned —
-  see the roadmap.)*
+  invoked through the Task tool, each scoped to one claimed Bead.
 - **Sync timer** — a systemd user timer firing `scripts/nogg sync` every
   30 s. It mirrors facts and makes local commits only; it never pushes, closes
   Beads, or archives.
@@ -122,19 +123,19 @@ ready` or the list of missing prerequisites. Target-owned content
 
 | Concept | In the repo |
 | --- | --- |
-| Two-phase parallel model, personas not a daemon | `operating-model.md`; personas connected only through shared state |
+| Two-phase parallel model, personas not a daemon | [Operating model](operating-model.md); personas connected only through shared state |
 | Mechanical sync, no LLM | `scripts/nogg sync` |
-| Three change states, acceptance as a flag | `architecture.md` — `open` / `done` / `archived` |
+| Three change states, acceptance as a flag | [Architecture](architecture.md) — `open` / `done` / `archived` |
 | Discovery via native Beads labels + notes | `bd list --label discovery`; `scripts/nogg discoveries` |
 | Source-of-truth direction | enforced by the write boundary and the mirror-only sync |
 | Session lock instead of merge handling | `.nogging/locks/planning.lock` |
 | `PreToolUse` hook, exit 2 | `scripts/hooks/pre-tool-use-openspec-guard` (+ two more layers) |
 | `commit-msg` rule requiring a work-item token | `scripts/hooks/commit-msg` |
 | `execution-log.md` written by the mechanical part | generated in `sync()` |
-| Minimal CI invariants | `.github/workflows/nogg-validate.yml` |
+| Minimal CI invariants | `.github/workflows/nogging-validate.yml` (the *Nogging validation* workflow) |
 | Update mechanism planned from the start | `update` command + `nogging_version` tracking |
 | `doctor` health check | `scripts/nogg doctor` + `bin/cli.js doctor` + readiness verdict |
-| Toolkit version scheme | `package.json` version, pinnable as `#v1.0.0` |
+| Toolkit version scheme | `package.json` version, pinnable as `#<tag>` |
 
 ### Deliberately changed
 
@@ -146,76 +147,16 @@ ready` or the list of missing prerequisites. Target-owned content
 | Long-lived sync **daemon** with a PID file, `SIGUSR1` "sync-now", and a 5-minute poll | a systemd **oneshot** timer every 30 s, no resident process | no daemon lifecycle to supervise; 30 s is cheap; "sync-now" becomes a direct `sync` run |
 | Repo name `agentic-workflow-toolkit` | `nogg` | rename |
 
-### Not yet built (on the roadmap)
-
-| Concept | Roadmap change |
-| --- | --- |
-| transient/permanent sync-failure classification, JSONL log with rotation; closed-Bead reconciliation; enriched `execution-log.md` (Bead note + commit SHA) | `reliable-beads-sync` |
-| `/plan`, `/discovery-review`, `/sync-now` slash commands | `planning-and-discovery-commands` |
-| the six specialist `.claude/agents/*.md` and the Lead Agent delegation model | `specialist-agents-and-skills` |
-| a checked branch-naming convention and a CI invariant over pull-request commits | `enforce-conventional-branching` |
-| remotely observable / stoppable agent sessions on the Pi | `remote-observable-claude-sessions` |
-| one reproducible end-to-end run with a human sign-off | `end-to-end-acceptance` |
-
-A defect found while building the installer is also tracked: `bd list` omits
-closed issues by default, so both `sync` and `materialize` miss closed mapped
-Beads (`reliable-beads-sync` carries the fix).
-
-### Concept open points — status
-
-| Open point (concept §"Offene Punkte") | Status |
-| --- | --- |
-| Full agent prompts and slash commands | planned — `planning-and-discovery-commands`, `specialist-agents-and-skills` |
-| `execution-log.md` as a fixed part of `sync_task()` | done; note + SHA enrichment planned in `reliable-beads-sync` |
-| Concrete systemd deployment | done — the installer renders the unit and prints the `systemctl --user enable` line |
-| `.agentic/config.yml` format | done as `.nogging/config.json` |
-| `doctor` check logic | done |
-| Toolkit version scheme | done — `v1.0.0` tagged |
-
 ## Status
 
-`v1.0.0` is the installer plus the base structure: a target repo can run
-`npx github:JoMe92/nogging init` and reach a ready-to-plan state. The six
-roadmap changes above are planned in `openspec/changes/` and materialised as
-Beads; they harden the sync, add the operator commands, and bring the specialist
-execution model online.
+The installer and the base structure are in place: a target repository can run
+`npx github:JoMe92/nogging#<tag> init` and reach a ready-to-plan state. On top
+of that, Nogging ships the operator commands (`/plan`, `/discovery-review`,
+`/sync-now`, `/orchestrate`), the six specialist agents and the Lead Agent
+delegation model, supervised and remotely observable agent sessions, isolated
+worktrees, the Orchestration Agent, and a reproducible acceptance procedure
+([Acceptance](acceptance.md)).
 
-### Roadmap execution order
-
-The changes are materialised as Beads with cross-change dependencies wired via
-`bd dep add`. Work them one change per branch (`<type>/<change-name>`), in this
-order:
-
-1. **`reliable-beads-sync`** — **done** (merged). Fixed the `bd list` closed-issue
-   defect, so `sync` and `materialize` stop missing closed mapped Beads;
-   established the enriched `execution-log.md`, the acknowledgement ledger, and
-   classified sync failures that later changes build on.
-2. **`remote-observable-claude-sessions`** — **done** (merged). Pi tmux sessions
-   the Product Owner watches over SSH / Remote Control; `session
-   list|launch|attach|log|stop|cleanup`, a durable record and a restricted
-   launch profile.
-3. **`enforce-conventional-branching`** — **done** (merged). `<type>/<slug>`
-   branch check, a `Nogging-Writer:` commit trailer, an advisory `pre-push`
-   hook, and a CI `invariants` job on `pull_request`.
-4. **`selectable-launch-profile`** — next. Adds `session launch
-   --profile/--prompt` and `--full-access`, a `trusted` profile + `autonomous`
-   prompt, and a non-removable command floor, so a whole change can be executed
-   by a supervised session that commits, pushes and merges itself. Also the seam
-   the Codex work needs.
-5. **`planning-and-discovery-commands`** — after 1 (`/discovery-review` uses the
-   acknowledgement ledger from `TASK-SYNC-006`).
-6. **`specialist-agents-and-skills`** — after 5 (the delegation section in
-   `CLAUDE.md` references `/plan`).
-7. **`end-to-end-acceptance`** — last. Depends on all of the above; its runbook
-   exercises the whole chain and its assertions are written against
-   post-`reliable-beads-sync` behaviour.
-
-Within a change, work the tasks in `tasks.md` order.
-
-### Known gaps not yet on the roadmap
-
-- **`SPEC-fc4`** — `openspec archive <change>` breaks `scripts/nogg validate`:
-  the archived change's closed Beads still carry `openspec:task:` labels that
-  `task_map()` no longer resolves. Completed changes therefore stay in
-  `openspec/changes/` (unarchived) until `task_map()`/`validate()` also read
-  `changes/archive/`, or archiving retires the mapped Beads.
+Nogging supports Linux hosts only. Antigravity sessions and the herdr terminal
+backend are experimental. Open limitations and recovery recipes are in
+[Failure recovery](failure-recovery.md) and the [FAQ](faq.md).
