@@ -404,6 +404,19 @@ require(not re.search(r"\d+\.\d+\.\d+\)", guides["model-selection.md"].split("##
 require("automatic-model-and-effort-selection" not in guides["model-selection.md"], "model-selection.md names an internal change")
 require("](architecture.md)" in guides["using-with-herdr.md"][:1500], "using-with-herdr.md intro must point at architecture.md")
 
+for key, pattern in (("lang: en", r"(?m)^lang: en$"),
+                     ("square-card logo", r"(?m)^logo: /brand/nogging-social-card-square\.png$"),
+                     ("large social card default image", r"(?m)^      image: /brand/nogging-social-card\.png$"),
+                     ("summary_large_image twitter card", r"(?ms)^twitter:\n  card: summary_large_image$")):
+    require(bool(re.search(pattern, config)), f"search metadata missing: {key}")
+require(bool(re.search(r"(?m)^      path: \"404\.md\"\n    values:\n(?:      .*\n)*?      sitemap: false$", config)),
+        "404 page must carry sitemap: false")
+require("Antigravity is experimental" in config.split("url:", 1)[0], "site description must mark Antigravity experimental")
+robots = docs / "robots.txt"
+require(robots.is_file() and "Sitemap: https://jome92.github.io/nogging/sitemap.xml" in robots.read_text(),
+        "docs/robots.txt must name the sitemap")
+require(not (docs / "llms.txt").exists() and not (root / "llms.txt").exists(), "llms.txt must not exist")
+
 if errors:
     for error in errors:
         print(f"FAIL: {error}", file=sys.stderr)

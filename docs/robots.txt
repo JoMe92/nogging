@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://jome92.github.io/nogging/sitemap.xml
