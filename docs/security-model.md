@@ -220,6 +220,76 @@ HOME-contained directories as sandbox writable roots. Records and listings
 show the source and paths. Treat granting credential-bearing state as write
 access to those credentials. See [Codex runtime state grants](using-with-codex.md).
 
+## Beads data and privacy
+
+Beads keeps every Bead — titles, descriptions, notes, `bd remember` memories,
+and the audit event history — in a local Dolt database. When `bd init` wires
+up synchronization, it points that database's Dolt sync remote at the
+project's own Git remote by default: pushed data lands on the Git remote as
+`refs/dolt/data` plus a `dolt_remote_info` branch, right next to the source
+code. The `owner` field of a Bead records the Git `user.email` configured when
+the Bead was created. Nogging does not configure this remote; it is Beads'
+default.
+
+On a public repository those refs are public too. Anyone can fetch them and
+read every Bead title, description, note and memory, the recorded owner
+identities, and the change history in events. Dolt keeps every earlier value
+in its history, so editing or deleting a note later does not remove it from
+the published refs.
+
+For a public project:
+
+1. **Keep the Beads database in a separate private repository.** Create one
+   and give it an initial commit — Dolt Git remotes need an existing branch
+   — for example:
+
+   ```bash
+   gh repo create <name>-beads --private --add-readme
+   ```
+
+   Then repoint Beads and push the existing database to it:
+
+   ```bash
+   bd dolt remote remove origin
+   bd dolt remote add origin git+ssh://git@<host>/<you>/<name>-beads.git
+   bd dolt push
+   ```
+
+   `<host>` is your Git host (`github.com` for GitHub). Set the same URL as
+   `sync.remote` in `.beads/config.yaml` so a fresh clone rediscovers the
+   private remote. With multi-machine mode enabled, every machine must use
+   that same private remote.
+
+2. **Set a private-safe identity before creating Beads.** The Git
+   `user.email` configured at creation time is what a Bead records as its
+   `owner`. Use your host's noreply address form (GitHub's ends in
+   `users.noreply.github.com`) rather than a personal address.
+
+3. **Never write personal data into Beads text or memories.** Titles,
+   descriptions, notes, and `bd remember` content all become part of the
+   synchronized database and its permanent history.
+
+If Beads data has already reached a public repository, move it first: check
+the `owner` fields, notes and memories for personal data, replace anything
+sensitive, commit, and push to the private remote. Then delete the published
+refs from the public repository:
+
+```bash
+git push <public-remote> --delete refs/dolt/data refs/heads/dolt_remote_info
+```
+
+Be honest about the limits of that cleanup: anyone who fetched the refs
+earlier still holds a copy, and GitHub removes unreachable objects only in a
+later garbage-collection pass, so treat everything that was published as
+compromised.
+
+The token-usage sync ([token usage accounting](token-usage.md)) is independent
+of Beads and pushes `.nogging/state/token-usage/database` to its own Dolt
+remote. Configure that remote inside the database with
+`dolt remote add <name> <url>`, or clone it onto a new device with
+`dolt clone <url> .nogging/state/token-usage/database`. The same rule applies:
+use a private remote that only your machines can read.
+
 ## Safe enablement
 
 Before broader authority:

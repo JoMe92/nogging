@@ -58,6 +58,15 @@ Only on a host and repository you trust. Nogging defaults to restricted
 authority and documents what `--full-access` and the background sync service
 change. Read the [security and threat model](security-model.md) first.
 
+## Is my Beads data public?
+
+On a public repository, yes. Beads syncs its Dolt database to the project's
+Git remote by default, so Bead titles, descriptions, notes, memories, owner
+identities and the change history are published with the code — and Dolt keeps
+every earlier value in its history. Keep the Beads database in a separate
+private repository for public projects; [Beads data and
+privacy](security-model.md#beads-data-and-privacy) has the exact steps.
+
 ## What happens when a run is interrupted?
 
 Claims, notes and worktree records persist, so work can be recovered rather
