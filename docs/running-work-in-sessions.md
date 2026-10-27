@@ -567,6 +567,8 @@ orchestrate-only-by-default scope.
 
 ## Quick reference
 
+This table covers the session and orchestrator commands. The [full command reference](https://jome92.github.io/nogging/commands/) lists every `nogg` subcommand.
+
 | Command | Effect |
 | --- | --- |
 | `session launch --role <r> [--backend <b::tmux|herdr>] [--bead <id>] [--planning-id <id> --description <d>] [--cwd <p>] [--read-only] [--owner <o>] [--agent <claude\|codex>] [--profile <n>] [--prompt <n>] [--full-access]` | start a supervised session; no Beads change |
