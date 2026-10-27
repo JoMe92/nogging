@@ -1,7 +1,6 @@
 # Project identity
 
-This document is the canonical identity statement for the first public
-Nogging release.
+This document is the canonical identity statement for Nogging.
 
 ## Canonical project
 
@@ -18,7 +17,8 @@ Nogging release.
 ### GitHub metadata
 
 - Description: `Structure for a team of agents: role boundaries, planning and
-  Git-evidenced execution for Claude Code, Codex, Pi and Antigravity, built on
+  Git-evidenced execution for Claude Code, Codex, Pi and Antigravity
+  (experimental), built on
   OpenSpec and Beads.`
 - Topics (20): `agentic-coding`, `agentic-development`, `ai-agents`,
   `ai-coding`, `beads`, `claude-code`, `cli`, `codex`, `coding-agents`,
@@ -58,7 +58,7 @@ endorsed by the Gas Town or Beads maintainers.
 
 ## Stability boundary
 
-The first Nogging release establishes the `nogg` command,
+Nogging establishes the `nogg` command,
 installer, configuration, service, and package identifiers. The
 unscoped npm package named `nogg` belongs to another project; this project
 uses tagged GitHub installation and does not publish to that npm name.
@@ -70,7 +70,7 @@ identifiers would change.
 
 ## Technical identifier inventory
 
-The first public release uses these identifiers as its compatibility surface:
+Nogging uses these identifiers as its compatibility surface:
 
 | Surface | Stable identifier |
 | --- | --- |
@@ -80,7 +80,7 @@ The first public release uses these identifiers as its compatibility surface:
 | Configuration and state root | `.nogging/` |
 | Installed reference documentation | `docs/nogging/` |
 | Generated systemd units | `nogg-sync-<slug>` and `nogg-orchestrator-<slug>` |
-| Dedicated tmux socket and sessions | `nogg` and `sf-<role>-<bead>-<nonce>` |
+| Dedicated tmux socket and sessions | `nogging` and `sf-<role>-<bead>-<nonce>` |
 | Codex prompt links | `nogg-<prompt>.md` |
 
 Consequently, a clean installation, an update from an earlier Nogging tag,

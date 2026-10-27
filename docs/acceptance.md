@@ -14,9 +14,8 @@ Each step is tagged:
 - **[A] agent-driven** — a person runs a session (or drives an agent) and
   records the outcome by hand in the report.
 
-`scripts/acceptance.sh` and this document must not drift. A task in the
-`end-to-end-acceptance` change keeps them in step; if you change one, change the
-other.
+`scripts/acceptance.sh` and this document must not drift; if you change one,
+change the other, and keep the step order and tags in step.
 
 ## Prerequisites
 
@@ -142,7 +141,7 @@ no network. That subset also runs from `scripts/test` (via
 - **Do:** `( cd "$target" && ./scripts/nogg plan-end )`.
 - **Expected:** `planning session lock released`; the lock file is gone.
 - **Why here:** the mechanical sync refuses to mirror while a planning session
-  is open or while `HEAD` is on a protected branch (`sync-safety` / W5), so the
+  is open or while `HEAD` is on a protected branch (the sync-safety guard), so the
   runbook ends planning and moves onto a change branch before the sync
   round-trip — matching the operating model, where execution and the
   timer-driven sync run only after `plan-end`.
