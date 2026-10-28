@@ -26,12 +26,10 @@ trap 'rm -f "$out"; rm -rf "$work"' EXIT
 out=$(mktemp)
 # No fixture may read the operator's real ~/.codex: `doctor` walks
 # <CODEX_HOME>, and against a real Codex history (gigabytes of rollouts) one
-# call costs ~40 s instead of ~1 s. scripts/test already exports a scratch
-# CODEX_HOME; a standalone run of this file gets one here.
-if [[ -z "${CODEX_HOME:-}" ]]; then
-  mkdir -p "$work/codex-home"
-  export CODEX_HOME="$work/codex-home"
-fi
+# call costs ~40 s instead of ~1 s. Always a scratch home, even when the
+# caller exported a real one.
+mkdir -p "$work/codex-home"
+export CODEX_HOME="$work/codex-home"
 
 # --- lint: no test invokes `nogg doctor|validate|audit` unguarded --------
 # Those subcommands exit non-zero on a host missing an optional tool (dolt on a
@@ -1273,13 +1271,15 @@ JSON
   || echo "ok   - rec-limbo: recover exits non-zero with a committed-but-open Bead"
 check "rec-limbo: lists the LIMBO Bead" "LIMBO: SPEC-lim committed in"
 check "rec-limbo: names the commit SHA" "$sha_lim"
+refute "rec-limbo: a single commit carries no commit count" "(newest of"
 check "rec-limbo: attention summary names it" "need attention"
 unset NOGGING_ROOT BD_FIXTURE BD_STUB_DIR
 
 # --- a Bead committed in several steps is one LIMBO line with its count ---
+# (a token repeated in one subject still counts that commit once)
 root="$work/rec-limbo-multi"; make_root "$root"
 git -C "$root" commit -q --allow-empty -m "feat(demo): first step [SPEC-mlt]"
-git -C "$root" commit -q --allow-empty -m "test(demo): second step [SPEC-mlt]"
+git -C "$root" commit -q --allow-empty -m "test(demo): second step [SPEC-mlt] (follow-up of [SPEC-mlt])"
 sha_mlt="$(git -C "$root" rev-parse --short=12 HEAD)"
 export NOGGING_ROOT="$root"
 export BD_FIXTURE="$work/rec-limbo-multi-beads.json"
@@ -1292,7 +1292,7 @@ cat >"$BD_FIXTURE" <<'JSON'
 JSON
 "$nogg" recover >"$out" 2>&1 || true
 check "rec-limbo-multi: recover names the newest commit and the count" \
-  "LIMBO: SPEC-mlt committed in $sha_mlt \"test(demo): second step [SPEC-mlt]\" (newest of 2 token commits) but status=in_progress"
+  "LIMBO: SPEC-mlt committed in $sha_mlt \"test(demo): second step [SPEC-mlt] (follow-up of [SPEC-mlt])\" (newest of 2 token commits) but status=in_progress"
 [[ $(grep -c "LIMBO: SPEC-mlt" "$out") -eq 1 ]] \
   && echo "ok   - rec-limbo-multi: several commits of one Bead are one LIMBO line" \
   || { echo "FAIL - rec-limbo-multi: expected exactly one LIMBO line"; cat "$out"; fail=1; }

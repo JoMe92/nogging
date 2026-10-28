@@ -7,6 +7,8 @@
 set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+# The opt-in under test; a standalone run must not inherit it.
+unset NOGG_SELFTEST
 
 fail=0
 check() { # <description> <test-expr...>

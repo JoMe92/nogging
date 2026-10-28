@@ -8,6 +8,8 @@ set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cli="$root/bin/cli.js"
+# The nested consumers below must skip the shipped self-tests by default.
+unset NOGG_SELFTEST
 
 if ! command -v node >/dev/null 2>&1; then
   echo "ok   - skipped (node not installed)"
@@ -100,7 +102,9 @@ check "init records every shipped self-test in the installed manifest" \
 consumer_runner_checks() { # <phase> <repo>
   local out
   printf '#!/usr/bin/env bash\necho own-ran\n' > "$2/scripts/own.test.sh"
-  out=$("$2/scripts/test")
+  local rc=0
+  out=$("$2/scripts/test" 2>&1) || rc=$?
+  check "$1: consumer scripts/test exits 0" [ "$rc" -eq 0 ]
   check "$1: consumer scripts/test runs the project's own test" grep -q "^PASS - scripts/own.test.sh" <<<"$out"
   check "$1: consumer scripts/test skips every shipped self-test" \
     grep -qF "skipped $shipped_count shipped Nogging self-test(s)" <<<"$out"

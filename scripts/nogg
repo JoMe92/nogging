@@ -1863,7 +1863,7 @@ def token_commit_shas():
     out = {}
     for line in res.stdout.splitlines():
         h, _, subject = line.partition(" ")
-        for token in LIMBO_TOKEN_RE.findall(subject):
+        for token in dict.fromkeys(LIMBO_TOKEN_RE.findall(subject)):
             out.setdefault(token, []).append(h)
     return out
 def branch_commit_tokens():
@@ -2270,7 +2270,8 @@ TASK_SIZING_DEFAULTS = {"bead_prod_lines": (400, 1000), "commit_lines": (100, 60
 # `[~N loc]` estimates production lines (tests excluded); `[~N loc: <reason>]`
 # states why a task is smaller than the configured minimum.
 TASK_ESTIMATE_RE = re.compile(r"\[~\s*(\d+)\s*loc\b\s*(?::\s*([^\]]*))?\]", re.I)
-OPEN_TASK_RE = re.compile(r"^- \[ \] (TASK-[A-Z0-9-]+)\b(.*)$")
+OPEN_TASK_RE = re.compile(r"^- \[ \] (TASK-[A-Z0-9-]+)\s+(.+)$")
+LIST_ITEM_RE = re.compile(r"^\s+(?:[-*+]|\d+[.)])\s")
 
 def task_sizing(cfg=None):
     """Return ({key: (min, max)}, configured keys, problems); a malformed key keeps its default."""
@@ -2299,14 +2300,16 @@ def task_sizing_cmd():
         print(f"WARN  {problem}", file=sys.stderr)
 
 def open_task_blocks(text):
-    """Every unticked task of a tasks.md as (task ID, text), continuation lines joined."""
+    """Every unticked task of a tasks.md as (task ID, text): wrapped continuation
+    lines are joined; a nested list item or a blank line ends the task."""
     blocks, current = [], None
     for line in text.splitlines():
         match = OPEN_TASK_RE.match(line)
         if match:
             current = [match.group(1), match.group(2)]
             blocks.append(current)
-        elif current is not None and line[:1] in (" ", "\t") and line.strip():
+        elif (current is not None and line[:1] in (" ", "\t") and line.strip()
+              and not LIST_ITEM_RE.match(line)):
             current[1] += " " + line.strip()
         else:
             current = None
@@ -2316,7 +2319,7 @@ def task_sizing_notes():
     """NOTE lines for open tasks of live changes that miss the configured Bead size.
 
     Advisory only: an estimate below the minimum without a reason, or a change
-    whose open tasks mostly carry no estimate. Never a FAIL, so a change planned
+    with two or more open tasks, most of them without an estimate. Never a FAIL, so a change planned
     before estimates existed stays valid.
     """
     low = task_sizing()[0]["bead_prod_lines"][0]
@@ -2336,7 +2339,7 @@ def task_sizing_notes():
         if small:
             notes.append(f"task sizing: {change.name}: {', '.join(small)} below the configured "
                          f"{low}-line Bead minimum without a reason ([~N loc: <reason>])")
-        if blocks and missing * 2 > len(blocks):
+        if missing >= 2 and missing * 2 > len(blocks):
             notes.append(f"task sizing: {change.name}: {missing} of {len(blocks)} open tasks "
                          f"carry no [~N loc] estimate")
     return notes
@@ -7991,7 +7994,7 @@ def commit_tokens_with_subject(rev_range=None):
     out = {}
     for line in res.stdout.splitlines():
         h, _, subject = line.partition("\x1f")
-        for token in LIMBO_TOKEN_RE.findall(subject):
+        for token in dict.fromkeys(LIMBO_TOKEN_RE.findall(subject)):
             sha, first_subject, count = out.get(token, (h, subject, 0))
             out[token] = (sha, first_subject, count + 1)
     return out
@@ -8357,7 +8360,10 @@ def codex_sandbox_diagnosis(workdir, with_sandbox=False, sandbox_extra=()):
         rc, out = _sandbox_run(base + [str(test_script)], workdir, policy, timeout_s)
     except OSError as exc:
         rc, out = 1, str(exc)
-    if rc == 0:
+    if rc == 0 and "nothing else to run" in out:
+        notes.append("codex sandbox test probe: passed but ran no project test; Nogging's shipped "
+                     "self-tests are skipped here (NOGG_SELFTEST=1 ./scripts/nogg doctor --sandbox includes them)")
+    elif rc == 0:
         notes.append("codex sandbox test probe: all suites passed")
     elif rc is None:
         notes.append(f"codex sandbox test probe: timed out after {timeout_s} s")
@@ -8605,7 +8611,7 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
     # (a malformed task_sizing a WARN, above); neither changes the exit code.
     try:
         notes.extend(task_sizing_notes())
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         notes.append(f"task sizing check unavailable: {exc}")
     if SKIP_RECORD.exists():
         try: srec = json.loads(SKIP_RECORD.read_text())

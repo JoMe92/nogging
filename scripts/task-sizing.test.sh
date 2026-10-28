@@ -12,10 +12,9 @@ source "$here/lib/test-env.sh"
 nogg="$here/nogg"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-if [[ -z "${CODEX_HOME:-}" ]]; then
-  mkdir -p "$work/codex-home"
-  export CODEX_HOME="$work/codex-home"
-fi
+# validate runs doctor, which walks CODEX_HOME: never the operator's real one.
+mkdir -p "$work/codex-home"
+export CODEX_HOME="$work/codex-home"
 
 fail=0
 check() { # <description> <test-expr...>
@@ -79,6 +78,8 @@ change small '- [ ] TASK-SM-001 Contracts only [~80 loc]
 - [ ] TASK-SM-002 Logic, wrapped over
       two lines [~ 120 loc]
 - [ ] TASK-SM-003 Full slice [~500 loc]'
+change lone '- [ ] TASK-LN-001 Lone task without its own estimate
+  - nested note citing [~80 loc] from the design'
 change bare '- [ ] TASK-BR-001 No estimate
 - [ ] TASK-BR-002 No estimate either
 - [ ] TASK-BR-003 One estimate [~450 loc]'
@@ -89,6 +90,8 @@ check "undersized tasks without a reason get one NOTE naming them" \
 check "an estimate on a continuation line is read" has "$out" "TASK-SM-002 (~120 loc)"
 check "a change whose open tasks mostly lack estimates gets a NOTE" \
   has "$out" "NOTE  task sizing: bare: 2 of 3 open tasks carry no [~N loc] estimate"
+check "a single unestimated open task is not 'many'" lacks "$out" "task sizing: lone"
+check "a nested bullet's estimate is not read as the task's" lacks "$out" "TASK-LN-001 (~80 loc)"
 check "task sizing findings are never a FAIL" bash -c '! grep -q "^FAIL.*task sizing" "$0"' "$work/validate.out"
 check "task sizing findings never change the validate exit code" test "$rc" = "$baseline_rc"
 
