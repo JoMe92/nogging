@@ -62,7 +62,16 @@ own action after kickoff.
 
 6. **Author or revise the change folder** — `proposal.md`, `design.md`,
    `tasks.md`, and `specs/<capability>/spec.md` — under
-   `openspec/changes/<change>/`.
+   `openspec/changes/<change>/`. Size every task as a vertical slice that
+   delivers one testable capability — backend, API and UI of a feature
+   together, its docs folded in — within the configured Bead range
+   (`task_sizing.bead_prod_lines` in `.nogging/config.json`;
+   `./scripts/nogg task-sizing` prints it). Do not split one feature into
+   separate contract, logic, migration, route, UI and docs tasks. Plan a
+   smaller task only for a stated reason (a security fix, a risky migration, a
+   hard dependency boundary). Every task line carries an estimate tag
+   `[~N loc]` (production lines, tests excluded); a smaller task names its
+   reason in the tag, e.g. `[~80 loc: security fix]`.
 
 7. **Validate.** Run `./scripts/nogg validate` and
    `openspec validate <change> --strict --no-interactive` (always name the
