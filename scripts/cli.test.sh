@@ -8,6 +8,8 @@ set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cli="$root/bin/cli.js"
+# The nested consumers below must skip the shipped self-tests by default.
+unset NOGG_SELFTEST
 
 if ! command -v node >/dev/null 2>&1; then
   echo "ok   - skipped (node not installed)"
@@ -86,6 +88,30 @@ check "AGENTS.md Tool notes labels Pi"  grep -q '.pi/extensions/nogging-guard.ts
 check "openspec scaffold written"  test -f "$repo/openspec/config.yaml"
 check "project.md scaffold written" test -f "$repo/openspec/project.md"
 check "config.json written"        test -f "$repo/.nogging/config.json"
+
+# A consumer's scripts/test runs its own tests, not the shipped self-tests the
+# installed manifest records (NOGG_SELFTEST=1 opts in; see selftest-scope.test.sh).
+shipped_tests=$(node -e '
+  const m = require(process.argv[1]);
+  console.log(m.verbatim.filter((p) => p.endsWith(".test.sh")).sort().join("\n"));
+' "$root/bin/lib/manifest.js")
+shipped_count=$(grep -c . <<<"$shipped_tests")
+recorded_tests=$(grep -o '"[^"]*\.test\.sh"' "$repo/.nogging/installed-manifest.json" | tr -d '"' | sort)
+check "init records every shipped self-test in the installed manifest" \
+  [ "$shipped_count" -gt 0 -a "$recorded_tests" = "$shipped_tests" ]
+consumer_runner_checks() { # <phase> <repo>
+  local out
+  printf '#!/usr/bin/env bash\necho own-ran\n' > "$2/scripts/own.test.sh"
+  local rc=0
+  out=$("$2/scripts/test" 2>&1) || rc=$?
+  check "$1: consumer scripts/test exits 0" [ "$rc" -eq 0 ]
+  check "$1: consumer scripts/test runs the project's own test" grep -q "^PASS - scripts/own.test.sh" <<<"$out"
+  check "$1: consumer scripts/test skips every shipped self-test" \
+    grep -qF "skipped $shipped_count shipped Nogging self-test(s)" <<<"$out"
+  check "$1: nogg.test.sh does not run in a consumer" bash -c '! grep -q "=== scripts/nogg.test.sh" <<<"$0"' "$out"
+  rm "$2/scripts/own.test.sh"
+}
+consumer_runner_checks init "$repo"
 
 name=$(node -e "process.stdout.write(require('$repo/.nogging/config.json').name)")
 check "config name is repo basename" [ "$name" = "fresh" ]
@@ -326,6 +352,7 @@ check "update leaves openspec/changes untouched" [ "$changes_before" = "$changes
 check "update leaves openspec/project.md untouched" grep -q "Custom purpose." "$upd/openspec/project.md"
 check "update refreshes a stale Claude agent" cmp -s "$root/.claude/agents/architect.md" "$upd/.claude/agents/architect.md"
 check "update refreshes a stale Claude command" cmp -s "$root/.claude/commands/plan.md" "$upd/.claude/commands/plan.md"
+consumer_runner_checks update "$upd"
 
 new_name=$(node -e "process.stdout.write(require('$upd/.nogging/config.json').name)")
 check "update keeps config name" [ "$new_name" = "my-custom-name" ]

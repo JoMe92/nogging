@@ -461,6 +461,7 @@ unset NOGGING_ROOT
 root="$work/send-codex-queue"; make_obs_root "$root"
 export NOGGING_ROOT="$root"
 export TMUX_STUB_DIR="$work/send-codex-queue-tmux"; mkdir -p "$TMUX_STUB_DIR"
+sob_saved_codex_home="${CODEX_HOME-}"   # restored after this scenario
 export CODEX_HOME="$work/codex-home-queue"
 export BD_KNOWN="SPEC-s03"
 "$nogg" session launch --role lead --bead SPEC-s03 --agent codex --profile restricted >/dev/null 2>&1
@@ -505,7 +506,10 @@ grep -qF "\"codex_thread_id\": \"$thread_id\"" "$root/.nogging/state/sessions/$n
   && ok "send: the resolved thread id is cached on the session record" \
   || { echo "FAIL - send: codex_thread_id not cached on the session record"; fail=1; }
 rm -f "$out_s" "$work/bin/codex"
-unset NOGGING_ROOT CODEX_HOME
+unset NOGGING_ROOT
+# Restore the runner's scratch CODEX_HOME: unsetting it would expose the
+# operator's real ~/.codex (and live quota) to every later launch and doctor.
+if [[ -n "$sob_saved_codex_home" ]]; then export CODEX_HOME="$sob_saved_codex_home"; else unset CODEX_HOME; fi
 
 # ===========================================================================
 # TASK-SOB-007: Claude Layer 2 (design.md Decision 4) — `session launch`

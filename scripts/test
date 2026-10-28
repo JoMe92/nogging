@@ -4,7 +4,16 @@
 # Language-neutral and offline by design. These checks must run with nothing
 # more than bash and coreutils: no Node, no network, and no running Beads/Dolt
 # server. Tests that need `bd` stub it (see scripts/nogg.test.sh).
+#
+# In a repository Nogging was installed into (it carries
+# .nogging/installed-manifest.json), the *.test.sh files that manifest records
+# are Nogging's own shipped self-tests: they are skipped so the runner checks
+# the repository's own tests only. NOGG_SELFTEST=1 runs them as well. In the
+# Nogging repository itself (no installed manifest) every test runs.
 set -euo pipefail
+
+# Read before test-env.sh clears every NOGG_* variable.
+selftest=${NOGG_SELFTEST:-0}
 
 # Tests construct their own repositories and supervised-session fixtures.
 # Keep the delivery session's identity, root and task-tick broker out of
@@ -25,12 +34,31 @@ export NOGG_LAUNCH_SETTLE_SECONDS=0.25
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
+shipped=
+manifest="$root/.nogging/installed-manifest.json"
+if [[ $selftest != 1 && -f $manifest ]]; then
+  # Manifest keys are repository-relative paths; values are hex digests.
+  shipped=$(grep -o '"[^"]*\.test\.sh"' "$manifest" | tr -d '"' || true)
+fi
+
 tests=()
+skipped=0
 while IFS= read -r t; do
+  if [[ -n $shipped ]] && grep -Fxq -- "${t#"$root"/}" <<<"$shipped"; then
+    skipped=$((skipped + 1))
+    continue
+  fi
   tests+=("$t")
 done < <(find "$root/scripts" -name '*.test.sh' -type f | sort)
 
+if [[ $skipped -gt 0 ]]; then
+  echo "Nogging: skipped $skipped shipped Nogging self-test(s); NOGG_SELFTEST=1 scripts/test runs them"
+fi
 if [[ ${#tests[@]} -eq 0 ]]; then
+  if [[ $skipped -gt 0 ]]; then
+    echo "Nogging: no project *.test.sh under scripts/; nothing else to run"
+    exit 0
+  fi
   echo "Nogging: no *.test.sh found under scripts/" >&2
   exit 1
 fi

@@ -53,12 +53,18 @@ there. For each Bead the Lead Agent follows this path:
    discovery (`bd update <id> --add-label discovery --append-notes "<prose>"`;
    `--status blocked` and move to the next independent Bead if it blocks). A
    specialist never labels or re-statuses the Bead itself.
-10. Validate, write the evidence note with the commit SHA, commit with the
-   `[<ID>]` token, and `bd close <id>`. The sync timer then mirrors the closure
-   into `execution-log.md`.
+10. Commit the Bead in several coherent steps within the configured commit
+   range (`task_sizing.commit_lines`, default 100–600 changed lines;
+   `./scripts/nogg task-sizing` prints it); every commit carries the `[<ID>]`
+   token and the tests for the code it changes. Test in stages: while
+   working, only the affected tests; before each commit, the affected suite
+   plus lint of the changed files; once per Bead, before hand-off, the full
+   project suite (`scripts/test`). CI stays the final gate. Then write the
+   evidence note listing every commit SHA and `bd close <id>`. The sync timer
+   then mirrors the closure into `execution-log.md`.
 
 A specialist owns none of steps 2, 8, or 9: claiming, closing, status changes,
-the evidence note, and the commit stay with the Lead Agent. See the *Lead Agent
+the evidence note, and the commits stay with the Lead Agent. See the *Lead Agent
 delegation* section of `CLAUDE.md` and the definitions in `.claude/agents/`.
 
 The six specialists in `.claude/agents/` are a **Claude Code** mechanism — they
@@ -97,6 +103,23 @@ and the known limitations). A Pi session invokes them from
 extension, the out-of-process specialist model, and the explicit limitation
 that Pi's `restricted` level is floor-only with no network or filesystem
 sandbox).
+
+## Task sizing
+
+The Planning Agent writes each `tasks.md` task as a vertical slice that
+delivers one testable capability: the backend, API and UI of a feature
+together, with its docs folded in, rather than separate contract, logic,
+migration, route, UI and docs tasks. A task targets the configured Bead range
+(`task_sizing.bead_prod_lines` in `.nogging/config.json`, default 400–1000
+production lines; `./scripts/nogg task-sizing` prints the range in effect).
+A smaller task needs a stated reason, such as a security fix, a risky
+migration or a hard dependency boundary. Every task line carries an estimate
+tag `[~N loc]` counting production lines, tests excluded; a smaller task
+states its reason in the tag, for example `[~80 loc: security fix]`.
+`./scripts/nogg validate` only prints a NOTE for a miss and never fails a
+change. The Lead Agent then commits such a Bead in several steps within the
+configured commit range (step 10 above). See
+[Configuration](https://jome92.github.io/nogging/configuration/#task_sizing).
 
 ## Orchestration
 
@@ -167,9 +190,10 @@ interim form and keeps `tier=<tier>`.
 the form `/orchestrate takeover {plan|code} <description>` does it perform one
 task directly — a planning task run as a full `plan-begin` … `plan-end`
 sequence committed with the `Nogging-Writer: planning` trailer (`plan-end` from the planning worktree, then `worktree cleanup` from the surviving canonical checkout), or a code task
-claimed, implemented, committed with the `[<bead-id>]` token, evidence-noted and
-closed. After the one task it returns to orchestrate-only. Nothing mechanical
-enforces the return: the orchestrator profile is god-mode (see *Launch
+claimed, implemented, committed in coherent steps that each carry the
+`[<bead-id>]` token, evidence-noted with every commit SHA and closed. After the
+one task it returns to orchestrate-only. Nothing mechanical enforces the
+return: the orchestrator profile is god-mode (see *Launch
 profiles* under *Session supervision*), so the discipline lives in
 `.nogging/launch-prompts/orchestrator.md` and the operator's explicit
 scoping, exactly as the `autonomous` prompt scopes a `--full-access` Lead
@@ -210,8 +234,9 @@ any leftover `materialize-<change>.json` journal), orphan Beads, crashed
 session records and the working-tree state, and exits non-zero when any of
 those needs a decision. The agent then resolves each item with the playbook in
 [`failure-recovery.md`](failure-recovery.md) § "Resuming an interrupted run" —
-in particular, a `LIMBO` / `resumable` Bead's work is already done and is
-verified-and-closed, never re-implemented. `AGENTS.md` § "Resuming a run" states
+in particular, a `LIMBO` / `resumable` Bead has committed work, complete or
+only its first steps: what is missing is finished, the whole is verified and
+closed, and committed work is never re-implemented. `AGENTS.md` § "Resuming a run" states
 the protocol tool-neutrally; `doctor` also prints a one-line `recover` summary.
 
 ## Branches and commits
@@ -242,7 +267,9 @@ named `plan/<planning-id>/<description>`:
 it. A branch that does not match fails CI.
 
 Use Conventional Commits, for example
-`feat(ui): add dark mode toggle [SPEC-abc123]`.
+`feat(ui): add dark mode toggle [SPEC-abc123]`. A Bead normally spans several
+such commits, each carrying its token (see step 10 of the Lead Agent
+knowledge path).
 
 Planning changes are committed on their change branch and merged into `develop`
 after `./scripts/nogg validate`. A planning commit uses a Conventional

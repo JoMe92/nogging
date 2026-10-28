@@ -24,6 +24,12 @@ repo_root="$(cd "$here/.." && pwd)"
 work=$(mktemp -d)
 trap 'rm -f "$out"; rm -rf "$work"' EXIT
 out=$(mktemp)
+# No fixture may read the operator's real ~/.codex: `doctor` walks
+# <CODEX_HOME>, and against a real Codex history (gigabytes of rollouts) one
+# call costs ~40 s instead of ~1 s. Always a scratch home, even when the
+# caller exported a real one.
+mkdir -p "$work/codex-home"
+export CODEX_HOME="$work/codex-home"
 
 # --- lint: no test invokes `nogg doctor|validate|audit` unguarded --------
 # Those subcommands exit non-zero on a host missing an optional tool (dolt on a
@@ -1265,7 +1271,35 @@ JSON
   || echo "ok   - rec-limbo: recover exits non-zero with a committed-but-open Bead"
 check "rec-limbo: lists the LIMBO Bead" "LIMBO: SPEC-lim committed in"
 check "rec-limbo: names the commit SHA" "$sha_lim"
+refute "rec-limbo: a single commit carries no commit count" "(newest of"
 check "rec-limbo: attention summary names it" "need attention"
+unset NOGGING_ROOT BD_FIXTURE BD_STUB_DIR
+
+# --- a Bead committed in several steps is one LIMBO line with its count ---
+# (a token repeated in one subject still counts that commit once)
+root="$work/rec-limbo-multi"; make_root "$root"
+git -C "$root" commit -q --allow-empty -m "feat(demo): first step [SPEC-mlt]"
+git -C "$root" commit -q --allow-empty -m "test(demo): second step [SPEC-mlt] (follow-up of [SPEC-mlt])"
+sha_mlt="$(git -C "$root" rev-parse --short=12 HEAD)"
+export NOGGING_ROOT="$root"
+export BD_FIXTURE="$work/rec-limbo-multi-beads.json"
+export BD_STUB_DIR="$root"
+cat >"$BD_FIXTURE" <<'JSON'
+[
+  {"id": "SPEC-mlt", "status": "in_progress",
+   "labels": ["openspec:change:demo", "openspec:task:TASK-DEMO-001"]}
+]
+JSON
+"$nogg" recover >"$out" 2>&1 || true
+check "rec-limbo-multi: recover names the newest commit and the count" \
+  "LIMBO: SPEC-mlt committed in $sha_mlt \"test(demo): second step [SPEC-mlt] (follow-up of [SPEC-mlt])\" (newest of 2 token commits) but status=in_progress"
+[[ $(grep -c "LIMBO: SPEC-mlt" "$out") -eq 1 ]] \
+  && echo "ok   - rec-limbo-multi: several commits of one Bead are one LIMBO line" \
+  || { echo "FAIL - rec-limbo-multi: expected exactly one LIMBO line"; cat "$out"; fail=1; }
+check "rec-limbo-multi: the Bead is still resumable" "SPEC-mlt [resumable]"
+"$nogg" validate >"$out" 2>&1 || true
+check "rec-limbo-multi: the validate WARN carries the count" \
+  "WARN  LIMBO: SPEC-mlt committed in $sha_mlt (newest of 2 token commits) but status=in_progress"
 unset NOGGING_ROOT BD_FIXTURE BD_STUB_DIR
 
 # --- a stale lock exits non-zero ---------------------------------------
@@ -1448,6 +1482,7 @@ export BD_STUB_DIR="$root"
 mkdir -p "$root/.codex/prompts"
 printf 'plan prompt\n' >"$root/.codex/prompts/plan.md"
 printf 'sync prompt\n' >"$root/.codex/prompts/sync-now.md"
+cxf_saved_codex_home="$CODEX_HOME"   # restored, never unset, after this scenario
 export CODEX_HOME="$root/.codex-home"
 
 # --- link: creates the nogging-<name>.md symlinks ---------------------
@@ -1517,7 +1552,11 @@ refute "cxf-doctor: NOTE is gone once every prompt is linked" \
   || { echo "FAIL - cxf-doctor: doctor exit code moved $rc_unlinked -> $rc_linked"; fail=1; }
 rm -f "$work/bin/codex"
 "$nogg" codex-prompts-link --unlink >/dev/null 2>&1 || true
-unset NOGGING_ROOT BD_FIXTURE BD_STUB_DIR CODEX_HOME
+unset NOGGING_ROOT BD_FIXTURE BD_STUB_DIR
+# Unsetting CODEX_HOME here would expose the operator's real ~/.codex to every
+# later doctor call (the hta-doctor pair cost ~90 s on a Pi 5); restore the
+# scratch home instead.
+export CODEX_HOME="$cxf_saved_codex_home"
 
 # ===========================================================================
 # Scenario: doctor flags a misconfigured or drifted bypass-permissions launch

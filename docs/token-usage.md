@@ -3,7 +3,10 @@
 Nogging keeps a private, local record of the tokens each supervised session
 consumed, and lets you query it by time window, model, task and complexity. It
 counts tokens only: there is no price, no billing figure and no quota percent
-here (quota admission is a separate feature, see `running-work-in-sessions.md`).
+here. Rate-limit observation and quota admission are a separate feature — see
+the [usage limits guide](https://jome92.github.io/nogging/usage-limits/) and
+the [launch usage
+gate](https://jome92.github.io/nogging/running-work-in-sessions/#launch-usage-gate).
 
 ## What ships and where state lives
 

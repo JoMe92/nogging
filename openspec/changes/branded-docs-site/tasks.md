@@ -110,7 +110,7 @@
   not change scripts/nogg. Check: site suite; commands and
   runtime-guidance-docs suites; nogg validate. Branch test/.
 
-- [ ] TASK-BDS-008 [standard] Troubleshooting page.
+- [x] TASK-BDS-008 [standard] Troubleshooting page.
   Per design Decision 8 (new page troubleshooting.md): write symptom, cause
   and fix entries for the listed failures (doctor FAIL and WARN, held
   planning lock, unreachable Dolt server, sandboxed or missing tmux server,
@@ -166,7 +166,7 @@
   session-observability, commands and installed-diagnostics suites; nogg
   validate. Branch fix/ (after TASK-BDS-010).
 
-- [ ] TASK-BDS-012 [standard] Usage-limits rewrite and operations and maintainer page fixes.
+- [x] TASK-BDS-012 [standard] Usage-limits rewrite and operations and maintainer page fixes.
   Per design Decision 8 (operations and maintainer pages): rewrite
   usage-limits.md around nogg usage and the usage gate, with probe detail in
   a short appendix and no owner time zone. Edit token-usage.md (intro),

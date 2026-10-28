@@ -8,6 +8,7 @@
   "sync_lock_ttl_seconds": 120,
   "change_states": ["open", "done", "archived"],
   "tier_overrides": {},
+  "task_sizing": {"bead_prod_lines": [400, 1000], "commit_lines": [100, 600]},
   "nogging_version": "0.0.0",
   "personas": {
     "planner": {"name": "Nogging Planner", "email": "planner@nogging.bot"},

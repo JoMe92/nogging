@@ -12,7 +12,7 @@ branch and an `origin` remote: worktrees are allocated from a freshly fetched
 
 ```bash
 cd /path/to/your-repo
-npx github:JoMe92/nogging#v3.2.0 init --no-systemd
+npx github:JoMe92/nogging#v3.3.0 init --no-systemd
 ```
 
 `--no-systemd` skips the systemd units; leave it off only after reviewing the
@@ -28,7 +28,7 @@ provisions the whole stack — pinned to the versions in the
 [compatibility matrix](compatibility.md) — and then runs `init` for you:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/JoMe92/nogging/v3.2.0/scripts/bootstrap | bash
+curl -fsSL https://raw.githubusercontent.com/JoMe92/nogging/v3.3.0/scripts/bootstrap | bash
 ```
 
 Always pin a tagged release in that URL, never `main`/`develop`, for the same
@@ -44,7 +44,7 @@ Download the script first, then run it, to get a guided, Nogging-styled
 terminal wizard instead:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/JoMe92/nogging/v3.2.0/scripts/bootstrap -o bootstrap
+curl -fsSL https://raw.githubusercontent.com/JoMe92/nogging/v3.3.0/scripts/bootstrap -o bootstrap
 bash bootstrap
 ```
 
@@ -139,6 +139,11 @@ command above.
 `.nogging/installed-manifest.json` tracks SHA-256 digests of all installed verbatim
 and doc files for three-way comparison during updates.
 
+The shipped `scripts/*.test.sh` files are Nogging's own self-tests. In your
+repository `scripts/test` skips every `*.test.sh` file the manifest records and
+runs only your own `scripts/**/*.test.sh`; `NOGG_SELFTEST=1 scripts/test` runs
+the shipped self-tests as well.
+
 Never touched: `openspec/changes/**`, `.beads/**`,
 `.nogging/{state,locks,reports}`, your `README.md`, your `package.json`.
 
@@ -206,6 +211,12 @@ systemctl --user enable --now "$PWD/systemd/nogg-sync-<slug>.timer"
 `<slug>` with the filenames printed by the installer. Enabling the timer is an
 explicit opt-in (marked `(optional)` in the next steps); review the generated
 unit before doing so.
+
+If your repository is public, note that `bd init` points Beads' Dolt sync
+remote at the project's own Git remote, which publishes all Beads data —
+Bead titles, notes, memories and owner identities, including their history —
+alongside the code. Point Beads at a separate private repository instead; see
+[Beads data and privacy](security-model.md#beads-data-and-privacy).
 
 Confirm the pinned package version before changing an installation:
 

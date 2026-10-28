@@ -14,9 +14,8 @@ Each step is tagged:
 - **[A] agent-driven** — a person runs a session (or drives an agent) and
   records the outcome by hand in the report.
 
-`scripts/acceptance.sh` and this document must not drift. A task in the
-`end-to-end-acceptance` change keeps them in step; if you change one, change the
-other.
+`scripts/acceptance.sh` and this document must not drift; if you change one,
+change the other, and keep the step order and tags in step.
 
 ## Prerequisites
 
@@ -131,10 +130,12 @@ no network. That subset also runs from `scripts/test` (via
 
 - **Prerequisite:** step 9; a convention-named branch (`<type>/<change-slug>`).
 - **Do:** claim `TASK-ACCEPTX-001`'s Bead, delegate an isolated slice to one
-  specialist, validate, then commit with a Conventional subject carrying the
-  `[<bead-id>]` token; add a Bead note with the commit SHA and evidence.
-- **Expected:** a commit on the convention branch whose subject matches the
-  commit-message rule and names the Bead; the Bead has an evidence note.
+  specialist, validate, then commit in one or more coherent steps, each with a
+  Conventional subject carrying the `[<bead-id>]` token; add a Bead note
+  listing every commit SHA and the evidence.
+- **Expected:** one or more commits on the convention branch whose subjects
+  match the commit-message rule and name the Bead; the Bead has an evidence
+  note that lists them.
 
 ### 11. Close the planning session — [M]
 
@@ -142,7 +143,7 @@ no network. That subset also runs from `scripts/test` (via
 - **Do:** `( cd "$target" && ./scripts/nogg plan-end )`.
 - **Expected:** `planning session lock released`; the lock file is gone.
 - **Why here:** the mechanical sync refuses to mirror while a planning session
-  is open or while `HEAD` is on a protected branch (`sync-safety` / W5), so the
+  is open or while `HEAD` is on a protected branch (the sync-safety guard), so the
   runbook ends planning and moves onto a change branch before the sync
   round-trip — matching the operating model, where execution and the
   timer-driven sync run only after `plan-end`.

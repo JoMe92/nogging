@@ -39,8 +39,11 @@ implementation code**. Your actions are limited to:
 - **Driving sub-sessions** — start a Planning or Lead session, watch its log,
   `attach` to steer it, `stop` it when it is done or stuck.
 - **`git`** — read freely; local integration (a fast-forward merge to
-  `develop`) is allowed. Do not `git push` a protected branch without an
-  explicit instruction.
+  `develop`) is allowed. A Lead commits a Bead in several steps, so integrate
+  the whole branch, never one cherry-picked SHA; if you must cherry-pick,
+  take the full `develop..<branch>` range in order and confirm
+  `git cherry develop <branch>` prints no `+` line. Do not `git push` a
+  protected branch without an explicit instruction.
 
 When you identify a needed spec change, you **start or direct a planning
 session** to make it — you do not edit `openspec/` yourself. The same applies
@@ -136,10 +139,13 @@ you have.
   `invariants` job.
 
 - **`takeover code`** — claim the named Bead (`bd update <id> --claim`),
-  implement it, run `scripts/test` (and any narrower suite the task calls
-  for), commit with a Conventional subject carrying the `[<bead-id>]` token,
-  append the evidence note (`bd update <id> --append-notes "commit <sha>;
-  <evidence>"`), and `bd close <id>`. Record any plan-relevant finding as a
+  implement it in coherent commits within the configured commit range
+  (`scripts/nogg task-sizing`), each with a Conventional subject carrying the
+  `[<bead-id>]` token and the tests for the code it changes. Run only the
+  affected tests while working, the affected suite plus lint of the changed
+  files before each commit, and `scripts/test` once before closing. Append the
+  evidence note listing every commit SHA (`bd update <id> --append-notes
+  "commits <sha>, <sha>; <evidence>"`), and `bd close <id>`. Record any plan-relevant finding as a
   discovery (`bd update <id> --add-label discovery --append-notes "<prose>"`;
   `--status blocked` if it blocks).
 

@@ -126,6 +126,14 @@ with tempfile.TemporaryDirectory() as tmp:
     check(any("origin is not an SSH remote" in n for n in notes), f"non-SSH remote skipped: {notes}")
     check(any(n == "codex sandbox test probe: FAILED suites: scripts/b.test.sh" for n in notes),
           f"only the failing suite is named, not per-check FAIL lines: {notes}")
+    # A consumer whose scripts/test skipped every shipped self-test ran nothing.
+    test.write_text("#!/usr/bin/env bash\necho 'Nogging: skipped 7 shipped Nogging self-test(s); "
+                    "NOGG_SELFTEST=1 scripts/test runs them'\n"
+                    "echo 'Nogging: no project *.test.sh under scripts/; nothing else to run'\n")
+    notes = diag(wt, with_sandbox=True)
+    check(any(n.startswith("codex sandbox test probe: passed but ran no project test") for n in notes)
+          and not any(n == "codex sandbox test probe: all suites passed" for n in notes),
+          f"a probe that ran nothing does not claim all suites passed: {notes}")
     test.write_text("#!/usr/bin/env bash\nsleep 30\n")
     notes = diag(wt, with_sandbox=True, cfg={"doctor_sandbox_test_timeout_seconds": 1})
     check(any(n == "codex sandbox test probe: timed out after 1 s" for n in notes), f"test probe bounded: {notes}")

@@ -25,10 +25,11 @@ valid. Conflicting or incomplete labels remain explicit diagnostics; Nogging
 never repairs them by selecting an arbitrary label or deleting history.
 
 Labels are used because Beads does not provide arbitrary per-issue custom
-fields. An execution agent adds a note before closing a Bead containing a Git
-commit SHA and validation evidence. A material discovery is recorded on the
-active Bead with the native `discovery` label plus a required human-readable
-note (`bd update <id> --add-label discovery --append-notes "..."`); a blocking
+fields. An execution agent adds a note before closing a Bead listing every Git
+commit SHA of the Bead and the validation evidence. A material discovery is
+recorded on the active Bead with the native `discovery` label plus a required
+human-readable note
+(`bd update <id> --add-label discovery --append-notes "..."`); a blocking
 discovery additionally sets the Bead status to `blocked`. The mechanical sync
 finds pending discoveries by the `discovery` label alone and never parses the
 note. It reads the full Bead status set, not the non-closed default, so a
