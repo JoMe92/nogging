@@ -87,13 +87,18 @@ A specialist returns a structured result and nothing else. It never claims,
 closes, or re-statuses a Bead, never commits, and never writes `openspec/`. On
 the specialist's return **you**:
 
-1. validate the work (run `scripts/test` or the narrower suite);
-2. write the evidence note — `bd update <id> --append-notes "commit <sha>; <evidence>"`;
-3. commit with a Conventional subject carrying the `[<ID>]` token, adding a
+1. validate the work in stages: the affected tests while working, the affected
+   suite plus lint of the changed files before each commit, and `scripts/test`
+   (the full suite) once per Bead before closing it;
+2. commit in coherent steps within the configured commit range
+   (`./scripts/nogg task-sizing`), each with a Conventional subject carrying
+   the `[<ID>]` token and the tests for the code it changes, adding a
    `Co-authored-by: <persona name> <persona email>` trailer naming the
    specialist whose delegated, incorporated work contributed to the commit
    (roster in `.nogging/config.json`'s `personas` key — e.g. `Co-authored-by:
    Nogging Backend Engineer <backend-engineer@nogging.bot>`);
+3. write the evidence note listing every commit SHA —
+   `bd update <id> --append-notes "commits <sha>, <sha>; <evidence>"`;
 4. `bd close <id>`.
 
 If a specialist reports a plan-relevant finding, you record the discovery per
