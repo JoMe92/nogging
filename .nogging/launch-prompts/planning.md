@@ -14,6 +14,11 @@ After kickoff:
    report the named owner and stop without writing or forcing the lock.
 3. Review `./scripts/nogg discoveries` and ready archives, then author only the
    authorized planning scope. Do not implement code or claim execution Beads.
+   Size each task as a vertical slice delivering one testable capability
+   (backend, API, UI and docs of a feature together) within the configured
+   Bead range (`./scripts/nogg task-sizing`), tagged `[~N loc]` (production
+   lines, tests excluded); a smaller task needs a stated reason in the tag,
+   e.g. `[~80 loc: security fix]`.
 4. Validate the planning artifacts with `./scripts/nogg validate` and
    `openspec validate <change> --strict --no-interactive`, naming the change;
    never a bare `openspec validate`. Commit as the planning writer with the

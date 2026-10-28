@@ -21,7 +21,7 @@ Nogging is a spec-driven, multi-agent workflow for AI coding agents such as Clau
 - **Problem:** several agents on one repository overwrite each other and the plan. **Solution:** one [Git worktree](docs/worktree-workflow.md) and one claimed Bead per agent.
 - **Problem:** an agent "fixes" the specification to match its code. **Solution:** only a planning session writes `openspec/`; execution roles are fenced out ([boundaries](#non-negotiable-boundaries)).
 - **Problem:** a run dies and the state is lost. **Solution:** claims, notes and worktree records persist, with [documented recovery](docs/failure-recovery.md).
-- **Problem:** "done" is a claim, not a record. **Solution:** every closed Bead carries a commit and an evidence note that sync mirrors into OpenSpec.
+- **Problem:** "done" is a claim, not a record. **Solution:** every closed Bead carries its commits and an evidence note that sync mirrors into OpenSpec.
 - **Problem:** you use more than one agent CLI. **Solution:** the same loop for Claude Code, Codex and Pi, with Antigravity experimental.
 
 ## How it compares
@@ -118,7 +118,7 @@ The manual sequence is the same flow, with both ids in kebab-case:
 ./scripts/nogg worktree plan <planning-id> <description>
 cd <printed planning worktree path>
 ./scripts/nogg plan-begin
-# Author the OpenSpec change, with stable TASK-... IDs in tasks.md.
+# Author the OpenSpec change: stable TASK-... IDs in tasks.md, each task a vertical slice tagged [~N loc].
 ./scripts/nogg validate
 NOGGING_WRITER=planning git commit -m "docs(openspec): <summary>"  # commit as the planning writer before materialize
 ./scripts/nogg materialize <change-name>
@@ -163,8 +163,10 @@ An optional always-on Orchestration Agent can drive these for you; see
 
 ### Close out
 
-The Lead commits with the `[<ID>]` token in the subject, runs `bd close <id>`
-and `./scripts/nogg task-done <id>`, and leaves the evidence note on the Bead.
+The Lead commits in coherent steps, each with the `[<ID>]` token in the
+subject, runs the full suite once at the end, then `bd close <id>` and
+`./scripts/nogg task-done <id>`, and leaves the evidence note listing every
+commit on the Bead.
 You review the pull request, run `./scripts/nogg sync --now` (or rely on the
 timer, enabled with `systemctl --user enable --now nogg-sync.timer`), triage
 discoveries with `/discovery-review`, and archive the change when

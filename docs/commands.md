@@ -82,6 +82,9 @@ install the statusline capture used by the launch usage gate.
 
 **Purpose.** Strict check that the OpenSpec tasks and the Beads that map to them
 agree. It exits non-zero on any defect.
+It also adds a task sizing NOTE for open tasks whose `[~N loc]` estimate is
+below the configured minimum without a reason, or that mostly carry no estimate
+(see [task-sizing](#task-sizing)). A NOTE never changes the exit code.
 
 **Common forms.**
 
@@ -242,6 +245,24 @@ step of the Lead close protocol.
 
 **Read more.** [Operating model](operating-model.md) and
 [Failure recovery](failure-recovery.md).
+
+## task-sizing
+
+**Purpose.** Print the Bead and commit line ranges in effect: the `task_sizing`
+key of `.nogging/config.json`, or its defaults (Bead 400–1000 production lines,
+commit 100–600 lines). Each range says whether it is configured or the default.
+
+**Common forms.**
+
+```bash
+./scripts/nogg task-sizing
+```
+
+**Used by.** The Planning Agent when it sizes tasks, and a Lead Agent when it
+splits a Bead into commits.
+
+**Read more.** [Configuration](configuration.md#task_sizing) and
+[Operating model](operating-model.md#task-sizing).
 
 ## codex-prompts-link
 

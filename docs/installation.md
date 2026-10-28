@@ -139,6 +139,11 @@ command above.
 `.nogging/installed-manifest.json` tracks SHA-256 digests of all installed verbatim
 and doc files for three-way comparison during updates.
 
+The shipped `scripts/*.test.sh` files are Nogging's own self-tests. In your
+repository `scripts/test` skips every `*.test.sh` file the manifest records and
+runs only your own `scripts/**/*.test.sh`; `NOGG_SELFTEST=1 scripts/test` runs
+the shipped self-tests as well.
+
 Never touched: `openspec/changes/**`, `.beads/**`,
 `.nogging/{state,locks,reports}`, your `README.md`, your `package.json`.
 

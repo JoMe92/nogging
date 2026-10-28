@@ -79,9 +79,11 @@ the orchestrator session — exactly one of:
   from the canonical checkout. The trailer is mandatory: the orchestrator session has no
   `openspec/**` write guard, so the trailer is the only thing that keeps the
   commit past the CI `invariants` job.
-- **`takeover code`** — claim the named Bead, implement, `scripts/test`, commit
-  with the `[<bead-id>]` token, write the evidence note, `bd close` — then back
-  to orchestrate-only.
+- **`takeover code`** — claim the named Bead, implement in coherent commits
+  within the configured commit range, each with the `[<bead-id>]` token and
+  its tests (affected tests while working, the affected suite plus lint before
+  each commit, `scripts/test` once before closing), write the evidence note
+  with every commit SHA, `bd close` — then back to orchestrate-only.
 
 A takeover is scoped to that one task. The orchestrator never completes the
 `Signed-off-by:` line of an acceptance report — acceptance stays the Product

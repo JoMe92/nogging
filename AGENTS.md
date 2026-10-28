@@ -9,12 +9,18 @@ the rest applies to every runtime — Claude Code, Codex, or another.
 
 1. Execution agents (Main Worker and specialists) must not edit `openspec/`.
 2. Work only on a Bead that has been claimed by the Main Worker.
-3. Before closing a Bead, run relevant validation. Close it (`bd close <id>`),
-   then immediately run `./scripts/nogg task-done <id>` to tick its mapped
-   `tasks.md` line (it refuses unless the Bead is already closed). Commit with
-   a Conventional Commit containing the Bead ID (e.g. `[SPEC-abc]`), bundling
-   that `tasks.md` tick into the same commit as the Bead's own execution
-   change, and add a Bead note with the commit SHA and evidence.
+3. Commit a Bead in several coherent steps, not as one commit at the end. Each
+   commit stays within the configured commit range (`task_sizing.commit_lines`
+   in `.nogging/config.json`; `./scripts/nogg task-sizing` prints it), is a
+   Conventional Commit containing the Bead ID (e.g. `[SPEC-abc]`), and holds
+   the tests for the code it changes. Test in stages: while working, run only
+   the affected tests; before each commit, the affected suite plus lint of the
+   changed files; once per Bead, before closing it, the full project suite.
+   CI stays the final gate. Then close the Bead (`bd close <id>`) and
+   immediately run `./scripts/nogg task-done <id>` to tick its mapped
+   `tasks.md` line (it refuses unless the Bead is already closed), bundling
+   that tick into the Bead's last commit, and add a Bead note listing every
+   commit SHA and the evidence.
 4. Record every material discovery on the active Bead with the native Beads
    `discovery` label plus a required human-readable note. Never encode the
    discovery as serialized data (no JSON, no key/value block). An execution
@@ -71,9 +77,11 @@ fresh, resumed, or after a tool switch — **before selecting work with
 2. Run `./scripts/nogg recover`.
 3. Resolve every item it reports, using the playbook in
    `docs/failure-recovery.md` § "Resuming an interrupted run". A `LIMBO` /
-   `resumable` Bead's work is **already done** — verify it (`scripts/test`), add
-   the evidence note, and `bd close` it; **never re-implement it** (that
-   produces a duplicate commit).
+   `resumable` Bead has **committed work**, complete or only its first steps:
+   compare its commits (`git log --oneline --grep '\[<id>\]'`) with the task
+   slice and finish what is missing; once complete, verify it (`scripts/test`),
+   add the evidence note with every commit SHA, and `bd close` it. **Never
+   re-implement committed work** (that produces duplicate commits).
 4. Only then select work with `bd ready`.
 
 ## Specialist delegation

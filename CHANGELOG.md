@@ -9,6 +9,40 @@ and GitHub Releases for that history.
 
 ## [Unreleased]
 
+### Added
+
+- `task_sizing` in `.nogging/config.json` (`bead_prod_lines`, default
+  400–1000 production lines per Bead; `commit_lines`, default 100–600 lines
+  per commit) and `nogg task-sizing`, which prints the ranges in effect.
+- `nogg validate` notes open tasks whose `[~N loc]` estimate is below the
+  configured minimum without a reason, and changes whose open tasks mostly
+  carry no estimate. A note never fails `validate`; existing changes stay
+  valid.
+
+### Changed
+
+- Planning writes each task as a vertical slice delivering one testable
+  capability (backend, API, UI and docs together) in the configured Bead
+  range, with a `[~N loc]` estimate; a smaller task states its reason.
+- Leads commit a Bead in several coherent commits within the configured
+  commit range, each carrying the `[<bead-id>]` token with its tests; the
+  evidence note lists every SHA.
+- Staged testing replaces "always the full suite": affected tests while
+  working, the affected suite plus lint before each commit, the full suite
+  once per Bead. CI stays the final gate.
+- In a repository Nogging is installed into, `scripts/test` runs only that
+  repository's own tests; Nogging's shipped self-tests run with
+  `NOGG_SELFTEST=1 scripts/test`. The Nogging repository runs everything.
+- `recover` and `validate` LIMBO lines show how many commits carry a Bead's
+  token, and the recovery playbook treats a LIMBO or `resumable` Bead as
+  possibly partial work.
+
+### Fixed
+
+- `scripts/nogg.test.sh` and `scripts/session-observability.test.sh` no
+  longer read the operator's real `~/.codex` after a scenario that unset
+  `CODEX_HOME`; on the delivery host that cost about 90 s per run.
+
 ## [3.2.0] - 2026-10-27
 
 ### Added

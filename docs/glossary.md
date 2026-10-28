@@ -16,10 +16,11 @@ command and want the short answer first. Terms are in the order you meet them.
 
 - **change**: one OpenSpec change directory holding the proposal, design, specs and `tasks.md` for an agreed piece of work; see [Concepts](concepts.md).
 - **task ID**: the stable `TASK-…` identifier of one line in `tasks.md`, carried by its Bead as an `openspec:task:` label; see [Operating model](operating-model.md).
+- **task sizing**: the configured line ranges for one task (and so one Bead) and for one commit; a task is a vertical slice delivering one testable capability, tagged with its production-line estimate `[~N loc]`; see [`task_sizing`](configuration.md#task_sizing).
 - **Bead**: one tracked unit of work in the Beads issue tracker, normally one task of a change; see [Concepts](concepts.md).
 - **claim**: taking a Bead for yourself with `bd update <id> --claim` before you start; see [Your first change](first-change.md).
 - **discovery**: a finding that matters to the plan, recorded on the Bead with the `discovery` label and a prose note; see [Operating model](operating-model.md#discoveries).
-- **evidence note**: the Bead note that records the commit SHA and the validation output before the Bead is closed; see [Operating model](operating-model.md).
+- **evidence note**: the Bead note that lists every commit SHA of the Bead and the validation output before the Bead is closed; see [Operating model](operating-model.md).
 - **materialize**: creating the Beads of a change from its `tasks.md`; see [`materialize`](commands.md#materialize).
 - **sync**: the mechanical pass that mirrors Bead state back into `tasks.md` and reconciles closed Beads; see [`sync`](commands.md#sync).
 - **acceptance report**: the written record of an acceptance run that the Product Owner signs; see [Acceptance](acceptance.md).
@@ -30,7 +31,7 @@ command and want the short answer first. Terms are in the order you meet them.
 - **sentinel and fence**: the sentinel is the `openspec.readonly` marker that `plan-end` writes; the fence is the read-only `openspec/` root that a launched non-planning session gets; together they keep execution agents out of the spec; see [Architecture](architecture.md).
 - **planning lock**: the `planning.lock` file that makes sync skip while a planning session is open; see [Failure recovery](failure-recovery.md).
 - **worktree record**: the JSON file under `.nogging/state/worktrees/` that remembers which worktree, branch and Bead belong together; see [`worktree`](commands.md#worktree).
-- **LIMBO**: a Bead whose commit exists but whose status was never closed, so the work is done and only the note and close are missing; see [Failure recovery](failure-recovery.md).
+- **LIMBO**: a Bead with committed work whose status was never closed; the commits may hold all of the work or only its first steps, so what is missing is finished, then noted and closed; see [Failure recovery](failure-recovery.md).
 - **tier**: the difficulty label (`routine`, `standard`, `complex`) that picks an agent's model and effort; see [Model selection](model-selection.md#tiers).
 - **authority level** (restricted, trusted, full access): how much a session may do, from vendor-restricted approvals and network to autonomous edits, commits, integration and pushing; see [Security model](security-model.md#trust-boundaries-and-authority-levels).
 - **command floor**: the fixed set of commands denied to every launched session whatever its profile, lifted only for the Orchestration Agent; see [Security model](security-model.md).

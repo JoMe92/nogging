@@ -111,11 +111,15 @@ Task-tool prompt. A specialist returns a structured result and nothing else: it
 never claims, closes or re-statuses a Bead, never commits, and never writes
 `openspec/`. When it returns, the **Lead**:
 
-1. validates the work with `scripts/test` or the narrower suite the task names;
-2. writes the evidence note on the Bead, with the commit SHA;
-3. commits with a Conventional subject that carries the Bead ID token, adding a
-   `Co-authored-by: <persona name> <persona email>` trailer for each specialist
-   whose delegated work went into the commit;
+1. validates the work in stages: the affected tests while working, the
+   affected suite plus lint of the changed files before each commit, and
+   `scripts/test` (the full suite) once per Bead before closing it;
+2. commits in coherent steps within the configured commit range
+   (`./scripts/nogg task-sizing` prints it), each with a Conventional subject
+   that carries the Bead ID token and the tests for the code it changes, adding
+   a `Co-authored-by: <persona name> <persona email>` trailer for each
+   specialist whose delegated work went into that commit;
+3. writes the evidence note on the Bead, listing every commit SHA;
 4. closes the Bead.
 
 The persona names and addresses come from the `personas` key in

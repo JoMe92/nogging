@@ -131,10 +131,12 @@ no network. That subset also runs from `scripts/test` (via
 
 - **Prerequisite:** step 9; a convention-named branch (`<type>/<change-slug>`).
 - **Do:** claim `TASK-ACCEPTX-001`'s Bead, delegate an isolated slice to one
-  specialist, validate, then commit with a Conventional subject carrying the
-  `[<bead-id>]` token; add a Bead note with the commit SHA and evidence.
-- **Expected:** a commit on the convention branch whose subject matches the
-  commit-message rule and names the Bead; the Bead has an evidence note.
+  specialist, validate, then commit in one or more coherent steps, each with a
+  Conventional subject carrying the `[<bead-id>]` token; add a Bead note
+  listing every commit SHA and the evidence.
+- **Expected:** one or more commits on the convention branch whose subjects
+  match the commit-message rule and name the Bead; the Bead has an evidence
+  note that lists them.
 
 ### 11. Close the planning session — [M]
 

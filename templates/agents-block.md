@@ -8,12 +8,18 @@ are confined to *Tool notes* at the end.
 
 1. Execution agents (Main Worker and specialists) must not edit `openspec/`.
 2. Work only on a Bead that has been claimed by the Main Worker.
-3. Before closing a Bead, run relevant validation. Close it (`bd close <id>`),
-   then immediately run `./scripts/nogg task-done <id>` to tick its mapped
-   `tasks.md` line (it refuses unless the Bead is already closed). Commit with
-   a Conventional Commit containing the Bead ID (e.g. `[SPEC-abc]`), bundling
-   that `tasks.md` tick into the same commit as the Bead's own execution
-   change, and add a Bead note with the commit SHA and evidence.
+3. Commit a Bead in several coherent steps, not as one commit at the end. Each
+   commit stays within the configured commit range (`task_sizing.commit_lines`
+   in `.nogging/config.json`; `./scripts/nogg task-sizing` prints it), is a
+   Conventional Commit containing the Bead ID (e.g. `[SPEC-abc]`), and holds
+   the tests for the code it changes. Test in stages: while working, run only
+   the affected tests; before each commit, the affected suite plus lint of the
+   changed files; once per Bead, before closing it, the full project suite.
+   CI stays the final gate. Then close the Bead (`bd close <id>`) and
+   immediately run `./scripts/nogg task-done <id>` to tick its mapped
+   `tasks.md` line (it refuses unless the Bead is already closed), bundling
+   that tick into the Bead's last commit, and add a Bead note listing every
+   commit SHA and the evidence.
 4. Record every material discovery on the active Bead with the native Beads
    `discovery` label plus a required human-readable note — never as serialized
    data, and never by editing `openspec/`. A blocking discovery also sets the

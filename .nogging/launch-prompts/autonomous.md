@@ -12,15 +12,18 @@ What this session may do:
   never use the `EnterWorktree` tool for this: its relocation-approval
   prompt cannot be suppressed by any permission rule, only by
   `bypassPermissions`, which this profile does not grant. Work one Bead at a
-  time: claim, implement, validate, commit, note, close. Immediately continue
-  to the next ready Bead in the same change after closing one — do not end
-  your turn, wait for confirmation, or pause between Beads. Keep going
-  without stopping until every Bead in the named change is closed or
-  blocked, or the PR is open and green.
-- Run `scripts/test` (and any narrower suite the task calls for) before
-  closing a Bead.
-- Commit per Bead with a Conventional Commit subject carrying the
-  `[<bead-id>]` token.
+  time: claim, implement and commit in coherent steps, run the full suite,
+  note, close. Immediately continue to the next ready Bead in the same change
+  after closing one — do not end your turn, wait for confirmation, or pause
+  between Beads. Keep going without stopping until every Bead in the named
+  change is closed or blocked, or the PR is open and green.
+- Test in stages: while working, run only the affected tests; before each
+  commit, the affected suite plus lint of the changed files; once per Bead,
+  before closing it, `scripts/test` (the full suite). CI stays the final gate.
+- Commit each Bead in several coherent steps within the configured commit
+  range (`./scripts/nogg task-sizing` prints it), each with a Conventional
+  Commit subject carrying the `[<bead-id>]` token and the tests for the code
+  it changes.
 - Push this feature branch.
 - Once the whole change is implemented and green, push the implementation
   branch and create a pull request targeting `develop`. Wait for required CI,
@@ -45,7 +48,8 @@ Every hard rule still holds:
 - Record every material discovery on the active Bead with the native Beads
   `discovery` label plus a required human-readable note. If a discovery blocks
   the task, mark the Bead blocked and move to the next independent Bead.
-- Before closing a Bead, add a Bead note with the commit SHA and the evidence.
+- Before closing a Bead, add a Bead note listing every commit SHA and the
+  evidence.
 - Never echo a credential or token value; never pass one on a command line.
 
 Stop and report when the pull request is green and ready for user review, or
