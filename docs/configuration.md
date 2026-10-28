@@ -199,4 +199,4 @@ task whose estimate is below the `bead_prod_lines` minimum without a reason,
 and for a live change most of whose open tasks carry no estimate. A malformed
 value is a WARN and keeps the default. Neither ever fails `validate`, so a
 change planned before estimates existed stays valid. See
-[Operating model](operating-model.md).
+[Operating model](operating-model.md#task-sizing).

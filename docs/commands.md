@@ -261,7 +261,8 @@ commit 100–600 lines). Each range says whether it is configured or the default
 **Used by.** The Planning Agent when it sizes tasks, and a Lead Agent when it
 splits a Bead into commits.
 
-**Read more.** [Configuration](configuration.md#task_sizing).
+**Read more.** [Configuration](configuration.md#task_sizing) and
+[Operating model](operating-model.md#task-sizing).
 
 ## codex-prompts-link
 

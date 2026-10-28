@@ -36,7 +36,8 @@ In Claude Code, run:
 
 The Planning Agent asks what you want built, then works through a fixed
 sequence: it allocates its own planning worktree, takes the planning lock,
-writes an OpenSpec change with stable task IDs in `tasks.md`, validates it,
+writes an OpenSpec change with stable task IDs in `tasks.md`, each task a
+vertical slice tagged with its size estimate `[~N loc]`, validates it,
 commits it, materializes the tasks into Beads and wires their dependencies.
 You should see it finish by releasing the lock and retiring the planning
 worktree. Nothing it wrote touches your working branch.
@@ -76,8 +77,9 @@ add `--full-access`, and see
 [Model selection](model-selection.md) for choosing the agent and effort.
 
 The Lead claims the Bead, allocates its own worktree from `origin/develop` (see
-the [worktree workflow](worktree-workflow.md)), implements the task there and
-runs the checks the task names.
+the [worktree workflow](worktree-workflow.md)), implements the task there in
+several commits, running the affected tests as it goes and the full suite once
+before it hands off.
 
 ## 5. Watch it work
 
@@ -94,9 +96,9 @@ described in [Running work in sessions](running-work-in-sessions.md).
 
 ## 6. Review the pull request
 
-When the Lead finishes, it has committed with the Bead ID in the subject,
-pushed its branch, opened a pull request against `develop` and left an
-evidence note on the Bead. You should find the PR on GitHub with the Bead token
+When the Lead finishes, it has committed the task in coherent steps, each
+with the Bead ID in the subject, pushed its branch, opened a pull request
+against `develop` and left an evidence note on the Bead. You should find the PR on GitHub with the Bead token
 in its commits. Review it as you would any other pull request. The Lead never
 merges its own pull request unless you started it with `--full-access` and told
 it to; see the [worktree workflow](worktree-workflow.md).
@@ -107,8 +109,8 @@ Check the Bead too:
 bd show <id>
 ```
 
-You should see the status `closed` and a note with the commit SHA and the
-evidence the Lead gathered.
+You should see the status `closed` and a note listing every commit SHA and
+the evidence the Lead gathered.
 
 ## 7. Mirror the evidence back
 
