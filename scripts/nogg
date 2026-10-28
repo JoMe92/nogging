@@ -1852,10 +1852,11 @@ def release_orchestrator_lock():
     (ORCHESTRATOR_LOCKS / "orchestrator.lock").unlink(missing_ok=True)
 
 LIMBO_TOKEN_RE = re.compile(r"\[([A-Z][A-Z0-9]*-[0-9a-z]+)\]")
-def branch_commit_tokens():
-    """Bead ID token `[<id>]` -> newest non-merge commit SHA on HEAD's history
-    whose subject carries it (the `[SPEC-xxx]` token the `commit-msg` hook
-    enforces on execution commits). Empty when this is not a git repository."""
+def token_commit_shas():
+    """Bead ID token `[<id>]` -> every non-merge commit SHA on HEAD's history
+    whose subject carries it, newest first (the `[SPEC-xxx]` token the
+    `commit-msg` hook enforces on execution commits; a Bead may have several).
+    Empty when this is not a git repository."""
     res = run("git", "log", "--no-merges", "--format=%H %s", check=False)
     if res.returncode:
         return {}
@@ -1863,24 +1864,32 @@ def branch_commit_tokens():
     for line in res.stdout.splitlines():
         h, _, subject = line.partition(" ")
         for token in LIMBO_TOKEN_RE.findall(subject):
-            out.setdefault(token, h)
+            out.setdefault(token, []).append(h)
     return out
+def branch_commit_tokens():
+    """Bead ID token `[<id>]` -> newest non-merge commit SHA carrying it."""
+    return {token: shas[0] for token, shas in token_commit_shas().items()}
+def token_commit_count_suffix(count):
+    """` (newest of N token commits)` for a Bead committed in several steps."""
+    return f" (newest of {count} token commits)" if count > 1 else ""
 def limbo_warnings(issues, commit_tokens=None):
     """`LIMBO: <id> committed in <sha> but status=<status>` for every Bead that
     has a commit carrying its ID token on HEAD's history but is not closed (W1:
     a committed-but-not-closed Bead is invisible and risks a duplicate commit on
-    resume). A warning, never a problem — the sync timer must keep mirroring the
-    Beads that *are* closed."""
-    commit_tokens = branch_commit_tokens() if commit_tokens is None else commit_tokens
+    resume). Several commits name the newest and their count: the work may be
+    complete or only partly committed. A warning, never a problem — the sync
+    timer must keep mirroring the Beads that *are* closed."""
+    commit_tokens = token_commit_shas() if commit_tokens is None else commit_tokens
     out = []
     for issue in issues:
         bid = str(issue_id(issue) or "")
-        sha = commit_tokens.get(bid)
-        if not bid or not sha:
+        shas = commit_tokens.get(bid)
+        if not bid or not shas:
             continue
         status = issue.get("status") or "unknown"
         if status != "closed":
-            out.append(f"LIMBO: {bid} committed in {sha[:12]} but status={status}")
+            out.append(f"LIMBO: {bid} committed in {shas[0][:12]}"
+                       f"{token_commit_count_suffix(len(shas))} but status={status}")
     return out
 def mapping_audit(fallback_ref=None):
     """One read-only snapshot, with typed scope for every mapping invariant."""
@@ -7970,9 +7979,9 @@ def resolve_ref(name):
             return cand
     return None
 def commit_tokens_with_subject(rev_range=None):
-    """`[<id>]` token -> (newest sha, subject) over non-merge commits, optionally
-    restricted to a `<base>..HEAD` range. Empty when this is not a git repo or
-    the range will not resolve."""
+    """`[<id>]` token -> (newest sha, its subject, commit count) over non-merge
+    commits, optionally restricted to a `<base>..HEAD` range. Empty when this is
+    not a git repo or the range will not resolve."""
     args = ["git", "log", "--no-merges", "--format=%H%x1f%s"]
     if rev_range:
         args.append(rev_range)
@@ -7983,7 +7992,8 @@ def commit_tokens_with_subject(rev_range=None):
     for line in res.stdout.splitlines():
         h, _, subject = line.partition("\x1f")
         for token in LIMBO_TOKEN_RE.findall(subject):
-            out.setdefault(token, (h, subject))
+            sha, first_subject, count = out.get(token, (h, subject, 0))
+            out[token] = (sha, first_subject, count + 1)
     return out
 MATERIALIZE_JOURNAL_RE = re.compile(r"^materialize-(.+)\.json$")
 def materialize_journals():
@@ -8075,13 +8085,14 @@ def recover_scan():
     limbo_lines = []
     if base_ref is None:
         limbo_lines.append(f"(base {base_name!r} does not resolve — scanning full HEAD history)")
-    for token, (sha, subject) in sorted(commit_tokens_with_subject(rng).items()):
+    for token, (sha, subject, count) in sorted(commit_tokens_with_subject(rng).items()):
         iss = by_id.get(token)
         if iss is None:
             continue
         status = iss.get("status") or "unknown"
         if status != "closed":
-            limbo_lines.append(f'LIMBO: {token} committed in {sha[:12]} "{subject}" but status={status}')
+            limbo_lines.append(f'LIMBO: {token} committed in {sha[:12]} "{subject}"'
+                               f'{token_commit_count_suffix(count)} but status={status}')
             attention.append(f"LIMBO {token}")
     section("Committed but not closed", limbo_lines)
 
@@ -8101,7 +8112,8 @@ def recover_scan():
             age_s = None
         if bid in head_tokens:
             # A commit carries its token but the Bead is not closed — the same
-            # committed-but-open case as LIMBO, so it needs a decision.
+            # committed-but-open case as LIMBO, so it needs a decision: the
+            # committed work may be the whole Bead or only its first steps.
             cls = "resumable"
             attention.append(f"resumable {bid}")
         elif age_s is not None and age_s >= stale_secs:

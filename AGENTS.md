@@ -71,9 +71,11 @@ fresh, resumed, or after a tool switch — **before selecting work with
 2. Run `./scripts/nogg recover`.
 3. Resolve every item it reports, using the playbook in
    `docs/failure-recovery.md` § "Resuming an interrupted run". A `LIMBO` /
-   `resumable` Bead's work is **already done** — verify it (`scripts/test`), add
-   the evidence note, and `bd close` it; **never re-implement it** (that
-   produces a duplicate commit).
+   `resumable` Bead has **committed work**, complete or only its first steps:
+   compare its commits (`git log --oneline --grep '\[<id>\]'`) with the task
+   slice and finish what is missing; once complete, verify it (`scripts/test`),
+   add the evidence note with every commit SHA, and `bd close` it. **Never
+   re-implement committed work** (that produces duplicate commits).
 4. Only then select work with `bd ready`.
 
 ## Specialist delegation

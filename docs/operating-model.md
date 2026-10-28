@@ -210,8 +210,9 @@ any leftover `materialize-<change>.json` journal), orphan Beads, crashed
 session records and the working-tree state, and exits non-zero when any of
 those needs a decision. The agent then resolves each item with the playbook in
 [`failure-recovery.md`](failure-recovery.md) § "Resuming an interrupted run" —
-in particular, a `LIMBO` / `resumable` Bead's work is already done and is
-verified-and-closed, never re-implemented. `AGENTS.md` § "Resuming a run" states
+in particular, a `LIMBO` / `resumable` Bead has committed work, complete or
+only its first steps: what is missing is finished, the whole is verified and
+closed, and committed work is never re-implemented. `AGENTS.md` § "Resuming a run" states
 the protocol tool-neutrally; `doctor` also prints a one-line `recover` summary.
 
 ## Branches and commits
