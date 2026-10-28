@@ -10,7 +10,7 @@ the table says otherwise; an absent key takes the default shown.
 Keys the scaffold does not write (most of the session and usage keys) are read
 with the default shown, so add one only when you want a different value. The
 keys are grouped as identity and personas, sync, sessions, models, usage,
-multi-machine and agent state. The commands that read them are described in the
+multi-machine, agent state and work sizing. The commands that read them are described in the
 [command reference](commands.md).
 
 ## Identity and personas
@@ -103,6 +103,12 @@ refused by name.
 | --- | --- | --- | --- |
 | `agent_state_roots` | object | `{"antigravity": ["~/.gemini/antigravity-cli"]}` | Home-directory paths a session may write for each agent. See [the block below](#agent_state_roots). |
 
+## Work sizing
+
+| Key | Type | Default | Effect |
+| --- | --- | --- | --- |
+| `task_sizing` | object | `{"bead_prod_lines": [400, 1000], "commit_lines": [100, 600]}` | The size one Bead and one commit should have. Planning and Lead guidance read it; `validate` only reports a NOTE. See [the block below](#task_sizing). |
+
 ## Blocks
 
 ### `usage_gate`
@@ -172,3 +178,25 @@ A Bead gets a grant only through the `agent-state:<agent>` label.
 ```
 
 See [Security model](security-model.md).
+
+### `task_sizing`
+
+An optional object with two optional keys, each a `[min, max]` pair of positive
+integers. An absent key takes its default:
+
+```json
+"task_sizing": {"bead_prod_lines": [400, 1000], "commit_lines": [100, 600]}
+```
+
+| Key | Type | Default | Effect |
+| --- | --- | --- | --- |
+| `bead_prod_lines` | `[min, max]` | `[400, 1000]` | Production lines (tests excluded) one task, and so one Bead, targets. The Planning Agent writes each task as a vertical slice in this range and tags it `[~N loc]`. A smaller task states its reason in the tag, e.g. `[~80 loc: security fix]`. |
+| `commit_lines` | `[min, max]` | `[100, 600]` | Changed lines one commit targets. A Lead commits a Bead in several coherent steps in this range, each carrying the `[<bead-id>]` token, with tests in the same commit as the code they cover. |
+
+`./scripts/nogg task-sizing` prints the ranges in effect and whether each one is
+configured or the default. `./scripts/nogg validate` adds a NOTE for an open
+task whose estimate is below the `bead_prod_lines` minimum without a reason,
+and for a live change most of whose open tasks carry no estimate. A malformed
+value is a WARN and keeps the default. Neither ever fails `validate`, so a
+change planned before estimates existed stays valid. See
+[Operating model](operating-model.md).

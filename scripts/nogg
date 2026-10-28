@@ -2254,6 +2254,84 @@ def record_mapping_health(branch, diagnostics, processed_changes):
     atomic_json_state(MAPPING_HEALTH, health)
     return health
 
+# Task sizing (`task_sizing` in .nogging/config.json): the production-line range
+# one Bead targets and the line range one commit targets. Planning and Lead
+# guidance only: `validate` reports a NOTE, nothing is ever refused.
+TASK_SIZING_DEFAULTS = {"bead_prod_lines": (400, 1000), "commit_lines": (100, 600)}
+# `[~N loc]` estimates production lines (tests excluded); `[~N loc: <reason>]`
+# states why a task is smaller than the configured minimum.
+TASK_ESTIMATE_RE = re.compile(r"\[~\s*(\d+)\s*loc\b\s*(?::\s*([^\]]*))?\]", re.I)
+OPEN_TASK_RE = re.compile(r"^- \[ \] (TASK-[A-Z0-9-]+)\b(.*)$")
+
+def task_sizing(cfg=None):
+    """Return ({key: (min, max)}, configured keys, problems); a malformed key keeps its default."""
+    raw = (CFG if cfg is None else cfg).get("task_sizing", {})
+    sizing, configured, problems = dict(TASK_SIZING_DEFAULTS), set(), []
+    if not isinstance(raw, dict):
+        return sizing, configured, ["task_sizing in .nogging/config.json must be an object; using the defaults"]
+    for key, value in raw.items():
+        if key not in TASK_SIZING_DEFAULTS:
+            problems.append(f"task_sizing.{key} in .nogging/config.json is not a known key; ignored")
+        elif (isinstance(value, list) and len(value) == 2
+              and all(isinstance(v, int) and not isinstance(v, bool) and v > 0 for v in value)
+              and value[0] <= value[1]):
+            sizing[key] = tuple(value)
+            configured.add(key)
+        else:
+            problems.append(f"task_sizing.{key} in .nogging/config.json must be [min, max] positive "
+                            f"integers with min <= max; using the default {list(TASK_SIZING_DEFAULTS[key])}")
+    return sizing, configured, problems
+
+def task_sizing_cmd():
+    sizing, configured, problems = task_sizing()
+    for key, (low, high) in sizing.items():
+        print(f"{key}: {low}-{high} ({'configured' if key in configured else 'default'})")
+    for problem in problems:
+        print(f"WARN  {problem}", file=sys.stderr)
+
+def open_task_blocks(text):
+    """Every unticked task of a tasks.md as (task ID, text), continuation lines joined."""
+    blocks, current = [], None
+    for line in text.splitlines():
+        match = OPEN_TASK_RE.match(line)
+        if match:
+            current = [match.group(1), match.group(2)]
+            blocks.append(current)
+        elif current is not None and line[:1] in (" ", "\t") and line.strip():
+            current[1] += " " + line.strip()
+        else:
+            current = None
+    return [tuple(block) for block in blocks]
+
+def task_sizing_notes():
+    """NOTE lines for open tasks of live changes that miss the configured Bead size.
+
+    Advisory only: an estimate below the minimum without a reason, or a change
+    whose open tasks mostly carry no estimate. Never a FAIL, so a change planned
+    before estimates existed stays valid.
+    """
+    low = task_sizing()[0]["bead_prod_lines"][0]
+    notes = []
+    for change in sorted(changes(), key=lambda path: path.name):
+        file = change / "tasks.md"
+        if not file.exists():
+            continue
+        blocks = open_task_blocks(file.read_text())
+        small, missing = [], 0
+        for task, body in blocks:
+            estimate = TASK_ESTIMATE_RE.search(body)
+            if not estimate:
+                missing += 1
+            elif int(estimate.group(1)) < low and not (estimate.group(2) or "").strip():
+                small.append(f"{task} (~{estimate.group(1)} loc)")
+        if small:
+            notes.append(f"task sizing: {change.name}: {', '.join(small)} below the configured "
+                         f"{low}-line Bead minimum without a reason ([~N loc: <reason>])")
+        if blocks and missing * 2 > len(blocks):
+            notes.append(f"task sizing: {change.name}: {missing} of {len(blocks)} open tasks "
+                         f"carry no [~N loc] estimate")
+    return notes
+
 def mapping_health_lines():
     last = read_last_success()
     lines = [f"last complete sync: {last['at']} ({humanize_age(last['at'])} ago)"
@@ -8488,6 +8566,7 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
     warnings.extend(herdr_warnings)
     artifact_warnings, artifact_notes = installer_artifact_diagnostics()
     warnings.extend(artifact_warnings)
+    warnings.extend(task_sizing()[2])
     for name, ok in checks: print(f"{'OK' if ok else 'FAIL'}  {name}")
     # Warnings are advisory (a committed-but-open Bead and the like): shown
     # distinctly from FAIL, and they never change doctor's exit code.
@@ -8510,6 +8589,12 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
     # actually archives a change; doctor only surfaces readiness.
     for change in archive_ready_changes(tasks, issues):
         notes.append(f"change ready to archive: {change} (every mapped Bead is closed)")
+    # Task sizing is advisory: an undersized or unestimated open task is a NOTE
+    # (a malformed task_sizing a WARN, above); neither changes the exit code.
+    try:
+        notes.extend(task_sizing_notes())
+    except OSError as exc:
+        notes.append(f"task sizing check unavailable: {exc}")
     if SKIP_RECORD.exists():
         try: srec = json.loads(SKIP_RECORD.read_text())
         except (ValueError, OSError): srec = {}
@@ -8780,6 +8865,8 @@ def main():
     td = sub.add_parser("task-done",
         help="tick the closed Bead's mapped tasks.md line (Lead close protocol)")
     td.add_argument("bead_id")
+    sub.add_parser("task-sizing",
+        help="print the configured Bead and commit line ranges (task_sizing)")
     cpl = sub.add_parser("codex-prompts-link",
         help="symlink .codex/prompts/*.md into <CODEX_HOME>/prompts/ as nogging-<name>.md")
     cpl.add_argument("--unlink", action="store_true",
@@ -8935,6 +9022,7 @@ def main():
         print("planning session lock released; openspec write boundary closed")
     elif args.command == "materialize": materialize(args.change)
     elif args.command == "task-done": task_done(args.bead_id)
+    elif args.command == "task-sizing": task_sizing_cmd()
     elif args.command == "codex-prompts-link": codex_prompts_link(args.unlink)
     elif args.command == "models": models_cmd(args.action, args.agent, args.tier, args.json)
     elif args.command == "worktree":
