@@ -20,6 +20,12 @@ and GitHub Releases for that history.
   configured minimum without a reason, and changes whose open tasks mostly
   carry no estimate. A note never fails `validate`; existing changes stay
   valid.
+- Security guidance for public projects: `docs/security-model.md` and the
+  FAQ explain why a Beads remote must stay private and how to configure it
+  safely, naming the `__dolt_remote_info__` table and recommending the seed
+  commit be authored locally (#306).
+- A troubleshooting page with symptom-cause-fix entries for the most common
+  operational failures (#311).
 
 ### Changed
 
@@ -37,13 +43,18 @@ and GitHub Releases for that history.
   `NOGG_SELFTEST=1 scripts/test`. The Nogging repository runs everything.
 - `recover` and `validate` LIMBO lines show how many commits carry a Bead's
   token, and the recovery playbook treats a LIMBO or `resumable` Bead as
-  possibly partial work.
+  possibly partial work (#313).
+- `docs/usage-limits.md` rewritten around `nogg usage`, including how to
+  install the statusline capture wrapper with `nogg usage
+  install-statusline` (#312, Refs #280).
 
 ### Fixed
 
 - `scripts/nogg.test.sh` and `scripts/session-observability.test.sh` no
   longer read the operator's real `~/.codex` after a scenario that unset
   `CODEX_HOME`; on the delivery host that cost about 90 s per run.
+- The docs-site guard test derives the owner-surname check from a hash so
+  the surname itself stays out of the repository (#310).
 
 ## [3.2.0] - 2026-10-27
 
@@ -55,12 +66,6 @@ and GitHub Releases for that history.
   search, and new pages: Your first change, Claude Code guide, command
   reference, configuration reference and glossary. Internal pages are
   excluded from the site (#281 #288 #289 #291 #292 #293 #294 #296).
-- Security guidance for public projects: `docs/security-model.md` and the
-  FAQ explain why a Beads remote must stay private and how to configure it
-  safely, naming the `__dolt_remote_info__` table and recommending the seed
-  commit be authored locally (#306).
-- A troubleshooting page with symptom-cause-fix entries for the most common
-  operational failures (#311).
 - An offline docs-site test suite (`scripts/docs-site.test.sh`) and a
   container build for the site (`scripts/docs-site-build`) (#289 #293).
 - `THIRD_PARTY_NOTICES.md` carries the full MIT texts for the OpenSpec and
@@ -76,13 +81,6 @@ and GitHub Releases for that history.
   holder is now "Jonas (JoMe92)" (#279).
 - Agent Console sibling-project references removed (#287).
 - Internal groundwork for scheduled loops (no user-facing command yet).
-- Task sizing and staged testing: planning writes each task as a vertical
-  slice with a `[~N loc]` estimate, Leads commit a Bead in several coherent
-  commits within the configured commit range, and the full suite runs once
-  per Bead while affected tests run during development (Refs #280).
-- `docs/usage-limits.md` rewritten around `nogg usage`, including how to
-  install the statusline capture wrapper with `nogg usage
-  install-statusline` (#312).
 
 ### Fixed
 
@@ -90,8 +88,6 @@ and GitHub Releases for that history.
   internal IDs removed (#291).
 - Session logs stay readable when log rotation splits a UTF-8 character;
   rotation now cuts on character boundaries (#304).
-- The docs-site guard test derives the owner-surname check from a hash so
-  the surname itself stays out of the repository (#310).
 
 ## [3.1.1] - 2026-10-26
 
