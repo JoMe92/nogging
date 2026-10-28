@@ -166,7 +166,7 @@
   session-observability, commands and installed-diagnostics suites; nogg
   validate. Branch fix/ (after TASK-BDS-010).
 
-- [ ] TASK-BDS-012 [standard] Usage-limits rewrite and operations and maintainer page fixes.
+- [x] TASK-BDS-012 [standard] Usage-limits rewrite and operations and maintainer page fixes.
   Per design Decision 8 (operations and maintainer pages): rewrite
   usage-limits.md around nogg usage and the usage gate, with probe detail in
   a short appendix and no owner time zone. Edit token-usage.md (intro),

@@ -17,9 +17,11 @@ with tempfile.TemporaryDirectory(prefix="nogg installed diagnostics ") as direct
                    stdout=subprocess.DEVNULL, check=True)
     config = json.loads((consumer / ".nogging/config.json").read_text())
     assert "claim_stale_seconds" not in config
-    # Exercise the actual installed self-tests with the minimal consumer config.
+    # Exercise the actual installed self-tests with the minimal consumer config;
+    # a consumer's scripts/test skips them unless NOGG_SELFTEST=1 asks.
     result = subprocess.run([str(consumer / "scripts/test")], cwd=consumer,
-                            env=env, text=True, capture_output=True, timeout=180)
+                            env={**env, "NOGG_SELFTEST": "1"}, text=True,
+                            capture_output=True, timeout=180)
     if result.returncode:
         print(result.stdout + result.stderr)
         raise AssertionError("installed self-tests failed with supported optional defaults")

@@ -372,8 +372,8 @@ you want to supervise a risky stretch.
 ## Running with broader authority
 
 By default a session runs under the `restricted` profile. To let a session work
-a whole change unattended — commit per Bead, push its branch, merge to
-`develop` when green — launch it with broader authority:
+a whole change unattended — commit each Bead in coherent steps, push its
+branch, merge to `develop` when green — launch it with broader authority:
 
 ```bash
 ./scripts/nogg session launch --role lead --bead SPEC-xxx --full-access
@@ -388,7 +388,8 @@ a whole change unattended — commit per Bead, push its branch, merge to
 - **`autonomous`** is the system prompt that authorises the session to execute
   one named change end to end and fast-forward-merge it to `develop` (no PR),
   while keeping every hard rule: never edit `openspec/`, work only that
-  change's Beads, record discoveries, commit-and-note before closing a Bead.
+  change's Beads, record discoveries, and before closing a Bead run the full
+  suite once and note every commit SHA.
 
 You can also pass the two flags separately, or point either at a file of your
 own: `--profile ./my-profile.json`, `--prompt ./my-prompt.md`. A bare name
@@ -938,3 +939,10 @@ processes run. This ensures that direct test runs:
 - Never inherit planning roles that grant unauthorized OpenSpec writes during guard tests.
 - Always retain unrelated environment variables, custom quota fixtures, and npm cache settings.
 Fixtures explicitly configure any required session variables after sourcing `test-env.sh`.
+
+`scripts/test` runs the suite the same way. In a repository Nogging was
+installed into, it runs only that repository's own `scripts/**/*.test.sh`;
+Nogging's shipped self-tests (the `*.test.sh` files
+`.nogging/installed-manifest.json` records) run only with
+`NOGG_SELFTEST=1 scripts/test`. In the Nogging repository itself every test
+runs.

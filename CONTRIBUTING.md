@@ -15,9 +15,13 @@ follow [SECURITY.md](SECURITY.md), not the public issue tracker.
 1. Fork or branch from `develop` using a supported conventional branch name.
 2. Associate implementation with a claimed Bead; do not edit `openspec/` from
    an execution session.
-3. Keep commits focused and use Conventional Commits with the Bead ID, for
-   example `fix(sync): preserve evidence ordering [SPEC-abc1]`.
-4. Run `scripts/test` and any focused checks relevant to the change.
+3. Commit a Bead in coherent steps within the configured commit range
+   (`./scripts/nogg task-sizing` prints it), each a Conventional Commit with
+   the Bead ID that holds the tests for the code it changes, for example
+   `fix(sync): preserve evidence ordering [SPEC-abc1]`.
+4. Test in stages: the affected tests while working, the affected suite plus
+   lint of the changed files before each commit, and `scripts/test` (the
+   full suite) once per Bead before hand-off. CI stays the final gate.
 5. Open a pull request targeting `develop` and complete the template.
 
 See [the operating model](docs/operating-model.md) and
@@ -40,7 +44,10 @@ scripts/test   # runs every scripts/**/*.test.sh; also `npm test`
 The runner is language-neutral and offline: bash and coreutils only, no Node,
 no network, and no running Beads/Dolt server (tests that need `bd` stub it). It
 covers the `commit-msg` boundary hook — Beads ID accepted, missing ID rejected,
-and the `planning`/`sync` `NOGGING_WRITER` exemptions.
+and the `planning`/`sync` `NOGGING_WRITER` exemptions. In a repository
+Nogging was installed into, the same runner skips Nogging's shipped self-tests
+unless `NOGG_SELFTEST=1` is set; here, with no installed manifest, every test
+runs.
 
 [Nogging validation](.github/workflows/nogging-validate.yml) runs this suite,
 plus the following, on every push and pull request:

@@ -1852,35 +1852,44 @@ def release_orchestrator_lock():
     (ORCHESTRATOR_LOCKS / "orchestrator.lock").unlink(missing_ok=True)
 
 LIMBO_TOKEN_RE = re.compile(r"\[([A-Z][A-Z0-9]*-[0-9a-z]+)\]")
-def branch_commit_tokens():
-    """Bead ID token `[<id>]` -> newest non-merge commit SHA on HEAD's history
-    whose subject carries it (the `[SPEC-xxx]` token the `commit-msg` hook
-    enforces on execution commits). Empty when this is not a git repository."""
+def token_commit_shas():
+    """Bead ID token `[<id>]` -> every non-merge commit SHA on HEAD's history
+    whose subject carries it, newest first (the `[SPEC-xxx]` token the
+    `commit-msg` hook enforces on execution commits; a Bead may have several).
+    Empty when this is not a git repository."""
     res = run("git", "log", "--no-merges", "--format=%H %s", check=False)
     if res.returncode:
         return {}
     out = {}
     for line in res.stdout.splitlines():
         h, _, subject = line.partition(" ")
-        for token in LIMBO_TOKEN_RE.findall(subject):
-            out.setdefault(token, h)
+        for token in dict.fromkeys(LIMBO_TOKEN_RE.findall(subject)):
+            out.setdefault(token, []).append(h)
     return out
+def branch_commit_tokens():
+    """Bead ID token `[<id>]` -> newest non-merge commit SHA carrying it."""
+    return {token: shas[0] for token, shas in token_commit_shas().items()}
+def token_commit_count_suffix(count):
+    """` (newest of N token commits)` for a Bead committed in several steps."""
+    return f" (newest of {count} token commits)" if count > 1 else ""
 def limbo_warnings(issues, commit_tokens=None):
     """`LIMBO: <id> committed in <sha> but status=<status>` for every Bead that
     has a commit carrying its ID token on HEAD's history but is not closed (W1:
     a committed-but-not-closed Bead is invisible and risks a duplicate commit on
-    resume). A warning, never a problem — the sync timer must keep mirroring the
-    Beads that *are* closed."""
-    commit_tokens = branch_commit_tokens() if commit_tokens is None else commit_tokens
+    resume). Several commits name the newest and their count: the work may be
+    complete or only partly committed. A warning, never a problem — the sync
+    timer must keep mirroring the Beads that *are* closed."""
+    commit_tokens = token_commit_shas() if commit_tokens is None else commit_tokens
     out = []
     for issue in issues:
         bid = str(issue_id(issue) or "")
-        sha = commit_tokens.get(bid)
-        if not bid or not sha:
+        shas = commit_tokens.get(bid)
+        if not bid or not shas:
             continue
         status = issue.get("status") or "unknown"
         if status != "closed":
-            out.append(f"LIMBO: {bid} committed in {sha[:12]} but status={status}")
+            out.append(f"LIMBO: {bid} committed in {shas[0][:12]}"
+                       f"{token_commit_count_suffix(len(shas))} but status={status}")
     return out
 def mapping_audit(fallback_ref=None):
     """One read-only snapshot, with typed scope for every mapping invariant."""
@@ -2253,6 +2262,87 @@ def record_mapping_health(branch, diagnostics, processed_changes):
                                                    "reason": d.message} for d in diagnostics]}
     atomic_json_state(MAPPING_HEALTH, health)
     return health
+
+# Task sizing (`task_sizing` in .nogging/config.json): the production-line range
+# one Bead targets and the line range one commit targets. Planning and Lead
+# guidance only: `validate` reports a NOTE, nothing is ever refused.
+TASK_SIZING_DEFAULTS = {"bead_prod_lines": (400, 1000), "commit_lines": (100, 600)}
+# `[~N loc]` estimates production lines (tests excluded); `[~N loc: <reason>]`
+# states why a task is smaller than the configured minimum.
+TASK_ESTIMATE_RE = re.compile(r"\[~\s*(\d+)\s*loc\b\s*(?::\s*([^\]]*))?\]", re.I)
+OPEN_TASK_RE = re.compile(r"^- \[ \] (TASK-[A-Z0-9-]+)\s+(.+)$")
+LIST_ITEM_RE = re.compile(r"^\s+(?:[-*+]|\d+[.)])\s")
+
+def task_sizing(cfg=None):
+    """Return ({key: (min, max)}, configured keys, problems); a malformed key keeps its default."""
+    raw = (CFG if cfg is None else cfg).get("task_sizing", {})
+    sizing, configured, problems = dict(TASK_SIZING_DEFAULTS), set(), []
+    if not isinstance(raw, dict):
+        return sizing, configured, ["task_sizing in .nogging/config.json must be an object; using the defaults"]
+    for key, value in raw.items():
+        if key not in TASK_SIZING_DEFAULTS:
+            problems.append(f"task_sizing.{key} in .nogging/config.json is not a known key; ignored")
+        elif (isinstance(value, list) and len(value) == 2
+              and all(isinstance(v, int) and not isinstance(v, bool) and v > 0 for v in value)
+              and value[0] <= value[1]):
+            sizing[key] = tuple(value)
+            configured.add(key)
+        else:
+            problems.append(f"task_sizing.{key} in .nogging/config.json must be [min, max] positive "
+                            f"integers with min <= max; using the default {list(TASK_SIZING_DEFAULTS[key])}")
+    return sizing, configured, problems
+
+def task_sizing_cmd():
+    sizing, configured, problems = task_sizing()
+    for key, (low, high) in sizing.items():
+        print(f"{key}: {low}-{high} ({'configured' if key in configured else 'default'})")
+    for problem in problems:
+        print(f"WARN  {problem}", file=sys.stderr)
+
+def open_task_blocks(text):
+    """Every unticked task of a tasks.md as (task ID, text): wrapped continuation
+    lines are joined; a nested list item or a blank line ends the task."""
+    blocks, current = [], None
+    for line in text.splitlines():
+        match = OPEN_TASK_RE.match(line)
+        if match:
+            current = [match.group(1), match.group(2)]
+            blocks.append(current)
+        elif (current is not None and line[:1] in (" ", "\t") and line.strip()
+              and not LIST_ITEM_RE.match(line)):
+            current[1] += " " + line.strip()
+        else:
+            current = None
+    return [tuple(block) for block in blocks]
+
+def task_sizing_notes():
+    """NOTE lines for open tasks of live changes that miss the configured Bead size.
+
+    Advisory only: an estimate below the minimum without a reason, or a change
+    with two or more open tasks, most of them without an estimate. Never a FAIL, so a change planned
+    before estimates existed stays valid.
+    """
+    low = task_sizing()[0]["bead_prod_lines"][0]
+    notes = []
+    for change in sorted(changes(), key=lambda path: path.name):
+        file = change / "tasks.md"
+        if not file.exists():
+            continue
+        blocks = open_task_blocks(file.read_text())
+        small, missing = [], 0
+        for task, body in blocks:
+            estimate = TASK_ESTIMATE_RE.search(body)
+            if not estimate:
+                missing += 1
+            elif int(estimate.group(1)) < low and not (estimate.group(2) or "").strip():
+                small.append(f"{task} (~{estimate.group(1)} loc)")
+        if small:
+            notes.append(f"task sizing: {change.name}: {', '.join(small)} below the configured "
+                         f"{low}-line Bead minimum without a reason ([~N loc: <reason>])")
+        if missing >= 2 and missing * 2 > len(blocks):
+            notes.append(f"task sizing: {change.name}: {missing} of {len(blocks)} open tasks "
+                         f"carry no [~N loc] estimate")
+    return notes
 
 def mapping_health_lines():
     last = read_last_success()
@@ -7892,9 +7982,9 @@ def resolve_ref(name):
             return cand
     return None
 def commit_tokens_with_subject(rev_range=None):
-    """`[<id>]` token -> (newest sha, subject) over non-merge commits, optionally
-    restricted to a `<base>..HEAD` range. Empty when this is not a git repo or
-    the range will not resolve."""
+    """`[<id>]` token -> (newest sha, its subject, commit count) over non-merge
+    commits, optionally restricted to a `<base>..HEAD` range. Empty when this is
+    not a git repo or the range will not resolve."""
     args = ["git", "log", "--no-merges", "--format=%H%x1f%s"]
     if rev_range:
         args.append(rev_range)
@@ -7904,8 +7994,9 @@ def commit_tokens_with_subject(rev_range=None):
     out = {}
     for line in res.stdout.splitlines():
         h, _, subject = line.partition("\x1f")
-        for token in LIMBO_TOKEN_RE.findall(subject):
-            out.setdefault(token, (h, subject))
+        for token in dict.fromkeys(LIMBO_TOKEN_RE.findall(subject)):
+            sha, first_subject, count = out.get(token, (h, subject, 0))
+            out[token] = (sha, first_subject, count + 1)
     return out
 MATERIALIZE_JOURNAL_RE = re.compile(r"^materialize-(.+)\.json$")
 def materialize_journals():
@@ -7997,13 +8088,14 @@ def recover_scan():
     limbo_lines = []
     if base_ref is None:
         limbo_lines.append(f"(base {base_name!r} does not resolve — scanning full HEAD history)")
-    for token, (sha, subject) in sorted(commit_tokens_with_subject(rng).items()):
+    for token, (sha, subject, count) in sorted(commit_tokens_with_subject(rng).items()):
         iss = by_id.get(token)
         if iss is None:
             continue
         status = iss.get("status") or "unknown"
         if status != "closed":
-            limbo_lines.append(f'LIMBO: {token} committed in {sha[:12]} "{subject}" but status={status}')
+            limbo_lines.append(f'LIMBO: {token} committed in {sha[:12]} "{subject}"'
+                               f'{token_commit_count_suffix(count)} but status={status}')
             attention.append(f"LIMBO {token}")
     section("Committed but not closed", limbo_lines)
 
@@ -8023,7 +8115,8 @@ def recover_scan():
             age_s = None
         if bid in head_tokens:
             # A commit carries its token but the Bead is not closed — the same
-            # committed-but-open case as LIMBO, so it needs a decision.
+            # committed-but-open case as LIMBO, so it needs a decision: the
+            # committed work may be the whole Bead or only its first steps.
             cls = "resumable"
             attention.append(f"resumable {bid}")
         elif age_s is not None and age_s >= stale_secs:
@@ -8267,7 +8360,10 @@ def codex_sandbox_diagnosis(workdir, with_sandbox=False, sandbox_extra=()):
         rc, out = _sandbox_run(base + [str(test_script)], workdir, policy, timeout_s)
     except OSError as exc:
         rc, out = 1, str(exc)
-    if rc == 0:
+    if rc == 0 and "nothing else to run" in out:
+        notes.append("codex sandbox test probe: passed but ran no project test; Nogging's shipped "
+                     "self-tests are skipped here (NOGG_SELFTEST=1 ./scripts/nogg doctor --sandbox includes them)")
+    elif rc == 0:
         notes.append("codex sandbox test probe: all suites passed")
     elif rc is None:
         notes.append(f"codex sandbox test probe: timed out after {timeout_s} s")
@@ -8488,6 +8584,7 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
     warnings.extend(herdr_warnings)
     artifact_warnings, artifact_notes = installer_artifact_diagnostics()
     warnings.extend(artifact_warnings)
+    warnings.extend(task_sizing()[2])
     for name, ok in checks: print(f"{'OK' if ok else 'FAIL'}  {name}")
     # Warnings are advisory (a committed-but-open Bead and the like): shown
     # distinctly from FAIL, and they never change doctor's exit code.
@@ -8510,6 +8607,12 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
     # actually archives a change; doctor only surfaces readiness.
     for change in archive_ready_changes(tasks, issues):
         notes.append(f"change ready to archive: {change} (every mapped Bead is closed)")
+    # Task sizing is advisory: an undersized or unestimated open task is a NOTE
+    # (a malformed task_sizing a WARN, above); neither changes the exit code.
+    try:
+        notes.extend(task_sizing_notes())
+    except (OSError, ValueError) as exc:
+        notes.append(f"task sizing check unavailable: {exc}")
     if SKIP_RECORD.exists():
         try: srec = json.loads(SKIP_RECORD.read_text())
         except (ValueError, OSError): srec = {}
@@ -8780,6 +8883,8 @@ def main():
     td = sub.add_parser("task-done",
         help="tick the closed Bead's mapped tasks.md line (Lead close protocol)")
     td.add_argument("bead_id")
+    sub.add_parser("task-sizing",
+        help="print the configured Bead and commit line ranges (task_sizing)")
     cpl = sub.add_parser("codex-prompts-link",
         help="symlink .codex/prompts/*.md into <CODEX_HOME>/prompts/ as nogging-<name>.md")
     cpl.add_argument("--unlink", action="store_true",
@@ -8935,6 +9040,7 @@ def main():
         print("planning session lock released; openspec write boundary closed")
     elif args.command == "materialize": materialize(args.change)
     elif args.command == "task-done": task_done(args.bead_id)
+    elif args.command == "task-sizing": task_sizing_cmd()
     elif args.command == "codex-prompts-link": codex_prompts_link(args.unlink)
     elif args.command == "models": models_cmd(args.action, args.agent, args.tier, args.json)
     elif args.command == "worktree":
