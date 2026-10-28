@@ -402,16 +402,14 @@ apart from the opt-in `pi-ext install`.
 
 ## Product Owner decisions
 
-Recorded at planning time. Revise them before materialization if the Product
-Owner answers otherwise.
+Recorded at planning time and approved as written by the Product Owner on
+2026-10-28, before materialization.
 
 1. **Location.** `.pi/nogging/` (Decision 2), not a top-level `pi/`.
 2. **Footer language.** English, like every Nogging surface; the Product
    Owner's German example is translated.
 3. **Community package.** On this host it is replaced by `glm-usage`
-   (Decision 9, TASK-PXG-008), assumed approved by the request to build our
-   own.
-4. **Routing policy.** No routing default changes. Whether the host-local
-   Pi routing entry should switch to `on_unknown: "deny"` once Pi usage is
-   known stays the Product Owner's call, through TASK-RTG-007 or an explicit
-   later instruction.
+   (Decision 9, TASK-PXG-008).
+4. **Routing policy.** No routing default changes. Unknown Pi usage only
+   warns. A later switch of the host-local Pi routing entry to
+   `on_unknown: "deny"` needs an explicit Product Owner instruction.
