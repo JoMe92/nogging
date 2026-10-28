@@ -9,6 +9,8 @@ and GitHub Releases for that history.
 
 ## [Unreleased]
 
+## [3.3.0] - 2026-10-28
+
 ### Added
 
 - `task_sizing` in `.nogging/config.json` (`bead_prod_lines`, default
@@ -18,6 +20,12 @@ and GitHub Releases for that history.
   configured minimum without a reason, and changes whose open tasks mostly
   carry no estimate. A note never fails `validate`; existing changes stay
   valid.
+- Security guidance for public projects: `docs/security-model.md` and the
+  FAQ explain why a Beads remote must stay private and how to configure it
+  safely, naming the `__dolt_remote_info__` table and recommending the seed
+  commit be authored locally (#306).
+- A troubleshooting page with symptom-cause-fix entries for the most common
+  operational failures (#311).
 
 ### Changed
 
@@ -35,13 +43,18 @@ and GitHub Releases for that history.
   `NOGG_SELFTEST=1 scripts/test`. The Nogging repository runs everything.
 - `recover` and `validate` LIMBO lines show how many commits carry a Bead's
   token, and the recovery playbook treats a LIMBO or `resumable` Bead as
-  possibly partial work.
+  possibly partial work (#313).
+- `docs/usage-limits.md` rewritten around `nogg usage`, including how to
+  install the statusline capture wrapper with `nogg usage
+  install-statusline` (#312, Refs #280).
 
 ### Fixed
 
 - `scripts/nogg.test.sh` and `scripts/session-observability.test.sh` no
   longer read the operator's real `~/.codex` after a scenario that unset
   `CODEX_HOME`; on the delivery host that cost about 90 s per run.
+- The docs-site guard test derives the owner-surname check from a hash so
+  the surname itself stays out of the repository (#310).
 
 ## [3.2.0] - 2026-10-27
 
