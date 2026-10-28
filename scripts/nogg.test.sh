@@ -24,6 +24,14 @@ repo_root="$(cd "$here/.." && pwd)"
 work=$(mktemp -d)
 trap 'rm -f "$out"; rm -rf "$work"' EXIT
 out=$(mktemp)
+# No fixture may read the operator's real ~/.codex: `doctor` walks
+# <CODEX_HOME>, and against a real Codex history (gigabytes of rollouts) one
+# call costs ~40 s instead of ~1 s. scripts/test already exports a scratch
+# CODEX_HOME; a standalone run of this file gets one here.
+if [[ -z "${CODEX_HOME:-}" ]]; then
+  mkdir -p "$work/codex-home"
+  export CODEX_HOME="$work/codex-home"
+fi
 
 # --- lint: no test invokes `nogg doctor|validate|audit` unguarded --------
 # Those subcommands exit non-zero on a host missing an optional tool (dolt on a
@@ -1448,6 +1456,7 @@ export BD_STUB_DIR="$root"
 mkdir -p "$root/.codex/prompts"
 printf 'plan prompt\n' >"$root/.codex/prompts/plan.md"
 printf 'sync prompt\n' >"$root/.codex/prompts/sync-now.md"
+cxf_saved_codex_home="$CODEX_HOME"   # restored, never unset, after this scenario
 export CODEX_HOME="$root/.codex-home"
 
 # --- link: creates the nogging-<name>.md symlinks ---------------------
@@ -1517,7 +1526,11 @@ refute "cxf-doctor: NOTE is gone once every prompt is linked" \
   || { echo "FAIL - cxf-doctor: doctor exit code moved $rc_unlinked -> $rc_linked"; fail=1; }
 rm -f "$work/bin/codex"
 "$nogg" codex-prompts-link --unlink >/dev/null 2>&1 || true
-unset NOGGING_ROOT BD_FIXTURE BD_STUB_DIR CODEX_HOME
+unset NOGGING_ROOT BD_FIXTURE BD_STUB_DIR
+# Unsetting CODEX_HOME here would expose the operator's real ~/.codex to every
+# later doctor call (the hta-doctor pair cost ~90 s on a Pi 5); restore the
+# scratch home instead.
+export CODEX_HOME="$cxf_saved_codex_home"
 
 # ===========================================================================
 # Scenario: doctor flags a misconfigured or drifted bypass-permissions launch
