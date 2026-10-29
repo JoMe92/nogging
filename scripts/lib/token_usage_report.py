@@ -2,13 +2,18 @@
 
 Pure functions over loaded current facts, so windows, buckets, filters,
 coarse attribution and runtime clipping are testable without Dolt. All
-windows are half-open UTC [from, to); hour/day buckets are UTC.
+windows are half-open UTC [from, to); hour/day buckets are UTC. The one
+side effect, the git attribution of the per-Bead view (bead_git_lines), is
+injected by the caller as context['bead_lines'] so report() stays pure.
 """
 import datetime as dt
 import json
 from pathlib import Path
+import re
+import subprocess
 
-from token_usage_store import FIELDS, JSON_FIELDS, StoreError, fact
+# StoreTimeout/StoreUnavailable are re-exported for nogg's bounded readers.
+from token_usage_store import FIELDS, JSON_FIELDS, StoreError, StoreTimeout, StoreUnavailable, fact  # noqa: F401
 
 REPORT_SCHEMA = 'nogg.token-usage.report/v1'
 SESSION_SCHEMA = 'nogg.token-usage.session/v1'
@@ -107,17 +112,36 @@ def decode_row(table, row):
     return values
 
 
-def load_facts(store):
-    """Current (latest-revision) facts by table; empty when no store exists."""
+def load_meta(store, timeout=None):
+    """Store metadata, or None when no store exists (no fact scan)."""
     if not (store.database / '.dolt').exists():
+        return None
+    return store.check_schema(timeout=timeout)
+
+
+def load_facts(store, timeout=None):
+    """Current (latest-revision) facts by table; empty when no store exists.
+
+    One base-table scan per table, the latest revision selected in Python
+    (Store.current): the current_<table> views are quadratic in Dolt. Each
+    Dolt call is bounded by `timeout` seconds (StoreTimeout past it)."""
+    meta = load_meta(store, timeout)
+    if meta is None:
         return None, {t: [] for t in FIELDS}
-    meta = store.check_schema()
     facts = {}
     for table in FIELDS:
-        rows = store.query(f'SELECT * FROM current_{table}')
+        rows = store.current(table, timeout=timeout)
         facts[table] = [dict(decode_row(table, r), fact_id=r['fact_id'], content_hash=r['content_hash'])
                         for r in rows]
     return meta, facts
+
+
+def load_counts(store, timeout=None):
+    """(meta, current fact count per table) without loading fact payloads."""
+    meta = load_meta(store, timeout)
+    if meta is None:
+        return None, {t: 0 for t in FIELDS}
+    return meta, store.current_counts(timeout=timeout)
 
 
 class Model:

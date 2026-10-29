@@ -4390,6 +4390,24 @@ def require_usage_sync_authority():
     raise RuntimeError(f"token-usage sync/import needs trusted operator or orchestrator authority; session "
                        f"{rec.get('name')} runs profile {rec.get('profile') or 'restricted'!r}, so remote sync is "
                        "refused (its usage is still collected locally by host supervision)")
+def usage_query_timeout():
+    """Bound in seconds on each Dolt call of a read-only token-usage command
+    (`token_usage_query_timeout_seconds`, default 30): a busy or oversized store
+    fails with a clear error instead of hanging."""
+    value = scfg("token_usage_query_timeout_seconds", 30)
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        return 30.0
+    return float(value)
+def load_usage_store(rep, store, what, loader):
+    """Run a bounded store reader; a timeout or Dolt failure names the remedy."""
+    try:
+        return loader(store, timeout=usage_query_timeout())
+    except rep.StoreTimeout as exc:
+        raise RuntimeError(f"token-usage {what}: local Dolt query timed out after {exc.seconds:g}s reading "
+                           f"{store.database}; the store may be busy (a collection or sync is running) or "
+                           "large — retry, or raise token_usage_query_timeout_seconds in .nogging/config.json") from exc
+    except rep.StoreUnavailable as exc:
+        raise RuntimeError(f"token-usage {what}: {exc}; check that `dolt` runs (see `nogg doctor`)") from exc
 def token_usage_command(args):
     """`nogg token-usage ...`: local consumption accounting (design 6)."""
     rep = usage_report_module()
@@ -4440,7 +4458,7 @@ def token_usage_command(args):
         return
     if args.usage_command == "import":
         require_usage_sync_authority()   # recovery writes facts a trusted sync may later push
-        meta, _ = rep.load_facts(store)
+        meta = load_usage_store(rep, store, "import", rep.load_meta)
         with open(args.file) as fh:
             project, records, registry = rep.import_records(fh, meta)
         # A recovered store adopts the export's project identity.
@@ -4455,11 +4473,16 @@ def token_usage_command(args):
         print(json.dumps({"schema": "nogg.token-usage.import/v1", "facts": len(records), "added": added})
               if args.json else f"imported {len(records)} fact(s); {added} new (identical facts are no-ops)")
         return
-    meta, facts = rep.load_facts(store)
+    if args.usage_command == "status":   # counts only: no fact payloads are loaded
+        meta, counts = load_usage_store(rep, store, "status", rep.load_counts)
+    else:
+        meta, facts = load_usage_store(rep, store, args.usage_command, rep.load_facts)
     context = dict(usage_context(), store="present" if meta else "absent")
     if args.usage_command == "report":
         start, end = rep.window(args.from_, args.to, now_dt)
         filters = {k: getattr(args, k) for k in rep.FILTERS}
+        if args.group_by == "bead":
+            context["bead_lines"] = lambda beads: rep.bead_git_lines(ROOT, beads, timeout=usage_query_timeout())
         doc = rep.report(facts, meta, start, end, args.group_by, filters, now_dt, context)
         print(json.dumps(doc, indent=2, sort_keys=True) if args.json else render_usage_report(doc))
     elif args.usage_command == "session":
@@ -4477,7 +4500,6 @@ def token_usage_command(args):
         for line in rep.export_lines(facts, meta, start, end, now_dt, registry):
             print(line)
     elif args.usage_command == "status":
-        counts = {table: len(rows) for table, rows in facts.items()}
         try:
             device = (store.root / "device-id").read_text().strip() or None
         except OSError:

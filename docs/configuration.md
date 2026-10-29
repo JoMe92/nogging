@@ -91,6 +91,7 @@ refused by name.
 | `token_usage_drain_seconds` | number | `20` | Time budget, in seconds, for collecting session usage in one pass. |
 | `token_usage_refresh_seconds` | number | `300` | Minimum seconds between bounded usage refreshes of a live session during supervision. |
 | `token_usage_refresh_drain_seconds` | number | `5` | Time budget, in seconds, for one such refresh. |
+| `token_usage_query_timeout_seconds` | number | `30` | Time limit, in seconds, for each local Dolt query behind `token-usage report`, `session`, `export`, `import` and `status`. A busy or very large store then fails with a clear error instead of hanging. |
 
 ## Multi-machine
 

@@ -9,6 +9,16 @@ and GitHub Releases for that history.
 
 ## [Unreleased]
 
+### Fixed
+
+- `token-usage report`, `session`, `export` and `status` no longer hang or
+  fail with "local Dolt could not run" on a large usage store. Current facts
+  are read from the base tables instead of the `current_*` views, which Dolt
+  evaluates quadratically (77 s to 3 s for 6,430 usage events in one consumer
+  store); `status` counts facts without loading them; every read query is
+  bounded by the new `token_usage_query_timeout_seconds` (default 30) and a
+  timeout says so and names the remedy.
+
 ### Added
 
 - `nogg validate` also notes open tasks whose `[~N loc]` estimate is above the
