@@ -4361,12 +4361,13 @@ def process_ancestors(pid=None):
         except (OSError, IndexError, ValueError):
             break
     return out
-def calling_session_record():
+def calling_session_record(records=None, purpose="remote usage operations"):
     """The supervised session this process runs inside, proven by process
     ancestry (session PID plus start time); None for an operator shell. A
     session environment that ancestry does not confirm fails closed, so a
-    restricted process cannot claim another session's authority by name."""
-    records = [r for _, r in session_records()]
+    restricted process cannot claim another session's authority by name.
+    `records` defaults to this checkout's session store."""
+    records = [r for _, r in session_records()] if records is None else records
     name = os.environ.get("NOGG_SESSION_NAME")
     ancestry = set(process_ancestors())
     proven = next((rec for rec in records
@@ -4380,12 +4381,12 @@ def calling_session_record():
     if proven is not None:
         if name and name != proven.get("name"):
             raise RuntimeError(f"session environment names {name} but this process runs inside "
-                               f"{proven.get('name')}; refusing remote usage operations")
+                               f"{proven.get('name')}; refusing {purpose}")
         return proven
     if name:
         known = any(rec.get("name") == name for rec in records)
         raise RuntimeError(f"session {name} is {'not running this process' if known else 'not a known supervised session'}"
-                           "; cannot prove its authority, refusing remote usage operations")
+                           f"; cannot prove its authority, refusing {purpose}")
     return None
 def require_usage_sync_authority():
     """Remote usage sync is trusted operator/orchestrator authority only;
@@ -8936,6 +8937,43 @@ def log_tail(path, count, block=65536):
 
 BASH_RULE_RE = re.compile(r"^Bash\((.+?)(?::\*)?\)$")
 RUN_QUIET_SHELLS = {"sh", "bash", "dash", "zsh", "ksh", "mksh", "busybox"}
+def run_quiet_session_record(directories=None):
+    """The supervised session whose deny rules `run-quiet` adds, looked up in
+    this checkout's session store and the canonical checkout's (a Lead works in
+    a linked worktree; its record lives where the session was launched).
+
+    The rules only ever restrict, so the session named by NOGG_SESSION_NAME is
+    taken at its word, without the ancestry proof that grants authority (a
+    fenced session's PID namespace hides its host PID). A named session with no
+    record anywhere fails closed. Without a name, a session proven by process
+    ancestry is used, else none (an operator shell: the floor alone). Like the
+    floor, this is a guard rail against accidents, not an OS boundary."""
+    if directories is None:
+        directories = [sessions_dir()]
+        try:
+            canonical = (Path(canonical_repository_state(ROOT)["config_path"]).parent.parent
+                         / scfg("session_state_dir", ".nogging/state/sessions"))
+            if canonical.is_dir() and canonical.resolve() != directories[0].resolve():
+                directories.append(canonical)
+        except (RuntimeError, OSError, KeyError, TypeError, ValueError):
+            pass
+    records, seen = [], set()
+    for directory in directories:
+        for _, rec in session_records(directory):
+            if rec.get("name") not in seen:
+                seen.add(rec.get("name"))
+                records.append(rec)
+    name = os.environ.get("NOGG_SESSION_NAME")
+    if name:
+        named = next((rec for rec in records if rec.get("name") == name), None)
+        if named is None:
+            raise RuntimeError(f"run-quiet: session {name} has no session record here or in the canonical "
+                               "checkout, so its deny rules cannot be applied; refusing")
+        return named
+    try:
+        return calling_session_record(records, purpose="run-quiet")
+    except RuntimeError:
+        return None
 def run_quiet_deny_rules(rec=None):
     """The `Bash(...)` deny rules `run-quiet` applies to its wrapped command:
     FLOOR_DENY plus, inside a supervised session, the deny list of that
@@ -9310,7 +9348,7 @@ def main():
             rq.error("separate the command with --, e.g. nogg run-quiet -- scripts/test")
         if not run_quiet_command:
             rq.error("a command is required after --")
-        denied = run_quiet_denied(run_quiet_command, run_quiet_deny_rules(calling_session_record()))
+        denied = run_quiet_denied(run_quiet_command, run_quiet_deny_rules(run_quiet_session_record()))
         if denied:
             rq.error(f"refusing: the wrapped command could run {denied}, which this session's deny "
                      "rules or the command floor deny; a wrapper never lifts them")

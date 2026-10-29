@@ -284,7 +284,9 @@ masked in the printed command, never in the log.
 A deny rule only sees `nogg run-quiet`, so the wrapper applies them itself: the
 command floor (`sudo`, `rm -rf`, `dd`, `mkfs`, `shutdown`, `reboot`) and, inside
 a supervised session, that session's own `Bash(...)` deny rules (for example a
-restricted profile's `git push`). A denied command anywhere in the argv (behind
+restricted profile's `git push`), found by the session's name in this
+checkout's or the canonical checkout's session store; a named session with no
+record is refused. A denied command anywhere in the argv (behind
 `env`, `timeout`, `xargs` or `find -exec`) or in a `<shell> -c` script is
 refused with exit 2 before anything runs.
 

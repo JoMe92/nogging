@@ -219,6 +219,34 @@ check "the floor applies with session rules too" has "$rules_out" "sudo x | Bash
 check "an allowed command passes the session rules" has "$rules_out" "git status | None | None"
 check "unreadable session deny rules fail closed" has "$rules_out" "unreadable | refused"
 
+# The session is found in the canonical store too (a Lead runs in a linked
+# worktree) and taken by name: its rules only ever restrict.
+mkdir -p "$work/store-local" "$work/store-canonical"
+printf '{"name": "lead-x", "bead_id": "SPEC-x", "role": "lead", "state": "running", "effective_settings_path": "%s"}\n' \
+  "$work/session.settings.json" > "$work/store-canonical/lead-x.json"
+lookup_out=$(NOGGING_ROOT="$fixture" python3 - "$nogg" "$work/store-local" "$work/store-canonical" <<'PY'
+import os, sys
+from pathlib import Path
+from importlib.machinery import SourceFileLoader
+m = SourceFileLoader("nogg_rq2", sys.argv[1]).load_module()
+dirs = [Path(sys.argv[2]), Path(sys.argv[3])]
+os.environ.pop("NOGG_SESSION_NAME", None)
+print("unnamed |", m.run_quiet_session_record(dirs))
+os.environ["NOGG_SESSION_NAME"] = "lead-x"
+rec = m.run_quiet_session_record(dirs)
+print("named |", rec["name"], "|", m.run_quiet_denied(["git", "push"], m.run_quiet_deny_rules(rec)))
+os.environ["NOGG_SESSION_NAME"] = "lead-unknown"
+try:
+    m.run_quiet_session_record(dirs)
+    print("unknown | allowed")
+except RuntimeError as exc:
+    print("unknown | refused |", exc)
+PY
+)
+check "an operator shell without a session uses the floor alone" has "$lookup_out" "unnamed | None"
+check "a named session's record is found in the canonical store" has "$lookup_out" "named | lead-x | Bash(git push:*)"
+check "a named session without any record fails closed" has "$lookup_out" "unknown | refused | run-quiet: session lead-unknown"
+
 # --- credential-looking values are masked in the summary, not in the log ------
 o=$(out masked)
 check "a secret-named NAME=value is masked" has "$o" "'GH_TOKEN=***'"
