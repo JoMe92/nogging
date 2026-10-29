@@ -258,7 +258,7 @@ class PromptTests(unittest.TestCase):
             self.assertNotIn(token, message)
             self.assertRegex(message.lower(), r"token|key")
         with self.assertRaisesRegex(ValueError, "private.key"):
-            check_prompt(self.prompt("-----BEGIN RSA PRIVATE KEY-----"))
+            check_prompt(self.prompt("-----BEGIN " + "RSA PRIVATE" + " KEY-----"))
 
     def test_clean_prompt_passes(self):
         check_prompt(self.prompt("# Night loop\n\nRun the checks and report.\n"))
