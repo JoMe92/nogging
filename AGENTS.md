@@ -14,9 +14,14 @@ the rest applies to every runtime — Claude Code, Codex, or another.
    in `.nogging/config.json`; `./scripts/nogg task-sizing` prints it), is a
    Conventional Commit containing the Bead ID (e.g. `[SPEC-abc]`), and holds
    the tests for the code it changes. Test in stages: while working, run only
-   the affected tests; before each commit, the affected suite plus lint of the
-   changed files; once per Bead, before closing it, the full project suite.
-   CI stays the final gate. Then close the Bead (`bd close <id>`) and
+   the tests of the files you change; before each commit, those tests plus
+   lint of the changed files; once per Bead, before closing it, the affected
+   suite. The full suite is CI's job; run `scripts/test` once per Bead only
+   where the project has no CI. Run a long command (a suite, a build) as one
+   blocking call with a timeout long enough for it to finish —
+   `./scripts/nogg run-quiet -- <command>` prints one line on success and
+   only the tail on failure — and never poll a running command (*Tool notes*
+   has the per-runtime detail). Then close the Bead (`bd close <id>`) and
    immediately run `./scripts/nogg task-done <id>` to tick its mapped
    `tasks.md` line (it refuses unless the Bead is already closed), bundling
    that tick into the Bead's last commit, and add a Bead note listing every
@@ -246,6 +251,9 @@ the subsection for the tool you are running as, and ignore the others.
   `test-runner` — invoked **in process through the Task tool**. The Lead Agent
   delegation model is the *Lead Agent delegation* section of `CLAUDE.md`.
 - **Operator entry points.** `.claude/commands/{plan,discovery-review,sync-now}.md`.
+- **Long commands.** Give `Bash` a `timeout` that covers the whole run (up to
+  10 minutes). For a longer run use `run_in_background` and wait for its
+  completion notification; never re-read its output or `sleep` in between.
 - **Cloud sessions.** The assigned `claude/*` branch is never a PR source:
   push the branch `nogg worktree implement` / `worktree plan` allocated, and
   open the pull request from that branch instead.
@@ -269,6 +277,11 @@ the subsection for the tool you are running as, and ignore the others.
   custom prompts only from `~/.codex/prompts/`, symlink or copy them there, or
   run the `scripts/nogg` steps directly. Codex auto-loads the repo's
   `.agents/skills/**/SKILL.md`, so the OpenSpec skills are available as-is.
+- **Long commands.** Give `exec_command` a `yield_time_ms` that covers the
+  run. If it still returns before the command ends, wait with one
+  `write_stdin` call with empty input and a yield of several minutes — never
+  a loop of one-second polls. Every poll re-sends the whole context: in one
+  consumer project half of all Codex tool calls were such polls.
 
 ### Pi
 
@@ -294,6 +307,9 @@ the subsection for the tool you are running as, and ignore the others.
   `.pi/prompts/` directly from the repository — no symlink helper is needed
   (unlike Codex, which needs `codex-prompts-link` because it only reads
   custom prompts from `~/.codex/prompts/`).
+- **Long commands.** Run a suite or build in one shell call that waits for it
+  to finish, with a timeout that covers the run; do not re-check a running
+  command.
 
 ### Antigravity
 

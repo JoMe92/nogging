@@ -14,6 +14,11 @@ and GitHub Releases for that history.
 - `nogg validate` also notes open tasks whose `[~N loc]` estimate is above the
   configured `bead_prod_lines` maximum without a reason, mirroring the minimum
   note. A note never fails `validate`.
+- `nogg run-quiet [--log PATH] [--tail N] -- <command>` runs a long command
+  (a suite, a build) as one blocking call: one `ok:` line on success, a
+  `FAIL (exit N)` line plus the log tail on failure, the full output in a
+  private log and the exit code passed through. It refuses a command the
+  command floor denies.
 
 ### Changed
 
@@ -21,6 +26,16 @@ and GitHub Releases for that history.
   the range states its reason in the tag. `docs/configuration.md` records the
   measured sweet spot: 500–1000 production lines per Bead cost the fewest
   tokens per line, and a maximum far above it costs more per line.
+- Sharper test stages: before each commit only the tests of the changed files
+  plus lint of those files; once per Bead the affected suite; the full suite
+  is CI's job (`scripts/test` once per Bead only where a project has no CI).
+  The same wording runs through `AGENTS.md`, `CLAUDE.md`, the shipped blocks,
+  the launch prompts, `/orchestrate`, the specialists and the docs.
+- No polling: Leads and specialists run a long command as one blocking call
+  with a timeout or yield that covers it and never poll it. `AGENTS.md` adds
+  per-runtime notes (Claude Code `timeout`/`run_in_background`, Codex
+  `yield_time_ms` and one long `write_stdin` wait, Pi). In one consumer
+  project half of all Codex tool calls had been such polls.
 
 ## [3.3.0] - 2026-10-28
 

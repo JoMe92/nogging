@@ -78,8 +78,8 @@ add `--full-access`, and see
 
 The Lead claims the Bead, allocates its own worktree from `origin/develop` (see
 the [worktree workflow](worktree-workflow.md)), implements the task there in
-several commits, running the affected tests as it goes and the full suite once
-before it hands off.
+several commits, running the tests of the files it changes as it goes and the
+affected suite once before it hands off; the full suite runs in CI.
 
 ## 5. Watch it work
 

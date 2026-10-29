@@ -164,7 +164,8 @@ An optional always-on Orchestration Agent can drive these for you; see
 ### Close out
 
 The Lead commits in coherent steps, each with the `[<ID>]` token in the
-subject, runs the full suite once at the end, then `bd close <id>` and
+subject, runs the affected suite once at the end (the full suite is CI's
+job), then `bd close <id>` and
 `./scripts/nogg task-done <id>`, and leaves the evidence note listing every
 commit on the Bead.
 You review the pull request, run `./scripts/nogg sync --now` (or rely on the

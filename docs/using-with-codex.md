@@ -312,6 +312,18 @@ session-name and failed-launch cleanup fixes, need a Nogging release that
 includes them. If your repository vendors an older copy, run `update` before
 relying on them.
 
+## Long-running commands
+
+Codex's `exec_command` returns after its `yield_time_ms` even when the command
+is still running, and a session that then calls `write_stdin` every second
+re-sends its whole context on each call. In one consumer project half of all
+Codex tool calls were such polls, about 98 per session, and a 20-minute suite
+cost 5–10 M tokens just waiting. `AGENTS.md` therefore tells a Codex Lead to
+give `exec_command` a `yield_time_ms` that covers the run and, if it still
+returns early, to wait with one empty `write_stdin` and a yield of several
+minutes. `./scripts/nogg run-quiet -- <command>` keeps the output of a passing
+run to one line, and the full suite is left to CI.
+
 ## A Codex session hit its usage limit
 
 `scripts/nogg session watch` and `scripts/nogg session resume-when-ready` work
