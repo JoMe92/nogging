@@ -87,9 +87,14 @@ A specialist returns a structured result and nothing else. It never claims,
 closes, or re-statuses a Bead, never commits, and never writes `openspec/`. On
 the specialist's return **you**:
 
-1. validate the work in stages: the affected tests while working, the affected
-   suite plus lint of the changed files before each commit, and `scripts/test`
-   (the full suite) once per Bead before closing it;
+1. validate the work in stages: the tests of the changed files while working,
+   those tests plus lint of the changed files before each commit, and the
+   affected suite once per Bead before closing it. The full suite is CI's job
+   (`scripts/test` once per Bead only where the project has no CI). Run a long
+   command as one blocking `Bash` call with a `timeout` that covers it, or with
+   `run_in_background` and wait for the completion notification —
+   `./scripts/nogg run-quiet -- <command>` keeps its output to one line on
+   success — and never poll it;
 2. commit in coherent steps within the configured commit range
    (`./scripts/nogg task-sizing`), each with a Conventional subject carrying
    the `[<ID>]` token and the tests for the code it changes, adding a

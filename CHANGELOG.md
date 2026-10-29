@@ -9,6 +9,63 @@ and GitHub Releases for that history.
 
 ## [Unreleased]
 
+### Fixed
+
+- `token-usage report`, `session`, `export` and `status` no longer hang or
+  fail with "local Dolt could not run" on a large usage store. Current facts
+  are read from the base tables instead of the `current_*` views, which Dolt
+  evaluates quadratically (77 s to 3 s for 6,430 usage events in one consumer
+  store); `status` counts facts without loading them; every read query is
+  bounded by the new `token_usage_query_timeout_seconds` (default 30) and a
+  timeout says so and names the remedy.
+
+### Added
+
+- `nogg token-usage report --group-by bead` (and a `--bead` filter): fresh
+  input, cache read, cache write, output and total tokens per Bead and
+  runtime, plus the Bead's commits, production lines and tokens per
+  production line from its `[<bead-id>]` commits (tests, `openspec/`,
+  `.beads/` and lockfiles excluded). `docs/token-usage.md` documents it as
+  the efficiency metric: fresh input and output per line are the cost of the
+  work, cached re-reads show waiting and context growth.
+- `nogg validate` also notes open tasks whose `[~N loc]` estimate is above the
+  configured `bead_prod_lines` maximum without a reason, mirroring the minimum
+  note. A note never fails `validate`.
+- `nogg run-quiet [--log PATH] [--tail N] -- <command>` runs a long command
+  (a suite, a build) as one blocking call: one `ok:` line on success, a
+  `FAIL (exit N)` line plus the log tail on failure, the full output in a
+  private log (removed after a passing run unless `--log` names it) and the
+  exit code passed through. It applies the command floor and the calling
+  session's own `Bash(...)` deny rules to the wrapped command, at any word
+  position and inside `<shell> -c` scripts, and masks credential-looking
+  values in the printed command.
+- `doctor_agy_models_cache_seconds` (default 3600): `doctor` reuses a
+  successful `agy models` listing per `agy` executable instead of spawning
+  the probe on every run; a failed probe is never cached.
+
+### Changed
+
+- Planning splits a task above the configured Bead maximum; a task outside
+  the range states its reason in the tag. `docs/configuration.md` records the
+  measured sweet spot: 500–1000 production lines per Bead cost the fewest
+  tokens per line, and a maximum far above it costs more per line.
+- `nogg doctor`, `validate` and `usage` read the Codex rollouts
+  incrementally: a per-root byte-offset index under the usage cache means
+  only appended bytes are parsed, with the same result and damaged-line
+  report as a full scan. On the delivery host a warm `doctor` fell from
+  about 44 s to under 4 s and `usage --agent codex` from about 20 s to about
+  1 s.
+- Sharper test stages: before each commit only the tests of the changed files
+  plus lint of those files; once per Bead the affected suite; the full suite
+  is CI's job (`scripts/test` once per Bead only where a project has no CI).
+  The same wording runs through `AGENTS.md`, `CLAUDE.md`, the shipped blocks,
+  the launch prompts, `/orchestrate`, the specialists and the docs.
+- No polling: Leads and specialists run a long command as one blocking call
+  with a timeout or yield that covers it and never poll it. `AGENTS.md` adds
+  per-runtime notes (Claude Code `timeout`/`run_in_background`, Codex
+  `yield_time_ms` and one long `write_stdin` wait, Pi). In one consumer
+  project half of all Codex tool calls had been such polls.
+
 ## [3.3.0] - 2026-10-28
 
 ### Added

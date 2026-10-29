@@ -67,9 +67,13 @@ own action after kickoff.
    `./scripts/nogg task-sizing` prints it). Do not split one feature into
    separate contract, logic, migration, route, UI and docs tasks. Plan a
    smaller task only for a stated reason (a security fix, a risky migration, a
-   hard dependency boundary). Every task line carries an estimate tag
-   `[~N loc]` (production lines, tests excluded); a smaller task names its
-   reason in the tag, e.g. `[~80 loc: security fix]`.
+   hard dependency boundary). Stay inside the range: split a task whose
+   estimate exceeds the maximum into further vertical slices; 500–1000
+   production lines per Bead cost the fewest tokens per line, and far larger
+   Beads cost more. Every task line carries an estimate tag `[~N loc]`
+   (production lines, tests excluded); a task outside the range names its
+   reason in the tag, e.g. `[~80 loc: security fix]` or
+   `[~1400 loc: generated client, one unit]`.
 
 7. **Validate.** Run `./scripts/nogg validate` and
    `openspec validate <change> --strict --no-interactive` (always name the

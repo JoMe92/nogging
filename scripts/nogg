@@ -5,7 +5,7 @@ It intentionally contains no LLM call and makes no semantic product decision.
 """
 from __future__ import annotations
 
-import argparse, base64, datetime as dt, fcntl, getpass, hashlib, importlib.util, json, math, os, re, shlex, shutil, signal, socket, subprocess, sys, tempfile, time, uuid
+import argparse, base64, datetime as dt, fcntl, fnmatch, getpass, hashlib, importlib.util, json, math, os, re, shlex, shutil, signal, socket, subprocess, sys, tempfile, time, uuid
 import urllib.parse, urllib.request
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -2268,7 +2268,7 @@ def record_mapping_health(branch, diagnostics, processed_changes):
 # guidance only: `validate` reports a NOTE, nothing is ever refused.
 TASK_SIZING_DEFAULTS = {"bead_prod_lines": (400, 1000), "commit_lines": (100, 600)}
 # `[~N loc]` estimates production lines (tests excluded); `[~N loc: <reason>]`
-# states why a task is smaller than the configured minimum.
+# states why a task is smaller than the configured minimum or larger than the maximum.
 TASK_ESTIMATE_RE = re.compile(r"\[~\s*(\d+)\s*loc\b\s*(?::\s*([^\]]*))?\]", re.I)
 OPEN_TASK_RE = re.compile(r"^- \[ \] (TASK-[A-Z0-9-]+)\s+(.+)$")
 LIST_ITEM_RE = re.compile(r"^\s+(?:[-*+]|\d+[.)])\s")
@@ -2318,27 +2318,35 @@ def open_task_blocks(text):
 def task_sizing_notes():
     """NOTE lines for open tasks of live changes that miss the configured Bead size.
 
-    Advisory only: an estimate below the minimum without a reason, or a change
-    with two or more open tasks, most of them without an estimate. Never a FAIL, so a change planned
-    before estimates existed stays valid.
+    Advisory only: an estimate below the minimum or above the maximum without a
+    reason, or a change with two or more open tasks, most of them without an
+    estimate. Never a FAIL, so a change planned before estimates existed stays valid.
     """
-    low = task_sizing()[0]["bead_prod_lines"][0]
+    low, high = task_sizing()[0]["bead_prod_lines"]
     notes = []
     for change in sorted(changes(), key=lambda path: path.name):
         file = change / "tasks.md"
         if not file.exists():
             continue
         blocks = open_task_blocks(file.read_text())
-        small, missing = [], 0
+        small, large, missing = [], [], 0
         for task, body in blocks:
             estimate = TASK_ESTIMATE_RE.search(body)
             if not estimate:
                 missing += 1
-            elif int(estimate.group(1)) < low and not (estimate.group(2) or "").strip():
-                small.append(f"{task} (~{estimate.group(1)} loc)")
+            elif not (estimate.group(2) or "").strip():
+                lines = int(estimate.group(1))
+                if lines < low:
+                    small.append(f"{task} (~{lines} loc)")
+                elif lines > high:
+                    large.append(f"{task} (~{lines} loc)")
         if small:
             notes.append(f"task sizing: {change.name}: {', '.join(small)} below the configured "
                          f"{low}-line Bead minimum without a reason ([~N loc: <reason>])")
+        if large:
+            notes.append(f"task sizing: {change.name}: {', '.join(large)} above the configured "
+                         f"{high}-line Bead maximum without a reason; split it or state why "
+                         f"([~N loc: <reason>])")
         if missing >= 2 and missing * 2 > len(blocks):
             notes.append(f"task sizing: {change.name}: {missing} of {len(blocks)} open tasks "
                          f"carry no [~N loc] estimate")
@@ -3750,12 +3758,43 @@ def codex_catalog_models():
     if not slugs:
         return None, f"{path} lists no models"
     return slugs, None
+def config_seconds(key, default, allow_zero=False):
+    """A finite, non-negative number of seconds from the config, or `default`
+    for a missing or malformed value (null, a string, a list, Infinity)."""
+    value = scfg(key, default)
+    if (isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value)
+            or value < 0 or (value == 0 and not allow_zero)):
+        return default
+    return value
+def agy_models_cache():
+    """(cache path, identity of the `agy` executable on PATH) for the model list."""
+    exe = shutil.which("agy")
+    try:
+        st = os.stat(exe)
+        key = [os.path.realpath(exe), st.st_ino, st.st_size, st.st_mtime_ns]
+    except (OSError, TypeError):
+        key = None
+    base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
+    return Path(base) / "nogging" / "agy-models.json", key
 def agy_listed_models():
     """Model names from a bounded `agy models` probe: the first field of each
-    tab-separated line. Returns `(names, None)` or `(None, reason)`."""
+    tab-separated line. Returns `(names, None)` or `(None, reason)`. A listed
+    result is cached for `doctor_agy_models_cache_seconds` (default 3600; 0
+    disables) per `agy` executable, so repeated `doctor` runs skip the ~2 s
+    probe; a failure is never cached."""
     if not tool_on_path("agy"):
         return None, "agy is not installed"
-    timeout = int(scfg("doctor_agy_models_timeout_seconds", 15))
+    ttl = config_seconds("doctor_agy_models_cache_seconds", 3600, allow_zero=True)
+    cache, key = agy_models_cache() if ttl > 0 else (None, None)
+    if key is not None:
+        try:
+            cached = json.loads(cache.read_text())
+            if (cached.get("key") == key and 0 <= time.time() - float(cached["at"]) < ttl
+                    and cached.get("names")):
+                return set(cached["names"]), None
+        except (OSError, ValueError, TypeError, KeyError, AttributeError):
+            pass
+    timeout = config_seconds("doctor_agy_models_timeout_seconds", 15)
     try:
         result = subprocess.run(["agy", "models"], capture_output=True, text=True,
                                 timeout=timeout, stdin=subprocess.DEVNULL)
@@ -3769,6 +3808,16 @@ def agy_listed_models():
     names.discard("")
     if not names:
         return None, "`agy models` listed no models"
+    if key is not None:
+        try:
+            cache.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            temp = cache.with_name(f".agy-models.{os.getpid()}.tmp")
+            fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as out:
+                json.dump({"key": key, "at": time.time(), "names": sorted(names)}, out)
+            os.replace(temp, cache)
+        except OSError:
+            pass   # only the cache is lost; the next doctor probes again
     return names, None
 def model_selection_notes():
     """Doctor NOTEs for model-selection table drift (design decision 8). Never a
@@ -4312,12 +4361,13 @@ def process_ancestors(pid=None):
         except (OSError, IndexError, ValueError):
             break
     return out
-def calling_session_record():
+def calling_session_record(records=None, purpose="remote usage operations"):
     """The supervised session this process runs inside, proven by process
     ancestry (session PID plus start time); None for an operator shell. A
     session environment that ancestry does not confirm fails closed, so a
-    restricted process cannot claim another session's authority by name."""
-    records = [r for _, r in session_records()]
+    restricted process cannot claim another session's authority by name.
+    `records` defaults to this checkout's session store."""
+    records = [r for _, r in session_records()] if records is None else records
     name = os.environ.get("NOGG_SESSION_NAME")
     ancestry = set(process_ancestors())
     proven = next((rec for rec in records
@@ -4331,12 +4381,12 @@ def calling_session_record():
     if proven is not None:
         if name and name != proven.get("name"):
             raise RuntimeError(f"session environment names {name} but this process runs inside "
-                               f"{proven.get('name')}; refusing remote usage operations")
+                               f"{proven.get('name')}; refusing {purpose}")
         return proven
     if name:
         known = any(rec.get("name") == name for rec in records)
         raise RuntimeError(f"session {name} is {'not running this process' if known else 'not a known supervised session'}"
-                           "; cannot prove its authority, refusing remote usage operations")
+                           f"; cannot prove its authority, refusing {purpose}")
     return None
 def require_usage_sync_authority():
     """Remote usage sync is trusted operator/orchestrator authority only;
@@ -4349,6 +4399,21 @@ def require_usage_sync_authority():
     raise RuntimeError(f"token-usage sync/import needs trusted operator or orchestrator authority; session "
                        f"{rec.get('name')} runs profile {rec.get('profile') or 'restricted'!r}, so remote sync is "
                        "refused (its usage is still collected locally by host supervision)")
+def usage_query_timeout():
+    """Bound in seconds on each Dolt call of a read-only token-usage command
+    (`token_usage_query_timeout_seconds`, default 30): a busy or oversized store
+    fails with a clear error instead of hanging."""
+    return float(config_seconds("token_usage_query_timeout_seconds", 30))
+def load_usage_store(rep, store, what, loader):
+    """Run a bounded store reader; a timeout or Dolt failure names the remedy."""
+    try:
+        return loader(store, timeout=usage_query_timeout())
+    except rep.StoreTimeout as exc:
+        raise RuntimeError(f"token-usage {what}: local Dolt query timed out after {exc.seconds:g}s reading "
+                           f"{store.database}; the store may be busy (a collection or sync is running) or "
+                           "large — retry, or raise token_usage_query_timeout_seconds in .nogging/config.json") from exc
+    except rep.StoreUnavailable as exc:
+        raise RuntimeError(f"token-usage {what}: {exc}; check that `dolt` runs (see `nogg doctor`)") from exc
 def token_usage_command(args):
     """`nogg token-usage ...`: local consumption accounting (design 6)."""
     rep = usage_report_module()
@@ -4399,7 +4464,7 @@ def token_usage_command(args):
         return
     if args.usage_command == "import":
         require_usage_sync_authority()   # recovery writes facts a trusted sync may later push
-        meta, _ = rep.load_facts(store)
+        meta = load_usage_store(rep, store, "import", rep.load_meta)
         with open(args.file) as fh:
             project, records, registry = rep.import_records(fh, meta)
         # A recovered store adopts the export's project identity.
@@ -4414,11 +4479,16 @@ def token_usage_command(args):
         print(json.dumps({"schema": "nogg.token-usage.import/v1", "facts": len(records), "added": added})
               if args.json else f"imported {len(records)} fact(s); {added} new (identical facts are no-ops)")
         return
-    meta, facts = rep.load_facts(store)
+    if args.usage_command == "status":   # counts only: no fact payloads are loaded
+        meta, counts = load_usage_store(rep, store, "status", rep.load_counts)
+    else:
+        meta, facts = load_usage_store(rep, store, args.usage_command, rep.load_facts)
     context = dict(usage_context(), store="present" if meta else "absent")
     if args.usage_command == "report":
         start, end = rep.window(args.from_, args.to, now_dt)
         filters = {k: getattr(args, k) for k in rep.FILTERS}
+        if args.group_by == "bead":
+            context["bead_lines"] = lambda beads: rep.bead_git_lines(ROOT, beads, timeout=usage_query_timeout())
         doc = rep.report(facts, meta, start, end, args.group_by, filters, now_dt, context)
         print(json.dumps(doc, indent=2, sort_keys=True) if args.json else render_usage_report(doc))
     elif args.usage_command == "session":
@@ -4436,7 +4506,6 @@ def token_usage_command(args):
         for line in rep.export_lines(facts, meta, start, end, now_dt, registry):
             print(line)
     elif args.usage_command == "status":
-        counts = {table: len(rows) for table, rows in facts.items()}
         try:
             device = (store.root / "device-id").read_text().strip() or None
         except OSError:
@@ -4468,9 +4537,11 @@ def render_usage_report(doc):
     w = doc["window"]
     lines = [f"token usage {w['from']} .. {w['to']} (UTC, half-open) grouped by {doc['group_by']}"
              + (f"; filters {doc['filters']}" if doc["filters"] else "")]
-    lines.append(f"{'GROUP':<26}  {'EVENTS':>6}  {'INPUT':>12}  {'OUTPUT':>10}  {'CACHE_READ':>12}  "
-                 f"{'CACHE_WRITE':>11}  {'INFER_S':>8}  RUNTIME")
-    for row in doc["rows"]:
+    bead_view = doc["group_by"] == "bead"   # per Bead and runtime, with tokens per production line
+    lines.extend(usage_report_module().render_bead_report(doc) if bead_view else
+                 [f"{'GROUP':<26}  {'EVENTS':>6}  {'INPUT':>12}  {'OUTPUT':>10}  {'CACHE_READ':>12}  "
+                  f"{'CACHE_WRITE':>11}  {'INFER_S':>8}  RUNTIME"])
+    for row in [] if bead_view else doc["rows"]:
         group = row.get("bucket") or (row.get("session") or row.get("segment_id") or "-")
         inp, out, cr, cw = _fmt_tokens(row)
         runtime = "-" if row["wall_runtime_ms"] is None else f"{row['wall_runtime_ms'] // 1000}s"
@@ -4487,7 +4558,8 @@ def render_usage_report(doc):
                      f"output {entry['tokens']['output_tokens']} (not split across buckets)")
     c = doc["coverage"]
     lines.append(f"coverage: {c['events_in_window']} events; unknown model {c['unknown_model']}, task "
-                 f"{c['unknown_task']}, complexity {c['unknown_complexity']}; untimed {c['untimed_events']}")
+                 f"{c['unknown_task']}, bead {c.get('unknown_bead', 0)}, complexity {c['unknown_complexity']}; "
+                 f"untimed {c['untimed_events']}")
     p, sync = doc["pending"], doc["sync"]
     lines.append(f"as of {doc['as_of']}; pending {p.get('spooled_batches', 0)} batch(es); sync {sync.get('state')}"
                  + (" (local-only)" if sync.get("local_only") else ""))
@@ -8607,7 +8679,7 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
     # actually archives a change; doctor only surfaces readiness.
     for change in archive_ready_changes(tasks, issues):
         notes.append(f"change ready to archive: {change} (every mapped Bead is closed)")
-    # Task sizing is advisory: an undersized or unestimated open task is a NOTE
+    # Task sizing is advisory: an undersized, oversized or unestimated open task is a NOTE
     # (a malformed task_sizing a WARN, above); neither changes the exit code.
     try:
         notes.extend(task_sizing_notes())
@@ -8827,6 +8899,218 @@ def credential_helper(slug, operation):
         print("nogg: credential-helper failed; no credential returned", file=sys.stderr)
         raise SystemExit(1)
 
+# `run-quiet`: run one long command (a test suite, a build) as ONE blocking call
+# whose whole output is one summary line, plus the log tail on failure, so an
+# agent neither polls a running command nor re-reads a passing suite's full
+# output every turn. The command's own output goes to a log file, in full.
+# Deliberately independent of Beads, Dolt and the Nogging config, so it behaves
+# the same in a consumer repository and in a linked worktree.
+RUN_QUIET_USAGE = "%(prog)s [-h] [--log PATH] [--tail N] -- <command> [args...]"
+RUN_QUIET_SIGNALS = (signal.SIGINT, signal.SIGTERM)
+def run_quiet_tail_count(value):
+    """argparse type for `run-quiet --tail`: a non-negative line count."""
+    try:
+        count = int(value)
+    except ValueError:
+        count = -1
+    if count < 0:
+        raise argparse.ArgumentTypeError(f"must be a non-negative integer, got {value!r}")
+    return count
+
+def log_tail(path, count, block=65536):
+    """The last `count` lines of the file at `path` (`tail -n` semantics),
+    read backwards in blocks so a multi-megabyte log is never loaded whole."""
+    if count <= 0:
+        return []
+    with open(path, "rb") as handle:
+        pos = handle.seek(0, os.SEEK_END)
+        data = b""
+        while pos > 0 and data.count(b"\n") <= count:
+            step = min(block, pos)
+            pos -= step
+            handle.seek(pos)
+            data = handle.read(step) + data
+    lines = data.split(b"\n")
+    if lines and lines[-1] == b"":
+        lines.pop()
+    return [line.decode("utf-8", "replace") for line in lines[-count:]]
+
+BASH_RULE_RE = re.compile(r"^Bash\((.+?)(?::\*)?\)$")
+RUN_QUIET_SHELLS = {"sh", "bash", "dash", "zsh", "ksh", "mksh", "busybox"}
+def run_quiet_session_record(directories=None):
+    """The supervised session whose deny rules `run-quiet` adds, looked up in
+    this checkout's session store and the canonical checkout's (a Lead works in
+    a linked worktree; its record lives where the session was launched).
+
+    The rules only ever restrict, so the session named by NOGG_SESSION_NAME is
+    taken at its word, without the ancestry proof that grants authority (a
+    fenced session's PID namespace hides its host PID). A named session with no
+    record anywhere fails closed. Without a name, a session proven by process
+    ancestry is used, else none (an operator shell: the floor alone). Like the
+    floor, this is a guard rail against accidents, not an OS boundary."""
+    if directories is None:
+        directories = [sessions_dir()]
+        try:
+            canonical = (Path(canonical_repository_state(ROOT)["config_path"]).parent.parent
+                         / scfg("session_state_dir", ".nogging/state/sessions"))
+            if canonical.is_dir() and canonical.resolve() != directories[0].resolve():
+                directories.append(canonical)
+        except (RuntimeError, OSError, KeyError, TypeError, ValueError):
+            pass
+    records, seen = [], set()
+    for directory in directories:
+        for _, rec in session_records(directory):
+            if rec.get("name") not in seen:
+                seen.add(rec.get("name"))
+                records.append(rec)
+    name = os.environ.get("NOGG_SESSION_NAME")
+    if name:
+        named = next((rec for rec in records if rec.get("name") == name), None)
+        if named is None:
+            raise RuntimeError(f"run-quiet: session {name} has no session record here or in the canonical "
+                               "checkout, so its deny rules cannot be applied; refusing")
+        return named
+    try:
+        return calling_session_record(records, purpose="run-quiet")
+    except RuntimeError:
+        return None
+def run_quiet_deny_rules(rec=None):
+    """The `Bash(...)` deny rules `run-quiet` applies to its wrapped command:
+    FLOOR_DENY plus, inside a supervised session, the deny list of that
+    session's effective settings (a restricted profile's `git push`, ...)."""
+    rules = list(FLOOR_DENY)
+    path = (rec or {}).get("effective_settings_path")
+    if path:
+        try:
+            deny = (json.loads(Path(path).read_text()).get("permissions") or {}).get("deny") or []
+        except (OSError, ValueError, AttributeError) as exc:
+            raise RuntimeError(f"run-quiet: cannot read this session's deny rules ({exc.__class__.__name__}); "
+                               "refusing") from exc
+        rules += [r for r in deny if isinstance(r, str) and r not in rules]
+    return [(rule, m.group(1).split()) for rule in rules if (m := BASH_RULE_RE.match(rule))]
+def run_quiet_denied(argv, rules, depth=0):
+    """The deny rule the wrapped argv could run, or None. Prefix rules see only
+    `nogg run-quiet`, so a rule matches the argv at any word position (which
+    also covers `env`, `timeout`, `xargs`, `find -exec` and the like), and the
+    script of `<shell> -c SCRIPT` is split into words and checked the same way.
+    Over-refusing an argument that merely equals a denied word is deliberate."""
+    words = list(argv)
+    for i, arg in enumerate(argv[:-1]):
+        if os.path.basename(arg) not in RUN_QUIET_SHELLS:
+            continue
+        # `-c`, or a short-option cluster carrying it (`-lc`, `-ec`): the next argument is a script.
+        flag = next((j for j in range(i + 1, len(argv) - 1)
+                     if re.fullmatch(r"-[A-Za-z]*c[A-Za-z]*", argv[j])), None)
+        if flag is None:
+            continue
+        try:
+            lexer = shlex.shlex(argv[flag + 1], posix=True, punctuation_chars=True)
+            lexer.whitespace_split = True
+            script = list(lexer)
+        except ValueError:
+            return "an unparsable shell script"
+        nested = run_quiet_denied(script, rules, depth + 1) if depth < 8 else "a too deeply nested shell script"
+        if nested:
+            return nested
+    for i in range(len(words)):
+        for rule, pattern in rules:
+            tail = words[i:i + len(pattern)]
+            if len(tail) == len(pattern) and all(
+                    fnmatch.fnmatchcase(os.path.basename(arg) if j == 0 else arg, word)
+                    for j, (arg, word) in enumerate(zip(tail, pattern))):
+                return rule
+    return None
+SECRET_NAME_RE = re.compile(r"(?i)(token|secret|passw(or)?d|api[_-]?key|credential|auth)")
+SECRET_VALUE_RE = re.compile(r"(?i)\b(bearer|basic|token)\s+\S+|\b(gh[pousr]_|github_pat_|glpat-|xox[abpr]-|sk-)[A-Za-z0-9_-]+")
+def run_quiet_shown(argv):
+    """The command as printed in the summary, with credential-looking values
+    masked: a `NAME=value` or `--name=value` whose name looks secret, the value
+    after such a `--name`, an `Authorization: Bearer ...` and known token
+    prefixes. The log itself is never rewritten."""
+    shown, hide_next = [], False
+    for arg in argv:
+        if hide_next:
+            shown.append("***")
+            hide_next = False
+            continue
+        name, eq, value = arg.partition("=")
+        if eq and value and SECRET_NAME_RE.search(name):
+            arg = f"{name}=***"
+        elif arg.startswith("--") and not eq and SECRET_NAME_RE.search(arg):
+            hide_next = True
+        arg = SECRET_VALUE_RE.sub(lambda m: (m.group(1) + " ***") if m.group(1) else "***", arg)
+        shown.append(arg)
+    return shlex.join(shown)
+def run_quiet(command, log=None, tail=40):
+    """Run `command` (an argv list; no shell) blocking, with stdin from
+    /dev/null and stdout+stderr merged into a log file. Print exactly one
+    summary line, plus the last `tail` log lines on failure, and return the
+    exit code to exit with: the command's own, 128+N for a death by signal N,
+    127 for a command that is not found and 126 for one that cannot start.
+    SIGINT/SIGTERM are forwarded to the command, and the summary still
+    printed once it exits. A passing run's default log is removed; a `--log`
+    file and every failing run's log are kept."""
+    shown = run_quiet_shown(command)
+    if log:
+        path = Path(os.path.abspath(os.path.expanduser(log)))
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        except OSError as exc:
+            raise RuntimeError(f"run-quiet: cannot open the log {path}: {exc.strerror}") from exc
+    else:
+        fd, name = tempfile.mkstemp(prefix="nogg-run-quiet.", suffix=".log")
+        path = Path(name)
+    where = shlex.quote(str(path))
+    child, pending = None, []
+    def forward(signum, _frame):
+        if child is None:
+            pending.append(signum)   # arrived before the command started
+            return
+        try:
+            child.send_signal(signum)
+        except ProcessLookupError:
+            pass
+    # A signal ignored on entry (SIGINT for a `&` job of a non-interactive
+    # shell) stays ignored, so the command inherits the same disposition.
+    previous = {signum: signal.signal(signum, forward) for signum in RUN_QUIET_SIGNALS
+                if signal.getsignal(signum) is not signal.SIG_IGN}
+    try:
+        start = time.monotonic()
+        with os.fdopen(fd, "wb") as out:
+            try:
+                child = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=out,
+                                         stderr=subprocess.STDOUT)
+            except OSError as exc:
+                missing = isinstance(exc, FileNotFoundError)
+                reason = "command not found" if missing else (exc.strerror or str(exc))
+                out.write(f"nogg run-quiet: cannot start {shown}: {reason}\n".encode())
+                rc = 127 if missing else 126
+                print(f"FAIL (exit {rc}): {shown} (cannot start: {reason}; log {where})")
+                return rc
+            for signum in pending:
+                child.send_signal(signum)
+            rc = child.wait()
+        elapsed = time.monotonic() - start
+        if rc < 0:
+            rc = 128 - rc
+        if rc == 0:
+            if log:
+                print(f"ok: {shown} ({elapsed:.1f} s; log {where})")
+            else:   # a passing run's default log would only pile up in $TMPDIR
+                path.unlink(missing_ok=True)
+                print(f"ok: {shown} ({elapsed:.1f} s)")
+            return 0
+        print(f"FAIL (exit {rc}): {shown} ({elapsed:.1f} s; log {where})")
+        for line in log_tail(path, tail):
+            print(line)
+        return rc
+    finally:
+        sys.stdout.flush()
+        for signum, handler in previous.items():
+            if handler is not None:
+                signal.signal(signum, handler)
+
 def main():
     p = argparse.ArgumentParser(); sub = p.add_subparsers(dest="command", required=True)
     ch = sub.add_parser("credential-helper", help="mint an in-memory GitHub App credential for Git")
@@ -8840,8 +9124,9 @@ def main():
     tuc.add_argument("--session"); tuc.add_argument("--json", action="store_true")
     tur = tusub.add_parser("report", help="UTC half-open window report (default: current UTC day, daily)")
     tur.add_argument("--from", dest="from_"); tur.add_argument("--to")
-    tur.add_argument("--group-by", choices=("hour", "day", "session"), default="day")
-    for key in ("project", "device", "runtime", "provider", "model", "task", "complexity", "effort"):
+    tur.add_argument("--group-by", choices=("hour", "day", "session", "bead"), default="day",
+                     help="bead: per Bead and runtime, with tokens per production line from [<bead-id>] commits")
+    for key in ("project", "device", "runtime", "provider", "model", "task", "bead", "complexity", "effort"):
         tur.add_argument(f"--{key}")
     tur.add_argument("--json", action="store_true")
     tus = tusub.add_parser("session", help="lifetime facts for one session (name or segment ID)")
@@ -8885,6 +9170,16 @@ def main():
     td.add_argument("bead_id")
     sub.add_parser("task-sizing",
         help="print the configured Bead and commit line ranges (task_sizing)")
+    rq = sub.add_parser("run-quiet", usage=RUN_QUIET_USAGE,
+        help="run one long command blocking; print one summary line (plus the log tail on failure)",
+        description="Run <command> as one blocking call (no shell, stdin from /dev/null), its stdout "
+                    "and stderr merged into a log file. Prints one summary line, plus the last N log "
+                    "lines on failure, and exits with the command's exit code.")
+    rq.add_argument("--log", metavar="PATH",
+        help="log file for the command's merged output (default: a new nogg-run-quiet.*.log in $TMPDIR)")
+    rq.add_argument("--tail", metavar="N", type=run_quiet_tail_count, default=40,
+        help="log lines printed on failure (default 40)")
+    rq.add_argument("stray", nargs="*", help=argparse.SUPPRESS)   # a command given without --
     cpl = sub.add_parser("codex-prompts-link",
         help="symlink .codex/prompts/*.md into <CODEX_HOME>/prompts/ as nogging-<name>.md")
     cpl.add_argument("--unlink", action="store_true",
@@ -9004,7 +9299,14 @@ def main():
     srw.add_argument("name"); srw.add_argument("--message")
     semit = ssub.add_parser("emit")
     semit.add_argument("event")
-    args = p.parse_args()
+    # `run-quiet` owns everything after its first `--` verbatim (the command's
+    # own options and any later `--` included): split it off before argparse,
+    # whose `--` handling differs across Python versions.
+    argv, run_quiet_command = sys.argv[1:], None
+    if argv[:1] == ["run-quiet"] and "--" in argv:
+        split = argv.index("--")
+        argv, run_quiet_command = argv[:split], argv[split + 1:]
+    args = p.parse_args(argv)
     if args.command == "credential-helper":
         credential_helper(args.slug, args.operation)
     elif args.command == "token-usage":
@@ -9041,6 +9343,16 @@ def main():
     elif args.command == "materialize": materialize(args.change)
     elif args.command == "task-done": task_done(args.bead_id)
     elif args.command == "task-sizing": task_sizing_cmd()
+    elif args.command == "run-quiet":
+        if args.stray or run_quiet_command is None:
+            rq.error("separate the command with --, e.g. nogg run-quiet -- scripts/test")
+        if not run_quiet_command:
+            rq.error("a command is required after --")
+        denied = run_quiet_denied(run_quiet_command, run_quiet_deny_rules(run_quiet_session_record()))
+        if denied:
+            rq.error(f"refusing: the wrapped command could run {denied}, which this session's deny "
+                     "rules or the command floor deny; a wrapper never lifts them")
+        sys.exit(run_quiet(run_quiet_command, args.log, args.tail))
     elif args.command == "codex-prompts-link": codex_prompts_link(args.unlink)
     elif args.command == "models": models_cmd(args.action, args.agent, args.tier, args.json)
     elif args.command == "worktree":

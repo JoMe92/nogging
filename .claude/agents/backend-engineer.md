@@ -22,7 +22,9 @@ stop and return control — you do not commit and you do not close anything.
 
 You have `Read`, `Grep`, `Glob`, `Edit`, `Write`, and `Bash`. Use `Edit` and
 `Write` on source and test files only. Use `Bash` to run the build and the test
-suite (`scripts/test` or the narrower suite the task names). The `PreToolUse`
+suite: the tests of the files you change, or the narrower suite the task
+names; leave `scripts/test` to the Lead and CI. Run each long command as one
+blocking call with a long enough timeout and never poll it. The `PreToolUse`
 guard blocks any write under `openspec/`; do not try to work around it.
 
 ## Boundary rules (every Nogging specialist repeats these)

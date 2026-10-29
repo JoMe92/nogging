@@ -25,7 +25,8 @@ anything.
 
 Same as `backend-engineer`: `Read`, `Grep`, `Glob`, `Edit`, `Write`, and `Bash`.
 Use `Edit` and `Write` on source and test files only. Use `Bash` to run the
-build and the test suite. The `PreToolUse` guard blocks any write under
+build and the tests of the files you change (one blocking call each, never
+polled). The `PreToolUse` guard blocks any write under
 `openspec/`; do not try to work around it.
 
 ## Boundary rules (every Nogging specialist repeats these)

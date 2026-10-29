@@ -2,13 +2,16 @@
 import datetime as dt
 import json
 from pathlib import Path
+import os
 import shutil
+import subprocess
 import tempfile
 import unittest
 
 import token_usage_report as tr
 from token_usage_report import ReportError
-from token_usage_store import FIELDS, Store, fact
+from token_usage_adapters import ClaudeAdapter, CodexAdapter
+from token_usage_store import FIELDS, Store, StoreTimeout, fact
 
 UTC = dt.timezone.utc
 NOW = dt.datetime(2026, 10, 11, 12, 0, tzinfo=UTC)
@@ -46,18 +49,18 @@ class Facts:
                 revision=beat, source_ordinal=1, source_timestamp=beat, segment_id=seg, kind='heartbeat'))
         return self
 
-    def boundary(self, seg, index, when, task='TASK-1', complexity='standard', effort=None):
+    def boundary(self, seg, index, when, task='TASK-1', complexity='standard', effort=None, bead='SPEC-1'):
         self.tables['attribution_events'].append(row('attribution_events', source_id=f'nogg-session:{seg}',
-            event_id=f'boundary:{index}', source_timestamp=when, segment_id=seg, task_id=task, bead_id='SPEC-1',
+            event_id=f'boundary:{index}', source_timestamp=when, segment_id=seg, task_id=task, bead_id=bead,
             change_id='change', role='lead', complexity=complexity, complexity_source='launch',
             vocabulary_version='1', requested_model='requested-model', configured_effort=effort))
         return self
 
     def usage(self, seg, event, when, model='luna', input=100, output=10, cache_write=5, semantics=None,
-              runtime='claude', duration=1000):
+              runtime='claude', duration=1000, cache_read=0):
         self.tables['usage_events'].append(row('usage_events', source_id=f'{runtime}:conv-{seg}', event_id=event,
             source_timestamp=when, segment_id=seg, runtime=runtime, provider='p', model=model,
-            input_tokens=input, output_tokens=output, cache_read_tokens=0, cache_write_tokens=cache_write,
+            input_tokens=input, output_tokens=output, cache_read_tokens=cache_read, cache_write_tokens=cache_write,
             thinking_tokens=0, inference_duration_ms=duration, completeness='complete',
             semantics=semantics or [], raw_usage={'input_tokens': input}))
         return self
@@ -234,6 +237,239 @@ class ReviewFixTests(unittest.TestCase):
         self.assertEqual([x['row']['device_id'] for x in facts if x.get('registry') == 'devices'], ['dev-1'])
         _, _, recovered = tr.import_records(lines, META)
         self.assertEqual(recovered['source_owners'], {'claude:conv-s': 'dev-1'})
+
+
+class FreshInputTests(unittest.TestCase):
+    """Stored input includes cache reads for every adapter; fresh = input - cache read."""
+
+    def test_fresh_input_per_runtime_semantics(self):
+        claude = ClaudeAdapter().parse_record({'type': 'assistant', 'sessionId': 's', 'timestamp': at(1),
+            'message': {'id': 'm', 'role': 'assistant', 'model': 'opus', 'usage': {
+                'input_tokens': 40, 'cache_read_input_tokens': 900, 'cache_creation_input_tokens': 60,
+                'output_tokens': 7}}})[1]
+        self.assertEqual((claude['input_tokens'], tr.fresh_input(claude)), (1000, 100))   # uncached 40 + cache write 60
+        no_write = ClaudeAdapter().parse_record({'type': 'assistant', 'sessionId': 's', 'timestamp': at(1),
+            'message': {'id': 'n', 'role': 'assistant', 'model': 'opus', 'usage': {
+                'input_tokens': 40, 'cache_read_input_tokens': 900, 'output_tokens': 7}}})[1]
+        self.assertIsNone(tr.fresh_input(no_write))   # cache creation unknown: fresh input is unknown, not 40
+        codex = CodexAdapter().parse_record({'type': 'token_usage_record', 'timestamp': at(1), 'payload': {
+            'response_id': 'r', 'session_id': 's', 'usage': {'input_tokens': 2000, 'cached_input_tokens': 1500,
+                                                             'output_tokens': 9, 'total_tokens': 2009}}})[1]
+        self.assertEqual((codex['input_tokens'], tr.fresh_input(codex)), (2000, 500))     # cached input is inside input
+        antigravity = {'input_tokens': 300, 'cache_read_tokens': 200,
+                       'semantics': ['input_includes_cache_read', 'thinking_in_output']}
+        self.assertEqual(tr.fresh_input(antigravity), 100)                                 # its cache-exclusive input
+        unflagged = {'input_tokens': 50, 'semantics': []}
+        self.assertEqual(tr.fresh_input(dict(unflagged, cache_read_tokens=0)), 50)
+        for unprovable in (dict(unflagged, cache_read_tokens=10), dict(unflagged, cache_read_tokens=None),
+                           {'input_tokens': None, 'cache_read_tokens': 0},
+                           {'input_tokens': 5, 'cache_read_tokens': 9, 'semantics': ['cache_inclusive_input']}):
+            self.assertIsNone(tr.fresh_input(unprovable), unprovable)
+
+    def test_classify_paths(self):
+        for path in ('scripts/lib/token_usage_report_test.py', 'scripts/nogg-tests/x.py', 'tests/a.sh', 'pkg/test/a.go',
+                     'src/__tests__/a.js', 'scripts/foo.test.sh', 'src/a.test.ts', 'src/a.spec.js', 'fixtures/a.json',
+                     'tests/fixtures/x', 'test_api.py', 'go/x_test.go', 'testdata/in.txt'):
+            self.assertEqual(tr.classify_path(path), 'test' if 'nogg-tests' not in path else 'production', path)
+        for path in ('openspec/changes/x/tasks.md', '.beads/issues.jsonl', 'package-lock.json', 'web/yarn.lock',
+                     'Cargo.lock', 'go.sum', 'uv.lock'):
+            self.assertEqual(tr.classify_path(path), 'generated', path)
+        for path in ('scripts/nogg', 'docs/token-usage.md', 'src/latest.py', 'scripts/test', 'contest/app.py'):
+            self.assertEqual(tr.classify_path(path), 'production', path)
+        self.assertEqual([tr.numstat_path(p) for p in ('src/{a.py => b.py}', 'old.py => new.py', 'a/{ => b}/c.py',
+                                                        'a/{b => }/c.py')], ['src/b.py', 'new.py', 'a/b/c.py', 'a/c.py'])
+
+
+def bead_facts():
+    f = Facts()
+    f.segment('lead', 'lead-sess', start=at(1), end=at(3))
+    f.boundary('lead', 0, at(1), bead='SPEC-a').boundary('lead', 1, at(2), bead='SPEC-b')
+    f.usage('lead', 'a1', at(1, 30), input=1000, cache_read=900, cache_write=60, output=40,
+            semantics=['cache_summed_input'])
+    f.usage('lead', 'b1', at(2, 30), input=500, cache_write=0, output=20, semantics=['cache_summed_input'])
+    f.segment('cx', 'codex-sess', runtime='codex', start=at(1), end=at(2)).boundary('cx', 0, at(1), bead='SPEC-a')
+    f.usage('cx', 'c1', at(1, 10), runtime='codex', input=2000, cache_read=1500, cache_write=None, output=100,
+            semantics=['cache_inclusive_input'])
+    f.segment('free', 'loose', start=at(4), end=at(5)).usage('free', 'u1', at(4, 30), input=10, output=1)
+    return f
+
+
+GIT_LINES = {'SPEC-a': {'commits': 2, 'production_lines': 100, 'test_lines': 30},
+             'SPEC-b': {'commits': 0, 'production_lines': 0, 'test_lines': 0}}
+
+
+class BeadViewTests(unittest.TestCase):
+    def doc(self, lines=None, **filters):
+        lo, hi = tr.window(at(0), at(12), NOW)
+        context = {'bead_lines': (lambda beads: {b: GIT_LINES[b] for b in beads}) if lines else lines}
+        return tr.report(bead_facts().tables, META, lo, hi, 'bead', filters, NOW, context)
+
+    def test_rows_per_bead_and_runtime_with_unattributed_group(self):
+        doc = self.doc(lines=True)
+        work = lambda r: tuple(r['work']['tokens'][k] for k in tr.WORK_COUNTERS)
+        self.assertEqual([(r['bead'], r['runtime'], r['events'], work(r), r['wall_runtime_ms'] // 60000, r['sessions'])
+                          for r in doc['rows']],
+                         [('SPEC-a', 'claude', 1, (100, 900, 60, 40, 1040), 60, ['lead-sess']),
+                          ('SPEC-a', 'codex', 1, (500, 1500, 0, 100, 2100), 60, ['codex-sess']),
+                          ('SPEC-b', 'claude', 1, (500, 0, 0, 20, 520), 60, ['lead-sess']),
+                          (None, 'claude', 1, (10, 0, 5, 1, 11), 60, ['loose'])])
+        self.assertEqual(doc['rows'][1]['work']['unknown_counters']['cache_write_tokens'], 1)   # Codex reported none
+        self.assertEqual(doc['coverage']['unknown_bead'], 1)
+        a_claude, a_codex, b_claude, loose = doc['rows']
+        self.assertEqual((a_claude['commits'], a_claude['production_lines'], a_claude['test_lines'],
+                          a_claude['per_production_line']),
+                         (2, 100, 30, {'fresh_input_tokens': 1.0, 'output_tokens': 0.4, 'total_tokens': 10.4}))
+        nulls = {'fresh_input_tokens': None, 'output_tokens': None, 'total_tokens': None}
+        self.assertEqual((b_claude['commits'], b_claude['production_lines'], b_claude['per_production_line']),
+                         (0, None, nulls))   # no commits: no production lines
+        self.assertEqual((loose['commits'], loose['production_lines'], loose['per_production_line']), (None, None, nulls))
+        totals = {t['bead']: t for t in doc['beads']}
+        self.assertEqual((totals['SPEC-a']['runtimes'], totals['SPEC-a']['events'], work(totals['SPEC-a']),
+                          totals['SPEC-a']['per_production_line'], totals['SPEC-a']['wall_runtime_ms'] // 60000),
+                         (['claude', 'codex'], 2, (600, 2400, 60, 140, 3140),
+                          {'fresh_input_tokens': 6.0, 'output_tokens': 1.4, 'total_tokens': 31.4}, 120))
+        self.assertEqual([t['bead'] for t in doc['beads']], ['SPEC-a', 'SPEC-b', None])
+        self.assertTrue(doc['git']['available'])
+        self.assertTrue(any('production lines count' in n for n in doc['notes']))
+
+    def test_without_git_every_git_field_is_null(self):
+        doc = self.doc()
+        self.assertFalse(doc['git']['available'])
+        self.assertTrue(any('git attribution unavailable' in n for n in doc['notes']))
+        for item in doc['rows'] + doc['beads']:
+            self.assertEqual((item['commits'], item['production_lines'], item['test_lines'],
+                              set(item['per_production_line'].values())), (None, None, None, {None}))
+        unavailable = tr.report(bead_facts().tables, META, *tr.window(at(0), at(12), NOW), 'bead', {}, NOW,
+                                {'bead_lines': lambda beads: None})
+        self.assertEqual(unavailable['rows'][0]['commits'], None)
+
+    def test_bead_filter_and_runtime_only_rows(self):
+        doc = self.doc(lines=True, bead='SPEC-b')
+        self.assertEqual([(r['bead'], r['events']) for r in doc['rows']], [('SPEC-b', 1)])
+        self.assertEqual(report(bead_facts(), at(0), at(12), 'day', bead='SPEC-a')['rows'][0]['events'], 2)
+        f = Facts().segment('quiet', 'quiet', start=at(1), end=at(2)).boundary('quiet', 0, at(1), bead='SPEC-a')
+        lo, hi = tr.window(at(0), at(12), NOW)
+        quiet = tr.report(f.tables, META, lo, hi, 'bead', {}, NOW, {'bead_lines': lambda b: GIT_LINES})['rows'][0]
+        self.assertEqual((quiet['events'], quiet['wall_runtime_ms'], quiet['production_lines'],
+                          quiet['per_production_line']['total_tokens']), (0, 60 * 60000, 100, None))
+        with self.assertRaises(ReportError):
+            tr.report(f.tables, META, lo, hi, 'week', {}, NOW)
+
+    def test_text_render(self):
+        lines = tr.render_bead_report(self.doc(lines=True))
+        self.assertEqual(lines[0].split()[:4], ['BEAD', 'AGENT', 'EVENTS', 'FRESH_IN'])
+        self.assertIn('TOTAL/LINE', lines[0])
+        self.assertEqual([l.split()[:2] for l in lines[1:]],
+                         [['SPEC-a', 'claude'], ['SPEC-a', 'codex'], ['SPEC-a', 'all'], ['SPEC-b', 'claude'],
+                          ['-', 'claude']])
+        self.assertEqual(lines[1].split()[-3:], ['1.0', '0.4', '10.4'])
+        self.assertIn('0+?', lines[2])              # Codex cache write unknown
+        self.assertEqual(lines[4].split()[-5:], ['0', '-', '-', '-', '-'])
+        self.assertEqual(lines[5].split()[-5:], ['-'] * 5)
+        long = self.doc(lines=True)
+        long['rows'][0]['bead'] = 'loadcompass-03v'
+        self.assertTrue(tr.render_bead_report(long)[1].startswith('loadcompass-03v '))   # never truncated
+
+
+@unittest.skipUnless(shutil.which('git'), 'git not installed')
+class GitAttributionTests(unittest.TestCase):
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.repo, ignore_errors=True)
+        self.env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1',
+                        GIT_AUTHOR_NAME='T', GIT_AUTHOR_EMAIL='t@example.org',
+                        GIT_COMMITTER_NAME='T', GIT_COMMITTER_EMAIL='t@example.org')
+        self.git('init', '-q', '-b', 'develop')
+        self.git('commit', '-q', '--allow-empty', '-m', 'init')
+
+    def git(self, *args):
+        return subprocess.run(['git', '-C', str(self.repo), *args], check=True, capture_output=True, text=True,
+                              env=self.env).stdout.strip()
+
+    def commit(self, subject, files):
+        for path, lines in files.items():
+            target = self.repo / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(lines) if isinstance(lines, bytes) else target.write_text(
+                ''.join(f'line {i}\n' for i in range(lines)) if isinstance(lines, int) else lines)
+        self.git('add', '-A')
+        self.git('commit', '-q', '-m', subject)
+        return self.git('rev-parse', 'HEAD')
+
+    def test_production_lines_from_bead_commits(self):
+        self.commit('feat: add [SPEC-a]', {'src/app.py': 10, 'docs/guide.md': 2, 'src/app_test.py': 5,
+                                           'tests/run.sh': 3, 'scripts/x.test.sh': 2, 'fixtures/data.json': 3,
+                                           'openspec/changes/x.md': 4, 'package-lock.json': 6})
+        self.commit('fix: tweak [SPEC-a] [loadcompass-wum2]', {'src/app.py': 'changed\n' + ''.join(
+            f'line {i}\n' for i in range(1, 10))})
+        (self.repo / 'lib').mkdir()
+        self.git('mv', 'src/app.py', 'lib/app.py')
+        self.commit('refactor: move [SPEC-b]', {'img.png': b'\x00\x01binary\x00'})
+        self.commit('feat: lookalike [SPEC-ab]', {'src/other.py': 7})
+        self.git('checkout', '-q', '-b', 'topic')
+        side = self.commit('feat: side [SPEC-c]', {'src/side.py': 1})
+        self.git('checkout', '-q', 'develop')
+        self.git('cherry-pick', side)                 # a copy: same author time and subject
+        self.git('checkout', '-q', '-b', 'merged')
+        self.commit('feat: merged work [SPEC-d]', {'src/d.py': 2})
+        self.git('checkout', '-q', 'develop')
+        self.git('merge', '-q', '--no-ff', '-m', 'merge [SPEC-a]', 'merged')   # merges never count
+        found = tr.bead_git_lines(self.repo, ['SPEC-a', 'SPEC-b', 'SPEC-c', 'SPEC-d', 'loadcompass-wum2', 'SPEC-none'])
+        self.assertEqual(found, {'SPEC-a': {'commits': 2, 'production_lines': 14, 'test_lines': 13},
+                                 'SPEC-b': {'commits': 1, 'production_lines': 0, 'test_lines': 0},
+                                 'SPEC-c': {'commits': 1, 'production_lines': 1, 'test_lines': 0},
+                                 'SPEC-d': {'commits': 1, 'production_lines': 2, 'test_lines': 0},
+                                 'loadcompass-wum2': {'commits': 1, 'production_lines': 2, 'test_lines': 0},
+                                 'SPEC-none': {'commits': 0, 'production_lines': 0, 'test_lines': 0}})
+        doc = tr.report(bead_facts().tables, META, *tr.window(at(0), at(12), NOW), 'bead', {}, NOW,
+                        {'bead_lines': lambda beads: tr.bead_git_lines(self.repo, beads)})
+        self.assertEqual([(r['bead'], r['commits'], r['production_lines']) for r in doc['rows']],
+                         [('SPEC-a', 2, 14), ('SPEC-a', 2, 14), ('SPEC-b', 1, 0), (None, None, None)])
+        self.assertEqual(doc['rows'][2]['per_production_line']['total_tokens'], None)   # zero production lines
+
+    def test_git_unavailable(self):
+        outside = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, outside, ignore_errors=True)
+        self.assertIsNone(tr.bead_git_lines(outside, ['SPEC-a']))
+        def missing(*args, **kwargs):
+            raise FileNotFoundError('git')
+        self.assertIsNone(tr.bead_git_lines(self.repo, ['SPEC-a'], run=missing))
+        def slow(*args, **kwargs):
+            raise subprocess.TimeoutExpired(args[0], kwargs.get('timeout'))
+        self.assertIsNone(tr.bead_git_lines(self.repo, ['SPEC-a'], run=slow))
+        self.assertEqual(tr.bead_git_lines(self.repo, []), {})
+
+    def test_non_utf8_paths_and_subjects_never_fail_the_view(self):
+        name = os.fsdecode(b'src/caf\xe9.py')   # a Latin-1 file name, not valid UTF-8
+        self.commit('feat: latin-1 [SPEC-a]', {name: 4})
+        found = tr.bead_git_lines(self.repo, ['SPEC-a'])
+        self.assertEqual(found['SPEC-a'], {'commits': 1, 'production_lines': 4, 'test_lines': 0})
+
+
+class BoundedLoadTests(unittest.TestCase):
+    def test_loaders_pass_the_timeout_and_skip_payloads_for_counts(self):
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        store = Store(tmp, lambda _: {'state_dir': str(tmp)})
+        self.assertEqual(tr.load_counts(store, timeout=1), (None, {t: 0 for t in FIELDS}))
+        self.assertIsNone(tr.load_meta(store))
+        (store.database / '.dolt').mkdir(parents=True)
+        calls = []
+        def fake(*args, sql=None, timeout=None):
+            calls.append((args[-1], timeout))
+            if 'store_meta' in args[-1]:
+                return json.dumps({'rows': [dict(META, identity_version=1, project_id=META['project_id'])]})
+            if 'UNION ALL' in args[-1]:
+                return json.dumps({'rows': [{'fact_table': 'usage_events', 'source_id': 's', 'event_id': 'e',
+                                             'source_ordinal': o} for o in (0, 1)]})
+            raise StoreTimeout('local Dolt timed out after 7s; usage evidence must remain pending', 7)
+        store._dolt = fake
+        meta, counts = tr.load_counts(store, timeout=7)
+        self.assertEqual((meta['project_id'], counts['usage_events'], counts['session_segments']), (META['project_id'], 1, 0))
+        self.assertEqual({t for _, t in calls}, {7})
+        self.assertFalse(any('current_' in sql or 'SELECT *' in sql and 'store_meta' not in sql for sql, _ in calls))
+        with self.assertRaises(StoreTimeout):
+            tr.load_facts(store, timeout=7)
 
 
 @unittest.skipUnless(shutil.which('dolt'), 'dolt not installed')

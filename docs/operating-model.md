@@ -57,9 +57,13 @@ there. For each Bead the Lead Agent follows this path:
    range (`task_sizing.commit_lines`, default 100–600 changed lines;
    `./scripts/nogg task-sizing` prints it); every commit carries the `[<ID>]`
    token and the tests for the code it changes. Test in stages: while
-   working, only the affected tests; before each commit, the affected suite
-   plus lint of the changed files; once per Bead, before hand-off, the full
-   project suite (`scripts/test`). CI stays the final gate. Then write the
+   working, only the tests of the files you change; before each commit, those
+   tests plus lint of the changed files; once per Bead, before hand-off, the
+   affected suite. The full suite is CI's job (`scripts/test` once per Bead
+   only where the project has no CI). Run a long command as one blocking call
+   with a timeout that covers it (`./scripts/nogg run-quiet -- <command>`) and
+   never poll it: every poll re-sends the agent's whole context, so waiting
+   costs tokens without doing work. Then write the
    evidence note listing every commit SHA and `bd close <id>`. The sync timer
    then mirrors the closure into `execution-log.md`.
 
@@ -113,11 +117,14 @@ migration, route, UI and docs tasks. A task targets the configured Bead range
 (`task_sizing.bead_prod_lines` in `.nogging/config.json`, default 400–1000
 production lines; `./scripts/nogg task-sizing` prints the range in effect).
 A smaller task needs a stated reason, such as a security fix, a risky
-migration or a hard dependency boundary. Every task line carries an estimate
-tag `[~N loc]` counting production lines, tests excluded; a smaller task
-states its reason in the tag, for example `[~80 loc: security fix]`.
+migration or a hard dependency boundary; a task above the maximum is split
+into further slices. Every task line carries an estimate tag `[~N loc]`
+counting production lines, tests excluded; a task outside the range states
+its reason in the tag, for example `[~80 loc: security fix]`.
 `./scripts/nogg validate` only prints a NOTE for a miss and never fails a
-change. The Lead Agent then commits such a Bead in several steps within the
+change. 500–1000 production lines per Bead cost the fewest tokens per line;
+raising the maximum far above that costs more per line, not less (see
+[Configuration](https://jome92.github.io/nogging/configuration/#task_sizing)). The Lead Agent then commits such a Bead in several steps within the
 configured commit range (step 10 above). See
 [Configuration](https://jome92.github.io/nogging/configuration/#task_sizing).
 

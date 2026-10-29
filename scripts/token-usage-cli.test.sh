@@ -148,6 +148,33 @@ expect "day totals and coverage" "$(j 'd["rows"][0]["events"], d["rows"][0]["tok
   && expect "status" "$(j 'd["store"], d["current_facts"]["usage_events"], d["sync"]["state"]')" "('present', 2, 'not_configured')" \
   || bad "status"
 
+# --- per-Bead view: fresh input and tokens per production line ------------------
+mkdir -p "$root/src"
+printf 'a\nb\nc\n' >"$root/src/demo.py"; printf 'x\ny\n' >"$root/src/demo_test.py"
+git -C "$root" add src
+git -C "$root" -c user.name=Test -c user.email=test@example.org commit -q -m "feat: demo [SPEC-cli]"
+# Each event: input 5 + cache read 100 + cache write 7 = 112 stored, fresh 12.
+"$nogg" token-usage report --from "$day" --to "$next" --group-by bead --json >"$out" 2>"$err" \
+  && expect "bead view: fresh input, production lines and tokens per line" \
+       "$(j 'd["rows"][0]["bead"], d["rows"][0]["runtime"], d["rows"][0]["work"]["tokens"]["fresh_input_tokens"], d["rows"][0]["commits"], d["rows"][0]["production_lines"], d["rows"][0]["test_lines"], d["rows"][0]["per_production_line"]["fresh_input_tokens"]')" \
+       "('SPEC-cli', 'claude', 24, 1, 3, 2, 8.0)" || bad "bead report"
+"$nogg" token-usage report --from "$day" --to "$next" --group-by bead >"$out" 2>&1 \
+  && grep -qE '^SPEC-cli +claude +2 +24 ' "$out" && ok "text bead report renders" || bad "text bead report"
+
+# --- read-only queries are bounded and fail with a clear remedy ------------------
+cp "$root/.nogging/config.json" "$work/config.json.bak"
+python3 - "$root/.nogging/config.json" <<'PY'
+import json, sys
+cfg = json.load(open(sys.argv[1])); cfg["token_usage_query_timeout_seconds"] = 0.001
+json.dump(cfg, open(sys.argv[1], "w"), indent=2)
+PY
+refuse "a report past its query bound" "local Dolt query timed out after 0.001s" report --from "$day" --to "$next"
+refuse "status past its query bound" "raise token_usage_query_timeout_seconds" status
+cp "$work/config.json.bak" "$root/.nogging/config.json"
+"$nogg" token-usage status --json >"$out" 2>"$err" \
+  && expect "the store reads normally after a bounded timeout" "$(j 'd["current_facts"]["usage_events"]')" "2" \
+  || bad "status after timeout"
+
 # --- export -> recovery ----------------------------------------------------------
 "$nogg" token-usage export --from "$day" --to "$next" >"$work/export.jsonl" 2>"$out" && ok "export" || bad "export"
 ! grep -q '"content"\|"text"' "$work/export.jsonl" && ok "export carries no transcript content" || bad "export content"

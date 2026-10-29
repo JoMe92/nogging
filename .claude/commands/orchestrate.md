@@ -81,8 +81,9 @@ the orchestrator session — exactly one of:
   commit past the CI `invariants` job.
 - **`takeover code`** — claim the named Bead, implement in coherent commits
   within the configured commit range, each with the `[<bead-id>]` token and
-  its tests (affected tests while working, the affected suite plus lint before
-  each commit, `scripts/test` once before closing), write the evidence note
+  its tests (the changed files' tests plus lint before each commit, the
+  affected suite once before closing, the full suite left to CI; long
+  commands as one blocking call, never polled), write the evidence note
   with every commit SHA, `bd close` — then back to orchestrate-only.
 
 A takeover is scoped to that one task. The orchestrator never completes the

@@ -22,6 +22,11 @@ class UsageTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
+        # The Codex scan writes its index under the usage cache: never the real one.
+        previous_cache = os.environ.get('XDG_CACHE_HOME')
+        os.environ['XDG_CACHE_HOME'] = str(self.root / 'cache')
+        self.addCleanup(lambda: os.environ.pop('XDG_CACHE_HOME') if previous_cache is None
+                        else os.environ.__setitem__('XDG_CACHE_HOME', previous_cache))
         self.now = dt.datetime(2026, 10, 11, 12, tzinfo=dt.timezone.utc)
         self.reset = int(self.now.timestamp()) + 3600
         self.row = {'type':'event_msg', 'timestamp':usage.iso(self.now),
