@@ -69,6 +69,7 @@ VALID='{"schema_version": 1, "roles": {"lead": [
 INVALID='{"schema_version": 1, "roles": {"lead": [{"agent": "pi", "wat": 1}]}}'
 
 # --- unit tests of the pure module run first --------------------------------
+# The unit test file ships with the package, so this runs in a consumer too.
 if python3 "$here/lib/agent_routing_test.py" >"$out" 2>&1; then
   echo "ok   - scripts/lib/agent_routing_test.py"
 else
@@ -76,24 +77,45 @@ else
 fi
 
 # --- shipped surface: template key, docs, manifest, package files -----------
-grep -q '"agent_routing_file": ".nogging/agent-routing.json"' \
-  "$repo_root/templates/nogging-config.json" \
-  && echo "ok   - template carries the agent_routing_file default" \
-  || { echo "FAIL - template lacks agent_routing_file"; fail=1; }
+# These checks read the source-checkout layout. The installed consumer copy
+# (installed-diagnostics runs this suite there) has no bin/, templates/ or
+# docs/configuration.md, so each check is skipped when its file is absent.
+if [[ -f "$repo_root/templates/nogging-config.json" ]]; then
+  grep -q '"agent_routing_file": ".nogging/agent-routing.json"' \
+    "$repo_root/templates/nogging-config.json" \
+    && echo "ok   - template carries the agent_routing_file default" \
+    || { echo "FAIL - template lacks agent_routing_file"; fail=1; }
+else
+  echo "ok   - template check skipped (installed consumer copy)"
+fi
 
-grep -q 'agent_routing_file' "$repo_root/docs/configuration.md" \
-  && echo "ok   - configuration.md documents agent_routing_file" \
-  || { echo "FAIL - configuration.md lacks agent_routing_file"; fail=1; }
+if [[ -f "$repo_root/docs/configuration.md" ]]; then
+  grep -q 'agent_routing_file' "$repo_root/docs/configuration.md" \
+    && echo "ok   - configuration.md documents agent_routing_file" \
+    || { echo "FAIL - configuration.md lacks agent_routing_file"; fail=1; }
+else
+  echo "ok   - configuration.md check skipped (installed consumer copy)"
+fi
 
-grep -q "scripts/lib/agent_routing.py" "$repo_root/bin/lib/manifest.js" \
-  && echo "ok   - manifest.js ships scripts/lib/agent_routing.py" \
-  || { echo "FAIL - manifest.js lacks agent_routing.py"; fail=1; }
-grep -q "scripts/lib/agent_routing.py" "$repo_root/package.json" \
-  && echo "ok   - package files list ships scripts/lib/agent_routing.py" \
-  || { echo "FAIL - package.json lacks agent_routing.py"; fail=1; }
-node -e "require('$repo_root/bin/lib/manifest.js')" \
-  && echo "ok   - manifest.js still parses" \
-  || { echo "FAIL - manifest.js does not parse"; fail=1; }
+if [[ -f "$repo_root/bin/lib/manifest.js" ]]; then
+  grep -q "scripts/lib/agent_routing.py" "$repo_root/bin/lib/manifest.js" \
+    && echo "ok   - manifest.js ships scripts/lib/agent_routing.py" \
+    || { echo "FAIL - manifest.js lacks agent_routing.py"; fail=1; }
+  grep -q "scripts/lib/agent_routing_test.py" "$repo_root/bin/lib/manifest.js" \
+    && echo "ok   - manifest.js ships scripts/lib/agent_routing_test.py" \
+    || { echo "FAIL - manifest.js lacks agent_routing_test.py"; fail=1; }
+  grep -q "scripts/lib/agent_routing.py" "$repo_root/package.json" \
+    && echo "ok   - package files list ships scripts/lib/agent_routing.py" \
+    || { echo "FAIL - package.json lacks agent_routing.py"; fail=1; }
+  grep -q "scripts/lib/agent_routing_test.py" "$repo_root/package.json" \
+    && echo "ok   - package files list ships scripts/lib/agent_routing_test.py" \
+    || { echo "FAIL - package.json lacks agent_routing_test.py"; fail=1; }
+  node -e "require('$repo_root/bin/lib/manifest.js')" \
+    && echo "ok   - manifest.js still parses" \
+    || { echo "FAIL - manifest.js does not parse"; fail=1; }
+else
+  echo "ok   - manifest checks skipped (installed consumer copy)"
+fi
 
 # --- route check: absent, valid, invalid ------------------------------------
 repo="$work/repo-absent"; make_repo "$repo"

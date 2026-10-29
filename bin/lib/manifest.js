@@ -19,6 +19,7 @@ module.exports = {
     'scripts/nogg_usage.py',
     'scripts/lib/session_backend.py',
     'scripts/lib/agent_routing.py',
+    'scripts/lib/agent_routing_test.py',
     'scripts/lib/loop_schedule.py',
     'scripts/lib/loop_config.py',
     'scripts/lib/loop_state.py',
