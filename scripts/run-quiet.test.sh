@@ -50,7 +50,8 @@ rc() { cat "$work/$1.rc"; }
 hundred='for i in $(seq 1 100); do echo "line-$i"; done; exit 3'
 printf 'stale-content\n' > "$work/fail.log"
 
-quiet ok -- true
+mkdir -p "$work/tmp-ok"
+TMPDIR="$work/tmp-ok" quiet ok -- true
 quiet chatty --log "$work/new/dir/chatty.log" -- bash -c \
   'cat; for i in $(seq 1 500); do echo "chatty-$i"; done; echo to-stderr >&2; echo "args:$*"' _ --tail 3 -- x
 quiet fail --log "$work/fail.log" -- bash -c "$hundred"
@@ -67,6 +68,14 @@ quiet floor -- rm -rf "$work/floor-target"
 quiet floorpath -- /usr/bin/sudo true
 quiet floorglob -- mkfs.ext4 /dev/null
 quiet floorok -- rm -f "$work/floor-other"
+quiet floorenv -- env FOO=1 sudo true
+quiet floortimeout -- timeout 5 sudo true
+quiet floorfind -- find "$work/floor-target" -maxdepth 0 -exec rm -rf {} ';'
+quiet floorscript -- bash -c "true && rm -rf '$work/floor-target'"
+quiet floornested -- bash -lc "bash -c 'sudo true'"
+quiet floorunparsable -- bash -c "echo 'unbalanced"
+quiet floorscriptok -- bash -c 'echo fine && exit 0'
+quiet masked -- env GH_TOKEN=ghp_examplevalue123 API_KEY=plain false
 
 # Signal forwarding: signal the bridge itself once the command runs. The exec
 # shim restores a default SIGINT, which a non-interactive shell's `&` ignores.
@@ -101,10 +110,11 @@ wait
 o=$(out ok)
 check "success exits 0" test "$(rc ok)" = 0
 check "success prints exactly one line" test "$(count "$o")" = 1
-check "success prints the ok summary" bash -c '[[ $0 =~ ^ok:\ true\ \([0-9]+\.[0-9]\ s\;\ log\ .+\)$ ]]' "$o"
+check "success prints the ok summary" bash -c '[[ $0 =~ ^ok:\ true\ \([0-9]+\.[0-9]\ s\)$ ]]' "$o"
 check "success writes nothing to stderr" test -z "$(err ok)"
-log=$(logged "$o")
-check "the default log is a new nogg-run-quiet.*.log in TMPDIR" \
+check "a passing run removes its default log" test -z "$(ls -A "$work/tmp-ok")"
+log=$(logged "$(out tail5)")
+check "a failing run keeps a new nogg-run-quiet.*.log in TMPDIR" \
   bash -c '[[ $0 == "$1"/nogg-run-quiet.*.log && -f $0 ]]' "$log" "$TMPDIR"
 check "the default log is private (0600)" test "$(ls -l "$log" | cut -c1-10)" = "-rw-------"
 
@@ -171,10 +181,49 @@ check "a usage error prints nothing on stdout" test -z "$(out nodash)$(out nocmd
 # --- the command floor applies to the wrapped command --------------------------
 check "a floor command is refused with exit 2" test "$(rc floor)" = 2
 check "a floor command is never run" test -d "$work/floor-target"
-check "the refusal names the floor entry" has "$(err floor)" "command floor denies (Bash(rm -rf:*))"
+check "the refusal names the denied rule" has "$(err floor)" "the wrapped command could run Bash(rm -rf:*)"
 check "a floor command named by path is refused" test "$(rc floorpath)" = 2
 check "a floor glob entry (mkfs.*) is refused" test "$(rc floorglob)" = 2
 check "a command outside the floor still runs" test "$(rc floorok)" = 0
+check "a floor command behind env is refused" test "$(rc floorenv)" = 2
+check "a floor command behind timeout is refused" test "$(rc floortimeout)" = 2
+check "a floor command in find -exec is refused" test "$(rc floorfind)" = 2
+check "a floor command inside bash -c is refused" test "$(rc floorscript)" = 2
+check "a floor command in a nested shell script is refused" test "$(rc floornested)" = 2
+check "an unparsable shell script is refused" test "$(rc floorunparsable)" = 2
+check "a refused script is never run" test -d "$work/floor-target"
+check "a shell script without a denied command runs" test "$(rc floorscriptok)" = 0
+
+# A supervised session's own deny rules (e.g. a restricted profile's git push)
+# apply to the wrapped command too; the floor applies everywhere.
+printf '{"permissions": {"deny": ["Bash(git push:*)", "Bash(bd dolt push:*)", "Edit(openspec/**)"]}}\n' \
+  > "$work/session.settings.json"
+rules_out=$(NOGGING_ROOT="$fixture" python3 - "$nogg" "$work/session.settings.json" <<'PY'
+import sys
+from importlib.machinery import SourceFileLoader
+m = SourceFileLoader("nogg_rq", sys.argv[1]).load_module()
+session = m.run_quiet_deny_rules({"effective_settings_path": sys.argv[2]})
+operator = m.run_quiet_deny_rules(None)
+for argv in (["git", "push", "origin"], ["bash", "-c", "bd dolt push"], ["sudo", "x"], ["git", "status"]):
+    print(" ".join(argv), "|", m.run_quiet_denied(argv, session), "|", m.run_quiet_denied(argv, operator))
+try:
+    m.run_quiet_deny_rules({"effective_settings_path": sys.argv[2] + ".missing"})
+    print("unreadable | allowed")
+except RuntimeError:
+    print("unreadable | refused")
+PY
+)
+check "a session's own deny rule refuses the wrapped command" has "$rules_out" "git push origin | Bash(git push:*) | None"
+check "a session deny rule applies inside bash -c" has "$rules_out" "bash -c bd dolt push | Bash(bd dolt push:*) | None"
+check "the floor applies with session rules too" has "$rules_out" "sudo x | Bash(sudo:*) | Bash(sudo:*)"
+check "an allowed command passes the session rules" has "$rules_out" "git status | None | None"
+check "unreadable session deny rules fail closed" has "$rules_out" "unreadable | refused"
+
+# --- credential-looking values are masked in the summary, not in the log ------
+o=$(out masked)
+check "a secret-named NAME=value is masked" has "$o" "'GH_TOKEN=***'"
+check "a known token prefix never reaches the summary" lacks "$o" "ghp_examplevalue123"
+check "an API_KEY value is masked" has "$o" "'API_KEY=***'"
 
 if [[ $fail -ne 0 ]]; then
   echo "run-quiet checks failed" >&2

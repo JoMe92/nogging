@@ -34,8 +34,11 @@ and GitHub Releases for that history.
 - `nogg run-quiet [--log PATH] [--tail N] -- <command>` runs a long command
   (a suite, a build) as one blocking call: one `ok:` line on success, a
   `FAIL (exit N)` line plus the log tail on failure, the full output in a
-  private log and the exit code passed through. It refuses a command the
-  command floor denies.
+  private log (removed after a passing run unless `--log` names it) and the
+  exit code passed through. It applies the command floor and the calling
+  session's own `Bash(...)` deny rules to the wrapped command, at any word
+  position and inside `<shell> -c` scripts, and masks credential-looking
+  values in the printed command.
 - `doctor_agy_models_cache_seconds` (default 3600): `doctor` reuses a
   successful `agy models` listing per `agy` executable instead of spawning
   the probe on every run; a failed probe is never cached.

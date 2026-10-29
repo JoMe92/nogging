@@ -270,15 +270,23 @@ splits a Bead into commits.
 **Purpose.** Run one long command, such as a test suite or a build, as a single
 blocking call that prints a single line. The command's stdout and stderr go to a
 log file in full, and its stdin is `/dev/null`. On success it prints
-`ok: <command> (<seconds> s; log <path>)`. On failure it prints a `FAIL (exit
-<code>)` line and the last lines of the log (40 unless `--tail N` says
-otherwise), then exits with the command's exit code. A death by signal N exits
-128+N, and a command that is not found exits 127. The log is a new
-`nogg-run-quiet.*.log` file in `$TMPDIR` unless `--log PATH` names one. The
-command runs without a shell, so wrap a pipeline in `bash -c '...'`. SIGINT and
-SIGTERM are passed on to the command. The `--` before the command is required.
-A command the Nogging command floor denies (`sudo`, `rm -rf`, `dd`, `mkfs`,
-`shutdown`, `reboot`) is refused with exit 2, so the wrapper never lifts it.
+`ok: <command> (<seconds> s)` and removes its default log. On failure it prints
+a `FAIL (exit <code>)` line with the log path and the last lines of the log (40
+unless `--tail N` says otherwise), then exits with the command's exit code. A
+death by signal N exits 128+N, and a command that is not found exits 127. The
+default log is a new `nogg-run-quiet.*.log` file in `$TMPDIR`; `--log PATH`
+names one that is always kept. The command runs without a shell, so wrap a
+pipeline in `bash -c '...'`. SIGINT and SIGTERM are passed on to the command.
+The `--` before the command is required. Credential-looking values (a
+`*TOKEN*=`/`*SECRET*=` argument, a `Bearer` header, a known token prefix) are
+masked in the printed command, never in the log.
+
+A deny rule only sees `nogg run-quiet`, so the wrapper applies them itself: the
+command floor (`sudo`, `rm -rf`, `dd`, `mkfs`, `shutdown`, `reboot`) and, inside
+a supervised session, that session's own `Bash(...)` deny rules (for example a
+restricted profile's `git push`). A denied command anywhere in the argv (behind
+`env`, `timeout`, `xargs` or `find -exec`) or in a `<shell> -c` script is
+refused with exit 2 before anything runs.
 
 **Common forms.**
 

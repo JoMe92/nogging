@@ -8929,16 +8929,75 @@ def log_tail(path, count, block=65536):
         lines.pop()
     return [line.decode("utf-8", "replace") for line in lines[-count:]]
 
-def floor_denied_command(argv):
-    """The FLOOR_DENY entry an argv list starts with, or None. Prefix deny
-    rules see only `nogg run-quiet`, so the wrapper applies the floor itself."""
-    for entry in FLOOR_DENY:
-        words = entry[len("Bash("):-len(":*)")].split()
-        if len(argv) >= len(words) and all(
-                fnmatch.fnmatchcase(os.path.basename(arg) if i == 0 else arg, word)
-                for i, (arg, word) in enumerate(zip(argv, words))):
-            return entry
+BASH_RULE_RE = re.compile(r"^Bash\((.+?)(?::\*)?\)$")
+RUN_QUIET_SHELLS = {"sh", "bash", "dash", "zsh", "ksh", "mksh", "busybox"}
+def run_quiet_deny_rules(rec=None):
+    """The `Bash(...)` deny rules `run-quiet` applies to its wrapped command:
+    FLOOR_DENY plus, inside a supervised session, the deny list of that
+    session's effective settings (a restricted profile's `git push`, ...)."""
+    rules = list(FLOOR_DENY)
+    path = (rec or {}).get("effective_settings_path")
+    if path:
+        try:
+            deny = (json.loads(Path(path).read_text()).get("permissions") or {}).get("deny") or []
+        except (OSError, ValueError, AttributeError) as exc:
+            raise RuntimeError(f"run-quiet: cannot read this session's deny rules ({exc.__class__.__name__}); "
+                               "refusing") from exc
+        rules += [r for r in deny if isinstance(r, str) and r not in rules]
+    return [(rule, m.group(1).split()) for rule in rules if (m := BASH_RULE_RE.match(rule))]
+def run_quiet_denied(argv, rules, depth=0):
+    """The deny rule the wrapped argv could run, or None. Prefix rules see only
+    `nogg run-quiet`, so a rule matches the argv at any word position (which
+    also covers `env`, `timeout`, `xargs`, `find -exec` and the like), and the
+    script of `<shell> -c SCRIPT` is split into words and checked the same way.
+    Over-refusing an argument that merely equals a denied word is deliberate."""
+    words = list(argv)
+    for i, arg in enumerate(argv[:-1]):
+        if os.path.basename(arg) not in RUN_QUIET_SHELLS:
+            continue
+        # `-c`, or a short-option cluster carrying it (`-lc`, `-ec`): the next argument is a script.
+        flag = next((j for j in range(i + 1, len(argv) - 1)
+                     if re.fullmatch(r"-[A-Za-z]*c[A-Za-z]*", argv[j])), None)
+        if flag is None:
+            continue
+        try:
+            lexer = shlex.shlex(argv[flag + 1], posix=True, punctuation_chars=True)
+            lexer.whitespace_split = True
+            script = list(lexer)
+        except ValueError:
+            return "an unparsable shell script"
+        nested = run_quiet_denied(script, rules, depth + 1) if depth < 8 else "a too deeply nested shell script"
+        if nested:
+            return nested
+    for i in range(len(words)):
+        for rule, pattern in rules:
+            tail = words[i:i + len(pattern)]
+            if len(tail) == len(pattern) and all(
+                    fnmatch.fnmatchcase(os.path.basename(arg) if j == 0 else arg, word)
+                    for j, (arg, word) in enumerate(zip(tail, pattern))):
+                return rule
     return None
+SECRET_NAME_RE = re.compile(r"(?i)(token|secret|passw(or)?d|api[_-]?key|credential|auth)")
+SECRET_VALUE_RE = re.compile(r"(?i)\b(bearer|basic|token)\s+\S+|\b(gh[pousr]_|github_pat_|glpat-|xox[abpr]-|sk-)[A-Za-z0-9_-]+")
+def run_quiet_shown(argv):
+    """The command as printed in the summary, with credential-looking values
+    masked: a `NAME=value` or `--name=value` whose name looks secret, the value
+    after such a `--name`, an `Authorization: Bearer ...` and known token
+    prefixes. The log itself is never rewritten."""
+    shown, hide_next = [], False
+    for arg in argv:
+        if hide_next:
+            shown.append("***")
+            hide_next = False
+            continue
+        name, eq, value = arg.partition("=")
+        if eq and value and SECRET_NAME_RE.search(name):
+            arg = f"{name}=***"
+        elif arg.startswith("--") and not eq and SECRET_NAME_RE.search(arg):
+            hide_next = True
+        arg = SECRET_VALUE_RE.sub(lambda m: (m.group(1) + " ***") if m.group(1) else "***", arg)
+        shown.append(arg)
+    return shlex.join(shown)
 def run_quiet(command, log=None, tail=40):
     """Run `command` (an argv list; no shell) blocking, with stdin from
     /dev/null and stdout+stderr merged into a log file. Print exactly one
@@ -8946,8 +9005,9 @@ def run_quiet(command, log=None, tail=40):
     exit code to exit with: the command's own, 128+N for a death by signal N,
     127 for a command that is not found and 126 for one that cannot start.
     SIGINT/SIGTERM are forwarded to the command, and the summary still
-    printed once it exits."""
-    shown = shlex.join(command)
+    printed once it exits. A passing run's default log is removed; a `--log`
+    file and every failing run's log are kept."""
+    shown = run_quiet_shown(command)
     if log:
         path = Path(os.path.abspath(os.path.expanduser(log)))
         try:
@@ -8992,7 +9052,11 @@ def run_quiet(command, log=None, tail=40):
         if rc < 0:
             rc = 128 - rc
         if rc == 0:
-            print(f"ok: {shown} ({elapsed:.1f} s; log {where})")
+            if log:
+                print(f"ok: {shown} ({elapsed:.1f} s; log {where})")
+            else:   # a passing run's default log would only pile up in $TMPDIR
+                path.unlink(missing_ok=True)
+                print(f"ok: {shown} ({elapsed:.1f} s)")
             return 0
         print(f"FAIL (exit {rc}): {shown} ({elapsed:.1f} s; log {where})")
         for line in log_tail(path, tail):
@@ -9241,9 +9305,10 @@ def main():
             rq.error("separate the command with --, e.g. nogg run-quiet -- scripts/test")
         if not run_quiet_command:
             rq.error("a command is required after --")
-        denied = floor_denied_command(run_quiet_command)
+        denied = run_quiet_denied(run_quiet_command, run_quiet_deny_rules(calling_session_record()))
         if denied:
-            rq.error(f"refusing a command the command floor denies ({denied}); a wrapper never lifts it")
+            rq.error(f"refusing: the wrapped command could run {denied}, which this session's deny "
+                     "rules or the command floor deny; a wrapper never lifts them")
         sys.exit(run_quiet(run_quiet_command, args.log, args.tail))
     elif args.command == "codex-prompts-link": codex_prompts_link(args.unlink)
     elif args.command == "models": models_cmd(args.action, args.agent, args.tier, args.json)
