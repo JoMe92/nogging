@@ -9,7 +9,7 @@ and GitHub Releases for that history.
 
 ## [Unreleased]
 
-## [3.4.0] - 
+## [3.4.0] - 2026-10-30
 
 ### Fixed
 
