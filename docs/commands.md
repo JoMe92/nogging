@@ -336,6 +336,24 @@ an agent and tier, or validate the table with `check`. It makes no live probe.
 
 **Read more.** [Model selection](model-selection.md).
 
+## route
+
+**Purpose.** Inspect the agent routing file: `check` validates it and exits
+non-zero naming every error; without `check` it prints every role's entries
+with their effective per-tier model and effort. It makes no live probe; the
+launch decides.
+
+**Common forms.**
+
+```bash
+./scripts/nogg route
+./scripts/nogg route check
+```
+
+**Used by.** Lead Agents, the Orchestration Agent and the operator.
+
+**Read more.** [Configuration](configuration.md#agent_routing_file).
+
 ## worktree
 
 **Purpose.** Allocate and safely manage isolated Git worktrees, so each agent

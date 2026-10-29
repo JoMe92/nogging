@@ -5,6 +5,7 @@
   "beads_command": "bd",
   "loops_file": ".nogging/loops.json",
   "session_backend": "tmux",
+  "agent_routing_file": ".nogging/agent-routing.json",
   "planning_lock_ttl_seconds": 7200,
   "sync_lock_ttl_seconds": 120,
   "change_states": ["open", "done", "archived"],
