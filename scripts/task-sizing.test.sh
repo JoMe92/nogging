@@ -3,7 +3,8 @@
 # task-sizing` prints the configured Bead/commit line ranges (defaults when the
 # key is absent), and `validate` reports a NOTE — never a FAIL, never a changed
 # exit code — for open tasks whose `[~N loc]` estimate is below the configured
-# minimum without a reason, or for a change whose open tasks mostly carry none.
+# minimum or above the configured maximum without a reason, or for a change
+# whose open tasks mostly carry none.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -95,10 +96,24 @@ check "a nested bullet's estimate is not read as the task's" lacks "$out" "TASK-
 check "task sizing findings are never a FAIL" bash -c '! grep -q "^FAIL.*task sizing" "$0"' "$work/validate.out"
 check "task sizing findings never change the validate exit code" test "$rc" = "$baseline_rc"
 
-write_config '{"bead_prod_lines": [50, 1000]}'
+change large '- [ ] TASK-LG-001 Whole subsystem in one go [~2400 loc]
+- [ ] TASK-LG-002 Generated schema, kept whole [~1800 loc: generated code, one unit]
+- [ ] TASK-LG-003 Right at the maximum [~1000 loc]'
+rc=$(validate)
+out=$(cat "$work/validate.out")
+check "an oversized task without a reason gets one NOTE naming it" \
+  has "$out" "NOTE  task sizing: large: TASK-LG-001 (~2400 loc) above the configured 1000-line Bead maximum without a reason"
+check "an above-maximum task with a reason gets no NOTE" lacks "$out" "TASK-LG-002"
+check "an estimate equal to the maximum gets no NOTE" lacks "$out" "TASK-LG-003"
+check "the oversized NOTE asks for a split" has "$out" "split it or state why"
+check "an oversized task is never a FAIL" bash -c '! grep -q "^FAIL.*TASK-LG" "$0"' "$work/validate.out"
+check "an oversized task never changes the validate exit code" test "$rc" = "$baseline_rc"
+
+write_config '{"bead_prod_lines": [50, 3000]}'
 rc=$(validate)
 out=$(cat "$work/validate.out")
 check "the configured minimum is the one applied" lacks "$out" "task sizing: small"
+check "the configured maximum is the one applied" lacks "$out" "task sizing: large"
 write_config '{"bead_prod_lines": "broken"}'
 rc=$(validate)
 out=$(cat "$work/validate.out")

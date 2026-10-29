@@ -2268,7 +2268,7 @@ def record_mapping_health(branch, diagnostics, processed_changes):
 # guidance only: `validate` reports a NOTE, nothing is ever refused.
 TASK_SIZING_DEFAULTS = {"bead_prod_lines": (400, 1000), "commit_lines": (100, 600)}
 # `[~N loc]` estimates production lines (tests excluded); `[~N loc: <reason>]`
-# states why a task is smaller than the configured minimum.
+# states why a task is smaller than the configured minimum or larger than the maximum.
 TASK_ESTIMATE_RE = re.compile(r"\[~\s*(\d+)\s*loc\b\s*(?::\s*([^\]]*))?\]", re.I)
 OPEN_TASK_RE = re.compile(r"^- \[ \] (TASK-[A-Z0-9-]+)\s+(.+)$")
 LIST_ITEM_RE = re.compile(r"^\s+(?:[-*+]|\d+[.)])\s")
@@ -2318,27 +2318,35 @@ def open_task_blocks(text):
 def task_sizing_notes():
     """NOTE lines for open tasks of live changes that miss the configured Bead size.
 
-    Advisory only: an estimate below the minimum without a reason, or a change
-    with two or more open tasks, most of them without an estimate. Never a FAIL, so a change planned
-    before estimates existed stays valid.
+    Advisory only: an estimate below the minimum or above the maximum without a
+    reason, or a change with two or more open tasks, most of them without an
+    estimate. Never a FAIL, so a change planned before estimates existed stays valid.
     """
-    low = task_sizing()[0]["bead_prod_lines"][0]
+    low, high = task_sizing()[0]["bead_prod_lines"]
     notes = []
     for change in sorted(changes(), key=lambda path: path.name):
         file = change / "tasks.md"
         if not file.exists():
             continue
         blocks = open_task_blocks(file.read_text())
-        small, missing = [], 0
+        small, large, missing = [], [], 0
         for task, body in blocks:
             estimate = TASK_ESTIMATE_RE.search(body)
             if not estimate:
                 missing += 1
-            elif int(estimate.group(1)) < low and not (estimate.group(2) or "").strip():
-                small.append(f"{task} (~{estimate.group(1)} loc)")
+            elif not (estimate.group(2) or "").strip():
+                lines = int(estimate.group(1))
+                if lines < low:
+                    small.append(f"{task} (~{lines} loc)")
+                elif lines > high:
+                    large.append(f"{task} (~{lines} loc)")
         if small:
             notes.append(f"task sizing: {change.name}: {', '.join(small)} below the configured "
                          f"{low}-line Bead minimum without a reason ([~N loc: <reason>])")
+        if large:
+            notes.append(f"task sizing: {change.name}: {', '.join(large)} above the configured "
+                         f"{high}-line Bead maximum without a reason; split it or state why "
+                         f"([~N loc: <reason>])")
         if missing >= 2 and missing * 2 > len(blocks):
             notes.append(f"task sizing: {change.name}: {missing} of {len(blocks)} open tasks "
                          f"carry no [~N loc] estimate")
@@ -8607,7 +8615,7 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
     # actually archives a change; doctor only surfaces readiness.
     for change in archive_ready_changes(tasks, issues):
         notes.append(f"change ready to archive: {change} (every mapped Bead is closed)")
-    # Task sizing is advisory: an undersized or unestimated open task is a NOTE
+    # Task sizing is advisory: an undersized, oversized or unestimated open task is a NOTE
     # (a malformed task_sizing a WARN, above); neither changes the exit code.
     try:
         notes.extend(task_sizing_notes())

@@ -9,6 +9,19 @@ and GitHub Releases for that history.
 
 ## [Unreleased]
 
+### Added
+
+- `nogg validate` also notes open tasks whose `[~N loc]` estimate is above the
+  configured `bead_prod_lines` maximum without a reason, mirroring the minimum
+  note. A note never fails `validate`.
+
+### Changed
+
+- Planning splits a task above the configured Bead maximum; a task outside
+  the range states its reason in the tag. `docs/configuration.md` records the
+  measured sweet spot: 500–1000 production lines per Bead cost the fewest
+  tokens per line, and a maximum far above it costs more per line.
+
 ## [3.3.0] - 2026-10-28
 
 ### Added
