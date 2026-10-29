@@ -124,7 +124,7 @@ its reason in the tag, for example `[~80 loc: security fix]`.
 `./scripts/nogg validate` only prints a NOTE for a miss and never fails a
 change. 500–1000 production lines per Bead cost the fewest tokens per line;
 raising the maximum far above that costs more per line, not less (see
-[Configuration](configuration.md#task_sizing)). The Lead Agent then commits such a Bead in several steps within the
+[Configuration](https://jome92.github.io/nogging/configuration/#task_sizing)). The Lead Agent then commits such a Bead in several steps within the
 configured commit range (step 10 above). See
 [Configuration](https://jome92.github.io/nogging/configuration/#task_sizing).
 
