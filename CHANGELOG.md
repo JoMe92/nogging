@@ -19,6 +19,9 @@ and GitHub Releases for that history.
   `FAIL (exit N)` line plus the log tail on failure, the full output in a
   private log and the exit code passed through. It refuses a command the
   command floor denies.
+- `doctor_agy_models_cache_seconds` (default 3600): `doctor` reuses a
+  successful `agy models` listing per `agy` executable instead of spawning
+  the probe on every run; a failed probe is never cached.
 
 ### Changed
 
@@ -26,6 +29,12 @@ and GitHub Releases for that history.
   the range states its reason in the tag. `docs/configuration.md` records the
   measured sweet spot: 500–1000 production lines per Bead cost the fewest
   tokens per line, and a maximum far above it costs more per line.
+- `nogg doctor`, `validate` and `usage` read the Codex rollouts
+  incrementally: a per-root byte-offset index under the usage cache means
+  only appended bytes are parsed, with the same result and damaged-line
+  report as a full scan. On the delivery host a warm `doctor` fell from
+  about 44 s to under 4 s and `usage --agent codex` from about 20 s to about
+  1 s.
 - Sharper test stages: before each commit only the tests of the changed files
   plus lint of those files; once per Bead the affected suite; the full suite
   is CI's job (`scripts/test` once per Bead only where a project has no CI).

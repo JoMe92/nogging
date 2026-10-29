@@ -3758,11 +3758,34 @@ def codex_catalog_models():
     if not slugs:
         return None, f"{path} lists no models"
     return slugs, None
+def agy_models_cache():
+    """(cache path, identity of the `agy` executable on PATH) for the model list."""
+    exe = shutil.which("agy")
+    try:
+        st = os.stat(exe)
+        key = [os.path.realpath(exe), st.st_ino, st.st_size, st.st_mtime_ns]
+    except (OSError, TypeError):
+        key = None
+    base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
+    return Path(base) / "nogging" / "agy-models.json", key
 def agy_listed_models():
     """Model names from a bounded `agy models` probe: the first field of each
-    tab-separated line. Returns `(names, None)` or `(None, reason)`."""
+    tab-separated line. Returns `(names, None)` or `(None, reason)`. A listed
+    result is cached for `doctor_agy_models_cache_seconds` (default 3600; 0
+    disables) per `agy` executable, so repeated `doctor` runs skip the ~2 s
+    probe; a failure is never cached."""
     if not tool_on_path("agy"):
         return None, "agy is not installed"
+    ttl = float(scfg("doctor_agy_models_cache_seconds", 3600))
+    cache, key = agy_models_cache() if ttl > 0 else (None, None)
+    if key is not None:
+        try:
+            cached = json.loads(cache.read_text())
+            if (cached.get("key") == key and 0 <= time.time() - float(cached["at"]) < ttl
+                    and cached.get("names")):
+                return set(cached["names"]), None
+        except (OSError, ValueError, TypeError, KeyError, AttributeError):
+            pass
     timeout = int(scfg("doctor_agy_models_timeout_seconds", 15))
     try:
         result = subprocess.run(["agy", "models"], capture_output=True, text=True,
@@ -3777,6 +3800,16 @@ def agy_listed_models():
     names.discard("")
     if not names:
         return None, "`agy models` listed no models"
+    if key is not None:
+        try:
+            cache.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            temp = cache.with_name(f".agy-models.{os.getpid()}.tmp")
+            fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as out:
+                json.dump({"key": key, "at": time.time(), "names": sorted(names)}, out)
+            os.replace(temp, cache)
+        except OSError:
+            pass   # only the cache is lost; the next doctor probes again
     return names, None
 def model_selection_notes():
     """Doctor NOTEs for model-selection table drift (design decision 8). Never a

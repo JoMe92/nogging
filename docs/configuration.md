@@ -80,6 +80,7 @@ refused by name.
 | --- | --- | --- | --- |
 | `tier_overrides` | object | `{}` | Changes the reasoning effort of one tier and agent without touching the researched table. See [the block below](#tier_overrides). |
 | `doctor_agy_models_timeout_seconds` | integer | `15` | Time limit for the `agy models` probe that `doctor` runs when Antigravity is installed. |
+| `doctor_agy_models_cache_seconds` | number | `3600` | How long `doctor` reuses a successful `agy models` listing, per `agy` executable (cached under `$XDG_CACHE_HOME/nogging/`). A failed probe is never cached; `0` probes on every run. |
 
 ## Usage
 

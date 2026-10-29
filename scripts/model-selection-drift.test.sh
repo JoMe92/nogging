@@ -70,6 +70,9 @@ make_root() {
   python3 - "$r/.nogging/config.json" <<'PY'
 import json, sys
 c = json.load(open(sys.argv[1])); c["doctor_agy_models_timeout_seconds"] = 1
+# Each check below varies the stub's output, so the list cache is off here;
+# the cache block further down turns it back on.
+c["doctor_agy_models_cache_seconds"] = 0
 json.dump(c, open(sys.argv[1], "w"), indent=2)
 PY
   cp "$template" "$r/.nogging/model-selection.json"
@@ -141,6 +144,37 @@ expect "agy hang: bounded and unavailable" present "timed out after 1 s"
 (( took < 5 )) && ok "agy probe is bounded (${took}s)" || bad "agy probe not bounded (${took}s)"
 AGY_STUB_MODE=empty notes "$r" "$with_agy" >"$out"
 expect "agy empty: unavailable" present "listed no models"
+
+# The `agy models` list is cached per executable; a failure is never cached.
+r="$work/cached"; make_root "$r"
+python3 - "$r/.nogging/config.json" <<'PY'
+import json, sys
+c = json.load(open(sys.argv[1])); del c["doctor_agy_models_cache_seconds"]
+json.dump(c, open(sys.argv[1], "w"), indent=2)
+PY
+export XDG_CACHE_HOME="$work/xdg-cache"
+AGY_STUB_MODE=fail notes "$r" "$with_agy" >"$out"
+expect "cache: a failed probe reports unavailable" present "\`agy models\` exited 3"
+[[ ! -e "$XDG_CACHE_HOME/nogging/agy-models.json" ]] && ok "cache: a failed probe is not cached" \
+  || bad "cache: a failed probe was cached"
+AGY_STUB_LIST="$work/agy-short" notes "$r" "$with_agy" >"$out"
+expect "cache: the first listing is probed" present "gemini-3.8-flash-high is not listed"
+[[ "$(stat -c %a "$XDG_CACHE_HOME/nogging/agy-models.json")" == 600 ]] && ok "cache: the list is private (0600)" \
+  || bad "cache: the list is not 0600"
+AGY_STUB_MODE=fail notes "$r" "$with_agy" >"$out"
+expect "cache: a later doctor reuses the list without probing" present "gemini-3.8-flash-high is not listed"
+expect "cache: a reused list never reports the probe as failed" absent "exited 3"
+touch -d '+1 minute' "$work/bin/agy"
+notes "$r" "$with_agy" >"$out"
+expect "cache: a changed agy executable probes again" absent "is not listed"
+python3 - "$r/.nogging/config.json" <<'PY'
+import json, sys
+c = json.load(open(sys.argv[1])); c["doctor_agy_models_cache_seconds"] = 0
+json.dump(c, open(sys.argv[1], "w"), indent=2)
+PY
+AGY_STUB_MODE=fail notes "$r" "$with_agy" >"$out"
+expect "cache: doctor_agy_models_cache_seconds 0 always probes" present "\`agy models\` exited 3"
+unset XDG_CACHE_HOME
 
 # Installed table older than packaged; invalid table.
 r="$work/old"; make_root "$r"
