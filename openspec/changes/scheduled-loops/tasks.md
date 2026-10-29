@@ -14,7 +14,7 @@
   the Europe/Berlin transitions on 2026-10-25 and 2027-03-28 and a UTC zone;
   package-manifest suite; scripts/test. Branch feat/.
 
-- [ ] TASK-SCL-002 [standard] [security] Loop definitions, prompt checks and validation.
+- [x] TASK-SCL-002 [standard] [security] Loop definitions, prompt checks and validation.
   Per design Decisions 1, 2, 4 and 8: add scripts/lib/loop_config.py (pure,
   shipped in the manifest). It loads `loops_file` (new config key, default
   `.nogging/loops.json`, added to templates/nogging-config.json) with
