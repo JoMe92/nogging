@@ -9,6 +9,8 @@ and GitHub Releases for that history.
 
 ## [Unreleased]
 
+## [3.4.0] - 
+
 ### Fixed
 
 - `token-usage report`, `session`, `export` and `status` no longer hang or

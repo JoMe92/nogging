@@ -12,7 +12,7 @@ branch and an `origin` remote: worktrees are allocated from a freshly fetched
 
 ```bash
 cd /path/to/your-repo
-npx github:JoMe92/nogging#v3.3.0 init --no-systemd
+npx github:JoMe92/nogging#v3.4.0 init --no-systemd
 ```
 
 `--no-systemd` skips the systemd units; leave it off only after reviewing the
@@ -28,7 +28,7 @@ provisions the whole stack — pinned to the versions in the
 [compatibility matrix](compatibility.md) — and then runs `init` for you:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/JoMe92/nogging/v3.3.0/scripts/bootstrap | bash
+curl -fsSL https://raw.githubusercontent.com/JoMe92/nogging/v3.4.0/scripts/bootstrap | bash
 ```
 
 Always pin a tagged release in that URL, never `main`/`develop`, for the same
@@ -44,7 +44,7 @@ Download the script first, then run it, to get a guided, Nogging-styled
 terminal wizard instead:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/JoMe92/nogging/v3.3.0/scripts/bootstrap -o bootstrap
+curl -fsSL https://raw.githubusercontent.com/JoMe92/nogging/v3.4.0/scripts/bootstrap -o bootstrap
 bash bootstrap
 ```
 
