@@ -52,6 +52,7 @@ export, import and sync. It reports tokens only, not cost or quota percent.
 ```bash
 ./scripts/nogg token-usage status
 ./scripts/nogg token-usage report
+./scripts/nogg token-usage report --group-by bead --from 2026-10-01 --to 2026-11-01   # tokens per Bead and per production line
 ./scripts/nogg token-usage session <name>
 ```
 

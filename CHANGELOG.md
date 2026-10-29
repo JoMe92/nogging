@@ -21,6 +21,13 @@ and GitHub Releases for that history.
 
 ### Added
 
+- `nogg token-usage report --group-by bead` (and a `--bead` filter): fresh
+  input, cache read, cache write, output and total tokens per Bead and
+  runtime, plus the Bead's commits, production lines and tokens per
+  production line from its `[<bead-id>]` commits (tests, `openspec/`,
+  `.beads/` and lockfiles excluded). `docs/token-usage.md` documents it as
+  the efficiency metric: fresh input and output per line are the cost of the
+  work, cached re-reads show waiting and context growth.
 - `nogg validate` also notes open tasks whose `[~N loc]` estimate is above the
   configured `bead_prod_lines` maximum without a reason, mirroring the minimum
   note. A note never fails `validate`.

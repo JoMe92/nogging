@@ -4531,9 +4531,11 @@ def render_usage_report(doc):
     w = doc["window"]
     lines = [f"token usage {w['from']} .. {w['to']} (UTC, half-open) grouped by {doc['group_by']}"
              + (f"; filters {doc['filters']}" if doc["filters"] else "")]
-    lines.append(f"{'GROUP':<26}  {'EVENTS':>6}  {'INPUT':>12}  {'OUTPUT':>10}  {'CACHE_READ':>12}  "
-                 f"{'CACHE_WRITE':>11}  {'INFER_S':>8}  RUNTIME")
-    for row in doc["rows"]:
+    bead_view = doc["group_by"] == "bead"   # per Bead and runtime, with tokens per production line
+    lines.extend(usage_report_module().render_bead_report(doc) if bead_view else
+                 [f"{'GROUP':<26}  {'EVENTS':>6}  {'INPUT':>12}  {'OUTPUT':>10}  {'CACHE_READ':>12}  "
+                  f"{'CACHE_WRITE':>11}  {'INFER_S':>8}  RUNTIME"])
+    for row in [] if bead_view else doc["rows"]:
         group = row.get("bucket") or (row.get("session") or row.get("segment_id") or "-")
         inp, out, cr, cw = _fmt_tokens(row)
         runtime = "-" if row["wall_runtime_ms"] is None else f"{row['wall_runtime_ms'] // 1000}s"
@@ -4550,7 +4552,8 @@ def render_usage_report(doc):
                      f"output {entry['tokens']['output_tokens']} (not split across buckets)")
     c = doc["coverage"]
     lines.append(f"coverage: {c['events_in_window']} events; unknown model {c['unknown_model']}, task "
-                 f"{c['unknown_task']}, complexity {c['unknown_complexity']}; untimed {c['untimed_events']}")
+                 f"{c['unknown_task']}, bead {c.get('unknown_bead', 0)}, complexity {c['unknown_complexity']}; "
+                 f"untimed {c['untimed_events']}")
     p, sync = doc["pending"], doc["sync"]
     lines.append(f"as of {doc['as_of']}; pending {p.get('spooled_batches', 0)} batch(es); sync {sync.get('state')}"
                  + (" (local-only)" if sync.get("local_only") else ""))
@@ -9014,8 +9017,9 @@ def main():
     tuc.add_argument("--session"); tuc.add_argument("--json", action="store_true")
     tur = tusub.add_parser("report", help="UTC half-open window report (default: current UTC day, daily)")
     tur.add_argument("--from", dest="from_"); tur.add_argument("--to")
-    tur.add_argument("--group-by", choices=("hour", "day", "session"), default="day")
-    for key in ("project", "device", "runtime", "provider", "model", "task", "complexity", "effort"):
+    tur.add_argument("--group-by", choices=("hour", "day", "session", "bead"), default="day",
+                     help="bead: per Bead and runtime, with tokens per production line from [<bead-id>] commits")
+    for key in ("project", "device", "runtime", "provider", "model", "task", "bead", "complexity", "effort"):
         tur.add_argument(f"--{key}")
     tur.add_argument("--json", action="store_true")
     tus = tusub.add_parser("session", help="lifetime facts for one session (name or segment ID)")

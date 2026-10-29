@@ -29,8 +29,8 @@ gate](https://jome92.github.io/nogging/running-work-in-sessions/#launch-usage-ga
 ```bash
 ./scripts/nogg token-usage status [--json]     # store, pending spool, sync freshness
 ./scripts/nogg token-usage collect [--session NAME] [--json]   # explicit catch-up
-./scripts/nogg token-usage report [--from T --to T] [--group-by hour|day|session] \
-    [--model M] [--task T] [--complexity C] [--runtime R] [--json]
+./scripts/nogg token-usage report [--from T --to T] [--group-by hour|day|session|bead] \
+    [--model M] [--task T] [--bead B] [--complexity C] [--runtime R] [--json]
 ./scripts/nogg token-usage session <name-or-segment> [--json]
 ./scripts/nogg token-usage export [--all] [--from T --to T] > usage.jsonl
 ./scripts/nogg token-usage import --file usage.jsonl
@@ -41,6 +41,84 @@ Windows are UTC and half-open (`from` inclusive, `to` exclusive). Unknown
 coverage (a runtime or source that reports no usage) is reported as unknown,
 never as zero. Complexity is recorded only when supplied at launch; historical
 sessions are never given a guessed complexity.
+
+Every local Dolt query behind `report`, `session`, `export`, `import` and
+`status` has a time limit, `token_usage_query_timeout_seconds` in
+`.nogging/config.json` (default 30). A busy store (for example, one a collection
+or sync is writing) or a very large store fails fast with
+`local Dolt query timed out after 30s` and the remedy, instead of hanging.
+`status` counts facts without loading them.
+
+## Tokens per Bead: the efficiency metric
+
+`report --group-by bead` gives one row per Bead and runtime (agent). A Bead
+worked by several runtimes also gets an `all` total line, and usage with no
+Bead at launch is grouped under `-`. Each row shows:
+
+| Column | Meaning |
+| --- | --- |
+| `FRESH_IN` | Input not served from the prompt cache: input minus cache read. |
+| `CACHE_READ` | Input re-read from the prompt cache. |
+| `CACHE_WRITE` | Input written to the cache (Claude). It is part of `FRESH_IN`. |
+| `OUTPUT` | Output, including thinking and reasoning tokens. |
+| `TOTAL` | All input (cached and fresh) plus output. |
+| `COMMITS`, `PROD_LINES` | The Bead's commits and their production lines (see below). |
+| `FRESH/LINE`, `OUT/LINE`, `TOTAL/LINE` | Those tokens divided by production lines. |
+
+`--json` carries the same fields: `work` for the tokens, plus `commits`,
+`production_lines`, `test_lines` and `per_production_line`. A `beads` list
+holds the per-Bead totals.
+
+**Fresh input per runtime.** The stored input always includes cache reads, so
+fresh input is input minus cache read for every runtime:
+
+- **Claude.** Stored input is uncached input + cache read + cache write.
+  Fresh input is uncached input plus cache write, which is the new context
+  the turn added.
+- **Codex.** The provider's input already includes the cached input. Fresh
+  input is input minus cached input. Codex reports no cache write.
+- **Antigravity.** The provider's input excludes cache reads, and the store
+  adds them back. Fresh input is the provider's own input.
+
+If a source can't prove the split (no cache-read counter, or a cache read
+without a flag saying input includes it), the sum is marked `+?` and the value
+is never guessed.
+
+**Production lines.** Nogging finds every non-merge commit whose subject
+carries the literal `[<bead-id>]` token. It searches all local and
+remote-tracking branches and tags, but not stash, notes or Beads'
+`refs/dolt/*`. A rebased or cherry-picked copy (same author time and subject)
+counts once. A commit naming several Beads counts for each of them.
+
+Production lines are added plus deleted lines from `git --numstat`, with
+renames detected and binary files counted as 0. Some files are left out:
+
+- **Tests** (`test_lines` in `--json`): `test/`, `tests/`, `__tests__/`, `fixtures/` and
+  `testdata/` directories, and `*.test.*`, `*.spec.*`, `*_test.py`,
+  `*_test.go` and `test_*.py` files.
+- **Generated and planning files**: `openspec/`, `.beads/` and lockfiles such
+  as `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `Cargo.lock`,
+  `poetry.lock`, `uv.lock` and `go.sum`.
+
+Docs and all other files count as production lines, as in `task_sizing`
+estimates.
+
+The commits are not limited to the report window, so make `--from`/`--to`
+cover the Bead's whole run. The git fields are null (`-` in text) when git is
+unavailable or the Bead has no commits. The per-line fields are also null
+when the Bead has no production lines, or when a row has no usage events.
+
+**Reading it.** Fresh input and output per production line are the cost of
+the work itself. Cached input grows with every turn spent waiting or polling,
+and with the size of the context being re-read, so a high `CACHE_READ` with
+low `FRESH/LINE` points to idle or long-context sessions rather than to
+expensive work. In a 208-Bead sample, Beads of 500–1000 production lines cost
+the fewest tokens per line.
+
+```bash
+./scripts/nogg token-usage report --group-by bead --from 2026-10-01 --to 2026-11-01
+./scripts/nogg token-usage report --group-by bead --bead SPEC-abc --from 2026-10-01 --to 2026-11-01 --json
+```
 
 ## Update, remove and rollback
 
