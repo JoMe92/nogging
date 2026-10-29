@@ -3,6 +3,7 @@
   "name": "Nogging",
   "sync_interval_seconds": 30,
   "beads_command": "bd",
+  "loops_file": ".nogging/state/loops.json",
   "planning_lock_ttl_seconds": 7200,
   "sync_lock_ttl_seconds": 120,
   "sync_max_attempts": 5,

@@ -8448,6 +8448,30 @@ def installer_artifact_diagnostics():
     return warnings, notes
 
 
+def loops_file_path():
+    """The repository-relative path of the loop definitions file."""
+    return ROOT / scfg("loops_file", ".nogging/loops.json")
+
+def loop_config_diagnostics():
+    """Validate the configured loops_file and every prompt. An invalid file,
+    an unknown key, a mode/authority/host rule violation or a prompt that
+    carries a secret or email address is a FAIL; `nogg validate` shares this
+    path through `doctor`. A missing file means no loops and is OK."""
+    import loop_config
+    path = loops_file_path()
+    try:
+        config = loop_config.load(path)
+        if config is not None:
+            loop_config.validate_hosts(config, multi_machine_enabled())
+            for name in config["loops"]:
+                loop_config.check_prompt(loop_config.prompt_path(path, name))
+    except ValueError as exc:
+        return [(f"loop definitions: {exc}", False)]
+    if config is None:
+        return [(f"loop definitions: none ({path}; loops_file)", True)]
+    return [(f"loop definitions: {path} ({len(config['loops'])} loop(s), "
+             f"timezone {config['timezone']})", True)]
+
 def doctor(audit=False, with_recover=False, with_sandbox=False):
     # A fresh install starts with the OpenSpec write boundary closed. Bootstrap
     # the sentinel once, only when nothing has toggled the boundary yet (no
@@ -8470,6 +8494,7 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
         warnings.extend(validation_warnings)
     except Exception as exc: problems = [str(exc)]
     checks.extend((p, False) for p in problems)
+    checks.extend(loop_config_diagnostics())
     if FAILURE_RECORD.exists():
         try: rec = json.loads(FAILURE_RECORD.read_text())
         except (ValueError, OSError): rec = {}
