@@ -264,6 +264,34 @@ splits a Bead into commits.
 **Read more.** [Configuration](configuration.md#task_sizing) and
 [Operating model](operating-model.md#task-sizing).
 
+## run-quiet
+
+**Purpose.** Run one long command, such as a test suite or a build, as a single
+blocking call that prints a single line. The command's stdout and stderr go to a
+log file in full, and its stdin is `/dev/null`. On success it prints
+`ok: <command> (<seconds> s; log <path>)`. On failure it prints a `FAIL (exit
+<code>)` line and the last lines of the log (40 unless `--tail N` says
+otherwise), then exits with the command's exit code. A death by signal N exits
+128+N, and a command that is not found exits 127. The log is a new
+`nogg-run-quiet.*.log` file in `$TMPDIR` unless `--log PATH` names one. The
+command runs without a shell, so wrap a pipeline in `bash -c '...'`. SIGINT and
+SIGTERM are passed on to the command. The `--` before the command is required.
+A command the Nogging command floor denies (`sudo`, `rm -rf`, `dd`, `mkfs`,
+`shutdown`, `reboot`) is refused with exit 2, so the wrapper never lifts it.
+
+**Common forms.**
+
+```bash
+./scripts/nogg run-quiet -- scripts/test
+./scripts/nogg run-quiet --tail 80 --log /tmp/build.log -- npm run build
+```
+
+**Used by.** A Lead Agent or specialist that runs a long command. Waiting is one
+blocking call, so the agent never polls the running command. A passing suite
+leaves one line in the context, not its whole output.
+
+**Read more.** [Operating model](operating-model.md).
+
 ## codex-prompts-link
 
 **Purpose.** Link the repository's Codex prompts into your Codex home as

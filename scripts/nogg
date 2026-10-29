@@ -5,7 +5,7 @@ It intentionally contains no LLM call and makes no semantic product decision.
 """
 from __future__ import annotations
 
-import argparse, base64, datetime as dt, fcntl, getpass, hashlib, importlib.util, json, math, os, re, shlex, shutil, signal, socket, subprocess, sys, tempfile, time, uuid
+import argparse, base64, datetime as dt, fcntl, fnmatch, getpass, hashlib, importlib.util, json, math, os, re, shlex, shutil, signal, socket, subprocess, sys, tempfile, time, uuid
 import urllib.parse, urllib.request
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -8835,6 +8835,117 @@ def credential_helper(slug, operation):
         print("nogg: credential-helper failed; no credential returned", file=sys.stderr)
         raise SystemExit(1)
 
+# `run-quiet`: run one long command (a test suite, a build) as ONE blocking call
+# whose whole output is one summary line, plus the log tail on failure, so an
+# agent neither polls a running command nor re-reads a passing suite's full
+# output every turn. The command's own output goes to a log file, in full.
+# Deliberately independent of Beads, Dolt and the Nogging config, so it behaves
+# the same in a consumer repository and in a linked worktree.
+RUN_QUIET_USAGE = "%(prog)s [-h] [--log PATH] [--tail N] -- <command> [args...]"
+RUN_QUIET_SIGNALS = (signal.SIGINT, signal.SIGTERM)
+def run_quiet_tail_count(value):
+    """argparse type for `run-quiet --tail`: a non-negative line count."""
+    try:
+        count = int(value)
+    except ValueError:
+        count = -1
+    if count < 0:
+        raise argparse.ArgumentTypeError(f"must be a non-negative integer, got {value!r}")
+    return count
+
+def log_tail(path, count, block=65536):
+    """The last `count` lines of the file at `path` (`tail -n` semantics),
+    read backwards in blocks so a multi-megabyte log is never loaded whole."""
+    if count <= 0:
+        return []
+    with open(path, "rb") as handle:
+        pos = handle.seek(0, os.SEEK_END)
+        data = b""
+        while pos > 0 and data.count(b"\n") <= count:
+            step = min(block, pos)
+            pos -= step
+            handle.seek(pos)
+            data = handle.read(step) + data
+    lines = data.split(b"\n")
+    if lines and lines[-1] == b"":
+        lines.pop()
+    return [line.decode("utf-8", "replace") for line in lines[-count:]]
+
+def floor_denied_command(argv):
+    """The FLOOR_DENY entry an argv list starts with, or None. Prefix deny
+    rules see only `nogg run-quiet`, so the wrapper applies the floor itself."""
+    for entry in FLOOR_DENY:
+        words = entry[len("Bash("):-len(":*)")].split()
+        if len(argv) >= len(words) and all(
+                fnmatch.fnmatchcase(os.path.basename(arg) if i == 0 else arg, word)
+                for i, (arg, word) in enumerate(zip(argv, words))):
+            return entry
+    return None
+def run_quiet(command, log=None, tail=40):
+    """Run `command` (an argv list; no shell) blocking, with stdin from
+    /dev/null and stdout+stderr merged into a log file. Print exactly one
+    summary line, plus the last `tail` log lines on failure, and return the
+    exit code to exit with: the command's own, 128+N for a death by signal N,
+    127 for a command that is not found and 126 for one that cannot start.
+    SIGINT/SIGTERM are forwarded to the command, and the summary still
+    printed once it exits."""
+    shown = shlex.join(command)
+    if log:
+        path = Path(os.path.abspath(os.path.expanduser(log)))
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        except OSError as exc:
+            raise RuntimeError(f"run-quiet: cannot open the log {path}: {exc.strerror}") from exc
+    else:
+        fd, name = tempfile.mkstemp(prefix="nogg-run-quiet.", suffix=".log")
+        path = Path(name)
+    where = shlex.quote(str(path))
+    child, pending = None, []
+    def forward(signum, _frame):
+        if child is None:
+            pending.append(signum)   # arrived before the command started
+            return
+        try:
+            child.send_signal(signum)
+        except ProcessLookupError:
+            pass
+    # A signal ignored on entry (SIGINT for a `&` job of a non-interactive
+    # shell) stays ignored, so the command inherits the same disposition.
+    previous = {signum: signal.signal(signum, forward) for signum in RUN_QUIET_SIGNALS
+                if signal.getsignal(signum) is not signal.SIG_IGN}
+    try:
+        start = time.monotonic()
+        with os.fdopen(fd, "wb") as out:
+            try:
+                child = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=out,
+                                         stderr=subprocess.STDOUT)
+            except OSError as exc:
+                missing = isinstance(exc, FileNotFoundError)
+                reason = "command not found" if missing else (exc.strerror or str(exc))
+                out.write(f"nogg run-quiet: cannot start {shown}: {reason}\n".encode())
+                rc = 127 if missing else 126
+                print(f"FAIL (exit {rc}): {shown} (cannot start: {reason}; log {where})")
+                return rc
+            for signum in pending:
+                child.send_signal(signum)
+            rc = child.wait()
+        elapsed = time.monotonic() - start
+        if rc < 0:
+            rc = 128 - rc
+        if rc == 0:
+            print(f"ok: {shown} ({elapsed:.1f} s; log {where})")
+            return 0
+        print(f"FAIL (exit {rc}): {shown} ({elapsed:.1f} s; log {where})")
+        for line in log_tail(path, tail):
+            print(line)
+        return rc
+    finally:
+        sys.stdout.flush()
+        for signum, handler in previous.items():
+            if handler is not None:
+                signal.signal(signum, handler)
+
 def main():
     p = argparse.ArgumentParser(); sub = p.add_subparsers(dest="command", required=True)
     ch = sub.add_parser("credential-helper", help="mint an in-memory GitHub App credential for Git")
@@ -8893,6 +9004,16 @@ def main():
     td.add_argument("bead_id")
     sub.add_parser("task-sizing",
         help="print the configured Bead and commit line ranges (task_sizing)")
+    rq = sub.add_parser("run-quiet", usage=RUN_QUIET_USAGE,
+        help="run one long command blocking; print one summary line (plus the log tail on failure)",
+        description="Run <command> as one blocking call (no shell, stdin from /dev/null), its stdout "
+                    "and stderr merged into a log file. Prints one summary line, plus the last N log "
+                    "lines on failure, and exits with the command's exit code.")
+    rq.add_argument("--log", metavar="PATH",
+        help="log file for the command's merged output (default: a new nogg-run-quiet.*.log in $TMPDIR)")
+    rq.add_argument("--tail", metavar="N", type=run_quiet_tail_count, default=40,
+        help="log lines printed on failure (default 40)")
+    rq.add_argument("stray", nargs="*", help=argparse.SUPPRESS)   # a command given without --
     cpl = sub.add_parser("codex-prompts-link",
         help="symlink .codex/prompts/*.md into <CODEX_HOME>/prompts/ as nogging-<name>.md")
     cpl.add_argument("--unlink", action="store_true",
@@ -9012,7 +9133,14 @@ def main():
     srw.add_argument("name"); srw.add_argument("--message")
     semit = ssub.add_parser("emit")
     semit.add_argument("event")
-    args = p.parse_args()
+    # `run-quiet` owns everything after its first `--` verbatim (the command's
+    # own options and any later `--` included): split it off before argparse,
+    # whose `--` handling differs across Python versions.
+    argv, run_quiet_command = sys.argv[1:], None
+    if argv[:1] == ["run-quiet"] and "--" in argv:
+        split = argv.index("--")
+        argv, run_quiet_command = argv[:split], argv[split + 1:]
+    args = p.parse_args(argv)
     if args.command == "credential-helper":
         credential_helper(args.slug, args.operation)
     elif args.command == "token-usage":
@@ -9049,6 +9177,15 @@ def main():
     elif args.command == "materialize": materialize(args.change)
     elif args.command == "task-done": task_done(args.bead_id)
     elif args.command == "task-sizing": task_sizing_cmd()
+    elif args.command == "run-quiet":
+        if args.stray or run_quiet_command is None:
+            rq.error("separate the command with --, e.g. nogg run-quiet -- scripts/test")
+        if not run_quiet_command:
+            rq.error("a command is required after --")
+        denied = floor_denied_command(run_quiet_command)
+        if denied:
+            rq.error(f"refusing a command the command floor denies ({denied}); a wrapper never lifts it")
+        sys.exit(run_quiet(run_quiet_command, args.log, args.tail))
     elif args.command == "codex-prompts-link": codex_prompts_link(args.unlink)
     elif args.command == "models": models_cmd(args.action, args.agent, args.tier, args.json)
     elif args.command == "worktree":
