@@ -152,6 +152,7 @@ import json, sys
 c = json.load(open(sys.argv[1])); del c["doctor_agy_models_cache_seconds"]
 json.dump(c, open(sys.argv[1], "w"), indent=2)
 PY
+saved_cache=${XDG_CACHE_HOME-}
 export XDG_CACHE_HOME="$work/xdg-cache"
 AGY_STUB_MODE=fail notes "$r" "$with_agy" >"$out"
 expect "cache: a failed probe reports unavailable" present "\`agy models\` exited 3"
@@ -174,7 +175,17 @@ json.dump(c, open(sys.argv[1], "w"), indent=2)
 PY
 AGY_STUB_MODE=fail notes "$r" "$with_agy" >"$out"
 expect "cache: doctor_agy_models_cache_seconds 0 always probes" present "\`agy models\` exited 3"
-unset XDG_CACHE_HOME
+for bad in '"1h"' 'null' '[1]' '-5'; do
+  python3 - "$r/.nogging/config.json" "$bad" <<'PY'
+import json, sys
+c = json.load(open(sys.argv[1])); c["doctor_agy_models_cache_seconds"] = json.loads(sys.argv[2])
+c["doctor_agy_models_timeout_seconds"] = json.loads(sys.argv[2]) if sys.argv[2] != '-5' else 1
+json.dump(c, open(sys.argv[1], "w"), indent=2)
+PY
+  if notes "$r" "$with_agy" >"$out" 2>&1; then ok "cache: a malformed value ($bad) keeps the default"
+  else bad "cache: a malformed value ($bad) broke the drift notes"; fi
+done
+if [[ -n $saved_cache ]]; then export XDG_CACHE_HOME=$saved_cache; else unset XDG_CACHE_HOME; fi
 
 # Installed table older than packaged; invalid table.
 r="$work/old"; make_root "$r"

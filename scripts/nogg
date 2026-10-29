@@ -3758,6 +3758,14 @@ def codex_catalog_models():
     if not slugs:
         return None, f"{path} lists no models"
     return slugs, None
+def config_seconds(key, default, allow_zero=False):
+    """A finite, non-negative number of seconds from the config, or `default`
+    for a missing or malformed value (null, a string, a list, Infinity)."""
+    value = scfg(key, default)
+    if (isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value)
+            or value < 0 or (value == 0 and not allow_zero)):
+        return default
+    return value
 def agy_models_cache():
     """(cache path, identity of the `agy` executable on PATH) for the model list."""
     exe = shutil.which("agy")
@@ -3776,7 +3784,7 @@ def agy_listed_models():
     probe; a failure is never cached."""
     if not tool_on_path("agy"):
         return None, "agy is not installed"
-    ttl = float(scfg("doctor_agy_models_cache_seconds", 3600))
+    ttl = config_seconds("doctor_agy_models_cache_seconds", 3600, allow_zero=True)
     cache, key = agy_models_cache() if ttl > 0 else (None, None)
     if key is not None:
         try:
@@ -3786,7 +3794,7 @@ def agy_listed_models():
                 return set(cached["names"]), None
         except (OSError, ValueError, TypeError, KeyError, AttributeError):
             pass
-    timeout = int(scfg("doctor_agy_models_timeout_seconds", 15))
+    timeout = config_seconds("doctor_agy_models_timeout_seconds", 15)
     try:
         result = subprocess.run(["agy", "models"], capture_output=True, text=True,
                                 timeout=timeout, stdin=subprocess.DEVNULL)
@@ -4394,10 +4402,7 @@ def usage_query_timeout():
     """Bound in seconds on each Dolt call of a read-only token-usage command
     (`token_usage_query_timeout_seconds`, default 30): a busy or oversized store
     fails with a clear error instead of hanging."""
-    value = scfg("token_usage_query_timeout_seconds", 30)
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
-        return 30.0
-    return float(value)
+    return float(config_seconds("token_usage_query_timeout_seconds", 30))
 def load_usage_store(rep, store, what, loader):
     """Run a bounded store reader; a timeout or Dolt failure names the remedy."""
     try:

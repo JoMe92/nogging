@@ -22,8 +22,8 @@ follow [SECURITY.md](SECURITY.md), not the public issue tracker.
 4. Test in stages: the tests of the files you change while working, those
    tests plus lint of the changed files before each commit, and the affected
    suite once per Bead before hand-off. The full suite is CI's job. Run a long
-   command as one blocking call (`./scripts/nogg run-quiet -- scripts/test`
-   prints one line on success) instead of polling it.
+   command as one blocking call (`./scripts/nogg run-quiet -- bash
+   scripts/nogg.test.sh` prints one line on success) instead of polling it.
 5. Open a pull request targeting `develop` and complete the template.
 
 See [the operating model](docs/operating-model.md) and

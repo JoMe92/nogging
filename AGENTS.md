@@ -84,8 +84,8 @@ fresh, resumed, or after a tool switch — **before selecting work with
    `docs/failure-recovery.md` § "Resuming an interrupted run". A `LIMBO` /
    `resumable` Bead has **committed work**, complete or only its first steps:
    compare its commits (`git log --oneline --grep '\[<id>\]'`) with the task
-   slice and finish what is missing; once complete, verify it (`scripts/test`),
-   add the evidence note with every commit SHA, and `bd close` it. **Never
+   slice and finish what is missing; once complete, verify it (the affected
+   suite, as in hard rule 3), add the evidence note with every commit SHA, and `bd close` it. **Never
    re-implement committed work** (that produces duplicate commits).
 4. Only then select work with `bd ready`.
 
