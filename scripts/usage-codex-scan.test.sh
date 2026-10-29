@@ -58,16 +58,19 @@ def reference(root):
 
 
 def comparable(result):
+    # The scan keeps only the quota windows of rate_limits (codex_windows); the
+    # verbatim reference keeps everything, so both are compared through it.
     observed, limits, reason = result
-    return (usage.iso(observed) if observed else None, json.dumps(limits, sort_keys=True), reason)
+    return (usage.iso(observed) if observed else None,
+            json.dumps(usage.codex_windows(limits), sort_keys=True), reason)
 
 
 def token(n, when=None, used=40):
     when = BASE + dt.timedelta(seconds=n) if when is None else when
     return (json.dumps({'type': 'event_msg', 'timestamp': usage.iso(when),
                         'payload': {'type': 'token_count', 'rate_limits': {
-                            'n': n, 'primary': {'used_percent': used, 'window_minutes': 300,
-                                                'resets_at': int(BASE.timestamp()) + 3600},
+                            'primary': {'n': n, 'used_percent': used, 'window_minutes': 300,
+                                        'resets_at': int(BASE.timestamp()) + 3600},
                             'secondary': {'used_percent': 10, 'window_minutes': 10080,
                                           'resets_at': int(BASE.timestamp()) + 600000}}}})
             + '\n').encode()
@@ -154,6 +157,19 @@ class CodexScanIndexTests(unittest.TestCase):
         self.assertEqual(sorted(p.name for p in self.index_path().parent.iterdir()),
                          sorted(['claude.json', self.index_path().name]))   # no temporary left
 
+    def test_only_quota_windows_are_kept(self):
+        path = self.day / 'rollout-a.jsonl'
+        row = json.loads(token(1))
+        row['payload']['rate_limits']['credits'] = {'token': 'CREDIT SECRET'}
+        row['payload']['rate_limits']['plan_type'] = 'plus'
+        path.write_bytes((json.dumps(row) + '\n').encode())
+        observed, limits, reason = usage.codex_observation(self.sessions)
+        self.assertIsNone(reason)
+        self.assertEqual(sorted(limits), ['primary', 'secondary'])
+        self.assertNotIn('CREDIT SECRET', self.index_path().read_text())
+        self.assertNotIn('plan_type', self.index_path().read_text())
+        self.assertMatchesFullScan()
+
     def test_no_source_writes_no_index(self):
         for child in sorted(self.sessions.rglob('*'), reverse=True):
             child.rmdir()
@@ -173,7 +189,7 @@ class CodexScanIndexTests(unittest.TestCase):
         self.append(path, extra)
         got, _ = self.assertMatchesFullScan()
         self.assertEqual(sum(self.parsed), len(extra))
-        self.assertEqual(got[1]['n'], 4)
+        self.assertEqual(got[1]['primary']['n'], 4)
         self.assertEqual(self.index()['files']['2026/10/11/rollout-a.jsonl']['offset'], path.stat().st_size)
 
     def test_same_size_and_larger_rewrites_are_reparsed(self):
@@ -196,24 +212,24 @@ class CodexScanIndexTests(unittest.TestCase):
         self.assertGreater(path.stat().st_size, size)
         got, _ = self.assertMatchesFullScan()
         self.assertEqual(sum(self.parsed), path.stat().st_size)
-        self.assertEqual(got[1]['n'], 7)
+        self.assertEqual(got[1]['primary']['n'], 7)
         # Replaced by a new inode with an identical prefix: reparsed too.
         replacement = self.day / 'rollout-a.tmp'
         replacement.write_bytes(token(7, used=12) + meta + token(6) + token(8))
         os.replace(replacement, path)
         got, _ = self.assertMatchesFullScan()
         self.assertEqual(sum(self.parsed), path.stat().st_size)
-        self.assertEqual(got[1]['n'], 8)
+        self.assertEqual(got[1]['primary']['n'], 8)
 
     def test_truncation_is_reparsed(self):
         path = self.day / 'rollout-a.jsonl'
         first = token(1)
         path.write_bytes(first + token(2, used=90))
-        self.assertEqual(self.assertMatchesFullScan()[0][1]['n'], 2)
+        self.assertEqual(self.assertMatchesFullScan()[0][1]['primary']['n'], 2)
         with path.open('r+b') as stream:
             stream.truncate(len(first))
         got, _ = self.assertMatchesFullScan()
-        self.assertEqual(got[1]['n'], 1)
+        self.assertEqual(got[1]['primary']['n'], 1)
         self.assertEqual(sum(self.parsed), len(first))
         path.write_bytes(b'')
         self.assertEqual(self.assertMatchesFullScan()[0][2], 'missing usage source')
@@ -222,10 +238,10 @@ class CodexScanIndexTests(unittest.TestCase):
         a, b = self.day / 'rollout-a.jsonl', self.day / 'rollout-b.jsonl'
         a.write_bytes(token(1))
         b.write_bytes(token(5))
-        self.assertEqual(self.assertMatchesFullScan()[0][1]['n'], 5)
+        self.assertEqual(self.assertMatchesFullScan()[0][1]['primary']['n'], 5)
         self.assertEqual(set(self.index()['files']), {'2026/10/11/rollout-a.jsonl', '2026/10/11/rollout-b.jsonl'})
         b.unlink()
-        self.assertEqual(self.assertMatchesFullScan()[0][1]['n'], 1)
+        self.assertEqual(self.assertMatchesFullScan()[0][1]['primary']['n'], 1)
         self.assertEqual(set(self.index()['files']), {'2026/10/11/rollout-a.jsonl'})
         a.unlink()
         self.assertEqual(self.assertMatchesFullScan()[0][2], 'missing usage source')
@@ -241,18 +257,18 @@ class CodexScanIndexTests(unittest.TestCase):
         self.assertFalse(self.index_path().exists())   # nothing committed yet
         self.append(path, line[40:-1])                   # complete JSON, still no newline
         got, damaged = self.assertMatchesFullScan()
-        self.assertEqual(got[1]['n'], 3)
+        self.assertEqual(got[1]['primary']['n'], 3)
         self.assertFalse(damaged)
         self.assertFalse(self.index_path().exists())
         self.append(path, b'\n' + token(4)[:25])
         got, damaged = self.assertMatchesFullScan()
-        self.assertEqual(got[1]['n'], 3)
+        self.assertEqual(got[1]['primary']['n'], 3)
         self.assertTrue(damaged)
         self.assertEqual(self.index()['files']['2026/10/11/rollout-a.jsonl']['offset'], len(line))
         self.assertFalse(self.index()['files']['2026/10/11/rollout-a.jsonl']['damaged'])
         self.append(path, token(4)[25:])
         got, damaged = self.assertMatchesFullScan()
-        self.assertEqual(got[1]['n'], 4)
+        self.assertEqual(got[1]['primary']['n'], 4)
         self.assertFalse(damaged)
         self.assertEqual(sum(self.parsed), len(token(4)))
 
@@ -269,7 +285,7 @@ class CodexScanIndexTests(unittest.TestCase):
         bad['timestamp'] = '2026-10-11T13:00:00'
         self.append(path, (json.dumps(bad) + '\n').encode())
         got, damaged = self.assertMatchesFullScan()
-        self.assertEqual(got[1]['n'], 2)
+        self.assertEqual(got[1]['primary']['n'], 2)
         self.assertTrue(damaged)
 
     def test_equal_timestamps_resolve_like_a_full_scan(self):
@@ -291,9 +307,9 @@ class CodexScanIndexTests(unittest.TestCase):
         c.parent.mkdir(parents=True)
         later = same + dt.timedelta(seconds=5)
         c.write_bytes(token(5, when=later))
-        self.assertEqual(self.assertMatchesFullScan()[0][1]['n'], 5)
+        self.assertEqual(self.assertMatchesFullScan()[0][1]['primary']['n'], 5)
         self.append(c, token(6, when=later))
-        self.assertEqual(self.assertMatchesFullScan()[0][1]['n'], 6)
+        self.assertEqual(self.assertMatchesFullScan()[0][1]['primary']['n'], 6)
 
     def test_corrupt_foreign_and_unwritable_index_fall_back(self):
         path = self.day / 'rollout-a.jsonl'
@@ -380,7 +396,7 @@ class CodexScanIndexTests(unittest.TestCase):
             self.assertEqual(worker.exitcode, 0)
         self.assertEqual(self.index()['schema_version'], 1)
         self.assertMatchesFullScan()
-        self.assertEqual(self.assertMatchesFullScan()[0][1]['n'], 39)
+        self.assertEqual(self.assertMatchesFullScan()[0][1]['primary']['n'], 39)
         self.assertEqual([p.name for p in self.index_path().parent.iterdir()], [self.index_path().name])
 
     def test_differential_against_full_scan(self):
@@ -398,11 +414,12 @@ class CodexScanIndexTests(unittest.TestCase):
                 stamp = usage.iso(when) if rng.random() < 0.8 else when.timestamp()
                 body = json.dumps({'type': 'event_msg', 'timestamp': stamp,
                                    'payload': {'type': 'token_count',
-                                               'rate_limits': {'n': counter[0], 'é': 'ü'}}},
+                                               'rate_limits': {'primary': {'n': counter[0], 'é': 'ü'}}}},
                                   ensure_ascii=rng.random() < 0.5).encode()
             elif kind < 0.55:
                 body = json.dumps({'type': 'event_msg', 'timestamp': '2026-10-11T12:00:00',
-                                   'payload': {'type': 'token_count', 'rate_limits': {'n': counter[0]}}}).encode()
+                                   'payload': {'type': 'token_count',
+                                               'rate_limits': {'primary': {'n': counter[0]}}}}).encode()
             elif kind < 0.62:
                 body = json.dumps({'type': 'event_msg', 'timestamp': usage.iso(BASE),
                                    'payload': {'type': 'token_count', 'rate_limits': None}}).encode()

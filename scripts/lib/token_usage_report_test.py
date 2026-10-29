@@ -248,6 +248,10 @@ class FreshInputTests(unittest.TestCase):
                 'input_tokens': 40, 'cache_read_input_tokens': 900, 'cache_creation_input_tokens': 60,
                 'output_tokens': 7}}})[1]
         self.assertEqual((claude['input_tokens'], tr.fresh_input(claude)), (1000, 100))   # uncached 40 + cache write 60
+        no_write = ClaudeAdapter().parse_record({'type': 'assistant', 'sessionId': 's', 'timestamp': at(1),
+            'message': {'id': 'n', 'role': 'assistant', 'model': 'opus', 'usage': {
+                'input_tokens': 40, 'cache_read_input_tokens': 900, 'output_tokens': 7}}})[1]
+        self.assertIsNone(tr.fresh_input(no_write))   # cache creation unknown: fresh input is unknown, not 40
         codex = CodexAdapter().parse_record({'type': 'token_usage_record', 'timestamp': at(1), 'payload': {
             'response_id': 'r', 'session_id': 's', 'usage': {'input_tokens': 2000, 'cached_input_tokens': 1500,
                                                              'output_tokens': 9, 'total_tokens': 2009}}})[1]
@@ -434,6 +438,12 @@ class GitAttributionTests(unittest.TestCase):
             raise subprocess.TimeoutExpired(args[0], kwargs.get('timeout'))
         self.assertIsNone(tr.bead_git_lines(self.repo, ['SPEC-a'], run=slow))
         self.assertEqual(tr.bead_git_lines(self.repo, []), {})
+
+    def test_non_utf8_paths_and_subjects_never_fail_the_view(self):
+        name = os.fsdecode(b'src/caf\xe9.py')   # a Latin-1 file name, not valid UTF-8
+        self.commit('feat: latin-1 [SPEC-a]', {name: 4})
+        found = tr.bead_git_lines(self.repo, ['SPEC-a'])
+        self.assertEqual(found['SPEC-a'], {'commits': 1, 'production_lines': 4, 'test_lines': 0})
 
 
 class BoundedLoadTests(unittest.TestCase):

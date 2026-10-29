@@ -75,8 +75,18 @@ def _codex_fold(region, best, damaged):
             damaged = True
             continue
         if best is None or observed >= best[0]:
-            best = (observed, payload['rate_limits'])
+            best = (observed, codex_windows(payload['rate_limits']))
     return best, damaged
+
+
+def codex_windows(limits):
+    """Only the quota windows inspect_usage reads (primary, secondary): the rest
+    of a runtime's rate_limits record (plan, credits, ...) is neither returned
+    nor written to the scan index. A non-object is kept, so it still reports
+    as an unsupported source."""
+    if not isinstance(limits, dict):
+        return limits
+    return {key: limits[key] for key in ('primary', 'secondary') if key in limits}
 
 
 def _codex_digest(data):
@@ -238,7 +248,8 @@ def codex_observation(root):
     replaced atomically (file 0600; a directory it creates 0700), last writer
     wins, written only when it changed, and any failure to read or write it
     falls back to a full scan without changing the result. It stores no
-    transcript text.
+    transcript text and, of each rate_limits record, only its primary and
+    secondary windows.
     """
     root = Path(root)
     index_path, resolved = codex_scan_index_path(root)

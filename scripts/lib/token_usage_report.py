@@ -285,9 +285,14 @@ def fresh_input(usage):
     total, cached = usage.get('input_tokens'), usage.get('cache_read_tokens')
     if total is None or cached is None:
         return None
+    semantics = set(usage.get('semantics') or ())
+    if {'cache_summed_input', 'missing_cache_write'} <= semantics:
+        # Claude without a cache-creation count: the stored input lacks the
+        # cache write that fresh input includes, so the value is unknown.
+        return None
     if cached == 0:
         return total
-    if INCLUSIVE_INPUT & set(usage.get('semantics') or ()) and cached <= total:
+    if INCLUSIVE_INPUT & semantics and cached <= total:
         return total - cached
     return None
 
@@ -341,8 +346,9 @@ def bead_git_lines(repo, beads, timeout=30, run=subprocess.run):
     def git(*args, stdin=None):
         try:
             result = run(['git', '-C', str(repo), '-c', 'core.quotePath=false', *args], input=stdin,
-                         capture_output=True, text=True, timeout=timeout)
-        except (OSError, subprocess.SubprocessError):
+                         capture_output=True, text=True, encoding='utf-8', errors='replace',
+                         timeout=timeout)
+        except (OSError, ValueError, subprocess.SubprocessError):
             return None
         return result.stdout if result.returncode == 0 else None
     log = git('log', '--branches', '--remotes', '--tags', '--no-merges', '--format=%H%x1f%at%x1f%s')
