@@ -36,7 +36,10 @@ make_repo() { # make_repo <dir>
   cp "$repo_root/.nogging/config.json" "$work/host-config.json"
   copy_host_config "$work/host-config.json" "$dir/.nogging/config.json" tmux
   mkdir -p "$dir/.nogging/state" "$dir/bin"
-  cp "$repo_root/templates/model-selection.json" "$dir/.nogging/model-selection.json"
+  # A consumer copy has no templates/; the doctor table-model NOTE then has
+  # no table to compare against, which the suite covers separately.
+  [[ -f "$repo_root/templates/model-selection.json" ]] \
+    && cp "$repo_root/templates/model-selection.json" "$dir/.nogging/model-selection.json" || true
   cat >"$dir/bin/bd" <<'STUB'
 #!/usr/bin/env bash
 echo '[]'
@@ -69,11 +72,16 @@ VALID='{"schema_version": 1, "roles": {"lead": [
 INVALID='{"schema_version": 1, "roles": {"lead": [{"agent": "pi", "wat": 1}]}}'
 
 # --- unit tests of the pure module run first --------------------------------
-# The unit test file ships with the package, so this runs in a consumer too.
-if python3 "$here/lib/agent_routing_test.py" >"$out" 2>&1; then
-  echo "ok   - scripts/lib/agent_routing_test.py"
+# The *_test.py file is source-only (the package must not ship tests), so this
+# step runs in the source checkout and is skipped in an installed consumer.
+if [[ -f "$here/lib/agent_routing_test.py" ]]; then
+  if python3 "$here/lib/agent_routing_test.py" >"$out" 2>&1; then
+    echo "ok   - scripts/lib/agent_routing_test.py"
+  else
+    echo "FAIL - scripts/lib/agent_routing_test.py"; cat "$out"; fail=1
+  fi
 else
-  echo "FAIL - scripts/lib/agent_routing_test.py"; cat "$out"; fail=1
+  echo "ok   - unit tests skipped (installed consumer copy)"
 fi
 
 # --- shipped surface: template key, docs, manifest, package files -----------
@@ -101,15 +109,12 @@ if [[ -f "$repo_root/bin/lib/manifest.js" ]]; then
   grep -q "scripts/lib/agent_routing.py" "$repo_root/bin/lib/manifest.js" \
     && echo "ok   - manifest.js ships scripts/lib/agent_routing.py" \
     || { echo "FAIL - manifest.js lacks agent_routing.py"; fail=1; }
-  grep -q "scripts/lib/agent_routing_test.py" "$repo_root/bin/lib/manifest.js" \
-    && echo "ok   - manifest.js ships scripts/lib/agent_routing_test.py" \
-    || { echo "FAIL - manifest.js lacks agent_routing_test.py"; fail=1; }
   grep -q "scripts/lib/agent_routing.py" "$repo_root/package.json" \
     && echo "ok   - package files list ships scripts/lib/agent_routing.py" \
     || { echo "FAIL - package.json lacks agent_routing.py"; fail=1; }
-  grep -q "scripts/lib/agent_routing_test.py" "$repo_root/package.json" \
-    && echo "ok   - package files list ships scripts/lib/agent_routing_test.py" \
-    || { echo "FAIL - package.json lacks agent_routing_test.py"; fail=1; }
+  ! grep -q "scripts/lib/agent_routing_test.py" "$repo_root/package.json" \
+    && echo "ok   - package files list excludes the *_test.py (tests are not shipped)" \
+    || { echo "FAIL - package.json ships agent_routing_test.py"; fail=1; }
   node -e "require('$repo_root/bin/lib/manifest.js')" \
     && echo "ok   - manifest.js still parses" \
     || { echo "FAIL - manifest.js does not parse"; fail=1; }
@@ -167,6 +172,8 @@ run_nogg "$repo" doctor >"$out" 2>&1 || true
 check "doctor: herdr missing is a NOTE" "targets herdr but herdr (herdr) is not on PATH"
 
 # --- doctor NOTE: table model outside the entry's allow list ------------------
+# Needs the shipped table; skipped in an installed consumer copy.
+if [[ -f "$repo_root/templates/model-selection.json" ]]; then
 cat > .nogging/agent-routing.json <<'JSON'
 {"schema_version": 1, "roles": {"lead": [
   {"agent": "codex",
@@ -176,6 +183,9 @@ JSON
 run_nogg "$repo" doctor >"$out" 2>&1 || true
 check "doctor: table model outside allow is a NOTE" "table model"
 check "doctor: NOTE names the reason code" "model-not-allowed"
+else
+  echo "ok   - table-model NOTE check skipped (installed consumer copy)"
+fi
 
 # --- linked-worktree resolution ----------------------------------------------
 repo="$work/repo-wt"; make_repo "$repo"
