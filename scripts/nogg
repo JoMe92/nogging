@@ -2809,16 +2809,21 @@ def merge_supervised_launch_permissions(settings, role):
 
 SIGNAL_RULE = "Bash(./scripts/nogg session signal:*)"
 INBOX_RULE = "Bash(./scripts/nogg session inbox:*)"
-def merge_signal_permission(settings):
-    """`session signal` and `session inbox` need no network and no Dolt, so every
-    restricted Lead may state that it is blocked or done and read the queue. Existing
-    rules are kept."""
+def _merge_allow_rule(settings, rule):
     result = json.loads(json.dumps(settings))
     permissions = result.setdefault("permissions", {})
     allow = list(permissions.get("allow") or [])
-    allow.extend(rule for rule in (SIGNAL_RULE, INBOX_RULE) if rule not in allow)
+    if rule not in allow:
+        allow.append(rule)
     permissions["allow"] = allow
     return result
+def merge_signal_permission(settings):
+    """`session signal` needs no network and no Dolt, so every restricted Lead
+    may state that it is blocked or done. Existing rules are kept."""
+    return _merge_allow_rule(settings, SIGNAL_RULE)
+def merge_inbox_permission(settings):
+    """`session inbox` only reads, and the spec allows it in every session."""
+    return _merge_allow_rule(settings, INBOX_RULE)
 
 def supervised_launch_permission_notes():
     notes = []
@@ -5655,7 +5660,7 @@ def _session_launch(role, bead, cwd, read_only, owner,
         # `--model` argv element, never as a second settings value.
         base_settings = {k: v for k, v in source_settings.items()
                          if k not in ("//", "nogging_floor", "nogging_openspec_readonly", "model", "effort")}
-        base_settings = merge_supervised_launch_permissions(base_settings, role_meta)
+        base_settings = merge_inbox_permission(merge_supervised_launch_permissions(base_settings, role_meta))
         if role_meta == "lead":
             base_settings = merge_signal_permission(base_settings)
         settings_out = base_settings if floor_lifted else merge_floor(base_settings)
@@ -8602,12 +8607,12 @@ DISPATCH_AUDIT_BYTES = 1024 * 1024
 DISPATCH_AUDIT_GENERATIONS = 3
 DISPATCH_TAIL_BYTES = 64 * 1024
 # What the send path says when it stopped before anything was submitted.
-WAKE_NOT_SENT = ("nothing was", "cannot send")
+WAKE_NOT_SENT = ("nothing was", "cannot send", "refusing", "timed out waiting for session lock")
 def dispatch_dir(): return ORCHESTRATOR_HOME / ".nogging/state/dispatch"
 def _read_dispatch_state(filename):
     try:
         value = json.loads((dispatch_dir() / filename).read_text())
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         return {}
     return value if isinstance(value, dict) else {}
 def _append_dispatch_audit(row):
@@ -8826,6 +8831,8 @@ def _deliver_wake(queue, moment, dry_run=False):
     """One digest, or why not (design Decision 8). None means nothing is due."""
     module = wake_module()
     if queue.get("sending") and not dry_run:
+        _append_dispatch_audit({"time": dispatch_module().iso(moment), "action": "wake", "id": queue["sending"].get("id"),
+                                "outcome": "failed: the delivery was interrupted"})
         module.mark_failed(queue, "the last delivery was interrupted", moment, True)
     policy = wake_policy()
     plan = module.plan(queue, policy, moment, dispatch_wake_hold())
@@ -8851,7 +8858,7 @@ def _quarantine_dispatch_state(filename):
             return
     except OSError:
         return
-    except ValueError:
+    except (ValueError, RecursionError):
         pass
     os.replace(path, path.with_name(filename + ".corrupt"))
     _append_dispatch_audit({"time": dispatch_module().iso(dt.datetime.now(dt.timezone.utc)), "action": "state",
@@ -8953,7 +8960,7 @@ def _dispatch_audit_tail():
     for line in lines:
         try:
             row = json.loads(line)
-        except ValueError:
+        except (ValueError, RecursionError):
             continue
         if isinstance(row, dict):
             rows.append(row)

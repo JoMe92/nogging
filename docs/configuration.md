@@ -189,9 +189,22 @@ An optional object. Every key is optional, and the template carries:
 | `stall_after` | duration | `15m` | Log silence of a `working` session before the stall ladder starts. A second period queues `stalled`. |
 | `ci_timeout` | duration | `60m` | How long checks may stay pending before `ci_timeout` is queued. |
 | `retire_merged` | boolean | `false` | Stop and clean up a session whose pull request is merged, whose Bead is closed and whose tree is clean. |
-| `wake` | object | see the template | Digest timing, keep-warm and quiet hours. Read by the wake delivery. |
+| `wake` | object | see the table below | Digest timing, keep-warm and quiet hours. |
 | `precompact_after` | duration | `50m` | Idle time before the one compaction ahead of a lapsing cache. |
 | `precompact_min_tokens` | integer | `100000` | Smallest context worth that compaction. |
+
+The digest reads these `wake` keys. `keep_warm`, `keep_warm_after` and `quiet_hours`
+are accepted and have no effect yet.
+
+| Key | Type | Default | Effect |
+| --- | --- | --- | --- |
+| `urgent_quiet` | duration | `90s` | How long `blocked`, `needs_input`, `crashed` and `stuck` wait, so that a Lead that recovers by itself wakes nobody. |
+| `normal_quiet` | duration | `300s` | Calm before the other items go out, so that several landing together make one wake. |
+| `max_hold` | duration | `900s` | Longest that calm may delay the oldest item, so that a steady stream cannot starve delivery. |
+| `min_gap` | duration | `300s` | Least time between wakes. Urgent items ignore it. |
+| `max_wakes_per_hour` | integer | `4` | Ceiling on wakes per hour. Urgent items may exceed it. |
+| `remind_after` | duration | `4h` | When an item nobody acted on is repeated, once. A new head makes it a new item. It also ends the wait of an item that only unreadable evidence keeps. |
+| `hold_above_percent` | number | `85` | Non-urgent items wait while a known usage window of the orchestrator's agent is above this. Unknown usage holds nothing. |
 
 A duration is a whole number with an optional `s`, `m` or `h`. `quiet_hours` is a list
 of `"HH:MM-HH:MM"` windows. An unknown key or a bad value fails `validate` and

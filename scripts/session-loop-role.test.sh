@@ -79,7 +79,8 @@ with tempfile.TemporaryDirectory(prefix='nogg loop role ') as td:
                         assert entry in deny, f'{authority}: missing {entry}'
                     assert 'Bash(./scripts/nogg session launch:*)' in deny
                     allow = eff['permissions'].get('allow', [])
-                    assert not any('nogg session' in a for a in allow), 'loop gained child-control rules'
+                    assert m.INBOX_RULE in allow, 'every session may read the inbox'
+                    assert not any('nogg session' in a for a in allow if a != m.INBOX_RULE), 'loop gained child-control rules'
                 else:
                     assert any('--readonly-root' in str(a) for a in rec['command']) or agent == 'pi'
         # default authority is restricted

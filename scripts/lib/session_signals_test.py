@@ -2,6 +2,7 @@ import importlib.util
 import json
 import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -37,6 +38,16 @@ class ExcerptTests(unittest.TestCase):
 
     def test_an_address_with_a_wide_character_goes_whole(self):
         self.assertEqual(sig.clean_excerpt("j\u00f6nas@b\u00fccher.de"), "***EMAIL***")
+
+    def test_size_cannot_stall_it(self):
+        started = time.monotonic()
+        for text in ("a" * 256 * 1024, "a-" * 128 * 1024, "." * 256 * 1024):
+            sig.clean_excerpt(text, lambda s: s)
+        self.assertLess(time.monotonic() - started, 2)
+
+    def test_a_secret_across_the_limit_is_still_seen_whole(self):
+        out = sig.clean_excerpt("x " * 148 + "ghp_" + "a" * 36)
+        self.assertNotIn("ghp_", out)
 
     def test_non_text_and_blank_are_none(self):
         self.assertIsNone(sig.clean_excerpt(None))

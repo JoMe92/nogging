@@ -22,6 +22,7 @@ which no action may depend:
 from __future__ import annotations
 
 import copy
+import hashlib
 import re
 from datetime import datetime, timezone
 from typing import Any
@@ -53,6 +54,7 @@ NUDGE_STALL = ("Nogging dispatcher: your session log has been silent for {minute
 
 _CHECK_NAME_DROP = re.compile(r"[^\w .:/()+-]+")
 _KEY_DROP = re.compile(r"[^\w:.+@-]+")
+_PLAIN_MARK = re.compile(r"[0-9a-fTZ:.+@-]{1,80}")
 _DURATION = re.compile(r"^(\d+)([smh]?)$")
 _UNITS = {"": 1, "s": 1, "m": 60, "h": 3600}
 _QUIET_WINDOW = re.compile(r"^([01]\d|2[0-3]):[0-5]\d-([01]\d|2[0-3]):[0-5]\d$")
@@ -160,7 +162,10 @@ def seconds_since(stamp: Any, now: datetime) -> float | None:
 
 def dedupe_key(session: str, kind: str, *marks: Any) -> str:
     """Session, kind and the head or fingerprint that makes this occurrence new. A
-    mark can come from an event line, so only what a stamp or a head needs survives."""
+    mark can come from an event line, so one that is no stamp or head is hashed: the
+    key stays stable and repeats no agent text."""
+    marks = [mark if isinstance(mark, str) and _PLAIN_MARK.fullmatch(mark)
+             else hashlib.sha256(str(mark).encode()).hexdigest()[:16] for mark in marks]
     return "|".join(_KEY_DROP.sub("", str(part))[:KEY_PART_CHARS] for part in (session, kind, *marks))
 
 
@@ -407,6 +412,26 @@ def _observe(fact: dict[str, Any], memory: dict[str, Any], now: datetime) -> Non
         memory.update(head=head, budget={})
 
 
+def _decide_remembering(fact: dict[str, Any], session: dict[str, Any], policy: dict[str, Any],
+                        now: datetime) -> list[dict[str, Any]]:
+    """One session's decision. `state.json` and the checks cache lie inside a tree some
+    Leads can write. A memory this code cannot use is forgotten, and a fact it cannot
+    use costs that session this pass, so neither can stop the pass for every session."""
+    failures = (AttributeError, KeyError, TypeError, ValueError)
+    try:
+        if not isinstance(session.get("done", []), list):
+            raise TypeError("done")
+        _observe(fact, session, now)
+        return _decide_session(fact, session, policy, now)
+    except failures:
+        session.clear()
+    try:
+        _observe(fact, session, now)
+        return _decide_session(fact, session, policy, now)
+    except failures:
+        return []
+
+
 def decide(facts: list[dict[str, Any]], memory: dict[str, Any], policy: dict[str, Any],
            now: datetime) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """The actions for one pass and the memory to carry forward. Spending an action
@@ -422,8 +447,8 @@ def decide(facts: list[dict[str, Any]], memory: dict[str, Any], policy: dict[str
         next_memory["sessions"][fact["session"]] = session
         if fact.get("state", "unknown") == "unknown":
             continue
-        _observe(fact, session, now)
-        actions.extend(action for action in _decide_session(fact, session, policy, now)
+        chosen = _decide_remembering(fact, session, policy, now)
+        actions.extend(action for action in chosen
                        if (action["type"] == "queue" or action["key"] not in session.get("done", []))
                        and not (policy.get("hold_sends") and action["type"] in SENDS))
     return actions, next_memory

@@ -182,10 +182,21 @@ with patch.object(m, "dispatch_dir", return_value=state):
     view = w.inbox(m._read_dispatch_state("queue.json"), m._dispatch_audit_tail())
     assert view["pending"] == [] and view["delivered"] == []
 
-# Every restricted Lead may read the inbox, as the spec says, without a prompt.
-allow = m.merge_signal_permission({"permissions": {"allow": ["Read"]}})["permissions"]["allow"]
-assert allow == ["Read", m.SIGNAL_RULE, "Bash(./scripts/nogg session inbox:*)"], allow
-assert m.merge_signal_permission({"permissions": {"allow": allow}})["permissions"]["allow"] == allow
+# A file nested past the parser's depth is moved aside too, and never stops the inbox.
+(state / "queue.json").write_text("[" * 200000)
+with patch.object(m, "dispatch_dir", return_value=state):
+    assert m._read_dispatch_state("queue.json") == {}
+    m._quarantine_dispatch_state("queue.json")
+    assert not (state / "queue.json").exists()
+    (state / "dispatch.jsonl").write_text("[" * 200000 + "\n" + '{"action": "ok"}\n')
+    assert m._dispatch_audit_tail() == [{"action": "ok"}]
+
+# Every session may read the inbox, as the spec says, without a prompt.
+allow = m.merge_inbox_permission({"permissions": {"allow": ["Read"]}})["permissions"]["allow"]
+assert allow == ["Read", "Bash(./scripts/nogg session inbox:*)"], allow
+assert m.merge_inbox_permission({"permissions": {"allow": allow}})["permissions"]["allow"] == allow
+source = pathlib.Path(sys.argv[1]).read_text()
+assert 'base_settings = merge_inbox_permission(merge_supervised_launch_permissions(base_settings, role_meta))' in source
 PY
 
 # --- one real pass: a stub orchestrator on a private socket ---------------------

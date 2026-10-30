@@ -50,12 +50,13 @@ _IGNORABLE = re.compile("[͏ᅟᅠ឴឵᠋-᠍ㅤ︀-️ﾠ]")
 _FOLDED = str.maketrans({'"': "'", "“": "'", "”": "'", "„": "'", "‟": "'", "<": "‹",
                          ">": "›"})
 _KEY = re.compile(r"[\w:.+@|-]+")
+_NAME = r"[A-Za-z0-9][\w.-]*"
 # The title and `next:` lines are not quoted as data, so only these shapes reach them.
 _SHAPES = {name: re.compile(shape) for name, shape in {
-    "kind": r"[a-z_]+", "bead": r"[\w.-]+", "session": r"[\w.-]+", "ci": r"[a-z-]+ \(\d+/\d+\)",
+    "kind": r"[a-z_]+", "bead": _NAME, "session": _NAME, "ci": r"[a-z-]+ \(\d+/\d+\)",
     "diff": r"\+\d+ -\d+", "head": r"[0-9a-f]{7,40}",
-    "next": r"gh pr (?:view|checks) \d+|bd show [\w.-]+|\./scripts/nogg session (?:log|attach) [\w.-]+"
-            r"|\./scripts/nogg worktree rebase [\w.-]+"}.items()}
+    "next": rf"gh pr (?:view|checks) \d+|bd show {_NAME}|\./scripts/nogg session (?:log|attach) {_NAME}"
+            rf"|\./scripts/nogg worktree rebase {_NAME}"}.items()}
 
 
 def policy_from(block: dict[str, Any] | None) -> dict[str, Any]:
@@ -72,20 +73,25 @@ def text(value: Any, redact: Callable[[str], str] | None, limit: int = FIELD_CHA
     if value is None:
         return None
     normal = unicodedata.normalize("NFKC", str(value))
-    normal = _IGNORABLE.sub("", "".join(ch for ch in normal if unicodedata.category(ch) != "Cf"))
+    normal = _IGNORABLE.sub("", "".join(ch for ch in normal if unicodedata.category(ch) not in ("Cf", "Cs")))
     cleaned = clean_excerpt(normal, redact, limit)
     return _HEADER_LIKE.sub("(nogg", cleaned).translate(_FOLDED) if cleaned else None
 
 
 def clean_item(item: dict[str, Any], redact: Callable[[str], str] | None) -> dict[str, Any]:
-    """Every field through `text`. `key` is safe by shape: see `normalized` and `dedupe_key`."""
-    return {name: value if name == "key" or value is None or isinstance(value, (bool, int)) else text(value, redact)
-            for name, value in item.items()}
+    """Every field through `text`, but for the identities a scrub would change, which
+    are safe by shape: a session name that has it, and `key` (`normalized`, `dedupe_key`)."""
+    def keeps(name: str, value: Any) -> bool:
+        return (name == "key" or value is None or isinstance(value, (bool, int))
+                or (name == "session" and isinstance(value, str) and _SHAPES["session"].fullmatch(value) is not None))
+
+    return {name: value if keeps(name, value) else text(value, redact) for name, value in item.items()}
 
 
 def _is_item(row: Any) -> bool:
     return (isinstance(row, dict) and isinstance(row.get("key"), str) and _KEY.fullmatch(row["key"]) is not None
-            and isinstance(row.get("session"), str) and isinstance(row.get("kind"), str))
+            and isinstance(row.get("session"), str) and _SHAPES["session"].fullmatch(row["session"]) is not None
+            and isinstance(row.get("kind"), str))
 
 
 def normalized(queue: dict[str, Any]) -> dict[str, Any]:
@@ -122,12 +128,13 @@ def conclusive(fact: dict[str, Any]) -> bool:
 
 
 def _settled(fact: dict[str, Any], memory: dict[str, Any], now: datetime) -> bool:
-    """Whether decide() looked at this session's worktree. A busy session, or one in
-    its settle window, reports nothing, and that clears nothing already delivered."""
+    """Whether decide() looked at this session's worktree. A busy session, one with its
+    own background job or a turn error, or one in its settle window reports nothing,
+    and that clears nothing already delivered."""
     if fact.get("state") == "gone":
         return True
     held = seconds_since(((memory.get("sessions") or {}).get(fact["session"]) or {}).get("since"), now)
-    return fact.get("state") in ("idle", "waiting_background") and held is not None and held >= SETTLE_SECONDS
+    return fact.get("state") == "idle" and not fact.get("turn_error") and held is not None and held >= SETTLE_SECONDS
 
 
 def _remind(queue: dict[str, Any], present: dict[str, dict[str, Any]], policy: dict[str, Any], now: datetime) -> None:
@@ -255,8 +262,9 @@ def wake_id(now: datetime) -> str:
 
 
 def _shaped(item: dict[str, Any], name: str, redact: Callable[[str], str] | None) -> str | None:
-    value = text(item.get(name), redact, SHOWN_CHARS)
-    return value if value and _SHAPES[name].fullmatch(value) else None
+    value = item.get(name)
+    value = value if name == "session" else text(value, redact, SHOWN_CHARS)
+    return value if isinstance(value, str) and _SHAPES[name].fullmatch(value) else None
 
 
 def _item_lines(item: dict[str, Any], redact: Callable[[str], str] | None) -> str:

@@ -16,6 +16,7 @@ SCHEMA = 2
 STDIN_LIMIT = 64 * 1024
 EVENTS_ROTATE_BYTES = 256 * 1024
 EXCERPT_LIMIT = 300
+SCAN_FACTOR = 4
 
 EVENTS = ("turn_start", "turn_end", "needs_input", "turn_error", "session_end", "blocked", "done", "guard_continue")
 # A signal is a fact an agent states about itself, never a classified state.
@@ -43,7 +44,7 @@ _EMAIL_RE = re.compile(r"[\w.%+\-]+@[\w\-]+(?:\.[\w\-]+)+")
 # neither, in text from a pane or an exception of some other tool.
 _PRIVATE_KEY_RE = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(?:-----END [A-Z ]*PRIVATE KEY-----|\Z)", re.S)
 _SECRET_PAIR_RE = re.compile(
-    r"""(["']?[\w.-]*(?:token|secret|password|passwd|api[_-]?key|private[_-]?key|credential|authorization)["']?"""
+    r"""(["']?[\w.-]{0,64}(?:token|secret|password|passwd|api[_-]?key|private[_-]?key|credential|authorization)["']?"""
     r"""\s*[:=]\s*)(?:"[^"]*"|'[^']*'|(?:basic|bearer|token)\s+\S+|\S+)""", re.I)
 _SECRET_SHAPES_RE = re.compile(
     r"\b(?:gh[pousr]_[A-Za-z0-9_]{16,}|github_pat_[A-Za-z0-9_]{16,}|glpat-[A-Za-z0-9_-]{16,}|npm_[A-Za-z0-9]{16,}"
@@ -62,9 +63,12 @@ def scrub_secrets(text: str) -> str:
 
 
 def clean_excerpt(text: Any, redact: Callable[[str], str] | None = None, limit: int = EXCERPT_LIMIT) -> str | None:
-    """Single-line, control-free, redacted, email-scrubbed text of at most `limit` characters."""
+    """Single-line, control-free, redacted, email-scrubbed text of at most `limit` characters.
+    Only a bounded head goes through the patterns: this text is another agent's, and it
+    must not be able to stall a pass or a hook by its size."""
     if not isinstance(text, str):
         return None
+    text = text[:limit * SCAN_FACTOR]
     if redact is not None:
         text = redact(text)
     text = _EMAIL_RE.sub("***EMAIL***", scrub_secrets(text))

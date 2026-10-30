@@ -2,6 +2,7 @@
 import os
 import sys
 import unittest
+import unittest.mock
 from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -469,6 +470,32 @@ class Queue(unittest.TestCase):
         p.run(lead())
         _, memory = d.decide([], p.memory, p.policy, T0)
         self.assertEqual(memory["sessions"], {})
+
+    def test_a_memory_this_code_cannot_use_is_forgotten(self):
+        for broken in ({"done": 5}, {"budget": 5}, {"ci": 5}, {"limit": 5}, {"stall": 5}, {"budget": {"nudges": "x"}},
+                       {"ci": {"pending_head": HEAD}}):
+            for fact in (lead(gaps=["dirty"]), lead(checks=checks("pending")), lead(state="limit"),
+                         lead(state="working", silent_seconds=900)):
+                actions, memory = d.decide([fact], {"sessions": {"s1": dict(broken, since="2026-10-30T11:00:00+00:00")}},
+                                           d.policy_from({"enabled": True}), T0)
+                self.assertIsInstance(memory["sessions"]["s1"], dict)
+
+    def test_a_fact_this_code_cannot_use_costs_only_its_session(self):
+        forged, good = lead(session="s2"), lead(gaps=["dirty"])
+        memory = {"sessions": {name: {"since": "2026-10-30T11:00:00+00:00"} for name in ("s1", "s2")}}
+        with unittest.mock.patch.object(d, "_decide_session", side_effect=[TypeError("forged"), TypeError("forged"),
+                                                                            [{"type": "queue", "key": "k"}]]):
+            actions, _ = d.decide([forged, good], memory, d.policy_from({"enabled": True}), T0)
+        self.assertEqual(actions, [{"type": "queue", "key": "k"}])
+
+    def test_a_mark_that_is_no_stamp_or_head_stays_out_of_the_key(self):
+        secret = "ghp_" + "a" * 36 + "owner@example.com"
+        key = d.dedupe_key("s1", "blocked", secret)
+        self.assertNotIn("ghp_", key)
+        self.assertNotIn("owner", key)
+        self.assertEqual(key, d.dedupe_key("s1", "blocked", secret))
+        self.assertEqual(d.dedupe_key("s1", "stuck", HEAD), f"s1|stuck|{HEAD}")
+        self.assertEqual(d.dedupe_key("s1", "blocked", "2026-10-30T12:00:00+00:00"), "s1|blocked|2026-10-30T12:00:00+00:00")
 
     def test_the_done_list_is_bounded(self):
         p = Pass()
