@@ -4,8 +4,10 @@
  * Maps Pi's lifecycle events onto `scripts/nogg session emit` so `session
  * watch`, `session send` and the dispatcher see a Pi session as idle,
  * working or waiting for input instead of `unknown` (session-wake design
- * Decision 2). Observability only: it is inert unless `NOGG_SESSION_NAME` is
- * set, never blocks or changes a run, and every failure is swallowed.
+ * Decision 2). It is inert unless `NOGG_SESSION_NAME` is set, and every failure
+ * is swallowed. One thing changes a run: the stop guard (Decision 5) continues
+ * an autonomous Lead that would settle with gaps, once per user input. Anything
+ * wrong with that check allows the settle.
  *
  * `agent_end` is deliberately not used: a retry, recovery, compaction or
  * queued message can start another run after it. Only `agent_settled` means
@@ -20,6 +22,7 @@ import { join } from "node:path";
 const LOADED = Symbol.for("nogging.lifecycle.loaded");
 const EMIT_TIMEOUT_MS = 3000;
 const DRAIN_MS = 1000;
+const GUARD_TIMEOUT_MS = 8000;
 const STDIN_LIMIT = 60 * 1024;
 
 type Json = Record<string, unknown>;
@@ -54,12 +57,19 @@ export default function (pi: any) {
 	const name = process.env.NOGG_SESSION_NAME;
 	const root = process.env.NOGG_SESSION_ROOT;
 	if (!name) return;
+	// A Pi child of a Claude or Codex session inherits its environment and must
+	// not answer for it.
+	const agent = process.env.NOGG_SESSION_AGENT;
+	if (agent && agent !== "pi") return;
 	const globals = globalThis as Record<symbol, unknown>;
 	if (globals[LOADED]) return;
 	globals[LOADED] = true;
 
 	let running = false;
 	let errored = false;
+	// In memory on purpose: Pi offers no stop_hook_active, and this bound must not
+	// depend on anything a broken check could lose.
+	let guarded = false;
 
 	// Emits run one after another so events append in the order Pi fired them;
 	// a stuck child delays only later events, by at most EMIT_TIMEOUT_MS each.
@@ -88,6 +98,32 @@ export default function (pi: any) {
 		}));
 	};
 
+	// The fixed continuation text, or "" for anything but a clear answer.
+	const guardMessage = () => new Promise<string>((resolve) => {
+		if (!root) return resolve("");
+		try {
+			const child = execFile(
+				join(root, "scripts", "nogg"),
+				["session", "completion-check", "--json"],
+				{ timeout: GUARD_TIMEOUT_MS, killSignal: "SIGKILL", windowsHide: true, env: process.env },
+				// Exit 1 only means "gaps": stdout is what counts.
+				(_error, stdout) => {
+					try {
+						const message = JSON.parse(String(stdout)).message;
+						resolve(typeof message === "string" ? message : "");
+					} catch {
+						resolve("");
+					}
+				},
+			);
+			child.on("error", () => resolve(""));
+			child.stdin?.on("error", () => {});
+			child.stdin?.end();
+		} catch {
+			resolve("");
+		}
+	});
+
 	// Give queued events a short, bounded chance to land before Pi exits.
 	const drain = () => new Promise<void>((resolve) => {
 		const timer = setTimeout(resolve, DRAIN_MS);
@@ -95,15 +131,20 @@ export default function (pi: any) {
 		tail.then(() => { clearTimeout(timer); resolve(); });
 	});
 
-	const on = (event: string, handler: (event: any, ctx: any) => void | Promise<void>) => {
+	const on = (event: string, handler: (event: any, ctx: any) => unknown) => {
 		pi.on(event, async (e: any, ctx: any) => {
 			try {
-				await handler(e, ctx);
+				return await handler(e, ctx);
 			} catch {
 				// Handler errors never reach Pi.
+				return undefined;
 			}
 		});
 	};
+
+	on("input", () => {
+		guarded = false;
+	});
 
 	on("agent_start", () => {
 		running = true;
@@ -111,11 +152,21 @@ export default function (pi: any) {
 		emit("turn_start");
 	});
 
-	on("agent_before_settle", (event, ctx) => {
-		if (event?.outcome !== "error") return;
+	on("agent_before_settle", async (event, ctx) => {
 		const last = lastAssistantMessage(ctx);
-		errored = true;
-		emit("turn_error", { error: errorKind(last.error), last_assistant_message: last.text });
+		if (event?.outcome === "error") {
+			errored = true;
+			emit("turn_error", { error: errorKind(last.error), last_assistant_message: last.text });
+			return undefined;
+		}
+		if (event?.outcome !== "completed" || guarded || event?.continue) return undefined;
+		const message = await guardMessage();
+		if (!message) return undefined;
+		guarded = true;
+		emit("guard_continue", { last_assistant_message: last.text });
+		// A handler's entries replace the chain, so keep what others proposed.
+		const entry = { type: "custom_message", customType: "nogging-stop-guard", content: message, display: true };
+		return { continue: true, entries: [...(event?.entries ?? []), entry] };
 	});
 
 	on("agent_settled", (event, ctx) => {

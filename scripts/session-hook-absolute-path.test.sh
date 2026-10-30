@@ -57,7 +57,7 @@ import json, os, shlex, sys
 
 d = json.loads(sys.argv[1])
 root = sys.argv[2]
-expected_stop = f"{shlex.quote(os.path.join(root, 'scripts/nogg'))} session emit turn_end"
+expected_stop = f"{shlex.quote(os.path.join(root, 'scripts/nogg'))} session emit turn_end --guard"
 expected_notif = f"{shlex.quote(os.path.join(root, 'scripts/nogg'))} session emit needs_input"
 
 hooks = d.get("hooks", {})

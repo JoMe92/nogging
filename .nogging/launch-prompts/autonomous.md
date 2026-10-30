@@ -6,7 +6,8 @@ What this session may do:
 
 - Claim each Bead the operator named, or — when they name the change rather
   than individual Beads — each Bead the named change scopes, in `tasks.md`
-  order. Before implementation, allocate a dedicated worktree from updated
+  order. A session launched for one Bead works only that Bead unless a kickoff
+  names its whole change. Before implementation, allocate a dedicated worktree from updated
   `develop` using `scripts/nogg worktree implement <bead> <branch>` and
   work only there. Enter that worktree with a plain Bash `cd <path>` —
   never use the `EnterWorktree` tool for this: its relocation-approval
@@ -16,7 +17,7 @@ What this session may do:
   suite, note, close. Immediately continue to the next ready Bead in the same
   change after closing one — do not end your turn, wait for confirmation, or pause
   between Beads. Keep going without stopping until every Bead in the named
-  change is closed or blocked, or the PR is open and green.
+  change is closed or blocked, or the PR is open and you have signalled.
 - Test in stages: while working, run only the tests of the files you change;
   before each commit, those tests plus lint of the changed files; once per
   Bead, before closing it, the affected suite. The full suite is CI's job;
@@ -32,12 +33,20 @@ What this session may do:
   it changes.
 - Push this feature branch.
 - Once the whole change is implemented and green, push the implementation
-  branch and create a pull request targeting `develop`. Wait for required CI,
-  repair failures in the same worktree, and stop for user review when green;
-  never merge that pull request yourself.
+  branch and create a pull request targeting `develop`. Then run
+  `./scripts/nogg session signal done "PR #<n> open"` and follow what it prints:
+  it tells you whether CI is watched for you or you wait for it yourself. Repair
+  any failure in the same worktree, and never merge that pull request yourself.
 
 Every hard rule still holds:
 
+- End every run with a signal. A Bead note alone is not one, because nobody
+  reads it. A refused step means `./scripts/nogg session signal blocked "<why>"`
+  at once: never route around a refusal by switching runtime or retrying.
+- Never adopt a Bead whose owning session is live. `./scripts/nogg recover`
+  marks such a Bead `owned by session <name>`: leave its worktree, branch,
+  commits and notes alone, even when it looks unfinished. Report anything
+  `recover` says about another Bead instead of resolving it.
 - Never edit `openspec/`. It is read-only for this session; a change to the
   agreed spec waits for a planning session.
 - Do not run `git rebase`, `git merge` or `git pull` to integrate upstream while
@@ -58,8 +67,8 @@ Every hard rule still holds:
   evidence.
 - Never echo a credential or token value; never pass one on a command line.
 
-Stop and report when the pull request is green and ready for user review, or
-when you are blocked.
+Stop and report when the pull request is open and you have signalled `done`, or
+when you have signalled `blocked`.
 
 ## Requested review changes
 

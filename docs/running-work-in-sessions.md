@@ -319,6 +319,20 @@ A Lead ends its work with `./scripts/nogg session signal done "<reason>"` or
 `blocked` line with the reason, once, until the next turn starts. The session
 still classifies `idle`, so `send`, loop deferral and `sweep` behave as before.
 
+An autonomous Lead that stops with uncommitted or unpushed work, or with no
+signal, is continued once with a fixed message instead of stopping silently. The
+stop guard applies only to a kicked-off `lead` under the `autonomous` prompt, on
+Claude Code, Codex and Pi. A `blocked` or `done` signal in that turn, background
+tasks or an API error let the stop through, and so does any failure of the check,
+because a broken guard must never trap a session. Claude Code and Codex allow the
+second stop through `stop_hook_active`, and Pi allows one continuation per user
+input. A continued stop shows as `guard_continue` in the event file. On Codex the
+guard needs the hook from `nogg session-hooks install --agent codex`.
+
+A launch from a sandbox that cannot write the session or usage state is refused
+before it creates anything, with a message that names the path and says to signal
+blocked. `nogg session capabilities` shows beforehand what a Lead can do.
+
 ## Attach and steer
 
 ```bash

@@ -21,6 +21,7 @@ mkdir -p "$work/root/scripts"
 # Stub nogg: one line per call, "<event>\t<stdin>"; `stuck` hangs for a minute.
 cat > "$work/root/scripts/nogg" <<'STUB'
 #!/usr/bin/env bash
+if [ "$2" = completion-check ]; then echo '{"gaps":[],"message":null}'; exit 0; fi
 payload=$(cat)
 if [ -n "${STUB_SLEEP:-}" ]; then sleep "$STUB_SLEEP"; fi
 printf '%s\t%s\t%s\n' "$3" "${NOGG_SESSION_NAME:-}" "$payload" >> "$STUB_LOG"
@@ -97,6 +98,13 @@ if (mode === "e2e") {
   console.log("E2E_MARK");
   await pi.fire("agent_settled", { aborted: false }, ctxWith("PR #9 is open and CI is running."));
   check("e2e: turn_end reached the events file", await waitFor(2));
+  process.exit(fail);
+}
+
+if (mode === "nested") {
+  const pi = fakePi();
+  load(pi);
+  check("a Pi child of another runtime's session registers nothing", pi.handlers.size === 0);
   process.exit(fail);
 }
 
@@ -200,6 +208,7 @@ if [[ $rc -eq 2 ]]; then
 fi
 echo "$out"
 [[ $rc -eq 0 ]] || { cat "$work/stderr" >&2; echo "pi-lifecycle checks failed" >&2; exit 1; }
+NOGG_SESSION_AGENT=claude run nested 2>/dev/null || { echo "pi-lifecycle checks failed" >&2; exit 1; }
 
 # end to end: the real extension, the real `session emit`, then `session watch`
 if command -v python3 >/dev/null 2>&1 && [[ -x "$root/scripts/nogg" ]]; then

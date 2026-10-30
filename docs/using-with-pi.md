@@ -90,9 +90,15 @@ every supervised session. It maps Pi's events onto `scripts/nogg session emit`:
 | `agent_start` | `turn_start` | `working` |
 | `agent_settled` | `turn_end`, with the last assistant message as the excerpt | `idle` |
 | `agent_before_settle` with `outcome: "error"` | `turn_error` | `limit` for a rate limit, else `idle` |
+| `agent_before_settle` with gaps, in an autonomous Lead | `guard_continue`, and one more model request | `working` |
 | `ui_prompt_start` | `needs_input` | `needs_input` |
 | `ui_prompt_end` | `turn_start` during a run, else `turn_end` | `working` or `idle` |
 | `session_shutdown` (quit) | `session_end` | `ended` |
+
+That second `agent_before_settle` row is the stop guard: it asks `session
+completion-check` and, on gaps, appends the fixed message and continues the run.
+It continues at most once per user input, kept in the extension's memory, and any
+failure of the check, including a stuck child, lets the run settle.
 
 `agent_end` is never used as completion: a retry, recovery, compaction or queued
 message can start another run after it, so only `agent_settled` means finished.

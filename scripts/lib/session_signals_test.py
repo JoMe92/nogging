@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -64,6 +65,60 @@ class PayloadTests(unittest.TestCase):
             sig.build_signal("s1", "done", "  ", STAMP)
 
 
+class CompletionTests(unittest.TestCase):
+    CLEAN = {"dirty": False, "upstream": True, "ahead": 0}
+    SESSION = {"role": "lead", "launch_prompt": "autonomous", "agent": "pi", "kickoff_sent_at": STAMP}
+
+    def test_gaps_from_injected_facts(self):
+        done = [{"event": "done"}]
+        self.assertEqual([], sig.completion_gaps(self.CLEAN, done))
+        self.assertEqual(["no-signal"], sig.completion_gaps(self.CLEAN, []))
+        self.assertEqual(["dirty"], sig.completion_gaps(dict(self.CLEAN, dirty=True), done))
+        self.assertEqual(["unpushed"], sig.completion_gaps(dict(self.CLEAN, ahead=2), done))
+        self.assertEqual(["unpushed"], sig.completion_gaps(dict(self.CLEAN, upstream=False), done))
+        self.assertEqual(["no-signal"], sig.completion_gaps(None, []), "unknown git proves no git gap")
+
+    def test_the_message_is_fixed_and_names_each_gap(self):
+        text = sig.guard_message(["dirty", "unpushed"])
+        self.assertTrue(text.startswith("You are ending your turn with: uncommitted changes, unpushed commits. "))
+        self.assertTrue(text.endswith("Do not answer with a plan."))
+
+    def test_guard_scope(self):
+        self.assertTrue(sig.guard_applies(self.SESSION, []))
+        for change in ({"role": "planning"}, {"launch_prompt": "no-autonomous-claim"},
+                       {"agent": "antigravity"}, {"kickoff_sent_at": None}):
+            self.assertFalse(sig.guard_applies(dict(self.SESSION, **change), []), change)
+        self.assertFalse(sig.guard_applies({}, []))
+
+    def test_guard_bounds(self):
+        for payload in ({"stop_hook_active": True}, {"stop_hook_active": False, "error": "rate_limit"},
+                        {"stop_hook_active": False, "background_tasks": 1}):
+            self.assertFalse(sig.guard_applies(self.SESSION, [], payload), payload)
+
+    def test_a_signal_or_error_in_this_turn_excuses_the_stop(self):
+        for excuse in ("blocked", "done", "turn_error"):
+            self.assertFalse(sig.guard_applies(self.SESSION, [{"event": "turn_start"}, {"event": excuse}]), excuse)
+            self.assertTrue(sig.guard_applies(self.SESSION, [{"event": excuse}, {"event": "turn_end"}]), excuse)
+            self.assertTrue(sig.guard_applies(self.SESSION, [{"event": excuse}, {"event": "turn_start"}]), excuse)
+
+    def test_a_stop_sequence_is_never_continued_twice(self):
+        self.assertFalse(sig.guard_applies(self.SESSION, [{"event": "turn_start"}, {"event": "guard_continue"}]))
+        self.assertTrue(sig.guard_applies(self.SESSION, [{"event": "guard_continue"}, {"event": "turn_start"}]))
+
+    def test_a_hook_payload_blocks_only_with_an_explicit_false(self):
+        self.assertTrue(sig.guard_applies(self.SESSION, [], {"stop_hook_active": False}))
+        for payload in ({}, {"stop_hook_active": None}, {"stop_hook_active": "false"}):
+            self.assertFalse(sig.guard_applies(self.SESSION, [], payload), payload)
+
+    def test_this_turn_stops_at_the_last_turn_end(self):
+        rows = [{"event": "done"}, {"event": "turn_end"}, {"event": "turn_start"}]
+        self.assertEqual([{"event": "turn_start"}], sig.this_turn(rows))
+        self.assertEqual([], sig.this_turn(rows[:2]))
+        self.assertEqual(rows[:1], sig.this_turn(rows[:1]))
+        self.assertEqual(["no-signal"], sig.completion_gaps(CompletionTests.CLEAN, sig.this_turn(rows[:2])))
+        self.assertEqual([], sig.completion_gaps(CompletionTests.CLEAN, rows[:2]), "a finished Lead has no gap")
+
+
 class StateTests(unittest.TestCase):
     def test_state_mapping(self):
         cases = {
@@ -90,6 +145,21 @@ class StateTests(unittest.TestCase):
         rows = [{"event": "turn_end"}, {"event": "blocked", "excerpt": "x"}]
         self.assertEqual("blocked", sig.current_signal(rows)["event"])
         self.assertIsNone(sig.current_signal(rows + [{"event": "turn_start"}]))
+
+    def test_a_guard_continuation_is_not_a_state(self):
+        self.assertIsNone(sig.event_state({"event": "guard_continue"}))
+        state, record = sig.latest_state([{"event": "turn_start"}, {"event": "guard_continue"}])
+        self.assertEqual(("working", "turn_start"), (state, record["event"]))
+
+    def test_read_events_never_blocks_or_follows_a_planted_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fifo = Path(tmp) / "fifo.events.jsonl"
+            os.mkfifo(fifo)
+            self.assertEqual([], sig.read_events(fifo))
+            real, link = Path(tmp) / "real", Path(tmp) / "link.events.jsonl"
+            real.write_text('{"event":"turn_end"}\n')
+            link.symlink_to(real)
+            self.assertEqual([], sig.read_events(link))
 
     def test_read_events_skips_junk_and_missing_files(self):
         with tempfile.TemporaryDirectory() as tmp:

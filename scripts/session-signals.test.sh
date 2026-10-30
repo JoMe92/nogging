@@ -237,7 +237,7 @@ hooks = out['hooks']
 print(json.dumps({k: [h['hooks'][0]['command'].split(' session emit ')[-1] for h in v] for k, v in hooks.items()}, sort_keys=True))
 ")
 expect "hooks: UserPromptSubmit, StopFailure and SessionEnd are wired, SubagentStop is not" \
-  '{"Notification": ["needs_input"], "SessionEnd": ["session_end"], "Stop": ["echo user", "turn_end"], "StopFailure": ["turn_error"], "UserPromptSubmit": ["turn_start"]}' "$got"
+  '{"Notification": ["needs_input"], "SessionEnd": ["session_end"], "Stop": ["echo user", "turn_end --guard"], "StopFailure": ["turn_error"], "UserPromptSubmit": ["turn_start"]}' "$got"
 
 got=$(run_py "
 once = m.merge_signal_permission({'permissions': {'allow': ['Read(src/**)']}})
