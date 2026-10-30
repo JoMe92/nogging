@@ -203,5 +203,17 @@ with tempfile.TemporaryDirectory(prefix='nogg loop codex ') as td:
         # After its kickoff the run binds to its own thread, not the earlier one.
         rollout(own, '2026-10-30T12:00:05Z', 'developer text', f'{header}\nlook')
         assert m.resolve_codex_thread_id(dict(run)) == own
+        # No other session takes a loop run's rollout, and a bad server entry refuses cleanly.
+        (day / f'rollout-2026-10-30T12-00-00-{foreign}.jsonl').unlink()
+        assert m.resolve_codex_thread_id({k: v for k, v in run.items() if not k.startswith('loop_')}) is None
+    (state / 'mcp').write_text('["bare"]')
+    os.environ['STUB_STATE'] = str(state)
+    with patch.dict(os.environ, {'PATH': env['PATH']}):
+        try:
+            m.verify_codex_no_commands(str(work))
+        except RuntimeError as exc:
+            assert 'MCP servers enabled (bare)' in str(exc), exc
+        else:
+            raise AssertionError('a bare MCP entry was accepted')
 print('loop-codex-launch: ok')
 PY

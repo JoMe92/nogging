@@ -4225,7 +4225,7 @@ def codex_rendered_tools(cwd, model=None, disabled=()):
     code-mode `exec` tool. The list differs per model, and it omits MCP tools."""
     args = ["debug", "prompt-input"]
     if model:
-        args += ["-c", f'model="{model}"']
+        args += ["-c", f"model={json.dumps(model)}"]
     for feature in disabled:
         args += ["--disable", feature]
     names = set()
@@ -4247,8 +4247,9 @@ def verify_codex_no_commands(cwd, model=None):
     a tool that only appears with the features off may be a fallback, and an
     enabled MCP server's tools never appear in the list, so each of those refuses:
     a run that must not execute commands never starts on an unproven removal."""
-    servers = sorted(str(server.get("name")) for server in codex_offline_json(cwd, "mcp", "list", "--json")
-                     if not isinstance(server, dict) or server.get("enabled") is not False)
+    servers = sorted(str(server.get("name") if isinstance(server, dict) else server)
+                     for server in codex_offline_json(cwd, "mcp", "list", "--json")
+                     if not (isinstance(server, dict) and server.get("enabled") is False))
     if servers:
         raise RuntimeError(f"Codex has MCP servers enabled ({', '.join(servers)}), whose tools its "
                            "tool list does not show; a no-commands launch is refused")
@@ -7792,11 +7793,12 @@ def resolve_codex_thread_id(rec, merge=False):
     thread may simply not have started (e.g. still sitting at Codex's
     hook-trust prompt). A loop run starts no turn before its kickoff, so it has no
     rollout until then and another same-cwd session's would match: it binds only
-    to the rollout holding its own run header."""
+    to the rollout holding its own run header, and no other session binds to one
+    holding a run header."""
     if rec.get("codex_thread_id"):
         return rec["codex_thread_id"]
-    marker = (f"[nogg loop {rec.get('loop_name')} run {rec['loop_run_id']}]".encode()
-              if rec.get("loop_run_id") else None)
+    own_marker = (f"[nogg loop {rec.get('loop_name')} run {rec['loop_run_id']}]".encode()
+                  if rec.get("loop_run_id") else None)
     try:
         started = parse_iso(rec["started_at"]) - dt.timedelta(seconds=5)
     except (KeyError, ValueError):
@@ -7814,7 +7816,8 @@ def resolve_codex_thread_id(rec, merge=False):
             ts_dt = parse_iso(ts)
         except ValueError:
             continue
-        if ts_dt < started or (marker and not _codex_rollout_mentions(path, marker)):
+        if ts_dt < started or (_codex_rollout_mentions(path, own_marker or b"[nogg loop ")
+                               != bool(own_marker)):
             continue
         candidates.append((ts_dt, thread_id))
     if not candidates:
