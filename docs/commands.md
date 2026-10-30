@@ -701,8 +701,10 @@ host-local path. Runtime state and approvals always stay under
 ./scripts/nogg loop log dependency-check --limit 20
 ./scripts/nogg loop pause dependency-check
 ./scripts/nogg loop resume dependency-check
+./scripts/nogg loop run-now dependency-check
 ./scripts/nogg loop approve dependency-check
 ./scripts/nogg loop remove dependency-check
+./scripts/nogg loop tick
 ```
 
 **Used by.** Operators and the Orchestration Agent. Mutations are refused in
@@ -741,6 +743,11 @@ Pause one loop on this host without editing its versioned definition.
 
 Resume one loop on this host and clear its suspended status.
 
+### loop run-now
+
+Run one approved loop immediately through usage and target admission, without
+applying its schedule or time window. A busy target is reported as skipped.
+
 ### loop approve
 
 Display the mode, target or agent, tier, authority and prompt hash, then approve
@@ -749,3 +756,9 @@ the definition currently on disk for this host.
 ### loop remove
 
 Remove the definition and its prompt while retaining run history.
+
+### loop tick
+
+Evaluate every enabled loop once. The command runs only in the main checkout,
+refuses every supervised session, and exits successfully when another tick
+holds the scheduler lock.

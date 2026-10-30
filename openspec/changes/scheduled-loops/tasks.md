@@ -113,7 +113,7 @@
 
 ## 4. Scheduler (feat/)
 
-- [ ] TASK-SCL-005 [complex] [~850 loc] Scheduler tick, run log, usage admission and send runs.
+- [x] TASK-SCL-005 [complex] [~850 loc] Scheduler tick, run log, usage admission and send runs.
   Per design Decisions 5, 6, 7 and 9: add `nogg loop tick` and `run-now`.
   - The tick runs only in the main checkout and is refused in every supervised
     session. It takes a non-blocking flock on `.nogging/locks/loops.lock` and

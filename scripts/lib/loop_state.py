@@ -16,7 +16,9 @@ def _atomic_json(path: Path, value) -> None:
     fd, name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
-            json.dump(value, stream, indent=2, sort_keys=True)
+            json.dump(value, stream, indent=2, sort_keys=True,
+                      default=lambda item: item.isoformat().replace("+00:00", "Z")
+                      if isinstance(item, datetime) else str(item))
             stream.write("\n")
             stream.flush()
             os.fsync(stream.fileno())

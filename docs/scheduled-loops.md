@@ -45,6 +45,37 @@ the accepted forms in detail; `nogg loop add --help` shows the creation flags.
 }
 ```
 
+An interval longer than one day keeps its phase from a full local anchor date:
+
+```json
+{
+  "schema_version": 1,
+  "timezone": "Europe/Berlin",
+  "loops": {
+    "dependency-check": {
+      "schedule": {"every": "5d", "start": "2026-10-28T03:00"},
+      "run": {"mode": "send", "target": "orchestrator"}
+    }
+  }
+}
+```
+
+An anchored daily interval restarts each local day. This schedule fires at
+02:07, 07:07, 12:07, 17:07 and 22:07:
+
+```json
+{
+  "schema_version": 1,
+  "timezone": "Europe/Berlin",
+  "loops": {
+    "orchestrator-issues": {
+      "schedule": {"every": "5h", "start": "02:07"},
+      "run": {"mode": "send", "target": "orchestrator"}
+    }
+  }
+}
+```
+
 ## Run modes and approval
 
 `send` delivers an approved standing instruction to the orchestrator. `launch`
@@ -75,8 +106,10 @@ are read-only and available to all roles.
 ./scripts/nogg loop log night-work --limit 20
 ./scripts/nogg loop pause night-work
 ./scripts/nogg loop resume night-work
+./scripts/nogg loop run-now night-work
 ./scripts/nogg loop approve night-work
 ./scripts/nogg loop remove night-work
+./scripts/nogg loop tick
 ```
 
 `list` reports the host state, next slot in local time and UTC, and latest
@@ -98,3 +131,45 @@ approved change before running `nogg loop approve`. If its status is paused or
 suspended, inspect the host-local state before resuming it. A loop definition
 alone does not schedule work; the operator must enable the scheduler timer when
 that capability is installed, or invoke the supported scheduler manually.
+
+### Tick and run-now
+
+The scheduler evaluates approved definitions once per minute from the main
+checkout. Each pass records `last_tick` and takes a non-blocking lock; an
+overlapping pass reports that it is busy and exits without evaluating loops.
+Missed schedule slots are coalesced, and the latest slot is considered only
+until its grace period, next slot, or window end. A loop added or approved now
+starts evaluating from that approval time, so it never catches up on earlier
+slots. `nogg loop run-now <name>` uses the same approval, pause, usage and target
+checks but ignores the schedule and window.
+
+Send mode targets only the canonical Orchestration Agent session. It sends the
+prompt with the `[nogg loop <name> run <id>]` header through verified delivery
+only while the target is idle. Working, waiting for input, rate limited or
+absent targets defer scheduled work until the slot deadline; a manual run-now
+reports the reason as skipped. The scheduler never queues to a busy session,
+starts or restarts the orchestrator, or stops it. A delivered run completes
+after two consecutive idle observations. A run beyond `max_runtime` is logged
+as unconfirmed and does not stop the orchestrator. Transient delivery failures
+retry after two and four minutes, with at most three attempts per slot and never
+past its deadline. Three consecutive failed slots suspend the loop until it is
+resumed.
+
+### Usage admission
+
+Every send observes the target agent's usage windows and applies the repository
+usage gate, including its estimate and outstanding reservations. A loop's
+`usage.max_used_percent` can impose a stricter limit. Known over-budget and
+unknown-denied observations skip the slot with the bucket and reset details;
+unknown-warn is recorded on the run. A denial never changes the agent or model.
+
+### Run log
+
+The host-local `runs.jsonl` file contains one version 1 JSON object per event.
+Each row has `schema_version`, `at`, `loop`, `run_id`, `slot`, `trigger` and
+`event`, plus known `reason`, `mode`, `target`, `session`, `agent`, `tier`,
+`attempt`, `usage` and `log_path` fields. Events are `missed`, `deferred`,
+`skipped`, `starting`, `delivered`, `started`, `retry-scheduled`, `completed`,
+`failed`, `stale`, `stopped-stale`, `unconfirmed` and `suspended`. `starting` is
+recorded before delivery begins. The log never stores prompt text and rotates
+at 1 MiB, keeping three older generations.
