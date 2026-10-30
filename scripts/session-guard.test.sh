@@ -319,6 +319,83 @@ NODE
   rm -f "$root/dirty.txt"
 fi
 
+# --- a sandboxed launch refuses before any side effect ----------------------------
+mkdir -p "$root/.nogging"
+cp -r "$repo_root/.nogging/launch-profiles" "$root/.nogging/launch-profiles"
+cp -r "$repo_root/.nogging/launch-prompts" "$root/.nogging/launch-prompts"
+if [[ $(id -u) -eq 0 ]]; then
+  ok "launch refusal skipped (root ignores file modes)"
+else
+  export XDG_CACHE_HOME="$work/cache"
+  usage_dir="$XDG_CACHE_HOME/nogging/usage/reservations"
+  mkdir -p "$usage_dir"; chmod 555 "$usage_dir"
+  before=$(ls -A "$sessions" | sort)
+  rc=0; out=$("$nogg" session launch --role lead --bead SPEC-abc --agent claude --full-access 2>&1) || rc=$?
+  chmod 755 "$usage_dir"
+  expect "a launch that cannot write its state is refused" 1 "$rc"
+  [[ "$out" == *"this session cannot launch child sessions"* ]] && ok "the refusal is named" || bad "refusal: $out"
+  [[ "$out" == *"$usage_dir"* ]] && ok "the refusal names the path" || bad "refusal: $out"
+  [[ "$out" == *"signal blocked and let the orchestrator do it"* ]] && ok "the refusal says what to do" || bad "refusal: $out"
+  [[ "$out" != *"Errno"* ]] && ok "no raw filesystem error reaches the caller" || bad "raw error: $out"
+  expect "the refusal leaves no session, record or log" "$before" "$(ls -A "$sessions" | sort)"
+  unset XDG_CACHE_HOME
+fi
+python3 - "$nogg" <<'PY' && ok "a read-only error from the usage gate is refused the same way" || bad "usage gate OSError"
+import errno, sys
+from importlib.machinery import SourceFileLoader
+from unittest.mock import patch
+m = SourceFileLoader("sf_swk003c", sys.argv[1]).load_module()
+error = OSError(errno.EROFS, "Read-only file system", "/x/reservations")
+with patch.object(m, "require_agent_binary"), patch.object(m, "read_only_launch_path", return_value=None), \
+     patch.object(m, "preflight_session_helpers"), patch.object(m, "bead_records", return_value=[{"labels": []}]), \
+     patch.object(m, "unmet_dependencies", return_value=[]), patch.object(m, "session_state_grants", return_value=[]), \
+     patch.object(m, "usage_gate_admission", side_effect=error):
+    try:
+        m._session_launch("lead", "SPEC-abc", None, False, None, full_access=True, agent="claude")
+    except RuntimeError as exc:
+        assert "cannot launch child sessions" in str(exc) and "Errno" not in str(exc), exc
+    else:
+        raise SystemExit("no refusal")
+PY
+
+# --- session capabilities, derived from what launch resolves ------------------------
+caps() { "$nogg" session capabilities --json "$@"; }
+answer() { python3 -c "import json, sys; print(json.loads(sys.argv[1])['capabilities'][sys.argv[2]]['answer'])" "$1" "$2"; }
+
+trusted=$(caps --agent codex --profile trusted)
+expect "codex trusted: the sandbox cannot write the usage ledger" no "$(answer "$trusted" launch_child_sessions)"
+expect "codex trusted: reaches Dolt" yes "$(answer "$trusted" reach_dolt)"
+expect "codex trusted: pushes" yes "$(answer "$trusted" push)"
+expect "codex trusted: in-process specialists are unknown" unknown "$(answer "$trusted" in_process_specialists)"
+restricted=$(caps --agent codex --profile restricted)
+expect "codex restricted: no network, no Dolt" no "$(answer "$restricted" reach_dolt)"
+expect "codex restricted: no push" no "$(answer "$restricted" push)"
+expect "codex restricted: no pull request without a push" no "$(answer "$restricted" open_pull_request)"
+claude_trusted=$(caps --agent claude --profile trusted)
+expect "claude trusted: launches children" yes "$(answer "$claude_trusted" launch_child_sessions)"
+expect "claude trusted: pushes" yes "$(answer "$claude_trusted" push)"
+claude_restricted=$(caps --agent claude --profile restricted)
+expect "claude restricted: the profile denies push" no "$(answer "$claude_restricted" push)"
+expect "claude restricted: no pull request without a push" no "$(answer "$claude_restricted" open_pull_request)"
+mkdir -p "$root/.claude/agents"; printf 'x\n' > "$root/.claude/agents/reviewer.md"
+expect "claude: specialists come from .claude/agents" yes \
+  "$(answer "$(caps --agent claude --profile trusted)" in_process_specialists)"
+rm "$root/.claude/agents/reviewer.md"
+expect "claude: none without an agent file" no \
+  "$(answer "$(caps --agent claude --profile trusted)" in_process_specialists)"
+expect "pi: no sandbox, so a push is possible" yes "$(answer "$(caps --agent pi --profile trusted)" push)"
+expect "antigravity: what is not derived reads unknown" unknown \
+  "$(answer "$(caps --agent antigravity --profile restricted)" push)"
+text=$("$nogg" session capabilities --agent codex --profile trusted)
+[[ "$text" == *"launch_child_sessions"*"no"* ]] && ok "capabilities reads as a table" || bad "text: $text"
+rc=0; "$nogg" session capabilities --agent codex --profile nonsense >/dev/null 2>&1 || rc=$?
+expect "an unknown profile is refused, as a launch would" 1 "$rc"
+
+# Every answer follows the profile: a spec with the network off changes the table.
+sed -i 's/^network_access *= *true/network_access = false/' "$root/.nogging/launch-profiles/trusted.codex.toml"
+expect "the table follows the resolved profile, not a list" no \
+  "$(answer "$(caps --agent codex --profile trusted)" push)"
+
 # --- wiring ---------------------------------------------------------------------
 python3 - "$nogg" <<'PY' && ok "Claude's Stop hook carries --guard, and only Stop" || bad "Stop hook wiring"
 import sys

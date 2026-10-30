@@ -5,7 +5,7 @@ It intentionally contains no LLM call and makes no semantic product decision.
 """
 from __future__ import annotations
 
-import argparse, base64, datetime as dt, fcntl, fnmatch, getpass, hashlib, importlib.util, json, math, os, re, select, shlex, shutil, signal, socket, subprocess, sys, tempfile, time, uuid
+import argparse, base64, datetime as dt, errno, fcntl, fnmatch, getpass, hashlib, importlib.util, json, math, os, re, select, shlex, shutil, signal, socket, subprocess, sys, tempfile, time, uuid
 import urllib.parse, urllib.request
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -5126,6 +5126,30 @@ def session_launch_notes(role_or_agent, agent_or_profile=None, profile_label=Non
 launch_notes = session_launch_notes
 
 
+LAUNCH_REFUSAL = "this session cannot launch child sessions ({reason}); signal blocked and let the orchestrator do it"
+def launch_state_paths(role="lead"):
+    """What a launch of `role` must be able to write, known before it writes any
+    of it. Shared by the launch refusal and `session capabilities`."""
+    paths = [ROOT / scfg("session_state_dir", ".nogging/state/sessions")]
+    usage = usage_module()
+    try:
+        config = usage.gate_config(CFG.get("usage_gate"))
+    except ValueError:
+        return paths    # the gate refuses a bad config itself, with a better message
+    group = "specialist" if role.startswith("specialist:") else role
+    if config["enabled"] and group not in config["exclude_roles"]:
+        paths.append(usage.Reservations().root)
+    return paths
+def read_only_launch_path(role="lead"):
+    """The first state path this process cannot write, or None. It widens nothing:
+    a sandboxed caller was going to fail anyway, only later and less clearly."""
+    for path in launch_state_paths(role):
+        existing = Path(path)
+        while not existing.exists() and existing != existing.parent:
+            existing = existing.parent
+        if not os.access(existing, os.W_OK):
+            return path
+    return None
 def session_launch(*args, **kwargs):
     pending_before = set(_USAGE_PENDING)
     try:
@@ -5316,6 +5340,9 @@ def _session_launch(role, bead, cwd, read_only, owner,
         validate_codex_resume_id(resume)
     role_meta, role_slug = normalize_role(role)
     planning_launch_authority(role_meta, agent, profile, full_access)
+    unwritable = read_only_launch_path(role_meta)
+    if unwritable is not None:
+        raise RuntimeError(LAUNCH_REFUSAL.format(reason=f"{unwritable} is read-only here"))
     is_orchestrator = role_meta == "orchestrator"
     is_planning = role_meta == "planning"
     if os.environ.get("NOGG_CODEX_EXTRA_WRITABLE_ROOTS"):
@@ -5447,7 +5474,12 @@ def _session_launch(role, bead, cwd, read_only, owner,
                 f"Bead {bead} has an unmet dependency on {', '.join(blocking)}; launch refused")
     # Usage admission is the last refusal before helper negotiation, worktree,
     # trust, tmux or record side effects.
-    usage_gate = usage_gate_admission(role_meta, agent, records, ignore_usage_gate, model=selected_model)
+    try:
+        usage_gate = usage_gate_admission(role_meta, agent, records, ignore_usage_gate, model=selected_model)
+    except OSError as exc:
+        if exc.errno not in (errno.EROFS, errno.EACCES, errno.EPERM):
+            raise
+        raise RuntimeError(LAUNCH_REFUSAL.format(reason=f"{exc.filename or 'the usage ledger'} is read-only here")) from exc
     # The orchestrator is a singleton: a fixed, nonce-free `nogg-orchestrator-<slug>`
     # name (a stale terminal record of the same name is reused in place). Every
     # other role gets the deterministic `sf-<role>-<bead>-<nonce>` shape.
@@ -5768,6 +5800,93 @@ def _session_launch(role, bead, cwd, read_only, owner,
             print(f"WARN: {warning}")
     return name
 
+CAPABILITIES = ("launch_child_sessions", "reach_dolt", "push", "open_pull_request",
+                "rebase_without_operator", "in_process_specialists")
+def _claude_rule_matches(rule, command):
+    match = re.fullmatch(r"Bash\((.*)\)", rule) if isinstance(rule, str) else None
+    if not match:
+        return False
+    pattern = match.group(1)
+    if pattern.endswith(":*"):
+        return command == pattern[:-2] or command.startswith(pattern[:-2] + " ")
+    return command.startswith(pattern[:-1]) if pattern.endswith("*") else command == pattern
+def _claude_permission(settings, command):
+    """`no` for a deny rule, `yes` for bypass or an allow rule, and `unknown` for
+    anything else, which another settings layer or a person may still decide."""
+    permissions = settings.get("permissions") or {}
+    if any(_claude_rule_matches(rule, command) for rule in permissions.get("deny") or []):
+        return "no", "the profile denies it"
+    if permissions.get("defaultMode") == "bypassPermissions":
+        return "yes", "the profile bypasses permission prompts"
+    if any(_claude_rule_matches(rule, command) for rule in permissions.get("allow") or []):
+        return "yes", "the profile allows it"
+    return "unknown", "no rule in the profile decides it; it may need approval"
+def _claude_capabilities(settings):
+    settings = merge_floor(merge_signal_permission(merge_supervised_launch_permissions(settings, "lead")))
+    specialists = sorted((ROOT / ".claude/agents").glob("*.md"))
+    return {
+        "reach_dolt": _claude_permission(settings, "bd show"),
+        "push": _claude_permission(settings, "git push"),
+        "open_pull_request": _claude_permission(settings, "gh pr create"),
+        "launch_child_sessions": _claude_permission(settings, "./scripts/nogg session launch"),
+        "rebase_without_operator": _claude_permission(settings, "./scripts/nogg worktree rebase"),
+        "in_process_specialists": (("yes", f"{len(specialists)} agents in .claude/agents") if specialists
+                                   else ("no", "no agent file in .claude/agents")),
+    }
+def _codex_capabilities(spec):
+    sandbox, network = spec["sandbox"], spec["network_access"]
+    offline = ("no", "the sandbox has no network")
+    online = ("yes", "the sandbox allows the network")
+    outside = [path for path in launch_state_paths("lead") if ROOT not in (Path(path), *Path(path).parents)]
+    if sandbox == "danger-full-access":
+        launch = ("yes", "no filesystem sandbox")
+    elif sandbox == "read-only" or outside:
+        launch = ("no", f"{outside[0]} is outside the sandbox's writable roots" if outside else "read-only sandbox")
+    else:
+        launch = ("yes", "every launch state path is writable")
+    return {
+        "launch_child_sessions": launch,
+        "reach_dolt": online if network else offline,
+        "push": online if network and sandbox != "read-only" else offline,
+        "open_pull_request": online if network and sandbox != "read-only" else offline,
+        "rebase_without_operator": ("unknown", "the broker socket from inside Codex's sandbox is not established"),
+        "in_process_specialists": ("unknown", "Nogging dispatches no Codex subagent; `multi_agent` is untested here"),
+    }
+def _pi_capabilities():
+    open_host = ("yes", "Pi has no sandbox; only the guard's command floor applies, at every authority level")
+    unwritable = read_only_launch_path("lead")
+    return {
+        "launch_child_sessions": ("no", f"{unwritable} is read-only here") if unwritable else open_host,
+        "reach_dolt": open_host, "push": open_host, "open_pull_request": open_host,
+        "rebase_without_operator": ("yes", "the sandbox broker rebases a clean worktree"),
+        "in_process_specialists": ("unknown", "Nogging dispatches no Pi subagent"),
+    }
+def session_capabilities(agent=None, profile=None, as_json=False):
+    """What a Lead of this agent and authority can do, derived from what launch
+    resolves (session-wake design Decision 11). `unknown` means it cannot be
+    established here, and a caller treats it as no."""
+    agent = resolve_agent(agent)
+    profile_path, profile_label, _ = resolved_launch_pair(profile, None, False, agent)
+    if agent == "claude":
+        found = _claude_capabilities(load_profile_settings(profile_path))
+    elif agent == "codex":
+        found = _codex_capabilities(load_codex_spec(profile_path))
+    elif agent == "pi":
+        load_pi_spec(profile_path)
+        found = _pi_capabilities()
+    else:
+        load_antigravity_spec(profile_path)
+        found = {}
+    if found.get("push", ("unknown",))[0] == "no":
+        found["open_pull_request"] = ("no", "it cannot push a branch")
+    table = {name: dict(zip(("answer", "reason"), found.get(name, ("unknown", f"not derived for {agent}"))))
+             for name in CAPABILITIES}
+    if as_json:
+        print(json.dumps({"agent": agent, "profile": profile_label, "capabilities": table}, indent=2))
+        return
+    print(f"{agent} / {profile_label}")
+    for name, row in table.items():
+        print(f"  {name:<24} {row['answer']:<8} {row['reason']}")
 def reconciled_state(rec, live):
     """The state to report: an active record whose backend session has vanished is
     `failed` (a crash), not the stale value on disk."""
@@ -9829,6 +9948,9 @@ def main():
     semit.add_argument("event")
     semit.add_argument("--guard", action="store_true", help="the Stop hook: continue a stop with gaps once")
     semit.add_argument("--runtime", choices=("claude", "codex", "pi"), help="the runtime firing this hook")
+    scap = ssub.add_parser("capabilities", help="what a Lead of this agent and authority can do")
+    scap.add_argument("--agent", choices=("claude", "codex", "pi", "antigravity", "agy"))
+    scap.add_argument("--profile"); scap.add_argument("--json", action="store_true")
     scc = ssub.add_parser("completion-check", help="report this session's dirty, unpushed and no-signal gaps")
     scc.add_argument("--json", action="store_true")
     ssig = ssub.add_parser("signal", help="state that this supervised session is blocked or done")
@@ -10020,6 +10142,8 @@ def session_cmd(args):
         session_resume_when_ready(args.name, args.message)
     elif args.session_command == "emit":
         session_emit(args.event, args.guard, args.runtime)
+    elif args.session_command == "capabilities":
+        session_capabilities(args.agent, args.profile, args.json)
     elif args.session_command == "completion-check":
         session_completion_check(args.json)
     elif args.session_command == "signal":
