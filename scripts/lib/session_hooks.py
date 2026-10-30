@@ -19,8 +19,10 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-HOOK_COMMAND = ('[ -z "${NOGG_SESSION_NAME:-}" ] || exec "$NOGG_SESSION_ROOT/scripts/nogg" '
-                'session emit turn_end --guard --runtime codex')
+# User-level, so it also fires in repositories on an older Nogging, which refuse
+# `--guard`: any failure must end the hook with 0, never read as a block.
+HOOK_COMMAND = ('[ -z "${NOGG_SESSION_NAME:-}" ] || "$NOGG_SESSION_ROOT/scripts/nogg" '
+                'session emit turn_end --guard --runtime codex || exit 0')
 HOOK_TIMEOUT_SECONDS = 30
 # Also recognizes an edited copy, which status must report as `modified`.
 HOOK_MARK = "session emit turn_end --guard"
@@ -78,7 +80,7 @@ def remove_stop(document: Any) -> bool:
     for group in groups:
         handlers = group.get("hooks", [])
         ours = [index for index, handler in enumerate(handlers) if _is_ours(handler)]
-        if ours and ours[-1] != len(handlers) - len(ours):
+        if ours and ours[0] != len(handlers) - len(ours):
             raise ValueError("another handler follows the Nogging hook in its group; remove it by hand")
         if ours:
             group["hooks"] = [handler for handler in handlers if not _is_ours(handler)]
@@ -142,8 +144,12 @@ class AppServer:
     def __enter__(self) -> "AppServer":
         self.process = subprocess.Popen(self.argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                         stderr=subprocess.DEVNULL, env=self.env, cwd=self.cwd)
-        self.request("initialize", {"clientInfo": {"name": "nogg", "title": "Nogging", "version": "1"}})
-        self._send({"method": "initialized"})
+        try:
+            self.request("initialize", {"clientInfo": {"name": "nogg", "title": "Nogging", "version": "1"}})
+            self._send({"method": "initialized"})
+        except BaseException:
+            self.__exit__()     # a failed `with` entry never reaches __exit__ itself
+            raise
         return self
 
     def __exit__(self, *_exc: Any) -> None:
@@ -201,14 +207,17 @@ def list_hooks(server: Any, cwd: str) -> list[dict[str, Any]]:
     return hooks
 
 
+def find_hooks(hooks: list[dict[str, Any]], path: Path) -> list[dict[str, Any]]:
+    """Every user-level Stop hook Codex lists from `path` that is ours."""
+    return [hook for hook in hooks
+            if hook.get("eventName") == "stop" and hook.get("source") == "user"
+            and HOOK_MARK in str(hook.get("command", ""))
+            and Path(str(hook.get("sourcePath"))).resolve() == path.resolve()]
+
+
 def find_hook(hooks: list[dict[str, Any]], path: Path) -> dict[str, Any] | None:
-    """The user-level Stop hook Codex lists from `path` that is ours, if any."""
-    for hook in hooks:
-        if (hook.get("eventName") == "stop" and hook.get("source") == "user"
-                and HOOK_MARK in str(hook.get("command", ""))
-                and Path(str(hook.get("sourcePath"))).resolve() == path.resolve()):
-            return hook
-    return None
+    found = find_hooks(hooks, path)
+    return found[0] if found else None
 
 
 def is_exact(hook: dict[str, Any]) -> bool:

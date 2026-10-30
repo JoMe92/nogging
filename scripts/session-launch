@@ -319,7 +319,16 @@ POLICY
       exec codex resume "$resume_id" "$@"
     fi
     if [ -n "$prompt" ] && [ -f "$prompt" ]; then
-      exec codex "$@" "$(cat "$prompt")"
+      first_turn=$(cat "$prompt")
+      # A positional prompt starts a turn at once, before any kickoff. Without
+      # this the session follows AGENTS.md's resume protocol on its own and can
+      # adopt another live Lead's Bead (SPEC-eeuv).
+      if [ -n "$bead" ]; then
+        first_turn="Startup only: read the following session instructions and acknowledge readiness in one line. This session was launched for Bead $bead and works only that Bead. Until a separate operator message tells you to begin, do not run recovery, do not claim or touch any Bead, worktree or branch, and make no commit.
+
+$first_turn"
+      fi
+      exec codex "$@" "$first_turn"
     fi
     exec codex "$@"
     ;;

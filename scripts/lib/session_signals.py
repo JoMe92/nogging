@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import stat
 from typing import Any, Callable
 
 SCHEMA = 2
@@ -142,9 +143,14 @@ def event_state(record: dict[str, Any]) -> str | None:
 
 
 def read_events(path: str | os.PathLike[str], limit: int = EVENTS_ROTATE_BYTES) -> list[dict[str, Any]]:
-    """Parsed events from the end of a per-session file; junk lines are skipped."""
+    """Parsed events from the end of a per-session file; junk lines are skipped. The
+    file is the session's to replace and an operator's `doctor` reads it, so anything
+    but a regular file reads as empty: opening a planted FIFO would block forever."""
     try:
-        with open(path, "rb") as stream:
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+        with os.fdopen(fd, "rb") as stream:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                return []
             stream.seek(0, os.SEEK_END)
             size = stream.tell()
             stream.seek(max(0, size - limit))
@@ -193,6 +199,16 @@ GUARD_MESSAGE = ("You are ending your turn with: {gaps}. Commit, push and open t
                  "Do not answer with a plan.")
 
 
+def this_turn(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The events since the last `turn_end`. Codex hooks report no `turn_start`, so a
+    stop must not count a signal from an earlier turn. Only the guard narrows this
+    far: a finished Lead that signalled and went idle has no gap."""
+    for index in range(len(events) - 1, -1, -1):
+        if events[index].get("event") == "turn_end":
+            return events[index + 1:]
+    return events
+
+
 def completion_gaps(git: dict[str, Any] | None, events: list[dict[str, Any]]) -> list[str]:
     """`dirty`, `unpushed` and `no-signal` from injected git facts and the session's
     events. `git` is {"dirty", "upstream", "ahead"}, or None when it is unknown."""
@@ -215,13 +231,17 @@ def guard_message(gaps: list[str]) -> str:
 def guard_applies(session: dict[str, Any], events: list[dict[str, Any]], payload: dict[str, Any] | None = None) -> bool:
     """Whether a stop may be continued at all. Only a kicked-off Lead under the
     `autonomous` prompt has the authority to finish; a startup turn before its
-    kickoff has no work to complete. `stop_hook_active` is the bound on Claude and
-    Codex: a second stop in a sequence always passes."""
-    payload = payload or {}
+    kickoff has no work to complete. A `payload` is a Stop hook's: it blocks only
+    when `stop_hook_active` is explicitly False, because that field is the bound on
+    Claude and Codex and an unreadable payload must not lose it. `guard_continue`
+    backs it up: a stop sequence is never continued twice. Pi passes None."""
     if (session.get("role") != "lead" or session.get("launch_prompt") != "autonomous"
             or session.get("agent") not in GUARDED_AGENTS or not session.get("kickoff_sent_at")):
         return False
-    if payload.get("stop_hook_active") or payload.get("error") or background_count(payload.get("background_tasks")):
+    if payload is not None and payload.get("stop_hook_active") is not False:
+        return False
+    payload = payload or {}
+    if payload.get("error") or background_count(payload.get("background_tasks")):
         return False
     # Codex hooks report no `turn_start`, so `turn_end` closes a turn here too: a
     # signal from an earlier turn must not excuse this one.
@@ -229,7 +249,7 @@ def guard_applies(session: dict[str, Any], events: list[dict[str, Any]], payload
         kind = record.get("event")
         if kind in ("turn_start", "turn_end"):
             return True
-        if kind in SIGNALS or kind == "turn_error":
+        if kind in SIGNALS or kind in ("turn_error", GUARD_CONTINUE):
             return False
     return True
 

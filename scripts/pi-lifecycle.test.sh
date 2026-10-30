@@ -101,6 +101,13 @@ if (mode === "e2e") {
   process.exit(fail);
 }
 
+if (mode === "nested") {
+  const pi = fakePi();
+  load(pi);
+  check("a Pi child of another runtime's session registers nothing", pi.handlers.size === 0);
+  process.exit(fail);
+}
+
 if (mode === "stuck") {
   const pi = fakePi();
   load(pi);
@@ -201,6 +208,7 @@ if [[ $rc -eq 2 ]]; then
 fi
 echo "$out"
 [[ $rc -eq 0 ]] || { cat "$work/stderr" >&2; echo "pi-lifecycle checks failed" >&2; exit 1; }
+NOGG_SESSION_AGENT=claude run nested 2>/dev/null || { echo "pi-lifecycle checks failed" >&2; exit 1; }
 
 # end to end: the real extension, the real `session emit`, then `session watch`
 if command -v python3 >/dev/null 2>&1 && [[ -x "$root/scripts/nogg" ]]; then

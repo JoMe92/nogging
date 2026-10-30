@@ -132,6 +132,7 @@ expect "unrelated top-level keys stay" True "$(hooks_py "print(doc['other']['kep
 expect "only one Stop entry is added" 1 "$(hooks_py "print(len(doc['hooks']['Stop']))")"
 expect "the mode is not widened" 640 "$(stat -c %a "$CODEX_HOME/hooks.json")"
 expect "the install is trusted, as Codex reads it back" trusted "$(state)"
+has "status keeps the warning while it is installed" "no sandbox boundary" "$(status)"
 grep -q 'config/value/write' "$CODEX_HOME/calls.log" && ok "trust goes through config/value/write" || bad "no config write"
 ls -A "$CODEX_HOME" | grep -q '^\.nogging' && bad "a temporary or lock file was left" || ok "no temporary or lock file is left"
 
@@ -146,6 +147,16 @@ rc=0; out=$(env -u NOGG_SESSION_NAME -u NOGG_SESSION_ROOT sh -c "$command" </dev
 expect "the hook exits 0 outside a session" 0 "$rc"
 expect "the hook prints nothing outside a session" "" "$out"
 [[ "$command" != *"$root"* && "$command" != *"$HOME"* ]] && ok "the command names no path" || bad "command: $command"
+has "install warns about what the hook runs outside the sandbox" "a sandboxed session can edit" "$(install)"
+# User-level, so it also fires in a repository on an older Nogging, whose argparse
+# exits 2 on --guard: that must never read as a block.
+mkdir -p "$work/old/scripts"
+printf '#!/bin/sh\necho "usage: nogg" >&2\nexit 2\n' > "$work/old/scripts/nogg"; chmod +x "$work/old/scripts/nogg"
+rc=0; out=$(NOGG_SESSION_NAME=s NOGG_SESSION_ROOT="$work/old" sh -c "$command" </dev/null 2>/dev/null) || rc=$?
+expect "an older nogg cannot turn a stop into a block" 0 "$rc"
+expect "an older nogg prints nothing to the hook's stdout" "" "$out"
+rc=0; NOGG_SESSION_NAME=s NOGG_SESSION_ROOT="$work/absent" sh -c "$command" </dev/null >/dev/null 2>&1 || rc=$?
+expect "a missing nogg cannot either" 0 "$rc"
 
 # --- modified --------------------------------------------------------------------
 cp "$CODEX_HOME/hooks.json" "$work/hooks.good"
@@ -193,6 +204,25 @@ expect "the Stop key is gone" False "$(hooks_py "print('Stop' in doc['hooks'])")
 hooks_py "print(json.dumps(doc['hooks']['SessionStart'], ensure_ascii=False))" > "$work/foreign.after"
 cmp -s "$work/foreign.before" "$work/foreign.after" && ok "remove leaves the foreign entry" || bad "remove changed the foreign entry"
 expect "remove clears the trust record" "{}" "$(cat "$CODEX_HOME/trust.json")"
+python3 - <<'PY'
+import json, os
+path = os.path.join(os.environ["CODEX_HOME"], "hooks.json")
+doc = json.load(open(path))
+marked = {"type": "command", "command": "x session emit turn_end --guard"}
+doc["hooks"]["Stop"] = [{"hooks": [marked, {"type": "command", "command": "echo shared"}]}]
+json.dump(doc, open(path, "w"))
+PY
+cp "$CODEX_HOME/hooks.json" "$work/hooks.shared"
+rc=0; out=$(remove 2>&1) || rc=$?
+expect "a shared group is refused" 1 "$rc"
+cmp -s "$CODEX_HOME/hooks.json" "$work/hooks.shared" && ok "the refusal changes nothing" || bad "the refusal wrote"
+python3 - <<'PY'
+import json, os
+path = os.path.join(os.environ["CODEX_HOME"], "hooks.json")
+doc = json.load(open(path))
+del doc["hooks"]["Stop"]
+json.dump(doc, open(path, "w"))
+PY
 out=$(remove)
 has "a second remove says so" "nothing to remove" "$out"
 

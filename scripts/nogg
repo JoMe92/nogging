@@ -280,6 +280,7 @@ def recorded_worktree_lines():
 def worktree_integrity_diagnostics():
     """Read-only half-checkout and abandoned-rebase-journal diagnostics."""
     lines, attention = [], []
+    owners = bead_owners()
     for record_path, record in worktree_records():
         if not isinstance(record, dict) or record.get("kind") != "implementation":
             continue
@@ -293,6 +294,13 @@ def worktree_integrity_diagnostics():
             continue
         state = result["state"]
         if state not in ("half-applied", "mixed"):
+            continue
+        owner = owners.get(record.get("bead_id"))
+        if owner:
+            # Its Lead may be mid-operation: never hand out a restore or clean hint.
+            lines.append(f"worktree {Path(location).name}: {state}; {owner[0]}")
+            if not owner[1]:
+                attention.append(f"worktree {Path(location).name} {state}")
             continue
         reproducible = result["reproducible"]
         detail = ", ".join(reproducible)
@@ -3000,16 +3008,31 @@ def tmux(*args, check=True, stdin=None):
     return command(*args, check=check, stdin=stdin)
 
 def sessions_dir(): return data_dir(ROOT / scfg("session_state_dir", ".nogging/state/sessions"))
+def canonical_sessions_dir():
+    """The store sessions are launched into, even when this script runs from a
+    Lead's linked worktree, whose own copy has an empty one."""
+    return ORCHESTRATOR_HOME / scfg("session_state_dir", ".nogging/state/sessions")
+def session_store(name):
+    """Where `name`'s record lives. A session's own record is canonical, so a signal
+    from a worktree reaches the hooks, `watch` and the dispatcher. Any other name
+    stays in this checkout's store: every backend, lock and liveness path around
+    `load_session` reads that store, and a record found without them would drive a
+    live session down the wrong path."""
+    canonical = canonical_sessions_dir()
+    if name == os.environ.get("NOGG_SESSION_NAME") and (canonical / f"{name}.json").is_file():
+        return canonical
+    return sessions_dir()
 def tmux_has_session(name, backend=None):
     substrate, ref = backend_for_name(name, backend)
     return substrate.exists(ref)
 
-def session_liveness(records=None):
+def session_liveness(records=None, strict=False):
     """Resolve liveness by each record's immutable backend selection.
 
     The tmux backend is also queried without managed records so unmanaged tmux
     sessions continue to participate in collision checks and shutdown. Unknown
-    liveness is kept separate from dead sessions.
+    liveness is kept separate from dead sessions. `strict` extends that to a failed
+    tmux query, for a caller that must not read a failure as proof of death.
     """
     records = list(records if records is not None else session_records())
     groups = {"tmux": []}
@@ -3027,7 +3050,7 @@ def session_liveness(records=None):
         except Exception:
             # Preserve the established tmux rule: a failed list query is an
             # empty set. Other backends must not infer death from query failure.
-            if name != "tmux":
+            if name != "tmux" or strict:
                 unknown.update(rec.get("name") for rec in grouped if rec.get("name"))
     return alive, unknown
 
@@ -3124,7 +3147,7 @@ def session_records(directory=None):
         out.append((p, rec))
     return out
 def load_session(name):
-    p = sessions_dir() / f"{name}.json"
+    p = session_store(name) / f"{name}.json"
     if not p.exists(): raise RuntimeError(f"no managed session named {name}")
     return p, json.loads(p.read_text())
 def write_session(path, rec):
@@ -3476,8 +3499,12 @@ def codex_hook_state():
     except Exception:
         return "unknown", None
 CODEX_HOOK_FIX = "./scripts/nogg session-hooks install --agent codex"
+CODEX_HOOK_WARNING = ("Codex runs this hook outside its sandbox, and the hook runs scripts/nogg, which a sandboxed "
+                      "session can edit. Every supervised Codex session in every repository on this host then has "
+                      "no sandbox boundary, under on-request approval too; see docs/security-model.md, "
+                      "The Codex stop hook.")
 CODEX_HOOK_DETAIL = {
-    "trusted": "",
+    "trusted": f". Warning: {CODEX_HOOK_WARNING}",
     "untrusted": f": Codex skips it, so the stop guard is off on Codex (run: {CODEX_HOOK_FIX})",
     "modified": f": it no longer matches what was trusted, so Codex skips it (run: {CODEX_HOOK_FIX})",
     "missing": f": the stop guard is off on Codex; turns are still seen from the rollout (run: {CODEX_HOOK_FIX})",
@@ -3506,18 +3533,21 @@ def session_hooks_install():
     if state != "trusted":
         raise RuntimeError(f"Codex reports the Stop hook as {state} after the install")
     print(f"codex stop hook: trusted\n  key: {hook['key']}\n  hash: {hook['currentHash']}\n  command: {hook['command']}")
+    print(f"warning: {CODEX_HOOK_WARNING}")
 def session_hooks_remove():
     hooks = session_hooks_module()
     path = codex_home() / "hooks.json"
     if not hooks.has_hook(hooks.read_document(path)):
         print("codex stop hook: nothing to remove")
         return
+    hooks.remove_stop(hooks.read_document(path))    # a refusal changes nothing
     with _codex_app_server() as server:
-        hook = hooks.find_hook(hooks.list_hooks(server, str(path.parent)), path)
-        hooks.update_file(path, hooks.remove_stop)
-        if hook is not None:
+        # Trust goes first: if the rest fails, a stale entry is skipped, not run.
+        found = hooks.find_hooks(hooks.list_hooks(server, str(path.parent)), path)
+        for hook in found:
             hooks.untrust(server, hook)
-    print(f"codex stop hook: removed from {path}" + (f" and untrusted ({hook['key']})" if hook else ""))
+        hooks.update_file(path, hooks.remove_stop)
+    print(f"codex stop hook: removed from {path}; untrusted {len(found)} record(s)")
 def session_hooks(action):
     """Status, install or remove of the user-level Codex Stop hook. Status never
     fails. Install and remove are operator acts on personal configuration; `init`
@@ -5127,7 +5157,7 @@ launch_notes = session_launch_notes
 
 
 LAUNCH_REFUSAL = "this session cannot launch child sessions ({reason}); signal blocked and let the orchestrator do it"
-def launch_state_paths(role="lead"):
+def launch_state_paths(role="lead", ignore_usage_gate=False):
     """What a launch of `role` must be able to write, known before it writes any
     of it. Shared by the launch refusal and `session capabilities`."""
     paths = [ROOT / scfg("session_state_dir", ".nogging/state/sessions")]
@@ -5137,17 +5167,21 @@ def launch_state_paths(role="lead"):
     except ValueError:
         return paths    # the gate refuses a bad config itself, with a better message
     group = "specialist" if role.startswith("specialist:") else role
-    if config["enabled"] and group not in config["exclude_roles"]:
+    if config["enabled"] and not ignore_usage_gate and group not in config["exclude_roles"]:
         paths.append(usage.Reservations().root)
     return paths
-def read_only_launch_path(role="lead"):
+def read_only_launch_path(role="lead", ignore_usage_gate=False):
     """The first state path this process cannot write, or None. It widens nothing:
-    a sandboxed caller was going to fail anyway, only later and less clearly."""
-    for path in launch_state_paths(role):
+    a sandboxed caller was going to fail anyway, only later and less clearly. A
+    real write is the probe, because `access(2)` does not see every sandbox, and an
+    unnamed temporary file leaves nothing behind."""
+    for path in launch_state_paths(role, ignore_usage_gate):
         existing = Path(path)
         while not existing.exists() and existing != existing.parent:
             existing = existing.parent
-        if not os.access(existing, os.W_OK):
+        try:
+            tempfile.TemporaryFile(dir=existing).close()
+        except OSError:
             return path
     return None
 def session_launch(*args, **kwargs):
@@ -5340,7 +5374,7 @@ def _session_launch(role, bead, cwd, read_only, owner,
         validate_codex_resume_id(resume)
     role_meta, role_slug = normalize_role(role)
     planning_launch_authority(role_meta, agent, profile, full_access)
-    unwritable = read_only_launch_path(role_meta)
+    unwritable = read_only_launch_path(role_meta, ignore_usage_gate)
     if unwritable is not None:
         raise RuntimeError(LAUNCH_REFUSAL.format(reason=f"{unwritable} is read-only here"))
     is_orchestrator = role_meta == "orchestrator"
@@ -5821,15 +5855,27 @@ def _claude_permission(settings, command):
     if any(_claude_rule_matches(rule, command) for rule in permissions.get("allow") or []):
         return "yes", "the profile allows it"
     return "unknown", "no rule in the profile decides it; it may need approval"
+def _rebase_capability():
+    """Every supervised runtime enters the fence through this helper, whose broker
+    runs a fenced session's rebase; the wrapper refuses to start without it."""
+    if (ROOT / "scripts/openspec-sandbox").is_file():
+        return "yes", "the sandbox broker rebases a clean worktree"
+    return "unknown", "scripts/openspec-sandbox is missing, so no broker is proven"
+def _host_launch_capability():
+    """A launch from an unsandboxed session writes what this process can write."""
+    unwritable = read_only_launch_path("lead")
+    return ("no", f"{unwritable} is read-only here") if unwritable else ("yes", "every launch state path is writable")
 def _claude_capabilities(settings):
     settings = merge_floor(merge_signal_permission(merge_supervised_launch_permissions(settings, "lead")))
     specialists = sorted((ROOT / ".claude/agents").glob("*.md"))
+    launch = _claude_permission(settings, "./scripts/nogg session launch")
+    rebase = _claude_permission(settings, "./scripts/nogg worktree rebase")
     return {
         "reach_dolt": _claude_permission(settings, "bd show"),
         "push": _claude_permission(settings, "git push"),
         "open_pull_request": _claude_permission(settings, "gh pr create"),
-        "launch_child_sessions": _claude_permission(settings, "./scripts/nogg session launch"),
-        "rebase_without_operator": _claude_permission(settings, "./scripts/nogg worktree rebase"),
+        "launch_child_sessions": _host_launch_capability() if launch[0] == "yes" else launch,
+        "rebase_without_operator": _rebase_capability() if rebase[0] == "yes" else rebase,
         "in_process_specialists": (("yes", f"{len(specialists)} agents in .claude/agents") if specialists
                                    else ("no", "no agent file in .claude/agents")),
     }
@@ -5843,7 +5889,9 @@ def _codex_capabilities(spec):
     elif sandbox == "read-only" or outside:
         launch = ("no", f"{outside[0]} is outside the sandbox's writable roots" if outside else "read-only sandbox")
     else:
-        launch = ("yes", "every launch state path is writable")
+        # Writable paths are necessary, not sufficient: the backend socket from
+        # inside this sandbox is not something launch resolves.
+        launch = ("unknown", "the state paths are writable; the backend socket from this sandbox is not established")
     return {
         "launch_child_sessions": launch,
         "reach_dolt": online if network else offline,
@@ -5853,12 +5901,15 @@ def _codex_capabilities(spec):
         "in_process_specialists": ("unknown", "Nogging dispatches no Codex subagent; `multi_agent` is untested here"),
     }
 def _pi_capabilities():
+    """A Pi launch resolves a provider and model only: no sandbox, no approval spec.
+    What it does require is the guard, and the wrapper refuses to start without it."""
+    if not (ROOT / ".pi/extensions/nogging-guard.ts").is_file():
+        return {name: ("no", "the Pi guard is missing, so a launch refuses to start") for name in CAPABILITIES}
     open_host = ("yes", "Pi has no sandbox; only the guard's command floor applies, at every authority level")
-    unwritable = read_only_launch_path("lead")
     return {
-        "launch_child_sessions": ("no", f"{unwritable} is read-only here") if unwritable else open_host,
+        "launch_child_sessions": _host_launch_capability(),
         "reach_dolt": open_host, "push": open_host, "open_pull_request": open_host,
-        "rebase_without_operator": ("yes", "the sandbox broker rebases a clean worktree"),
+        "rebase_without_operator": _rebase_capability(),
         "in_process_specialists": ("unknown", "Nogging dispatches no Pi subagent"),
     }
 def session_capabilities(agent=None, profile=None, as_json=False):
@@ -6258,7 +6309,7 @@ def session_pane_text(name, escapes=False):
     -e`), which is how a dim placeholder suggestion is told from input."""
     return session_action(name, "capture", attributes=escapes)
 def session_events_path(name):
-    return sessions_dir() / f"{name}.events.jsonl"
+    return session_store(name) / f"{name}.events.jsonl"
 def validate_antigravity_conversation_id(value):
     try:
         if not isinstance(value, str) or str(uuid.UUID(value)) != value:
@@ -6608,7 +6659,10 @@ def _append_session_event(name, record):
             os.replace(path, path.with_name(path.name + ".1"))
     except OSError:
         pass
-    with path.open("a") as fh:
+    # The hook may run outside the session's sandbox and this file is the session's
+    # to replace, so a symlink must never redirect the append.
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o644)
+    with os.fdopen(fd, "a") as fh:
         fh.write(json.dumps(record) + "\n")
 def _supervised_session_name(command):
     name = os.environ.get("NOGG_SESSION_NAME")
@@ -6618,24 +6672,29 @@ def _supervised_session_name(command):
             "a session `scripts/nogg session launch` started)")
     return name
 def _session_checkout(rec):
-    """The checkout a session's work is in: its Bead's implementation worktree
-    while that allocation exists, else the directory it was launched in."""
+    """The checkout a session's work is in: its Bead's implementation worktree while
+    that allocation exists, else the directory it was launched in. None for the
+    shared checkout, whose changes may be anyone's."""
     bead = rec.get("bead_id")
     if bead:
         safe_id = re.sub(r"[^a-z0-9-]", "-", bead.lower())
+        store = ORCHESTRATOR_HOME / WORKTREE_STATE.relative_to(ROOT)
         try:
-            allocation = json.loads((WORKTREE_STATE / f"implementation--{safe_id}.json").read_text())
+            allocation = json.loads((store / f"implementation--{safe_id}.json").read_text())
             if allocation.get("bead_id") == bead and Path(allocation["path"]).is_dir():
                 return allocation["path"]
         except (OSError, ValueError, KeyError, TypeError):
             pass
-    return rec.get("working_dir") or "."
+    workdir = rec.get("working_dir")
+    return workdir if workdir and Path(workdir).resolve() != ORCHESTRATOR_HOME.resolve() else None
 GUARD_GIT_TIMEOUT_SECONDS = 5
 def session_git_facts(rec):
     """`{"dirty", "upstream", "ahead"}` from local git only, or None when a fact
     cannot be read. A branch allocated from `origin/develop` tracks it, so its own
     pushed ref is compared first; a plain `git push` without -u then still counts."""
     workdir = _session_checkout(rec)
+    if workdir is None:
+        return {"dirty": False, "upstream": True, "ahead": 0}
     def git(*args):
         return run("git", "-C", workdir, *args, check=False, timeout=GUARD_GIT_TIMEOUT_SECONDS)
     status, branch = git("status", "--porcelain"), git("branch", "--show-current")
@@ -6656,7 +6715,7 @@ def session_stop_guard(name, payload):
         if not signals.guard_applies(rec, events, payload):
             return None
         git = session_git_facts(rec)
-        gaps = signals.completion_gaps(git, events) if git is not None else []
+        gaps = signals.completion_gaps(git, signals.this_turn(events)) if git is not None else []
         return signals.guard_message(gaps) if gaps else None
     except Exception:
         return None
@@ -8697,6 +8756,35 @@ def materialize_journals():
         except (ValueError, OSError):
             out[m.group(1)] = {}
     return out
+def bead_owners():
+    """Bead ID to `(note, quiet)` for every other Lead that may still hold its Bead,
+    from the canonical store so a worktree caller sees them too. Such a Bead is not
+    free to adopt. A Lead proven dead holds nothing, so its replacement can recover
+    it. `quiet` means proven alive and not blocked, so `recover` raises no attention;
+    a blocked Lead or unknown liveness still does, because a person has to look. A
+    caller's own Bead is left out and keeps its normal classification."""
+    try:
+        store = canonical_sessions_dir()
+        records = session_records(store)
+        alive, unknown = session_liveness(records, strict=True)
+        own = os.environ.get("NOGG_SESSION_NAME")
+        signals = signals_module()
+        owners = {}
+        for _, rec in records:
+            name = rec.get("name")
+            if (not rec.get("bead_id") or (rec.get("role") or "lead") != "lead" or name == own
+                    or rec.get("state") not in SESSION_ACTIVE_STATES):
+                continue
+            if name in alive:
+                signal = signals.current_signal(signals.read_events(store / f"{name}.events.jsonl"))
+                owners[rec["bead_id"]] = (f"owned by session {name}: do not adopt it",
+                                          (signal or {}).get("event") != "blocked")
+            elif name in unknown:
+                owners[rec["bead_id"]] = (f"session {name} may still be running: confirm it ended "
+                                          "(`session reap`) before adopting", False)
+        return owners
+    except Exception:
+        return {}
 def recover_scan():
     """Run the interrupted-run checks (handoff §5.1) and return
     `(sections, attention)` — `sections` a list of `(title, [lines])` with the
@@ -8767,6 +8855,7 @@ def recover_scan():
     base_ref = resolve_ref(base_name)
     rng = f"{base_ref}..HEAD" if base_ref else None
     limbo_lines = []
+    owners = bead_owners()
     if base_ref is None:
         limbo_lines.append(f"(base {base_name!r} does not resolve — scanning full HEAD history)")
     for token, (sha, subject, count) in sorted(commit_tokens_with_subject(rng).items()):
@@ -8775,9 +8864,12 @@ def recover_scan():
             continue
         status = iss.get("status") or "unknown"
         if status != "closed":
+            note, quiet = owners.get(token, (None, False))
             limbo_lines.append(f'LIMBO: {token} committed in {sha[:12]} "{subject}"'
-                               f'{token_commit_count_suffix(count)} but status={status}')
-            attention.append(f"LIMBO {token}")
+                               f'{token_commit_count_suffix(count)} but status={status}'
+                               + (f" ({note})" if note else ""))
+            if not quiet:
+                attention.append(f"LIMBO {token}")
     section("Committed but not closed", limbo_lines)
 
     # --- in_progress Beads --------------------------------------------
@@ -8794,7 +8886,12 @@ def recover_scan():
             age_s = int((now_dt - parse_iso(updated)).total_seconds())
         except (ValueError, TypeError, AttributeError):
             age_s = None
-        if bid in head_tokens:
+        note, quiet = owners.get(bid, (None, False))
+        if note:
+            cls = note
+            if not quiet:
+                attention.append(f"session-owned {bid}")
+        elif bid in head_tokens:
             # A commit carries its token but the Bead is not closed — the same
             # committed-but-open case as LIMBO, so it needs a decision: the
             # committed work may be the whole Bead or only its first steps.

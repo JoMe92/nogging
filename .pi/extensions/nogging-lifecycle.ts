@@ -57,6 +57,10 @@ export default function (pi: any) {
 	const name = process.env.NOGG_SESSION_NAME;
 	const root = process.env.NOGG_SESSION_ROOT;
 	if (!name) return;
+	// A Pi child of a Claude or Codex session inherits its environment and must
+	// not answer for it.
+	const agent = process.env.NOGG_SESSION_AGENT;
+	if (agent && agent !== "pi") return;
 	const globals = globalThis as Record<symbol, unknown>;
 	if (globals[LOADED]) return;
 	globals[LOADED] = true;

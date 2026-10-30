@@ -25,7 +25,8 @@ class FakeServer:
 
 class MergeTests(unittest.TestCase):
     def test_the_command_is_inert_outside_a_session_and_names_no_path(self):
-        self.assertTrue(hooks.HOOK_COMMAND.startswith('[ -z "${NOGG_SESSION_NAME:-}" ] || exec '))
+        self.assertTrue(hooks.HOOK_COMMAND.startswith('[ -z "${NOGG_SESSION_NAME:-}" ] || '))
+        self.assertTrue(hooks.HOOK_COMMAND.endswith(" || exit 0"))
         self.assertNotIn("/home", hooks.HOOK_COMMAND)
 
     def test_merge_appends_and_leaves_other_entries(self):
@@ -63,10 +64,16 @@ class MergeTests(unittest.TestCase):
         document = {"hooks": {"Stop": [{"hooks": [FOREIGN]}]}}
         self.assertFalse(hooks.remove_stop(document))
         self.assertEqual({"hooks": {"Stop": [{"hooks": [FOREIGN]}]}}, document)
-        shared = {"hooks": {"Stop": [{"hooks": [OURS, FOREIGN]}]}}
-        with self.assertRaises(ValueError):
-            hooks.remove_stop(shared)
-        self.assertEqual({"hooks": {"Stop": [{"hooks": [OURS, FOREIGN]}]}}, shared)
+        for handlers in ([OURS, FOREIGN], [OURS, OURS, FOREIGN], [OURS, FOREIGN, OURS]):
+            shared = {"hooks": {"Stop": [{"hooks": list(handlers)}]}}
+            with self.assertRaises(ValueError, msg=handlers):
+                hooks.remove_stop(shared)
+            self.assertEqual(handlers, shared["hooks"]["Stop"][0]["hooks"])
+
+    def test_remove_takes_every_copy_when_nothing_follows(self):
+        document = {"hooks": {"Stop": [{"hooks": [FOREIGN, OURS, OURS]}]}}
+        self.assertTrue(hooks.remove_stop(document))
+        self.assertEqual([{"hooks": [FOREIGN]}], document["hooks"]["Stop"])
 
     def test_unknown_shapes_are_refused(self):
         for document in ([], {"hooks": []}, {"hooks": {"Stop": {}}}, {"hooks": {"Stop": [1]}},
@@ -124,6 +131,13 @@ class ListingTests(unittest.TestCase):
         for change in ({"source": "project"}, {"eventName": "sessionStart"}, {"sourcePath": "/y/hooks.json"},
                        {"command": "echo other"}):
             self.assertIsNone(hooks.find_hook([dict(self.HOOK, **change)], self.PATH), change)
+
+    def test_a_failed_handshake_leaves_no_process(self):
+        # It hangs without answering, so only the cleanup can end it.
+        server = hooks.AppServer(["sleep", "60"], dict(os.environ), "/", timeout=0.2)
+        with self.assertRaises(TimeoutError):
+            server.__enter__()
+        self.assertIsNotNone(server.process.poll())
 
     def test_only_the_exact_constant_is_exact(self):
         self.assertTrue(hooks.is_exact(self.HOOK))
