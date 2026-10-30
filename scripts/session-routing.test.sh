@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # fixture-backend-pin: allow - routing entries select their own backend
-# Routed and unrouted `session launch` (TASK-RTG-003).
+# Routed, pinned, off-list and unrouted `session launch` (TASK-RTG-003).
 #
 # Covered, through the real CLI with PATH-injected bd, tmux and agent stubs and
 # the herdr fixture (no real session or runtime is ever started):
@@ -14,11 +14,13 @@
 #     dependency, flags) refuses instead of skipping, with no side effect;
 #   - a routed Pi entry keeps the Pi launch path: its profile provider reaches
 #     usage admission and pi_extensions loads, or refuses with no side effect;
-#   - unrouted launches behave as without routing, carry no routing key and list
-#     as before;
+#   - a pinned launch applies its entry, never falls through, and enforces allow;
+#   - off-list and unrouted launches behave as without routing; unrouted records
+#     carry no routing key and list as before;
 #   - entries supply model and effort with `route` provenance, Pi records a tier;
 #   - the record, the printed routing= line and `session list` show the decision,
-#     and launch mutates no Bead.
+#     an exact resume keeps its selection, a Codex resume stays inside `allow`, and
+#     launch mutates no Bead.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/test-fixture-config.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/test-agents.sh"
@@ -431,7 +433,96 @@ new_root "$PI_ONLY"
 patch_config 'cfg["pi_extensions"] = ["glm-usage"]'
 refused pi-extensions-missing 1 "pi_extensions names" --full-access
 
-# --- unrouted ----------------------------------------------------------------
+# --- pinned ------------------------------------------------------------------
+new_root "$SOL"
+refused pin-allow 1 "allow list" --agent codex --tier complex --model gpt-6.1-sol --effort high --full-access
+said "pin-allow: names the allowed efforts" "allowed efforts for gpt-6.1-sol (low)"
+new_root "$SOL"
+launched pin-allowed --agent codex --tier complex --model gpt-6.1-sol --effort low --full-access
+has "pin-allowed: model" "--model gpt-6.1-sol"
+has "pin-allowed: effort" "--reasoning-effort low"
+expect "pin-allowed: mode" routing.mode '"pinned"'
+expect "pin-allowed: model source" model_source '"launch"'
+expect "pin-allowed: tier effort stays the entry's" selection_tier_effort '"medium"'
+expect "pin-allowed: tier effort source" selection_tier_effort_source '"route"'
+said "pin-allowed: routing line" "routing=lead#1 codex/tmux pinned"
+
+new_root "$TWO"
+codex_usage 99; claude_usage 10
+refused pin-denial 75 "usage gate denied codex launch" --agent codex --full-access
+
+only_agents claude
+new_root "$THREE"
+refused pin-binary 1 "agent binary 'codex' not found on PATH" --agent codex --full-access
+export PATH="$work/agents:$base_path"
+
+new_root '{"schema_version": 1, "roles": {"lead": [
+  {"agent": "codex", "backend": "tmux", "tiers": ["complex"]}, {"agent": "claude", "backend": "tmux"}]}}'
+launched pin-tiers --agent codex --tier routine --full-access
+expect "pin-tiers: tiers does not bind a pinned launch" routing.chosen.index 1
+
+new_root '{"schema_version": 1, "roles": {"lead": [
+  {"agent": "claude", "backend": "tmux"},
+  {"agent": "codex", "backend": "herdr", "note": "herdr"}, {"agent": "codex", "backend": "tmux", "on_unknown": "deny"}]}}'
+codex_usage 10
+launched pin-backend --agent codex --backend tmux --full-access
+expect "pin-backend: first entry with the backend" routing.chosen.index 3
+new_root '{"schema_version": 1, "roles": {"lead": [
+  {"agent": "codex", "backend": "herdr", "allow": [{"model": "gpt-6-luna"}]}]}}'
+patch_config 'cfg["session_herdr_command"] = "/missing/herdr"'
+refused pin-other-backend 1 "allow list" --agent codex --backend tmux --full-access
+
+new_root "$TWO"
+refused pin-skip 1 "--skip-agent is valid only on a routed launch" --agent codex --skip-agent claude --full-access
+
+# A refusal no entry can change comes before admission, so it is no quota wait.
+new_root "$TWO"
+codex_usage 99
+refused pin-bad-resume 1 "invalid Codex conversation ID" --agent codex --resume not-a-uuid --full-access
+new_root "$PI_ONLY"
+refused pin-pi-resume 1 "exact resume is supported only" --agent pi --resume some-id --full-access
+
+# Only a resume that restores its record escapes the entry. A Codex resume
+# re-resolves, so `allow` keeps holding and the Sol restriction cannot be resumed around.
+cat >"$work/agents/codex" <<'STUB'
+#!/usr/bin/env bash
+if [[ "${1:-}" == resume && "${2:-}" == --help ]]; then cat "$RESUME_HELP"; exit 0; fi
+exit 0
+STUB
+export RESUME_HELP="$here/fixtures/codex/codex-resume-help.txt"
+thread=019f0000-0000-7000-8000-000000000001
+LUNA='{"schema_version": 1, "roles": {"lead": [{"agent": "codex", "backend": "tmux", "allow": [{"model": "gpt-6-luna"}]}]}}'
+new_root "$LUNA"
+refused codex-resume-allow 1 "allow list" --agent codex --tier complex --resume "$thread" --full-access
+new_root "$LUNA"
+refused codex-resume-no-tier 1 "allow list" --agent codex --resume "$thread" --full-access
+new_root "$SOL"
+launched codex-resume-entry --agent codex --tier complex --resume "$thread" --full-access
+has "codex-resume-entry: the entry's model" "--model gpt-6-luna"
+has "codex-resume-entry: the entry's effort" "--reasoning-effort medium"
+expect "codex-resume-entry: route provenance" model_source '"route"'
+
+# A falsy --resume is a cold start, so it keeps the entry.
+new_root '{"schema_version": 1, "roles": {"lead": [{"agent": "claude", "backend": "tmux",
+  "models": {"complex": {"model": "claude-route-model"}}, "allow": [{"model": "claude-route-model"}]}]}}'
+launched empty-resume --agent claude --tier complex --resume "" --full-access
+has "empty-resume: the entry's model" "--model claude-route-model"
+expect "empty-resume: a cold start" model_source '"route"'
+
+# --- off-list and unrouted ---------------------------------------------------
+new_root "$TWO"
+launched off-list --agent antigravity --full-access
+expect "off-list: agent" agent '"antigravity"'
+expect "off-list: mode" routing.mode '"off-list"'
+expect "off-list: no entry index" routing.chosen.index null
+expect "off-list: backend" routing.chosen.backend '"tmux"'
+said "off-list: note" "NOTE: antigravity is not on the lead routing list"
+said "off-list: routing line" "routing=lead off-list antigravity/tmux"
+"$nogg" session list >"$out" 2>&1
+! grep -qF "route=#" "$out" && ok "off-list: list has no route" || bad "off-list: list shows a route"
+new_root "$TWO"
+refused off-list-tier 1 "or add a pi entry" --agent pi --tier routine --full-access
+
 new_root
 launched unrouted --agent codex --full-access
 expect "unrouted: no routing key" routing missing
@@ -491,4 +582,34 @@ expect "pi-tier: null tier effort" selection_tier_effort null
 expect "pi-tier: null source" selection_tier_effort_source null
 expect "pi-tier: runtime default" model_source '"runtime-default"'
 expect "pi-tier: no table lookup attributed" usage_attribution.0.selection_version null
+new_root "$PI_ONLY"
+launched pi-pinned --agent pi --tier routine --full-access
+expect "pi-pinned: tier recorded" selection_tier '"routine"'
+expect "pi-pinned: mode" routing.mode '"pinned"'
+
+new_root '{"schema_version": 1, "roles": {"lead": [{"agent": "claude", "backend": "tmux",
+  "models": {"complex": {"model": "claude-route-model", "effort": "low"}}}]}}'
+launched resume-origin --tier complex --full-access
+session_id=$(field claude_session_id | tr -d '"')
+expect "resume-origin: route model" model_source '"route"'
+sessions="$root/.nogging/state/sessions"
+python3 - "$root/.nogging/agent-routing.json" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+data["roles"]["lead"][0]["models"]["complex"] = {"model": "claude-changed", "effort": "high"}
+data["roles"]["lead"][0]["allow"] = [{"model": "claude-changed"}]
+json.dump(data, open(sys.argv[1], "w"))
+PY
+patch_config 'cfg["tier_overrides"] = {"complex": {"claude": {"effort": "bogus"}}}'
+launched resume --agent claude --tier complex --resume "$session_id" --full-access
+has "resume: the recorded model" "--model claude-route-model"
+lacks "resume: never the changed entry" "claude-changed"
+expect "resume: model source kept" model_source '"route"'
+expect "resume: effort source kept" reasoning_effort_source '"route"'
+expect "resume: tier effort source kept" selection_tier_effort_source '"route"'
+launched resume-explicit --agent claude --tier complex --resume "$session_id" --model claude-changed --effort low --full-access
+expect "resume-explicit: an allowed explicit model" requested_model '"claude-changed"'
+launch --agent claude --tier complex --resume "$session_id" --model claude-other --full-access \
+  && bad "resume-outside: an explicit model stays inside allow" || said "resume-outside: refused by allow" "allow list"
+
 exit "$fail"
