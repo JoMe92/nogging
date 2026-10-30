@@ -32,6 +32,7 @@ CHECKS_INTERVAL_SECONDS = 120
 BEADS_CACHE_SECONDS = 300
 FAILED_CHECKS_SHOWN = 5
 DONE_KEYS_KEPT = 64
+KEY_PART_CHARS = 80
 EXCERPT_LINES = 6
 
 # Retrying these cannot help, so they skip the retry nudge.
@@ -51,6 +52,7 @@ NUDGE_STALL = ("Nogging dispatcher: your session log has been silent for {minute
                + BLOCK_HINT)
 
 _CHECK_NAME_DROP = re.compile(r"[^\w .:/()+-]+")
+_KEY_DROP = re.compile(r"[^\w:.+@-]+")
 _DURATION = re.compile(r"^(\d+)([smh]?)$")
 _UNITS = {"": 1, "s": 1, "m": 60, "h": 3600}
 _QUIET_WINDOW = re.compile(r"^([01]\d|2[0-3]):[0-5]\d-([01]\d|2[0-3]):[0-5]\d$")
@@ -151,14 +153,15 @@ def seconds_since(stamp: Any, now: datetime) -> float | None:
     stamp without a zone is local time, which is what `resolve_clock_time` returns."""
     try:
         moment = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
-    except ValueError:
+        return (now - (moment if moment.tzinfo else moment.astimezone())).total_seconds()
+    except (ValueError, OverflowError, OSError):
         return None
-    return (now - (moment if moment.tzinfo else moment.astimezone())).total_seconds()
 
 
 def dedupe_key(session: str, kind: str, *marks: Any) -> str:
-    """Session, kind and the head or fingerprint that makes this occurrence new."""
-    return "|".join(str(part) for part in (session, kind, *marks))
+    """Session, kind and the head or fingerprint that makes this occurrence new. A
+    mark can come from an event line, so only what a stamp or a head needs survives."""
+    return "|".join(_KEY_DROP.sub("", str(part))[:KEY_PART_CHARS] for part in (session, kind, *marks))
 
 
 def check_names(failed: list[Any]) -> str:
@@ -184,9 +187,10 @@ def _diffstat(checks: dict[str, Any]) -> str | None:
 def _queue(fact: dict[str, Any], kind: str, mark: Any, reason: str, next_step: str) -> dict[str, Any]:
     checks = fact.get("checks") or {}
     key = dedupe_key(fact["session"], kind, mark)
+    pr = checks.get("pr_number")
     return {"type": "queue", "session": fact["session"], "key": key, "reason": reason,
             "item": {"key": key, "kind": kind, "session": fact["session"], "bead": fact.get("bead"),
-                     "pr": checks.get("pr_number"), "ci": ci_summary(checks), "diff": _diffstat(checks),
+                     "pr": pr if type(pr) is int else None, "ci": ci_summary(checks), "diff": _diffstat(checks),
                      "head": (fact.get("head") or "")[:12] or None, "reason": reason, "next": next_step}}
 
 
@@ -383,7 +387,7 @@ def _decide_session(fact: dict[str, Any], memory: dict[str, Any], policy: dict[s
         return []
     signal = fact.get("signal") or {}
     if signal.get("kind") == "blocked":
-        return [_queue(fact, "blocked", signal.get("at"), signal.get("reason") or "blocked",
+        return [_queue(fact, "blocked", f"{signal.get('at')}@{fact.get('head')}", signal.get("reason") or "blocked",
                        f"./scripts/nogg session log {name}")]
     sweep = fact.get("sweep") or ""
     if fact.get("bead_status") == "blocked" or sweep.startswith("bead-blocked"):
@@ -410,10 +414,11 @@ def decide(facts: list[dict[str, Any]], memory: dict[str, Any], policy: dict[str
     never spent: it reports a condition on every pass while it holds, which is what
     keeps the queue level-triggered. A session with no fact any more is forgotten;
     `unknown` keeps what it had."""
-    known = memory.get("sessions") or {}
+    known = memory.get("sessions") if isinstance(memory.get("sessions"), dict) else {}
     next_memory, actions = {**memory, "sessions": {}}, []
     for fact in facts:
-        session = copy.deepcopy(known.get(fact["session"]) or {})
+        remembered = known.get(fact["session"])
+        session = copy.deepcopy(remembered) if isinstance(remembered, dict) else {}
         next_memory["sessions"][fact["session"]] = session
         if fact.get("state", "unknown") == "unknown":
             continue

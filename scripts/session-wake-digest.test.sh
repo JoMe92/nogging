@@ -41,6 +41,7 @@ from datetime import datetime, timedelta, timezone
 from importlib.machinery import SourceFileLoader
 from unittest.mock import patch
 m = SourceFileLoader("sf_swk005", sys.argv[1]).load_module()
+w = m.wake_module()
 state = pathlib.Path(sys.argv[2]); state.mkdir()
 t0 = datetime(2026, 10, 30, 12, 0, tzinfo=timezone.utc)
 record = {"name": "orch", "agent": "claude", "requested_model": "opus"}
@@ -87,12 +88,12 @@ assert result["outcome"] == "delivered", result
 result, sent = deliver({"items": [item("crashed")]}, hold="paused")
 assert result["outcome"] == "held: paused" and sent == [], result
 
-# A failed delivery keeps the items, says why and is told once in the audit log.
+# A failed delivery keeps the items and says why, with the address scrubbed.
 def refuse(_record, _text):
-    raise RuntimeError("orch: composer is input; nothing was typed or submitted, owner@example.com")
+    raise RuntimeError("orch: message still unverified, owner@example.com")
 queue = {"items": [item("blocked")]}
 result, sent = deliver(queue, send=refuse)
-assert result["outcome"].startswith("failed: orch: composer is input"), result
+assert result["outcome"].startswith("failed: orch: message still unverified"), result
 assert len(queue["items"]) == 1 and queue["failures"] == 1 and "owner@example.com" not in queue["last_error"], queue
 result, sent = deliver(queue, send=refuse)
 assert result["outcome"] == "held: retry" and queue["failures"] == 1, (result, queue)
@@ -121,6 +122,70 @@ assert result is None and "hold" not in queue, (result, queue)
 rows = [json.loads(line) for line in (state / "dispatch.jsonl").read_text().splitlines()]
 assert all("owner@example.com" not in json.dumps(row) for row in rows)
 assert any(row.get("outcome", "").startswith("failed:") for row in rows)
+
+# A refusal says nothing was sent, so a later pass tries at once and the audit says it once.
+def refused(_record, _text):
+    raise RuntimeError("orch: composer is other; nothing was typed or submitted")
+queue = {"items": [item("blocked")]}
+before = len((state / "dispatch.jsonl").read_text().splitlines())
+for _ in range(3):
+    result, _sent = deliver(queue, send=refused)
+    assert result["outcome"].startswith("failed:") and "failures" not in queue and "deliveries" not in queue, (result, queue)
+assert len((state / "dispatch.jsonl").read_text().splitlines()) == before + 1
+
+# An unverified send counts as a wake and backs off.
+def unverified(_record, _text):
+    raise RuntimeError("orch: message still unverified before the delivery deadline")
+queue = {"items": [item("ready_for_review")]}
+result, _sent = deliver(queue, send=unverified)
+assert queue["failures"] == 1 and queue["deliveries"][0]["unverified"], queue
+assert deliver(queue)[0]["outcome"] == "held: retry"
+
+# The record comes before the send: with no way to keep it, nothing is sent.
+queue = {"items": [item("blocked")]}
+with patch.object(m, "atomic_json_state", side_effect=OSError("read-only file system")):
+    try:
+        result, sent = deliver(queue)
+    except OSError:
+        sent = []
+    else:
+        raise AssertionError("the write failure must end the pass")
+assert sent == []
+
+# A wake that outlived its pass may have landed: it counts and backs off.
+queue = {"items": [item("blocked")], "sending": {"id": "w-old", "at": t0.isoformat(), "keys": ["k"], "urgent": 1}}
+result, sent = deliver(queue)
+assert result["outcome"] == "held: retry" and sent == [] and "sending" not in queue, (result, queue)
+assert queue["deliveries"][0]["id"] == "w-old" and queue["items"], queue
+
+# What cannot be read holds nothing, the usage loader included.
+with patch.object(m, "usage_module", side_effect=RuntimeError("missing")):
+    assert m._orchestrator_usage(record) is None
+
+# The state is the last thing read: a turn that starts during the usage read holds the digest.
+states = iter([(record, "idle"), (record, "working")])
+queue = {"items": [item("ready_for_review")]}
+with patch.object(m, "dispatch_dir", return_value=state), patch.object(m, "_orchestrator_usage", return_value=None), \
+     patch.object(m, "orchestrator_target", side_effect=lambda: next(states)), \
+     patch.object(m, "orchestrator_send", side_effect=AssertionError("sent")):
+    assert m._deliver_wake(queue, t0 + timedelta(seconds=1000))["outcome"] == "held: orchestrator working"
+
+# A file that does not parse is moved aside, not read as empty; a wrong shape is filtered.
+(state / "queue.json").write_text("{not json")
+with patch.object(m, "dispatch_dir", return_value=state):
+    m._quarantine_dispatch_state("queue.json")
+    assert (state / "queue.json.corrupt").read_text() == "{not json" and not (state / "queue.json").exists()
+    m._quarantine_dispatch_state("queue.json")
+    (state / "queue.json").write_text('{"items": [1, {"key": "bad key"}], "delivered": 3}')
+    m._quarantine_dispatch_state("queue.json")
+    assert (state / "queue.json").exists()
+    view = w.inbox(m._read_dispatch_state("queue.json"), m._dispatch_audit_tail())
+    assert view["pending"] == [] and view["delivered"] == []
+
+# Every restricted Lead may read the inbox, as the spec says, without a prompt.
+allow = m.merge_signal_permission({"permissions": {"allow": ["Read"]}})["permissions"]["allow"]
+assert allow == ["Read", m.SIGNAL_RULE, "Bash(./scripts/nogg session inbox:*)"], allow
+assert m.merge_signal_permission({"permissions": {"allow": allow}})["permissions"]["allow"] == allow
 PY
 
 # --- one real pass: a stub orchestrator on a private socket ---------------------
@@ -129,10 +194,11 @@ if ! command -v tmux >/dev/null; then
 else
   export HOME="$work/home"; mkdir -p "$HOME"
   export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid
-  export TMUX_TMPDIR="$work/tmux"; mkdir -p "$TMUX_TMPDIR"
+  # A socket path must stay under 108 bytes, whatever TMPDIR is.
+  export TMUX_TMPDIR; TMUX_TMPDIR=$(mktemp -d /tmp/nogg-wake.XXXXXX)
   export NOGG_TEST_ARGS_DIR="$work/args"; mkdir -p "$NOGG_TEST_ARGS_DIR"
   sock="nogg-swk005-$$"
-  trap 'tmux -L "$sock" kill-server 2>/dev/null || true; rm -rf "$work"' EXIT
+  trap 'tmux -L "$sock" kill-server 2>/dev/null || true; rm -rf "$work" "$TMUX_TMPDIR"' EXIT
   root="$work/root"
   sessions="$root/.nogging/state/sessions"
   queue_file="$root/.nogging/state/dispatch/queue.json"

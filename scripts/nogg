@@ -2808,14 +2808,15 @@ def merge_supervised_launch_permissions(settings, role):
     return result
 
 SIGNAL_RULE = "Bash(./scripts/nogg session signal:*)"
+INBOX_RULE = "Bash(./scripts/nogg session inbox:*)"
 def merge_signal_permission(settings):
-    """`session signal` needs no network and no Dolt, so every restricted Lead
-    may state that it is blocked or done. Existing rules are kept."""
+    """`session signal` and `session inbox` need no network and no Dolt, so every
+    restricted Lead may state that it is blocked or done and read the queue. Existing
+    rules are kept."""
     result = json.loads(json.dumps(settings))
     permissions = result.setdefault("permissions", {})
     allow = list(permissions.get("allow") or [])
-    if SIGNAL_RULE not in allow:
-        allow.append(SIGNAL_RULE)
+    allow.extend(rule for rule in (SIGNAL_RULE, INBOX_RULE) if rule not in allow)
     permissions["allow"] = allow
     return result
 
@@ -8600,6 +8601,8 @@ def resume_step(name, message=None):
 DISPATCH_AUDIT_BYTES = 1024 * 1024
 DISPATCH_AUDIT_GENERATIONS = 3
 DISPATCH_TAIL_BYTES = 64 * 1024
+# What the send path says when it stopped before anything was submitted.
+WAKE_NOT_SENT = ("nothing was", "cannot send")
 def dispatch_dir(): return ORCHESTRATOR_HOME / ".nogging/state/dispatch"
 def _read_dispatch_state(filename):
     try:
@@ -8759,7 +8762,7 @@ def _dispatch_apply(action, fact, memory, queue, moment):
         with redirect_stdout(io.StringIO()):
             outcome = _dispatch_run(action, fact, memory, queue, moment)
     except (Exception, SystemExit) as exc:
-        detail = signals_module().clean_excerpt(str(exc), redact, 200) or "unknown error"
+        detail = wake_module().text(str(exc), redact, 200) or "unknown error"
         outcome = f"failed: {detail}"
         if action["type"] in ("resume", "retire"):
             module.enqueue(queue, module.failure_item(fact, action, detail)["item"], moment)
@@ -8771,28 +8774,59 @@ def _dispatch_apply(action, fact, memory, queue, moment):
     return outcome
 def _orchestrator_usage(record):
     """The orchestrator's usage windows, or None: what cannot be read holds nothing."""
-    usage = usage_module()
     try:
+        usage = usage_module()
         return usage.observe(record.get("agent") or "claude", usage.gate_config(CFG.get("usage_gate")),
                              model=record.get("requested_model"))
     except Exception:
         return None
 def _wake_target(plan, policy):
-    """(record, reason to hold). State is read here, right before the send, because a
-    gather may be seconds old."""
-    record, state = orchestrator_target()
-    if record is None or state not in loop_runner_module().SEND_STATES:
-        return None, f"orchestrator {state}"
-    return record, None if plan["urgent"] else wake_module().usage_hold(_orchestrator_usage(record), policy)
+    """(record, reason to hold). The state is the last thing read before the send,
+    after the usage read, because a gather may be seconds old."""
+    def at_prompt():
+        record, state = orchestrator_target()
+        held = record is None or state not in loop_runner_module().SEND_STATES
+        return (None, f"orchestrator {state}") if held else (record, None)
+    record, hold = at_prompt()
+    if hold or plan["urgent"]:
+        return record, hold
+    hold = wake_module().usage_hold(_orchestrator_usage(record), policy)
+    return (None, hold) if hold else at_prompt()
 def _note_wake_hold(queue, hold, moment):
     """Write down a hold once, when its reason changes, and not on every pass."""
     if queue.get("hold") != hold:
         _append_dispatch_audit({"time": dispatch_module().iso(moment), "action": "wake", "outcome": f"held: {hold}"})
     queue["hold"] = hold
-def _deliver_wake(queue, moment, dry_run=False):
-    """One digest, or why not (design Decision 8). A failed delivery keeps the items
-    and a later pass retries, so the send can never lose one. None means nothing is due."""
+def _send_wake(queue, wake, message, shown, told, record, moment):
+    """The send, with its record written first, so a state directory that cannot be
+    written costs a pass and never a message on every pass. A failed delivery keeps
+    the items, and a later pass retries."""
     module = wake_module()
+    module.begin_send(queue, wake, shown, moment)
+    atomic_json_state(data_dir(dispatch_dir()) / "queue.json", queue)
+    try:
+        with redirect_stdout(io.StringIO()):
+            orchestrator_send(record, message)
+    except (Exception, SystemExit) as exc:
+        detail = module.text(str(exc), redact, 200) or "unknown error"
+        landed = not any(token in str(exc) for token in WAKE_NOT_SENT)
+        repeated = queue.get("last_error") == detail
+        module.mark_failed(queue, detail, moment, landed)
+        outcome = f"failed: {detail}"
+        audit = landed or not repeated
+    else:
+        module.mark_delivered(queue, shown, told, moment)
+        outcome, audit = "delivered", True
+    atomic_json_state(data_dir(dispatch_dir()) / "queue.json", queue)
+    if audit:
+        _append_dispatch_audit({"time": dispatch_module().iso(moment), "action": "wake", "id": wake,
+                                "keys": [item["key"] for item in shown], "outcome": outcome})
+    return outcome
+def _deliver_wake(queue, moment, dry_run=False):
+    """One digest, or why not (design Decision 8). None means nothing is due."""
+    module = wake_module()
+    if queue.get("sending") and not dry_run:
+        module.mark_failed(queue, "the last delivery was interrupted", moment, True)
     policy = wake_policy()
     plan = module.plan(queue, policy, moment, dispatch_wake_hold())
     if not plan["items"]:
@@ -8807,21 +8841,23 @@ def _deliver_wake(queue, moment, dry_run=False):
     message, shown, told = module.render(wake, plan["items"], queue.get("retired") or [], redact)
     if dry_run:
         return {"outcome": "dry-run", "id": wake, "items": len(shown), "text": message}
+    return {"outcome": _send_wake(queue, wake, message, shown, told, record, moment), "id": wake, "items": len(shown)}
+def _quarantine_dispatch_state(filename):
+    """Move a file that does not parse aside: read as empty it would lose the rate
+    history and the sticky items without a word."""
+    path = dispatch_dir() / filename
     try:
-        with redirect_stdout(io.StringIO()):
-            orchestrator_send(record, message)
-    except (Exception, SystemExit) as exc:
-        detail = module.text(str(exc), redact, 200) or "unknown error"
-        module.mark_failed(queue, detail, moment)
-        outcome = f"failed: {detail}"
-    else:
-        module.mark_delivered(queue, wake, shown, told, moment)
-        outcome = "delivered"
-    atomic_json_state(data_dir(dispatch_dir()) / "queue.json", queue)
-    _append_dispatch_audit({"time": dispatch_module().iso(moment), "action": "wake", "id": wake, "keys": [item["key"] for item in shown], "outcome": outcome})
-    return {"outcome": outcome, "id": wake, "items": len(shown)}
+        if isinstance(json.loads(path.read_text()), dict):
+            return
+    except OSError:
+        return
+    except ValueError:
+        pass
+    os.replace(path, path.with_name(filename + ".corrupt"))
+    _append_dispatch_audit({"time": dispatch_module().iso(dt.datetime.now(dt.timezone.utc)), "action": "state",
+                            "outcome": f"{filename} could not be read and was moved aside"})
 def _dispatch_pass(dry_run, as_json):
-    module = dispatch_module()
+    module, wake_lib = dispatch_module(), wake_module()
     records = [rec for _path, rec in session_records()]
     alive, unknown = session_liveness(records, strict=True)
     live = alive | unknown
@@ -8831,7 +8867,14 @@ def _dispatch_pass(dry_run, as_json):
     issues = _dispatch_issues(dry_run) if targets else None
     facts = [_dispatch_fact(rec, live, unknown, issues, live_beads, dry_run) for rec in targets]
     moment = dt.datetime.now(dt.timezone.utc)
-    queue = _read_dispatch_state("queue.json")
+    if not dry_run:
+        _quarantine_dispatch_state("queue.json")
+        _quarantine_dispatch_state("state.json")
+    queue = wake_lib.normalized(_read_dispatch_state("queue.json"))
+    malformed = queue.pop("malformed", 0)
+    if malformed and not dry_run:
+        _append_dispatch_audit({"time": module.iso(moment), "action": "state",
+                                "outcome": f"dropped {malformed} malformed row(s) from queue.json"})
     actions, memory = module.decide(facts, _read_dispatch_state("state.json"), dispatch_policy(), moment)
     memory["last_pass_at"] = module.iso(moment)
     by_session = {fact["session"]: fact for fact in facts}
@@ -8840,7 +8883,7 @@ def _dispatch_pass(dry_run, as_json):
         if action["type"] != "queue":
             outcome = "dry-run" if dry_run else _dispatch_apply(action, by_session[action["session"]], memory, queue, moment)
             results.append({**action, "outcome": outcome})
-    added, cleared = wake_module().reconcile(queue, actions, facts, wake_policy(), moment, redact)
+    added, cleared = wake_lib.reconcile(queue, actions, facts, memory, wake_policy(), moment, redact)
     results.extend({"type": "queue", "session": item["session"], "key": item["key"], "reason": item.get("reason"),
                     "kind": item["kind"], "outcome": "dry-run" if dry_run else "queued"} for item in added)
     if not dry_run:
@@ -8848,9 +8891,11 @@ def _dispatch_pass(dry_run, as_json):
             _append_dispatch_audit({"time": module.iso(moment), "session": row.get("session"), "action": "item",
                                     "kind": row.get("kind"), "key": row["key"], "reason": row.get("reason"),
                                     "outcome": outcome})
+        # Saved before the delivery, so a fault there cannot lose this pass.
+        atomic_json_state(data_dir(dispatch_dir()) / "state.json", memory)
+        atomic_json_state(dispatch_dir() / "queue.json", queue)
     wake = _deliver_wake(queue, moment, dry_run)
     if not dry_run:
-        atomic_json_state(data_dir(dispatch_dir()) / "state.json", memory)
         atomic_json_state(dispatch_dir() / "queue.json", queue)
     items = queue.get("items") or []
     if as_json:

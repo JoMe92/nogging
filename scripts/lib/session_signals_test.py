@@ -21,6 +21,23 @@ class ExcerptTests(unittest.TestCase):
         self.assertLessEqual(len(out), 300)
         self.assertNotRegex(out, r"[\x00-\x1f]")
 
+    def test_secret_shapes_go_without_any_help_from_redact(self):
+        for leak in ("token: s3cr3tvalue", '"api_key": "s3cr3tvalue"', "Authorization: Basic s3cr3tvalue",
+                     "password=s3cr3tvalue", "ghp_" + "a" * 36, "sk-ant-" + "b" * 30, "glpat-" + "c" * 20,
+                     "https://user:s3cr3tvalue@host/x", "aB3" * 14,
+                     "-----BEGIN RSA PRIVATE KEY-----\ns3cr3tvalue\nmore\n-----END RSA PRIVATE KEY-----",
+                     "-----BEGIN PRIVATE KEY-----\ns3cr3tvalue cut off here"):
+            out = sig.clean_excerpt(f"saw {leak} there")
+            self.assertIn("***REDACTED***", out, leak)
+            self.assertNotIn("s3cr3tvalue", out, leak)
+
+    def test_ordinary_text_and_heads_stay(self):
+        for text in ("max_tokens: 4096", "author: a teammate", "head " + "a1b2c3d4" * 5, "sf-lead-spec-rn7m-20261030"):
+            self.assertEqual(sig.clean_excerpt(text), text)
+
+    def test_an_address_with_a_wide_character_goes_whole(self):
+        self.assertEqual(sig.clean_excerpt("j\u00f6nas@b\u00fccher.de"), "***EMAIL***")
+
     def test_non_text_and_blank_are_none(self):
         self.assertIsNone(sig.clean_excerpt(None))
         self.assertIsNone(sig.clean_excerpt(" \n\t "))

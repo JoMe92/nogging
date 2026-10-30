@@ -245,7 +245,7 @@ twice = m.merge_signal_permission(once)
 print(once['permissions']['allow'], twice == once)
 ")
 expect "permissions: session signal is appended once, existing rules kept" \
-  "['Read(src/**)', 'Bash(./scripts/nogg session signal:*)'] True" "$got"
+  "['Read(src/**)', 'Bash(./scripts/nogg session signal:*)', 'Bash(./scripts/nogg session inbox:*)'] True" "$got"
 grep -qF 'if role_meta == "lead":' "$nogg" && ok "permissions: the launch adds the signal rule for a Lead" || bad "permissions: launch does not add the rule"
 
 # --- shipped files ----------------------------------------------------------

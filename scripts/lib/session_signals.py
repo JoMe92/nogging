@@ -38,8 +38,27 @@ STATE_MAP = {
 SOURCES = {"claude": "claude-hook", "codex": "codex-hook", "pi": "pi-extension"}
 
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f  ]+")
-_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)+")
+_EMAIL_RE = re.compile(r"[\w.%+\-]+@[\w\-]+(?:\.[\w\-]+)+")
+# `redact` knows this host's values and `name=value`. These give a secret away with
+# neither, in text from a pane or an exception of some other tool.
+_PRIVATE_KEY_RE = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(?:-----END [A-Z ]*PRIVATE KEY-----|\Z)", re.S)
+_SECRET_PAIR_RE = re.compile(
+    r"""(["']?[\w.-]*(?:token|secret|password|passwd|api[_-]?key|private[_-]?key|credential|authorization)["']?"""
+    r"""\s*[:=]\s*)(?:"[^"]*"|'[^']*'|(?:basic|bearer|token)\s+\S+|\S+)""", re.I)
+_SECRET_SHAPES_RE = re.compile(
+    r"\b(?:gh[pousr]_[A-Za-z0-9_]{16,}|github_pat_[A-Za-z0-9_]{16,}|glpat-[A-Za-z0-9_-]{16,}|npm_[A-Za-z0-9]{16,}"
+    r"|pypi-[A-Za-z0-9_-]{16,}|hf_[A-Za-z0-9]{16,}|sk-[A-Za-z0-9_-]{16,}|[sr]k_(?:live|test)_[A-Za-z0-9]{16,}"
+    r"|xox[abprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|AIza[A-Za-z0-9_-]{30,}"
+    r"|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_.-]{10,}"
+    r"|(?-i:(?=[\w-]*[A-Z])(?=[\w-]*[a-z])(?=[\w-]*\d)[\w-]{32,}))\b"
+    r"|\bbearer\s+\S+|(?<=://)[^/\s:@]+:[^/\s@]+(?=@)", re.I)
 _FIELD_RE = re.compile(r"[^A-Za-z0-9_.:\-]")
+
+
+def scrub_secrets(text: str) -> str:
+    text = _PRIVATE_KEY_RE.sub("***REDACTED***", text)
+    text = _SECRET_PAIR_RE.sub(lambda match: match.group(1) + "***REDACTED***", text)
+    return _SECRET_SHAPES_RE.sub("***REDACTED***", text)
 
 
 def clean_excerpt(text: Any, redact: Callable[[str], str] | None = None, limit: int = EXCERPT_LIMIT) -> str | None:
@@ -48,7 +67,7 @@ def clean_excerpt(text: Any, redact: Callable[[str], str] | None = None, limit: 
         return None
     if redact is not None:
         text = redact(text)
-    text = _EMAIL_RE.sub("***EMAIL***", text)
+    text = _EMAIL_RE.sub("***EMAIL***", scrub_secrets(text))
     text = " ".join(_CONTROL_RE.sub(" ", text).split())
     if len(text) > limit:
         text = text[:limit - 1].rstrip() + "…"
