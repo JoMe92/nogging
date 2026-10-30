@@ -63,6 +63,22 @@ and GitHub Releases for that history.
   install it.
 - `nogg session capabilities` reports what a Lead of an agent and authority can
   do, derived from what launch resolves.
+- `.pi/nogging/`: a home for optional Pi extensions that Pi never discovers, with
+  conventions, shared helpers and an offline test runner
+  (`scripts/pi-extensions.test.sh`). The installer copies it on `init` and
+  `update` and enables nothing.
+- The `pi_extensions` config key (default `[]`): the extensions every
+  `session launch --agent pi` loads after the guard. An invalid value refuses the
+  launch, and `validate` and `doctor` report it.
+- `nogg pi-ext list|install|remove` manages an extension for standalone Pi through
+  Pi's own package command, and `doctor` notes a missing install, a stale path and
+  `npm:pi-glm-usage` next to `glm-usage`.
+- The `glm-usage` Pi extension: a footer and `/glm-usage` command for the Z.ai
+  coding-plan quota. It gets the key only from Pi, never prints it, marks a failed
+  refresh stale, and shares a key-free snapshot. See `docs/pi-extensions.md`.
+- `nogg usage --agent pi` reports the Z.ai 5-hour and weekly windows from that
+  snapshot, refreshed by one bounded, key-safe probe through
+  `pi auth print-api-key`. `PI_NOGG_USAGE_PROBE=0` makes it cache-only.
 
 ### Changed
 
@@ -75,6 +91,10 @@ and GitHub Releases for that history.
 - `nogg loop tick` runs one dispatch pass first, under its own lock and exception
   boundary, and `orchestrator run` writes the `orchestrator_context` values into
   the session's effective settings `env`.
+- Pi usage is known when a Z.ai key is configured in Pi, so the launch gate checks
+  its cap, estimate and reservations. It stays unknown, and follows
+  `usage_gate.on_unknown`, for other providers, a missing key or an unsupported
+  response.
 - `session watch` also reads herdr's `agent_status` (`blocked` is a question,
   `done` is idle, `unknown` proves nothing), between the rollout and the pane.
 - `session watch` classifies every agent from one evidence order (structured
