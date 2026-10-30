@@ -303,7 +303,10 @@ bounded by `session_log_max_bytes` and rotated up to `session_log_rotation_depth
 
 `session watch` classifies each session from one evidence order, whatever the
 agent: a fresh structured event from the session's own events file, then a
-Codex rollout's last turn, then the pane adapter. A Claude session reports
+Codex rollout's last turn, then herdr's `agent_status` (on herdr sessions:
+`blocked` is a question, `done` is idle, and `unknown` proves nothing), then the
+pane adapter. A Pi session reports its turns through a lifecycle extension the
+same way (see [`using-with-pi.md`](using-with-pi.md)). A Claude session reports
 `turn_start`, `turn_end`, a question, an API error and its end through hooks;
 a finished Codex turn is read from its own rollout with no hook installed,
 and the reply's first line shows as an `excerpt`. An `idle` from an event

@@ -179,25 +179,44 @@ def current_signal(records: list[dict[str, Any]]) -> dict[str, Any] | None:
     return None
 
 
-def resolve_state(event: str | None, rollout: str | None, pane: str | None) -> tuple[str, str]:
-    """One evidence order for every agent: event, then rollout, then pane.
+HERDR_STATES = {"blocked": "needs_input", "done": "idle", "idle": "idle", "working": "working"}
+# Pane states herdr has no word for; they stay visible when herdr reports a status.
+PANE_REFINEMENTS = frozenset({"limit", "waiting_background"})
 
-    An `idle` from an event or rollout yields to a live `working` pane, so a turn
-    whose start hook was lost is still seen. `unknown` stays `unknown`: no source
-    infers completion. Returns (state, source)."""
+
+def herdr_state(status: Any) -> str | None:
+    """The classified state herdr's `agent_status` documents, or None.
+
+    `blocked` is an approval UI (needs_input) and `done` an unseen `idle`. Neither
+    proves the work is finished, and `unknown` proves nothing."""
+    return HERDR_STATES.get(status) if isinstance(status, str) else None
+
+
+def resolve_state(event: str | None, rollout: str | None, pane: str | None,
+                  herdr: str | None = None) -> tuple[str, str]:
+    """One evidence order for every agent: event, rollout, herdr, then pane.
+
+    An `idle` from an event or rollout yields to a live `working` herdr status or
+    pane, so a turn whose start hook was lost is still seen. `unknown` stays
+    `unknown`: no source infers completion. `herdr` is the raw `agent_status`.
+    Returns (state, source)."""
     pane = pane if pane not in (None, "unknown") else None
+    herdr_live = herdr_state(herdr)
+    if herdr_live is not None and pane in PANE_REFINEMENTS:
+        herdr_live = None
+    live, live_source = (herdr_live, "herdr") if herdr_live is not None else (pane, "pane")
     if event == "ended":
         return event, "event"
     if rollout == "working":
         return "working", "rollout"
     if event is not None:
-        if pane is not None and (event == "needs_input" or (event == "idle" and pane == "working")):
-            return pane, "pane"
+        if live is not None and (event == "needs_input" or (event == "idle" and live == "working")):
+            return live, live_source
         return event, "event"
     if rollout is not None:
-        if rollout == "idle" and pane == "working":
-            return "working", "pane"
+        if rollout == "idle" and live == "working":
+            return "working", live_source
         return rollout, "rollout"
-    if pane is not None:
-        return pane, "pane"
+    if live is not None:
+        return live, live_source
     return "unknown", "none"

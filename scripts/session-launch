@@ -381,6 +381,14 @@ $(cat "$prompt")"
     # Explicit loading works even in a fresh worktree. Approval applies only
     # to this process; never modify Pi's standing trust store.
     set -- --approve --extension "$guard"
+    # Observability never blocks a launch: without the lifecycle extension the
+    # session still runs, and watch falls back to herdr status or the pane.
+    lifecycle="$(pwd)/.pi/extensions/nogging-lifecycle.ts"
+    if [ -f "$lifecycle" ]; then
+      set -- "$@" --extension "$lifecycle"
+    else
+      echo "session-launch: warning: Pi lifecycle extension is missing: $lifecycle; watch cannot see this session's turns" >&2
+    fi
     [ -n "$provider" ] && set -- "$@" --provider "$provider"
     [ -n "$model" ]    && set -- "$@" --model "$model"
     if [ -n "$prompt" ] && [ -f "$prompt" ]; then

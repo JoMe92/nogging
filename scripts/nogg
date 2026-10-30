@@ -6460,11 +6460,20 @@ def _rollout_evidence(rec):
     except (OSError, ValueError, TypeError, RuntimeError):
         return None
     return turn if turn and turn["state"] != "none" else None
+def _herdr_status(rec):
+    """herdr's `agent_status` for a record on a backend that has one, else None.
+    A query failure is `unknown`, which proves nothing."""
+    try:
+        substrate = session_backend(record_backend_name(rec))
+        if not getattr(getattr(substrate, "capabilities", None), "agent_status", False):
+            return None
+        return substrate.agent_status(record_backend_ref(rec))
+    except Exception:
+        return None
 def classify_session_detail(rec, live=None):
     """One-shot state classification with one evidence order for every agent: a
-    fresh structured event, then a Codex rollout turn state, then the pane
-    adapter keyed off the recorded agent (herdr `agent_status` joins before the
-    pane in TASK-SWK-002). Returns `{"state", "source", "pane", "excerpt"}`. An
+    fresh structured event, then a Codex rollout turn state, then herdr
+    `agent_status`, then the pane adapter keyed off the recorded agent. Returns `{"state", "source", "pane", "excerpt"}`. An
     `idle` or stale `needs_input` yields to live evidence, and `unknown` stays
     `unknown`: no source may infer completion."""
     name = rec.get("name")
@@ -6483,7 +6492,7 @@ def classify_session_detail(rec, live=None):
         turn = _rollout_evidence(rec)
         if turn:
             rollout_state = "working" if turn["state"] == "running" else "idle"
-    state, source = signals.resolve_state(event_state, rollout_state, pane_state)
+    state, source = signals.resolve_state(event_state, rollout_state, pane_state, herdr=_herdr_status(rec))
     if source == "rollout" and state == "idle":
         excerpt = signals.clean_excerpt(turn["message"] or turn["reason"], redact)
     elif source != "event":
