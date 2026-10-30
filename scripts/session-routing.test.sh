@@ -16,8 +16,9 @@
 #     usage admission and pi_extensions loads, or refuses with no side effect;
 #   - unrouted launches behave as without routing, carry no routing key and list
 #     as before;
-#   - the record and the printed routing= line show the decision, and launch
-#     mutates no Bead.
+#   - entries supply model and effort with `route` provenance, Pi records a tier;
+#   - the record, the printed routing= line and `session list` show the decision,
+#     and launch mutates no Bead.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/test-fixture-config.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/test-agents.sh"
@@ -220,6 +221,8 @@ expect "binary-missing: skip reason" routing.skipped.0.reason '"binary-missing"'
 expect "binary-missing: skip detail" routing.skipped.0.detail '"pi is not on PATH"'
 expect "binary-missing: skip_agents" routing.skip_agents '[]'
 said "binary-missing: routing line" "routing=lead#2 codex/tmux; skipped #1 pi/tmux: binary-missing (pi is not on PATH)"
+"$nogg" session list >"$out" 2>&1
+said "binary-missing: list shows the route" "route=#2 skipped=#1:binary-missing"
 grep -E '^(implement|write|update|create|close|add|remember)' "$BD_STUB_LOG" >"$out" \
   && bad "binary-missing: launch mutated a Bead" || ok "binary-missing: no Beads mutation"
 export PATH="$work/agents:$base_path"
@@ -453,4 +456,39 @@ new_root '{"schema_version": 1, "roles": {"specialist": [{"agent": "codex", "bac
   && ok "specialist: launched" || bad "specialist: launch errored"
 expect "specialist: list key" routing.role '"specialist"'
 
+# --- selection and provenance ------------------------------------------------
+new_root "$SOL"
+patch_config 'cfg["tier_overrides"] = {"complex": {"codex": {"effort": "low"}}}'
+launched entry-selection --tier complex --full-access
+has "entry-selection: model" "--model gpt-6-luna"
+has "entry-selection: effort" "--reasoning-effort medium"
+expect "entry-selection: model source" model_source '"route"'
+expect "entry-selection: effort source" reasoning_effort_source '"route"'
+expect "entry-selection: tier" selection_tier '"complex"'
+expect "entry-selection: tier effort" selection_tier_effort '"medium"'
+expect "entry-selection: tier effort source" selection_tier_effort_source '"route"'
+"$nogg" session list >"$out" 2>&1
+said "entry-selection: list shows route effort" "effort=medium (route)"
+said "entry-selection: list keeps the tier" "tier=complex route=#1"
+
+new_root '{"schema_version": 1, "roles": {"lead": [{"agent": "codex", "backend": "tmux",
+  "models": {"complex": {"effort": "medium"}}}]}}'
+launched entry-effort --tier complex --full-access
+expect "entry-effort: the table keeps the model" model_source '"launch"'
+expect "entry-effort: the entry supplies the effort" reasoning_effort_source '"route"'
+
+new_root '{"schema_version": 1, "roles": {"lead": [{"agent": "codex", "backend": "tmux"}]}}'
+patch_config 'cfg["tier_overrides"] = {"complex": {"codex": {"effort": "low"}}}'
+launched no-entry-selection --tier complex --full-access
+expect "no-entry-selection: the override stays" selection_tier_effort_source '"project"'
+expect "no-entry-selection: effort source" reasoning_effort_source '"project"'
+
+new_root "$PI_ONLY"
+launched pi-tier --tier standard --full-access
+expect "pi-tier: agent" agent '"pi"'
+expect "pi-tier: tier recorded" selection_tier '"standard"'
+expect "pi-tier: null tier effort" selection_tier_effort null
+expect "pi-tier: null source" selection_tier_effort_source null
+expect "pi-tier: runtime default" model_source '"runtime-default"'
+expect "pi-tier: no table lookup attributed" usage_attribution.0.selection_version null
 exit "$fail"

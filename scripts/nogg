@@ -6539,7 +6539,8 @@ def _model_display(rec):
     predating `reasoning_effort_source` shows a stored effort as
     `effort=<level> (unknown)` (historical provenance is never inferred) and
     otherwise keeps its prior display. A record from before model selection
-    was recorded shows `-`."""
+    was recorded shows `-`. A routed or pinned session adds `route=#<n>`, then
+    `skipped=#<i>:<reason>,...` when higher entries were skipped."""
     if "model_source" not in rec:
         return "-"
     shown = rec.get("requested_model") or "runtime-default"
@@ -6552,6 +6553,11 @@ def _model_display(rec):
         shown += f" effort={effort} (unknown)"
     if rec.get("selection_tier"):
         shown += f" tier={rec['selection_tier']}"
+    routing = rec.get("routing") or {}
+    if (routing.get("chosen") or {}).get("index"):
+        shown += f" route=#{routing['chosen']['index']}"
+    if routing.get("skipped"):
+        shown += " skipped=" + ",".join(f"#{item['index']}:{item['reason']}" for item in routing["skipped"])
     return shown
 def _agent_display(rec):
     """`session list` AGENT cell: a record written before this column existed
