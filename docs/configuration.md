@@ -94,6 +94,13 @@ refused by name.
 | `token_usage_refresh_drain_seconds` | number | `5` | Time budget, in seconds, for one such refresh. |
 | `token_usage_query_timeout_seconds` | number | `30` | Time limit, in seconds, for each local Dolt query behind `token-usage report`, `session`, `export`, `import` and `status`. A busy or very large store then fails with a clear error instead of hanging. |
 
+## Session wake
+
+| Key | Type | Default | Effect |
+| --- | --- | --- | --- |
+| `session_dispatch` | object | see [the block below](#session_dispatch) | Deterministic follow-ups for supervised sessions. Off by default. |
+| `orchestrator_context` | object | see [the block below](#orchestrator_context) | Context budget values for the Orchestration Agent. |
+
 ## Multi-machine
 
 | Key | Type | Default | Effect |
@@ -150,6 +157,58 @@ Unknown keys and out-of-range or mistyped values refuse every launch until
 they are fixed. The semantics are in
 [Running work in sessions](running-work-in-sessions.md) and
 [Usage limits](usage-limits.md).
+
+### `session_dispatch`
+
+An optional object. Every key is optional, and the template carries:
+
+```json
+"session_dispatch": {
+  "enabled": false,
+  "max_nudges": 2,
+  "max_ci_nudges": 2,
+  "stall_after": "15m",
+  "ci_timeout": "60m",
+  "retire_merged": false,
+  "wake": {
+    "urgent_quiet": "90s", "normal_quiet": "300s", "max_hold": "900s",
+    "min_gap": "300s", "max_wakes_per_hour": 4, "remind_after": "4h",
+    "hold_above_percent": 85,
+    "keep_warm": true, "keep_warm_after": "50m", "quiet_hours": []
+  },
+  "precompact_after": "50m",
+  "precompact_min_tokens": 100000
+}
+```
+
+| Key | Type | Default | Effect |
+| --- | --- | --- | --- |
+| `enabled` | boolean | `false` | With it off or absent, `session dispatch` prints that it is disabled and no session is nudged, retired or woken. |
+| `max_nudges` | integer | `2` | Nudges per head SHA for an idle Lead with gaps or no pull request. New commits restore them. Past the budget the condition is queued as `stuck`. |
+| `max_ci_nudges` | integer | `2` | Nudges for red CI, counted across fixes until CI is green. Past the budget the condition is queued as `ci_stuck`. |
+| `stall_after` | duration | `15m` | Log silence of a `working` session before the stall ladder starts. A second period queues `stalled`. |
+| `ci_timeout` | duration | `60m` | How long checks may stay pending before `ci_timeout` is queued. |
+| `retire_merged` | boolean | `false` | Stop and clean up a session whose pull request is merged, whose Bead is closed and whose tree is clean. |
+| `wake` | object | see the template | Digest timing, keep-warm and quiet hours. Read by the wake delivery. |
+| `precompact_after` | duration | `50m` | Idle time before the one compaction ahead of a lapsing cache. |
+| `precompact_min_tokens` | integer | `100000` | Smallest context worth that compaction. |
+
+A duration is a whole number with an optional `s`, `m` or `h`. `quiet_hours` is a list
+of `"HH:MM-HH:MM"` windows. An unknown key or a bad value fails `validate` and
+`doctor`, naming it, and `session dispatch` refuses to run.
+
+### `orchestrator_context`
+
+An optional object, with unknown keys refused the same way:
+
+```json
+"orchestrator_context": {"auto_compact_window": 200000, "idle_compact_min_tokens": 100000}
+```
+
+| Key | Type | Default | Effect |
+| --- | --- | --- | --- |
+| `auto_compact_window` | integer | `200000` | The Orchestration Agent's automatic compaction window, in tokens. |
+| `idle_compact_min_tokens` | integer | `100000` | Smallest context worth compacting while it idles. |
 
 ### `tier_overrides`
 

@@ -6727,6 +6727,14 @@ def signals_module():
     sys.dont_write_bytecode = True
     import session_signals
     return session_signals
+def dispatch_module():
+    """Load the pure dispatch decision from scripts/lib beside this script."""
+    lib = str(Path(__file__).resolve().parent / "lib")
+    if lib not in sys.path:
+        sys.path.insert(0, lib)
+    sys.dont_write_bytecode = True
+    import session_dispatch
+    return session_dispatch
 def _read_hook_stdin(limit, wait=1.0):
     """At most `limit` bytes of hook JSON from stdin, or b'' for a terminal, a
     closed stdin or a writer that stays silent for `wait` seconds."""
@@ -9443,6 +9451,11 @@ def loop_config_diagnostics():
     return [(f"loop definitions: {path} ({len(config['loops'])} loop(s), "
              f"timezone {config['timezone']})", True)]
 
+def session_dispatch_diagnostics():
+    """A defect in the `session_dispatch` or `orchestrator_context` block is a FAIL;
+    `nogg validate` shares this path through `doctor`. Fine blocks print nothing."""
+    return [(f"session dispatch config: {error}", False) for error in dispatch_module().config_errors(CFG)]
+
 LOOP_TICK_WARN_SECONDS = 300
 
 def loop_timer_state():
@@ -9533,6 +9546,7 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
     except Exception as exc: problems = [str(exc)]
     checks.extend((p, False) for p in problems)
     checks.extend(loop_config_diagnostics())
+    checks.extend(session_dispatch_diagnostics())
     try:
         loop_warnings, loop_notes = loop_health_diagnostics()
     except Exception as exc:
