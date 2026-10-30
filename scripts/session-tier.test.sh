@@ -25,6 +25,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/test-fixture-config.sh"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 nogg="$here/nogg"
 repo_root="$(cd "$here/.." && pwd)"
+unset NOGG_OPENSPEC_FENCED  # hermetic: never test the fenced tmux -N transport here
 work=$(mktemp -d)
 out=$(mktemp)
 trap 'rm -f "$out"; rm -rf "$work"' EXIT
@@ -75,6 +76,7 @@ make_root() {
 import json, sys
 cfg = json.load(open(sys.argv[1]))
 cfg.pop("session_launch_profile", None); cfg.pop("session_launch_prompt", None)
+cfg.pop("tier_overrides", None)  # isolate from this repository's tier_overrides
 json.dump(cfg, open(sys.argv[2], "w"), indent=2)
 PY
 }
