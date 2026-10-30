@@ -191,9 +191,12 @@ def _queue(fact: dict[str, Any], kind: str, mark: Any, reason: str, next_step: s
 
 
 def failure_item(fact: dict[str, Any], action: dict[str, Any], detail: str) -> dict[str, Any]:
-    """The `error` item for a resume or retirement that failed."""
-    return _queue(fact, "error", action["key"], f"{action['type']} failed: {detail}",
-                  f"./scripts/nogg session log {fact['session']}")
+    """The `error` item for a resume or retirement that failed. Its action is spent, so
+    no later pass can report it again, and it is `sticky` until it has gone out."""
+    failure = _queue(fact, "error", action["key"], f"{action['type']} failed: {detail}",
+                     f"./scripts/nogg session log {fact['session']}")
+    failure["item"]["sticky"] = True
+    return failure
 
 
 def _nudge_or_escalate(fact: dict[str, Any], memory: dict[str, Any], budget: str, limit: int,
@@ -403,8 +406,10 @@ def _observe(fact: dict[str, Any], memory: dict[str, Any], now: datetime) -> Non
 def decide(facts: list[dict[str, Any]], memory: dict[str, Any], policy: dict[str, Any],
            now: datetime) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """The actions for one pass and the memory to carry forward. Spending an action
-    is `record`'s job, so one held back at the send stays due. A session with no
-    fact any more is forgotten; `unknown` keeps what it had."""
+    is `record`'s job, so one held back at the send stays due. A queue action is
+    never spent: it reports a condition on every pass while it holds, which is what
+    keeps the queue level-triggered. A session with no fact any more is forgotten;
+    `unknown` keeps what it had."""
     known = memory.get("sessions") or {}
     next_memory, actions = {**memory, "sessions": {}}, []
     for fact in facts:
@@ -414,7 +419,7 @@ def decide(facts: list[dict[str, Any]], memory: dict[str, Any], policy: dict[str
             continue
         _observe(fact, session, now)
         actions.extend(action for action in _decide_session(fact, session, policy, now)
-                       if action["key"] not in session.get("done", [])
+                       if (action["type"] == "queue" or action["key"] not in session.get("done", []))
                        and not (policy.get("hold_sends") and action["type"] in SENDS))
     return actions, next_memory
 
@@ -433,7 +438,7 @@ def record(memory: dict[str, Any], action: dict[str, Any], now: datetime) -> Non
 
 
 def enqueue(queue: dict[str, Any], item: dict[str, Any], now: datetime) -> None:
-    """Add an item once, by key. TASK-SWK-005 delivers and drops them."""
+    """Add an item once, by key. session_wake re-evaluates, delivers and drops them."""
     items = queue.setdefault("items", [])
     if not any(existing.get("key") == item["key"] for existing in items):
         items.append({**item, "created_at": iso(now)})
