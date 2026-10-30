@@ -144,8 +144,10 @@ class StateTests(unittest.TestCase):
         self.assertEqual(target.read_text(), "keep")
 
     def test_a_reader_is_bounded_and_refuses_a_node(self):
-        self.write_raw("x" * 100)
+        self.write_raw("x" * 100 + "last")
         self.assertEqual(p.read_regular(self.path, 10), b"x" * 10)
+        self.assertEqual(p.read_regular(self.path, 4, tail=True), b"last")
+        self.assertEqual(len(p.read_regular(self.path, 500, tail=True)), 104)
         self.path.unlink()
         os.mkfifo(self.path)
         with self.assertRaises(OSError):
@@ -157,10 +159,17 @@ class StateTests(unittest.TestCase):
         os.mkfifo(self.path)
         p.set_aside(self.path)
         self.assertFalse(self.path.exists())
-        self.assertTrue(stat.S_ISFIFO(Path(f"{self.path}.corrupt").lstat().st_mode))
+        aside = list(self.path.parent.glob("pause.json.corrupt.*"))
+        self.assertTrue(stat.S_ISFIFO(aside[0].lstat().st_mode))
         self.path.write_text("kept")
         p.set_aside(self.path)
         self.assertEqual(self.path.read_text(), "kept")
+        self.path.unlink()
+        self.path.mkdir()
+        (self.path / "taken").write_text("x")
+        p.set_aside(self.path)
+        self.assertFalse(self.path.exists())
+        self.assertEqual(len(list(self.path.parent.glob("pause.json.corrupt.*"))), 2, "a taken name stops nothing")
 
     def test_clear_is_idempotent(self):
         p.write(self.path, pause())

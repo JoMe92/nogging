@@ -185,7 +185,7 @@ class LoopRunner:
             return
         # A pause stops automation, not people: `run-now` is someone's decision. It is read
         # per loop, so that one set while this tick runs holds the loops still to come.
-        pause = None if manual else self.pause(instant)
+        pause = None if manual else self.pause(self.now())
         if pause and name not in pause["keep_loops"]:
             self._tick_paused(instant, config, name, loop, pause)
             return
@@ -263,7 +263,7 @@ class LoopRunner:
         being logged on every tick. A row lost to rotation costs one repeated line."""
         rows = set()
         try:
-            data = session_pause.read_regular(event_path(self.root), 2 * LOG_MAX)
+            data = session_pause.read_regular(event_path(self.root), 2 * LOG_MAX, tail=True)
         except OSError:
             return rows
         for line in data.decode(errors="replace").splitlines():

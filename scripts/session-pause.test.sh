@@ -103,7 +103,14 @@ class PausedTicks(unittest.TestCase):
         self.assertEqual(len([row for row in self.rows("alpha") if row.get("reason") == "paused-global"]), 2)
 
     def test_a_pause_set_during_a_tick_holds_the_loops_still_to_come(self):
-        self.runner.send = lambda _record, text: (self.sent.append(text), self.held())
+        # Through the real read: this pause starts after the tick did.
+        path = self.root / "pause.json"
+        self.runner.pause = lambda now: session_pause.read(path, now)[0]
+        def send_then_pause(_record, text):
+            self.sent.append(text)
+            self.clock[0] += timedelta(seconds=30)
+            session_pause.write(path, session_pause.begin(None, self.clock[0] + timedelta(days=1), [], "operator", self.clock[0]))
+        self.runner.send = send_then_pause
         self.tick(5)
         self.assertEqual(len(self.sent), 1, "alpha ran, and report comes after the pause")
         self.assertEqual(self.rows("report"), [], "held, and its slot came before the pause began")
@@ -232,7 +239,8 @@ assert m.dispatch_wake_hold(held).startswith("paused until "), m.dispatch_wake_h
 assert m.dispatch_policy()["hold_sends"] is False and m.dispatch_wake_hold() is None
 
 # A loop run cannot pause or resume, and its deny rule leaves the status alone.
-assert "Bash(./scripts/nogg pause --days:*)" in m.LOOP_DENY and "Bash(./scripts/nogg resume:*)" in m.LOOP_DENY
+for command in ("pause --days", "pause --until", "pause --keep-loop", "resume"):
+    assert f"Bash(./scripts/nogg {command}:*)" in m.LOOP_DENY, command
 assert not [rule for rule in m.LOOP_DENY if "pause --status" in rule or rule.endswith("nogg pause:*)")]
 
 # --- the end of a pause inside a pass ---------------------------------------------
@@ -270,10 +278,14 @@ assert len(sent) == 1 and "resumed" in sent[0] and "items=2" in sent[0] and not 
 
 # A failed end costs no pass and no repeated digest: the state that stays holds delivery.
 seed(-60)
-with patch.object(module, "clear", side_effect=OSError("read-only file system")):
+policy = m.dispatch_policy
+with patch.object(module, "clear", side_effect=OSError("read-only file system")), \
+     patch.object(m, "dispatch_policy", side_effect=policy) as spied:
     for _ in range(3):
         assert one_pass() == []
 assert len(json.loads(queue_path.read_text())["items"]) == 2 and path.exists()
+assert json.loads(queue_path.read_text())["hold"] == "the pause could not be ended"
+assert all(call.args == (None,) for call in spied.call_args_list), "only the digest waits for a failed end"
 with patch.object(m, "dispatch_dir", return_value=state), patch.object(m, "pause_path", return_value=path):
     warnings, notes = m.pause_diagnostics()
 assert any("past its end" in line for line in warnings) and notes == [], (warnings, notes)
@@ -295,8 +307,19 @@ queue_path.unlink()
 os.mkfifo(queue_path)
 one_pass()
 assert not path.exists() and queue_path.is_file() and (state / "dispatch.jsonl").is_file()
-for name in ("dispatch.jsonl.2", "dispatch.jsonl.corrupt"):
-    (state / name).unlink()
+(state / "dispatch.jsonl.2").unlink()
+for aside in state.glob("dispatch.jsonl.corrupt.*"):
+    aside.unlink()
+
+# A log that cannot be kept costs a line on stderr and no pass.
+with patch.object(m, "dispatch_dir", return_value=state), patch.object(module, "set_aside", side_effect=OSError("no")):
+    m._append_dispatch_audit({"action": "x"})
+
+# The newest rows of an oversized log are the ones read.
+(state / "dispatch.jsonl").write_text("x" * (3 * 1024 * 1024) + "\n" + json.dumps({"action": "newest"}) + "\n")
+with patch.object(m, "dispatch_dir", return_value=state):
+    assert m._dispatch_audit_tail()[-1] == {"action": "newest"} and m._dispatch_audit_rows()[-1] == {"action": "newest"}
+(state / "dispatch.jsonl").unlink()
 
 # A fault in the end never leaves `loop tick`.
 seed(-60)
@@ -304,6 +327,15 @@ with patch.object(m, "pause_path", return_value=path), patch.object(m, "ORCHESTR
      patch.object(m, "_end_pause", side_effect=TypeError("a bad row")):
     m.end_due_pause()
 assert path.exists()
+
+# Neither does a lock that cannot be opened, and a tick with nothing to end never tries.
+(state / "bad-locks" / "dispatch.lock").mkdir(parents=True)
+with patch.object(m, "pause_path", return_value=path), patch.object(m, "ORCHESTRATOR_LOCKS", state / "bad-locks"):
+    m.end_due_pause()
+    assert path.exists()
+    path.unlink()
+    with patch.object(m, "_dispatch_lock", side_effect=AssertionError("the lock was touched")):
+        m.end_due_pause()
 PY
 
 # --- the commands in a scratch repository ----------------------------------------
@@ -433,7 +465,7 @@ json.dump({"schema": 1, "started_at": (end - timedelta(days=days)).isoformat(), 
 PY
 }
 write_pause 1 2
-has "ended: the status says it is over" "the next pass clears it" "$("$nogg" pause --status)"
+has "ended: the status says it is over" "is not cleared yet" "$("$nogg" pause --status)"
 lacks "ended: session list does not call it paused" "PAUSED" "$("$nogg" session list)"
 "$nogg" loop tick
 [[ ! -e "$pause_file" ]] && ok "uneventful: a tick ends it without the dispatcher" || bad "uneventful: the tick left it"

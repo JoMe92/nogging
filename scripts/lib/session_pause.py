@@ -17,6 +17,7 @@ import os
 import re
 import stat
 import tempfile
+import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -62,14 +63,17 @@ def _moment(value: Any) -> datetime | None:
     return moment if moment.tzinfo else None
 
 
-def read_regular(path: Any, limit: int) -> bytes:
-    """At most `limit` bytes of a regular file. The open neither follows a link nor
-    waits on a planted FIFO, because the state, the queue and the audit log lie in the
-    shared checkout and every tick reads them. OSError for anything else."""
+def read_regular(path: Any, limit: int, tail: bool = False) -> bytes:
+    """At most `limit` bytes of a regular file, its last ones with `tail`. The open neither
+    follows a link nor waits on a planted FIFO, because the state, the queue and the audit
+    log lie in the shared checkout and every tick reads them. OSError for anything else."""
     descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
     with os.fdopen(descriptor, "rb") as stream:
-        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+        status = os.fstat(stream.fileno())
+        if not stat.S_ISREG(status.st_mode):
             raise OSError(errno.EINVAL, "not a regular file")
+        if tail:
+            stream.seek(max(0, status.st_size - limit))
         return stream.read(limit)
 
 
@@ -81,7 +85,7 @@ def set_aside(path: Any) -> None:
             return
     except FileNotFoundError:
         return
-    os.replace(path, f"{path}.corrupt")
+    os.replace(path, f"{path}.corrupt.{uuid.uuid4().hex}")
 
 
 def parse_end(until: str | None, days: str | None, now: datetime) -> datetime:
@@ -214,7 +218,7 @@ def status(state: dict[str, Any] | None, now: datetime, problem: str | None = No
 def status_lines(view: dict[str, Any]) -> list[str]:
     if not view["paused"]:
         if view.get("ended_at"):
-            return [f"not paused: the pause ended at {local(_moment(view['ended_at']))}; the next pass clears it"]
+            return [f"not paused: the pause ended at {local(_moment(view['ended_at']))} and is not cleared yet"]
         if view.get("problem"):
             return [f"not paused: pause.json cannot be used ({view['problem']})"]
         return ["not paused"]
