@@ -2388,11 +2388,11 @@ def parse_iso(iso):
     on every supported Python version — `datetime.fromisoformat` only started
     accepting 'Z' directly in Python 3.11."""
     return dt.datetime.fromisoformat(iso.replace("Z", "+00:00"))
-def humanize_age(iso):
+def humanize_age(iso, at=None):
     """A compact age string (`45s`, `12m`, `3h`, `2d`) for an ISO timestamp, or
     `age unknown` when it will not parse."""
     try:
-        secs = int((dt.datetime.now(dt.timezone.utc)
+        secs = int(((at or dt.datetime.now(dt.timezone.utc))
                     - parse_iso(iso)).total_seconds())
     except (ValueError, TypeError, AttributeError):
         return "age unknown"
@@ -8936,6 +8936,67 @@ def loop_config_diagnostics():
     return [(f"loop definitions: {path} ({len(config['loops'])} loop(s), "
              f"timezone {config['timezone']})", True)]
 
+LOOP_TICK_WARN_SECONDS = 300
+
+def loop_timer_state():
+    """The loop scheduler timer of the main checkout and its unit-file state,
+    `unavailable` without a usable systemctl."""
+    timer = f"nogg-loops-{slugify(ORCHESTRATOR_HOME.name)}.timer"
+    if not tool_on_path("systemctl"):
+        return timer, "unavailable"
+    try:
+        res = run("systemctl", "--user", "is-enabled", timer, check=False, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return timer, "unavailable"
+    state = res.stdout.strip() or "unavailable"
+    return timer, "enabled" if state in ("enabled", "enabled-runtime") else state
+
+def loop_health_diagnostics(now=None):
+    """Advisory loop health as `(warnings, notes)`: never a FAIL. An invalid file
+    is the FAIL of `loop_config_diagnostics`, so it adds nothing here."""
+    lib = str(Path(__file__).resolve().parent / "lib")
+    if lib not in sys.path:
+        sys.path.insert(0, lib)
+    import loop_config, loop_state
+    now = now or dt.datetime.now(dt.timezone.utc)
+    definitions = ORCHESTRATOR_HOME / scfg("loops_file", ".nogging/loops.json")
+    try:
+        config = loop_config.load(definitions)
+    except ValueError:
+        return [], []
+    try:
+        state = loop_state.read_state(ORCHESTRATOR_HOME)
+    except ValueError as exc:
+        return [f"loop health unavailable: {exc}"], []
+    warnings, notes = [], []
+    loops = {name: loop for name, loop in (config or {"loops": {}})["loops"].items()
+             if loop["enabled"] and loop.get("host") in (None, os.uname().nodename)}
+    for name, loop in loops.items():
+        item = state.get("loops", {}).get(name, {})
+        if not loop_state.approval_status(ORCHESTRATOR_HOME, definitions, config, name)[0]:
+            warnings.append(f"loop {name} is unapproved and will not run; review it, then `nogg loop approve {name}`")
+        if item.get("suspended"):
+            warnings.append(f"loop {name} is suspended after repeated failures; "
+                            f"check `nogg loop log {name}`, then `nogg loop resume {name}`")
+        active = item.get("active_run")
+        if active:
+            limit = loop_config._runtime_minutes(loop["run"].get("max_runtime", "1h"), "max_runtime")
+            if now - parse_iso(active["started_at"]) > dt.timedelta(minutes=limit):
+                warnings.append(f"loop {name} run {active['run_id']} is past its max_runtime of "
+                                f"{loop['run'].get('max_runtime', '1h')}; a tick should have ended it")
+    timer, timer_state = loop_timer_state()
+    if timer_state == "enabled":
+        last_tick = state.get("last_tick")
+        if not last_tick:
+            warnings.append(f"loop scheduler: {timer} is enabled but no tick is recorded")
+        elif (now - parse_iso(last_tick)).total_seconds() > LOOP_TICK_WARN_SECONDS:
+            warnings.append(f"loop scheduler: {timer} is enabled but the last tick was "
+                            f"{humanize_age(last_tick, now)} ago")
+    elif loops:
+        notes.append(f"loop scheduler: {len(loops)} enabled loop(s) will not run: {timer} is {timer_state}; "
+                     "enable the timer or run `nogg loop tick` (docs/nogging/scheduled-loops.md)")
+    return warnings, notes
+
 def doctor(audit=False, with_recover=False, with_sandbox=False):
     # A fresh install starts with the OpenSpec write boundary closed. Bootstrap
     # the sentinel once, only when nothing has toggled the boundary yet (no
@@ -8959,6 +9020,11 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
     except Exception as exc: problems = [str(exc)]
     checks.extend((p, False) for p in problems)
     checks.extend(loop_config_diagnostics())
+    try:
+        loop_warnings, loop_notes = loop_health_diagnostics()
+    except Exception as exc:
+        loop_warnings, loop_notes = [], [f"loop health check unavailable: {exc}"]
+    warnings.extend(loop_warnings)
     if FAILURE_RECORD.exists():
         try: rec = json.loads(FAILURE_RECORD.read_text())
         except (ValueError, OSError): rec = {}
@@ -8993,6 +9059,7 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
              "Git 2.30+, Bash 4.4+, OpenSpec 1.11.x, Beads 1.2.x, Dolt 2.3.x "
              "(docs/nogging/compatibility.md)"]
     notes.extend(routing_notes)
+    notes.extend(loop_notes)
     notes.extend(mapping_health_lines())
     try:
         integrity_lines, _integrity_attention = worktree_integrity_diagnostics()

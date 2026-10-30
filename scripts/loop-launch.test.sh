@@ -39,7 +39,7 @@ with tempfile.TemporaryDirectory(prefix='nogg loop launch ') as td:
     config = json.loads((root / '.nogging/config.json').read_text())
     config.update(session_tmux_socket=SOCKET, session_stop_grace_seconds=0.1,
                   session_startup_timeout_seconds=6, session_delivery_timeout_seconds=4,
-                  usage_gate={'enabled': False})
+                  usage_gate={'enabled': False}, loops_file='.nogging/loops.json')
     (root / '.nogging/config.json').write_text(json.dumps(config, indent=2))
     (root / 'scripts').mkdir()
     for name in ('session-launch', 'session-log-writer', 'openspec-sandbox', 'nogg'):
@@ -128,7 +128,6 @@ while True:
             prompt.write_text(f'Inspect the queue for {name}.\n')
             loop_state.approve(root, defs, loaded, name, at='2026-01-01T00:00:00Z', user='operator')
         runner = m.loop_runner_for_main()
-        runner.definitions = defs
         runner.usage = admit
         runner.now = lambda: clock[0]
         return runner
