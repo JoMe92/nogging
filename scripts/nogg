@@ -4203,6 +4203,50 @@ def resolve_launch_tier(tier, agent, resume=None):
             "effort_source": entry["effort_source"], "table_effort": entry["table_effort"]}
 CODEX_SANDBOX_MODES = ("read-only", "workspace-write", "danger-full-access")
 CODEX_APPROVAL_POLICIES = ("on-request", "never")
+# The features that give a Codex session a command tool, and those tools' names.
+CODEX_COMMAND_FEATURES = ("shell_tool", "unified_exec")
+CODEX_COMMAND_TOOLS = ("exec_command", "write_stdin")
+CODEX_NESTED_TOOL_RE = re.compile(r"declare const tools: \{ (\w+)\(")
+def codex_rendered_tools(cwd, disabled=()):
+    """The tool names Codex would offer the model in `cwd`, read offline from
+    `codex debug prompt-input` (no model call), including those nested under its
+    code-mode `exec` tool. Raises when Codex cannot render them."""
+    argv = ["codex", "debug", "prompt-input"]
+    for feature in disabled:
+        argv += ["--disable", feature]
+    try:
+        result = subprocess.run(argv, cwd=cwd, stdin=subprocess.DEVNULL, text=True,
+                                capture_output=True, timeout=30)
+        items = json.loads(result.stdout) if result.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
+        raise RuntimeError("cannot read the Codex tool list; launch refused") from exc
+    if not isinstance(items, list):
+        raise RuntimeError("cannot read the Codex tool list; launch refused")
+    names = set()
+    def walk(tools):
+        for tool in tools if isinstance(tools, list) else []:
+            if isinstance(tool, dict):
+                names.add(tool.get("name"))
+                names.update(CODEX_NESTED_TOOL_RE.findall(str(tool.get("description"))))
+                walk(tool.get("tools"))
+    for item in items:
+        if isinstance(item, dict) and item.get("type") == "additional_tools":
+            walk(item.get("tools"))
+    return names
+def verify_codex_no_commands(cwd):
+    """Prove the installed Codex drops every command tool when
+    `CODEX_COMMAND_FEATURES` are disabled, and return those features. A baseline
+    without `exec_command` means the tool list is no longer readable as evidence,
+    so that refuses too: a run that must not execute commands never starts on an
+    unproven removal."""
+    if "exec_command" not in codex_rendered_tools(cwd):
+        raise RuntimeError("cannot find the command tool in the Codex tool list; "
+                           "a no-commands launch is refused")
+    left = sorted(set(CODEX_COMMAND_TOOLS) & codex_rendered_tools(cwd, CODEX_COMMAND_FEATURES))
+    if left:
+        raise RuntimeError(f"Codex still offers {', '.join(left)} with its command features "
+                           "disabled; a no-commands launch is refused")
+    return CODEX_COMMAND_FEATURES
 def load_codex_spec(path):
     """Read a `.codex.toml` launch fragment: the three required flat keys
     `sandbox`, `ask_for_approval`, `network_access`, plus the optional `model`
@@ -4401,7 +4445,7 @@ def session_helper_diagnostics():
                  "--sandbox", "--approval", "--network", "--readonly-root",
                  "--provider", "--model", "--reasoning-effort", "--effort", "--mode", "--session-id", "--resume", "--remote-control"):
         argv += [flag, "probe"]
-    argv += ["--read-only", "--continue"]
+    argv += ["--read-only", "--instructions-only", "--no-commands", "--continue"]
     try:
         contract = helper_contract(wrapper)
         for agent in ("claude", "codex", "pi", "antigravity"):
