@@ -2884,9 +2884,9 @@ def deny_openspec_writes(settings):
 # events file over pane-scraping. Appended into `hooks.<event>` by
 # merge_observability_hooks() below — never replacing or reordering an
 # existing entry for that event, exactly like FLOOR_DENY / OPENSPEC_READONLY_DENY.
-def _emit_hook(event):
+def _emit_hook(event, *flags):
     return {"hooks": [{"type": "command",
-                       "command": f"{shlex.quote(str(ROOT / 'scripts/nogg'))} session emit {event}"}]}
+                       "command": " ".join([shlex.quote(str(ROOT / 'scripts/nogg')), "session", "emit", event, *flags])}]}
 # `SubagentStop` is deliberately not wired: a subagent finishing is not a turn end.
 OBSERVABILITY_HOOKS = {
     "UserPromptSubmit": "turn_start",
@@ -2903,7 +2903,7 @@ def merge_observability_hooks(settings):
     hooks = result.setdefault("hooks", {})
     for event, emitted in OBSERVABILITY_HOOKS.items():
         existing = list(hooks.get(event) or [])
-        existing.append(_emit_hook(emitted))
+        existing.append(_emit_hook(emitted, *(("--guard",) if event == "Stop" else ())))
         hooks[event] = existing
     return result
 def resolve_launch_file(value, dir_key, default_dir, suffix):
@@ -5533,6 +5533,8 @@ def _session_launch(role, bead, cwd, read_only, owner,
         "owner": owner_identity(owner), "state": "starting", "log_path": str(log_path),
         "read_only": bool(read_only), "ended_at": None, "exit_reason": None,
         "profile": profile_label, "effective_settings_path": effective_settings_path,
+        # The stop guard applies only under the `autonomous` prompt.
+        "launch_prompt": Path(prompt_path).stem if prompt_path else None,
         "agent": agent, "openspec_readonly": bool(openspec_readonly),
         "floor_lifted": bool(floor_lifted), "claude_session_id": claude_session_id,
         "antigravity_conversation_id": resume if agent == "antigravity" else None,
@@ -6409,15 +6411,87 @@ def _supervised_session_name(command):
             f"{command}: NOGG_SESSION_NAME is not set (not running inside "
             "a session `scripts/nogg session launch` started)")
     return name
-def session_emit(event):
+def _session_checkout(rec):
+    """The checkout a session's work is in: its Bead's implementation worktree
+    while that allocation exists, else the directory it was launched in."""
+    bead = rec.get("bead_id")
+    if bead:
+        safe_id = re.sub(r"[^a-z0-9-]", "-", bead.lower())
+        try:
+            allocation = json.loads((WORKTREE_STATE / f"implementation--{safe_id}.json").read_text())
+            if allocation.get("bead_id") == bead and Path(allocation["path"]).is_dir():
+                return allocation["path"]
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+    return rec.get("working_dir") or "."
+GUARD_GIT_TIMEOUT_SECONDS = 5
+def session_git_facts(rec):
+    """`{"dirty", "upstream", "ahead"}` from local git only, or None when a fact
+    cannot be read. A branch allocated from `origin/develop` tracks it, so its own
+    pushed ref is compared first; a plain `git push` without -u then still counts."""
+    workdir = _session_checkout(rec)
+    def git(*args):
+        return run("git", "-C", workdir, *args, check=False, timeout=GUARD_GIT_TIMEOUT_SECONDS)
+    status, branch = git("status", "--porcelain"), git("branch", "--show-current")
+    if status.returncode or branch.returncode or not branch.stdout.strip():
+        return None
+    pushed = f"refs/remotes/origin/{branch.stdout.strip()}"
+    base = pushed if git("rev-parse", "--verify", "--quiet", pushed).returncode == 0 else "@{upstream}"
+    ahead = git("rev-list", "--count", f"{base}..HEAD")
+    return {"dirty": bool(status.stdout.strip()), "upstream": ahead.returncode == 0,
+            "ahead": int(ahead.stdout.strip() or 0) if ahead.returncode == 0 else 0}
+def session_stop_guard(name, payload):
+    """The fixed continuation for a stop with gaps, or None to allow it. Any
+    failure allows the stop: a broken check never traps a session."""
+    try:
+        signals = signals_module()
+        _, rec = load_session(name)
+        events = signals.read_events(session_events_path(name))
+        if not signals.guard_applies(rec, events, payload):
+            return None
+        git = session_git_facts(rec)
+        gaps = signals.completion_gaps(git, events) if git is not None else []
+        return signals.guard_message(gaps) if gaps else None
+    except Exception:
+        return None
+def session_completion_check(as_json=False):
+    """Report this session's gaps (design Decision 5), one implementation for every
+    runtime: exit 1 with gaps, 0 without and 0 on any internal error (fail open)."""
+    try:
+        signals = signals_module()
+        name = _supervised_session_name("session completion-check")
+        _, rec = load_session(name)
+        events = signals.read_events(session_events_path(name))
+        git = session_git_facts(rec)
+        gaps = signals.completion_gaps(git, events)
+        message = session_stop_guard(name, None)
+    except Exception as exc:
+        reason = redact(str(exc))
+        print(json.dumps({"gaps": [], "message": None, "unknown": reason}) if as_json
+              else f"completion check unknown: {reason}")
+        return
+    if as_json:
+        print(json.dumps({"session": name, "gaps": gaps, "message": message}))
+    else:
+        print(f"{name}: " + (", ".join(gaps) if gaps else "no gaps"))
+    if gaps:
+        sys.exit(1)
+def session_emit(event, guard=False, runtime=None):
     """Append one normalized schema 2 line to the calling session's own
     `<name>.events.jsonl` (session-wake design Decision 2). The session name is
     read from `NOGG_SESSION_NAME`, set as session environment by
     `session_launch` for exactly this purpose — a bare hook command carries no
     arguments identifying which session it fired in. Hook JSON on stdin is read
-    up to 64 KiB, tolerated when invalid, and reduced to a field whitelist."""
+    up to 64 KiB, tolerated when invalid, and reduced to a field whitelist.
+
+    `--guard` is the Stop hook (Decision 5): a stop with gaps prints
+    `decision: "block"` and records `guard_continue` instead of `turn_end`.
+    `--runtime` is the hook's own runtime: a Codex child inside a Claude session
+    inherits the session's environment and must not speak for it."""
     name = _supervised_session_name("session emit")
     agent = os.environ.get("NOGG_SESSION_AGENT")
+    if runtime and agent and runtime != agent:
+        return
     if agent == "antigravity":
         if event != "turn_end":
             raise RuntimeError("unsupported Antigravity hook event")
@@ -6426,6 +6500,11 @@ def session_emit(event):
     signals = signals_module()
     payload = signals.read_payload(_read_hook_stdin(signals.STDIN_LIMIT))
     if not signals.is_recorded(event, payload):
+        return
+    message = session_stop_guard(name, payload) if guard and event == "turn_end" else None
+    if message:
+        _append_session_event(name, signals.build_event(name, signals.GUARD_CONTINUE, payload, now(), agent, redact))
+        print(json.dumps({"decision": "block", "reason": message}))
         return
     _append_session_event(name, signals.build_event(name, event, payload, now(), agent, redact))
 SIGNAL_NEXT_STEP = {
@@ -9657,6 +9736,10 @@ def main():
     srw.add_argument("name"); srw.add_argument("--message")
     semit = ssub.add_parser("emit")
     semit.add_argument("event")
+    semit.add_argument("--guard", action="store_true", help="the Stop hook: continue a stop with gaps once")
+    semit.add_argument("--runtime", choices=("claude", "codex", "pi"), help="the runtime firing this hook")
+    scc = ssub.add_parser("completion-check", help="report this session's dirty, unpushed and no-signal gaps")
+    scc.add_argument("--json", action="store_true")
     ssig = ssub.add_parser("signal", help="state that this supervised session is blocked or done")
     ssig.add_argument("kind", choices=("blocked", "done"))
     ssig.add_argument("reason", help="why, in at most 300 characters")
@@ -9844,7 +9927,9 @@ def session_cmd(args):
     elif args.session_command == "resume-when-ready":
         session_resume_when_ready(args.name, args.message)
     elif args.session_command == "emit":
-        session_emit(args.event)
+        session_emit(args.event, args.guard, args.runtime)
+    elif args.session_command == "completion-check":
+        session_completion_check(args.json)
     elif args.session_command == "signal":
         session_signal(args.kind, args.reason)
 if __name__ == "__main__":

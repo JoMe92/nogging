@@ -16,9 +16,11 @@ STDIN_LIMIT = 64 * 1024
 EVENTS_ROTATE_BYTES = 256 * 1024
 EXCERPT_LIMIT = 300
 
-EVENTS = ("turn_start", "turn_end", "needs_input", "turn_error", "session_end", "blocked", "done")
+EVENTS = ("turn_start", "turn_end", "needs_input", "turn_error", "session_end", "blocked", "done", "guard_continue")
 # A signal is a fact an agent states about itself, never a classified state.
 SIGNALS = ("blocked", "done")
+# A stop the guard turned into a continuation: the turn goes on, so no state changes.
+GUARD_CONTINUE = "guard_continue"
 
 # Only these Claude `Notification` types are questions to a person.
 QUESTION_NOTIFICATIONS = frozenset({
@@ -130,7 +132,7 @@ def build_signal(session: str, kind: str, reason: str, timestamp: str,
 def event_state(record: dict[str, Any]) -> str | None:
     """The classified state one event implies, or None for a signal (not a state)."""
     kind = record.get("event")
-    if kind in SIGNALS:
+    if kind in SIGNALS or kind == GUARD_CONTINUE:
         return None
     if kind == "turn_end":
         return "waiting_background" if background_count(record.get("background_tasks")) else "idle"
@@ -177,6 +179,59 @@ def current_signal(records: list[dict[str, Any]]) -> dict[str, Any] | None:
         if record.get("event") in SIGNALS:
             return record
     return None
+
+
+GUARDED_AGENTS = ("claude", "codex", "pi")
+GAP_TEXT = {
+    "dirty": "uncommitted changes",
+    "unpushed": "unpushed commits",
+    "no-signal": "no completion signal (run `./scripts/nogg session signal done \"PR #<n> open\"` "
+                 "once the pull request is open)",
+}
+GUARD_MESSAGE = ("You are ending your turn with: {gaps}. Commit, push and open the pull request now. "
+                 "If you cannot, run `./scripts/nogg session signal blocked \"<why>\"` and stop. "
+                 "Do not answer with a plan.")
+
+
+def completion_gaps(git: dict[str, Any] | None, events: list[dict[str, Any]]) -> list[str]:
+    """`dirty`, `unpushed` and `no-signal` from injected git facts and the session's
+    events. `git` is {"dirty", "upstream", "ahead"}, or None when it is unknown."""
+    gaps = []
+    if git is not None:
+        if git.get("dirty"):
+            gaps.append("dirty")
+        if not git.get("upstream") or git.get("ahead"):
+            gaps.append("unpushed")
+    if current_signal(events) is None:
+        gaps.append("no-signal")
+    return gaps
+
+
+def guard_message(gaps: list[str]) -> str:
+    """The fixed continuation text. It carries gap names only, never agent output."""
+    return GUARD_MESSAGE.format(gaps=", ".join(GAP_TEXT[gap] for gap in gaps))
+
+
+def guard_applies(session: dict[str, Any], events: list[dict[str, Any]], payload: dict[str, Any] | None = None) -> bool:
+    """Whether a stop may be continued at all. Only a kicked-off Lead under the
+    `autonomous` prompt has the authority to finish; a startup turn before its
+    kickoff has no work to complete. `stop_hook_active` is the bound on Claude and
+    Codex: a second stop in a sequence always passes."""
+    payload = payload or {}
+    if (session.get("role") != "lead" or session.get("launch_prompt") != "autonomous"
+            or session.get("agent") not in GUARDED_AGENTS or not session.get("kickoff_sent_at")):
+        return False
+    if payload.get("stop_hook_active") or payload.get("error") or background_count(payload.get("background_tasks")):
+        return False
+    # Codex hooks report no `turn_start`, so `turn_end` closes a turn here too: a
+    # signal from an earlier turn must not excuse this one.
+    for record in reversed(events):
+        kind = record.get("event")
+        if kind in ("turn_start", "turn_end"):
+            return True
+        if kind in SIGNALS or kind == "turn_error":
+            return False
+    return True
 
 
 HERDR_STATES = {"blocked": "needs_input", "done": "idle", "idle": "idle", "working": "working"}

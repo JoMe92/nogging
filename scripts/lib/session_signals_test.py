@@ -64,6 +64,43 @@ class PayloadTests(unittest.TestCase):
             sig.build_signal("s1", "done", "  ", STAMP)
 
 
+class CompletionTests(unittest.TestCase):
+    CLEAN = {"dirty": False, "upstream": True, "ahead": 0}
+    SESSION = {"role": "lead", "launch_prompt": "autonomous", "agent": "pi", "kickoff_sent_at": STAMP}
+
+    def test_gaps_from_injected_facts(self):
+        done = [{"event": "done"}]
+        self.assertEqual([], sig.completion_gaps(self.CLEAN, done))
+        self.assertEqual(["no-signal"], sig.completion_gaps(self.CLEAN, []))
+        self.assertEqual(["dirty"], sig.completion_gaps(dict(self.CLEAN, dirty=True), done))
+        self.assertEqual(["unpushed"], sig.completion_gaps(dict(self.CLEAN, ahead=2), done))
+        self.assertEqual(["unpushed"], sig.completion_gaps(dict(self.CLEAN, upstream=False), done))
+        self.assertEqual(["no-signal"], sig.completion_gaps(None, []), "unknown git proves no git gap")
+
+    def test_the_message_is_fixed_and_names_each_gap(self):
+        text = sig.guard_message(["dirty", "unpushed"])
+        self.assertTrue(text.startswith("You are ending your turn with: uncommitted changes, unpushed commits. "))
+        self.assertTrue(text.endswith("Do not answer with a plan."))
+
+    def test_guard_scope(self):
+        self.assertTrue(sig.guard_applies(self.SESSION, []))
+        for change in ({"role": "planning"}, {"launch_prompt": "no-autonomous-claim"},
+                       {"agent": "antigravity"}, {"kickoff_sent_at": None}):
+            self.assertFalse(sig.guard_applies(dict(self.SESSION, **change), []), change)
+        self.assertFalse(sig.guard_applies({}, []))
+
+    def test_guard_bounds(self):
+        for payload in ({"stop_hook_active": True}, {"error": "rate_limit"}, {"background_tasks": 1}):
+            self.assertFalse(sig.guard_applies(self.SESSION, [], payload), payload)
+
+    def test_a_signal_or_error_in_this_turn_excuses_the_stop(self):
+        for excuse in ("blocked", "done", "turn_error"):
+            self.assertFalse(sig.guard_applies(self.SESSION, [{"event": "turn_start"}, {"event": excuse}]), excuse)
+            self.assertTrue(sig.guard_applies(self.SESSION, [{"event": excuse}, {"event": "turn_end"}]), excuse)
+            self.assertTrue(sig.guard_applies(self.SESSION, [{"event": excuse}, {"event": "turn_start"}]), excuse)
+        self.assertTrue(sig.guard_applies(self.SESSION, [{"event": "turn_start"}, {"event": "guard_continue"}]))
+
+
 class StateTests(unittest.TestCase):
     def test_state_mapping(self):
         cases = {
@@ -90,6 +127,11 @@ class StateTests(unittest.TestCase):
         rows = [{"event": "turn_end"}, {"event": "blocked", "excerpt": "x"}]
         self.assertEqual("blocked", sig.current_signal(rows)["event"])
         self.assertIsNone(sig.current_signal(rows + [{"event": "turn_start"}]))
+
+    def test_a_guard_continuation_is_not_a_state(self):
+        self.assertIsNone(sig.event_state({"event": "guard_continue"}))
+        state, record = sig.latest_state([{"event": "turn_start"}, {"event": "guard_continue"}])
+        self.assertEqual(("working", "turn_start"), (state, record["event"]))
 
     def test_read_events_skips_junk_and_missing_files(self):
         with tempfile.TemporaryDirectory() as tmp:
