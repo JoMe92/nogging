@@ -2,6 +2,7 @@
 import os
 import sys
 import unittest
+import unittest.mock
 from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -51,6 +52,11 @@ class Pass:
 
 def kinds(actions):
     return [a["item"]["kind"] if a["type"] == "queue" else a["type"] for a in actions]
+
+
+def keys(actions):
+    """A queue action stands while its condition holds, under one key: the queue is what dedupes it."""
+    return [a["key"] for a in actions]
 
 
 class Config(unittest.TestCase):
@@ -135,7 +141,7 @@ class GapNudges(unittest.TestCase):
         self.assertEqual(kinds(p.run(fact, advance=61)), ["nudge"])
         escalated = p.run(fact, advance=61)
         self.assertEqual(kinds(escalated), ["stuck"])
-        self.assertEqual(p.run(fact, advance=61), [])
+        self.assertEqual(keys(p.run(fact, advance=61)), keys(escalated))
 
     def test_new_commits_reset_the_budget(self):
         p = Pass()
@@ -189,8 +195,9 @@ class ContinuousIntegration(unittest.TestCase):
         fact = lead(checks=checks("pending", pending=["test"]))
         self.assertEqual(p.settled(fact), [])
         self.assertEqual(p.run(fact, advance=3000), [])
-        self.assertEqual(kinds(p.run(fact, advance=600)), ["ci_timeout"])
-        self.assertEqual(p.run(fact, advance=61), [])
+        timed_out = p.run(fact, advance=600)
+        self.assertEqual(kinds(timed_out), ["ci_timeout"])
+        self.assertEqual(keys(p.run(fact, advance=61)), keys(timed_out))
 
     def test_red_ci_names_at_most_five_checks_and_queues_nothing(self):
         failed = [f"check-{n}" for n in range(7)]
@@ -211,8 +218,9 @@ class ContinuousIntegration(unittest.TestCase):
         second = lead(head="b" * 40, checks=checks("failing", failed=["t"], head_sha="b" * 40, fingerprint="fp2"))
         self.assertEqual(kinds(p.run(second, advance=61)), ["nudge"])
         third = lead(head="c" * 40, checks=checks("failing", failed=["t"], head_sha="c" * 40, fingerprint="fp3"))
-        self.assertEqual(kinds(p.run(third, advance=61)), ["ci_stuck"])
-        self.assertEqual(p.run(third, advance=61), [])
+        stuck = p.run(third, advance=61)
+        self.assertEqual(kinds(stuck), ["ci_stuck"])
+        self.assertEqual(keys(p.run(third, advance=61)), keys(stuck))
 
     def test_a_lead_ignoring_red_ci_is_not_left_alone(self):
         p = Pass()
@@ -275,7 +283,7 @@ class NeedsInput(unittest.TestCase):
         self.assertEqual(p.run(fact, advance=119), [])
         action = p.run(fact, advance=2)[0]
         self.assertEqual((kinds([action]), action["item"]["reason"]), (["needs_input"], "Do you want to proceed?"))
-        self.assertEqual(p.run(fact, advance=61), [])
+        self.assertEqual(keys(p.run(fact, advance=61)), keys([action]))
 
     def test_a_second_prompt_is_a_second_item(self):
         p = Pass()
@@ -347,8 +355,9 @@ class Stall(unittest.TestCase):
         self.assertEqual((kinds(first), first[0]["reason"]), (["nudge"], "stall"))
         self.assertTrue(first[0]["once"])
         self.assertEqual(p.run(self.fact(960), advance=60), [])
-        self.assertEqual(kinds(p.run(self.fact(1800), advance=840)), ["stalled"])
-        self.assertEqual(p.run(self.fact(1860), advance=60), [])
+        stalled = p.run(self.fact(1800), advance=840)
+        self.assertEqual(kinds(stalled), ["stalled"])
+        self.assertEqual(keys(p.run(self.fact(1860), advance=60)), keys(stalled))
 
     def test_output_ends_the_ladder(self):
         p = Pass()
@@ -461,6 +470,32 @@ class Queue(unittest.TestCase):
         p.run(lead())
         _, memory = d.decide([], p.memory, p.policy, T0)
         self.assertEqual(memory["sessions"], {})
+
+    def test_a_memory_this_code_cannot_use_is_forgotten(self):
+        for broken in ({"done": 5}, {"budget": 5}, {"ci": 5}, {"limit": 5}, {"stall": 5}, {"budget": {"nudges": "x"}},
+                       {"ci": {"pending_head": HEAD}}):
+            for fact in (lead(gaps=["dirty"]), lead(checks=checks("pending")), lead(state="limit"),
+                         lead(state="working", silent_seconds=900)):
+                actions, memory = d.decide([fact], {"sessions": {"s1": dict(broken, since="2026-10-30T11:00:00+00:00")}},
+                                           d.policy_from({"enabled": True}), T0)
+                self.assertIsInstance(memory["sessions"]["s1"], dict)
+
+    def test_a_fact_this_code_cannot_use_costs_only_its_session(self):
+        forged, good = lead(session="s2"), lead(gaps=["dirty"])
+        memory = {"sessions": {name: {"since": "2026-10-30T11:00:00+00:00"} for name in ("s1", "s2")}}
+        with unittest.mock.patch.object(d, "_decide_session", side_effect=[TypeError("forged"), TypeError("forged"),
+                                                                            [{"type": "queue", "key": "k"}]]):
+            actions, _ = d.decide([forged, good], memory, d.policy_from({"enabled": True}), T0)
+        self.assertEqual(actions, [{"type": "queue", "key": "k"}])
+
+    def test_a_mark_that_is_no_stamp_or_head_stays_out_of_the_key(self):
+        secret = "ghp_" + "a" * 36 + "owner@example.com"
+        key = d.dedupe_key("s1", "blocked", secret)
+        self.assertNotIn("ghp_", key)
+        self.assertNotIn("owner", key)
+        self.assertEqual(key, d.dedupe_key("s1", "blocked", secret))
+        self.assertEqual(d.dedupe_key("s1", "stuck", HEAD), f"s1|stuck|{HEAD}")
+        self.assertEqual(d.dedupe_key("s1", "blocked", "2026-10-30T12:00:00+00:00"), "s1|blocked|2026-10-30T12:00:00+00:00")
 
     def test_the_done_list_is_bounded(self):
         p = Pass()

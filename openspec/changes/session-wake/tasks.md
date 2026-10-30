@@ -168,15 +168,31 @@
   session-wake-digest, orchestrator, commands and docs-site suites. Branch feat/ (after
   TASK-SWK-009).
 
-- [ ] TASK-SWK-006 [standard] [~540 loc] Scheduler wiring, doctor health, the orchestrator context budget and the guide, including how to pause.
-  Per design Decisions 9, 12, 13, 15 and 16 and the requirements on the scheduler,
-  diagnostics, the context budget and the installer. Call the dispatch pass first in `nogg
-  loop tick` under its own lock and exception boundary, after the pause end check of
-  TASK-SWK-009. Add doctor reporting: disabled or stale dispatcher, queue depth, oldest
-  item, exhausted budgets, Codex hook state, and whether the orchestrator's watchers are
-  still needed. Write the orchestrator_context values into its effective settings `env`.
+- [ ] TASK-SWK-006 [standard] [~680 loc] Scheduler wiring, dispatch on by default, doctor health, the orchestrator context budget and the guide, including how to pause.
+  Per design Decisions 7, 9, 12, 13, 15 and 16, Product Owner decision 6 and the
+  requirements on the scheduler, diagnostics, the context budget, dispatch on by default
+  and the installer. Make dispatch on by default: set `enabled: true` in
+  templates/nogging-config.json and read a missing `session_dispatch` block or `enabled`
+  key as on through the one `policy_from` in scripts/lib/session_dispatch.py, replacing
+  every `enabled is True` test in scripts/nogg (`session signal`, `session dispatch`, the
+  tick, `doctor`) with it; only an explicit `false` is off; `retire_merged` stays `false`.
+  Make a pass with no orchestrator session or no timer exit 0 quietly: nudges and CI
+  tracking continue, the digest has no target and is held without an error or a repeated
+  log line, and `doctor` prints one NOTE each for the missing orchestrator and the
+  missing timer, with the fix and the `session_dispatch.enabled: false` switch, and none
+  when disabled or paused. `update` keeps an existing `enabled` value, including `false`,
+  and prints one line when the key is missing saying dispatch is on and how to switch it
+  off. Add a CHANGELOG line under Changed that dispatch is on by default. Call the
+  dispatch pass first in `nogg loop tick` under its own lock and exception boundary,
+  after the pause end check of TASK-SWK-009. Add doctor reporting: disabled or stale
+  dispatcher, queue depth, oldest item, exhausted budgets, Codex hook state, and whether
+  the orchestrator's watchers are still needed. Write the orchestrator_context values into its effective settings `env`.
   Add the new consumer-copied docs/session-wake.md under Guides in docs/_config.yml and to
-  manifest docs and package files: concepts, the evidence per runtime, the follow-up table,
+  manifest docs and package files: a first section, "Dispatch is on by default", saying
+  plainly that it is on, what it does and does not do (fixed nudges, CI tracking, a held
+  digest, no model, no merge, no retirement unless `retire_merged`), what changes with no
+  orchestrator or timer, and how to switch it off (`session_dispatch.enabled: false`) or
+  pause it (`nogg pause`); then concepts, the evidence per runtime, the follow-up table,
   the digest format, tuning, disabling it, the token model and troubleshooting, and a
   section for the user on pausing: what the orchestrator costs while waiting, when
   keep-warm pays and when pausing does, the break of about a day that pays, the commands
@@ -186,25 +202,30 @@
   first, with a stub orchestrator and stub agents through a full Lead life cycle from
   kickoff to merged, using an injected clock and a stub gh, then the same life cycle
   across a pause and a quiet-hours window; scripts/cli.test.sh and the packed suites prove
-  the payload ships inactive, `update` keeps an enabled value, quiet hours and a pause, and
-  personal configuration stays untouched; loop-tick, orchestrator, installed-docs,
+  the payload ships with dispatch on and `retire_merged` off, a default install with a
+  stub orchestrator nudges a Lead and delivers one digest, the same install with no
+  orchestrator and no timer exits 0, holds the digest and prints one NOTE each in
+  `doctor`, `update` keeps an explicit `enabled: false` and `true`, quiet hours and a
+  pause, and personal configuration stays untouched; red-first loop-tick and dispatch
+  tests cover a missing key reading as on; loop-tick, orchestrator, installed-docs,
   package-manifest and docs-site suites. Branch feat/ (after TASK-SWK-010 and
   TASK-SCL-006).
 
 ## 3. This repository and host (chore/)
 
-- [ ] TASK-SWK-007 [routine] [~40 loc: host configuration only] Enable session wake for this repository and the delivery host.
-  Per design Decisions 9 and 13 and Product Owner decisions 1 to 3 in design.md. In
-  this repository's tracked .nogging/config.json set `session_dispatch.enabled` and
-  `session_dispatch.retire_merged` to true, and commit only that; the template default
-  stays false. On the delivery host, run `nogg session-hooks install --agent codex`,
+- [ ] TASK-SWK-007 [routine] [~40 loc: host configuration only] Turn on merged-session retirement for this repository and install the Codex hook on the delivery host.
+  Per design Decisions 9 and 13 and Product Owner decisions 1 to 3 and 6 in design.md.
+  Dispatch is already on by default after TASK-SWK-006, so in this repository's tracked
+  .nogging/config.json set only `session_dispatch.retire_merged` to true, leaving
+  `enabled` absent or true, and commit only that; the template default for
+  `retire_merged` stays false. On the delivery host, run `nogg session-hooks install --agent codex`,
   which the Product Owner approved, and record `session-hooks status`. The operator or
   the Orchestration Agent then restarts the
   orchestrator from an external shell so the budget applies, once it is idle. Remove the
   orchestrator's remaining background waiters. Needs a --full-access Lead; if it cannot
   reach the personal Codex configuration, record a blocking discovery and hand the
   commands to the Orchestration Agent. Check: doctor shows the dispatcher running with
-  no FAIL; `session dispatch --dry-run --json` output as evidence; scripts/test. Branch
+  no FAIL and no missing-orchestrator or missing-timer NOTE; `session dispatch --dry-run --json` output as evidence; scripts/test. Branch
   chore/ (after TASK-SWK-006).
 
 ## 4. Live acceptance (test/)
@@ -218,7 +239,7 @@
   nudge landing only when idle; a red check nudging the Lead; a green check producing
   `ready_for_review`; two items coalesced into one wake; a merged session retired when
   enabled; a keep-warm answered in one line with no tool call; a pause of a few minutes
-  that suppresses it and ends in one resume digest; a quiet-hours window holding an item.
+  that suppresses it and ends in one resume digest; a quiet-hours window holding an item; and, on a scratch consumer with no `session_dispatch.enabled` key, that dispatch reads as on, and with the orchestrator stopped holds its digest and prints the one `doctor` NOTE.
   Measure one warm and one cold wake to report how the quota weights a cache read against
   a write. Verify the host facts planning could not observe without a model turn: the
   Codex hook runs from a Lead worktree with NOGG_SESSION_ROOT set, and whether native

@@ -12,14 +12,19 @@ import tempfile
 
 import loop_schedule
 import loop_state
+import session_pause
 
 UTC = timezone.utc
 LOG_MAX = 1024 * 1024
 LOG_GENERATIONS = 3
 RETRY_MINUTES = (2, 4)
+# waiting_background: the session sits at its prompt with only its own background
+# job running, so it accepts a message like idle.
+SEND_STATES = ("idle", "waiting_background")
 MAX_ATTEMPTS = 3
 START_RECONCILE_MINUTES = 10
 REASON_MAX = 300
+PAUSED_GLOBAL = "paused-global"
 
 
 def iso(value):
@@ -43,6 +48,7 @@ def append_event(root, event):
                           default=lambda value: iso(value) if isinstance(value, datetime) else str(value)) + "\n").encode()
     with path.with_suffix(".lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
+        session_pause.set_aside(path)
         if path.exists() and path.stat().st_size + len(encoded) > LOG_MAX:
             path.with_name(path.name + f".{LOG_GENERATIONS}").unlink(missing_ok=True)
             for index in range(LOG_GENERATIONS - 1, 0, -1):
@@ -86,12 +92,13 @@ class LoopRunner:
     verified delivery path. `sessions` carries the launch-mode operations:
     `model(run)`, `start(name, run, run_id, message)`, `state(session)`,
     `retire(run_id, reason)` and `adopt(run_id)`. They are injected so the
-    scheduler is testable without starting a real session.
+    scheduler is testable without starting a real session. `pause(now)` returns
+    the host-wide pause in force, or None.
     """
 
     def __init__(self, root, definitions, *, target, usage, send, sessions=None,
                  now=lambda: datetime.now(UTC), host=None, multi_machine=False,
-                 redact=lambda text: text):
+                 redact=lambda text: text, pause=lambda _now: None):
         self.root = Path(root).resolve()
         self.definitions = Path(definitions)
         self.target = target
@@ -102,6 +109,7 @@ class LoopRunner:
         self.host = host or os.uname().nodename
         self.multi_machine = multi_machine
         self.redact = redact
+        self.pause = pause
         self.lock_path = self.root / ".nogging/locks/loops.lock"
 
     @contextmanager
@@ -134,6 +142,7 @@ class LoopRunner:
         state = loop_state.read_state(self.root)
         state.setdefault("loops", {})
         self._state, self._seen = state, loop_state.operator_fields(state)
+        self._skips_logged = None
         if not manual:
             state["last_tick"] = iso(instant)
             self._save()
@@ -173,6 +182,12 @@ class LoopRunner:
         state = self._state
         loop = config["loops"][name]
         if loop.get("host") and loop["host"] != self.host:
+            return
+        # A pause stops automation, not people: `run-now` is someone's decision. It is read
+        # per loop, so that one set while this tick runs holds the loops still to come.
+        pause = None if manual else self.pause(self.now())
+        if pause and name not in pause["keep_loops"]:
+            self._tick_paused(instant, config, name, loop, pause)
             return
         item = state["loops"].setdefault(name, {})
         self._advance_active(instant, name, loop, item)
@@ -241,6 +256,43 @@ class LoopRunner:
         base = _base_event(name, slot, slot, "manual" if manual else "scheduled", loop)
         self._evaluate(instant, config, state, name, loop, item, slot, base,
                        manual=manual)
+
+    def _paused_rows(self):
+        """The slots already logged `paused-global`. No loop state may record one, so that
+        `resume` finds every loop as it was, and the run log is what keeps a slot from
+        being logged on every tick. A row lost to rotation costs one repeated line."""
+        rows = set()
+        try:
+            data = session_pause.read_regular(event_path(self.root), 2 * LOG_MAX, tail=True)
+        except OSError:
+            return rows
+        for line in data.decode(errors="replace").splitlines():
+            if PAUSED_GLOBAL in line:
+                try:
+                    row = json.loads(line)
+                    rows.add((row.get("loop"), row.get("slot")))
+                except (ValueError, AttributeError, TypeError, RecursionError):
+                    continue
+        return rows
+
+    def _tick_paused(self, instant, config, name, loop, pause):
+        """A loop outside `keep_loops`. A run already going is still supervised, because
+        a pause stops no session. Nothing starts, and nothing else is written for it."""
+        item = self._state["loops"].get(name) or {}
+        if item.get("active_run"):
+            self._advance_active(instant, name, loop, item)
+        _, approval = loop_state.approval_status(self.root, self.definitions, config, name)
+        anchors = [parse_time(pause["started_at"])]
+        anchors.extend(parse_time(stamp) for stamp in (item.get("last_evaluated"), (approval or {}).get("approved_at"))
+                       if stamp)
+        due = loop_schedule.due({"timezone": config["timezone"], **loop["schedule"]}, max(anchors), instant)
+        if self._skips_logged is None:
+            self._skips_logged = self._paused_rows()
+        if due is None or (name, iso(due["slot"])) in self._skips_logged:
+            return
+        base = _base_event(name, due["slot"], due["slot"], "scheduled", loop)
+        self._emit_outcome(instant, base, name, "skipped", PAUSED_GLOBAL)
+        self._skips_logged.add((name, iso(due["slot"])))
 
     def _save(self):
         self._seen = loop_state.save_tick_state(self.root, self._state, self._seen)
@@ -409,9 +461,7 @@ class LoopRunner:
             record, target_state = self.target()
             if record is None or target_state == "ended":
                 target_state = "target-not-running"
-            # waiting_background: the session sits at its prompt with only its
-            # own background job running, so it accepts a message like idle.
-            if target_state not in ("idle", "waiting_background"):
+            if target_state not in SEND_STATES:
                 mapped = {"working": "target-busy", "needs_input": "target-needs-input",
                           "limit": "target-limit"}.get(target_state)
                 if mapped is None:

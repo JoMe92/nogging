@@ -441,6 +441,8 @@ Start with `./scripts/nogg doctor` and `./scripts/nogg loop log <name>`.
 - **`will not run`**: the timer is missing or disabled. Link its service and enable
   it as the [timer section](scheduled-loops.md#the-scheduler-timer) shows, or run
   `nogg loop tick` from your own scheduler.
+- **`unknown from this session`**: `systemctl` is denied in this session, so
+  `doctor` cannot read the timer; check it from a shell outside the session.
 - **The last tick is old**: read the service journal.
 - **`doctor` fails on the definitions file**: no new run starts until it is fixed.
   Ticks keep running and keep supervising started runs.

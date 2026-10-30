@@ -2811,16 +2811,26 @@ def merge_supervised_launch_permissions(settings, role):
     return result
 
 SIGNAL_RULE = "Bash(./scripts/nogg session signal:*)"
-def merge_signal_permission(settings):
-    """`session signal` needs no network and no Dolt, so every restricted Lead
-    may state that it is blocked or done. Existing rules are kept."""
+INBOX_RULE = "Bash(./scripts/nogg session inbox:*)"
+PAUSE_STATUS_RULE = "Bash(./scripts/nogg pause --status:*)"
+def _merge_allow_rule(settings, rule):
     result = json.loads(json.dumps(settings))
     permissions = result.setdefault("permissions", {})
     allow = list(permissions.get("allow") or [])
-    if SIGNAL_RULE not in allow:
-        allow.append(SIGNAL_RULE)
+    if rule not in allow:
+        allow.append(rule)
     permissions["allow"] = allow
     return result
+def merge_signal_permission(settings):
+    """`session signal` needs no network and no Dolt, so every restricted Lead
+    may state that it is blocked or done. Existing rules are kept."""
+    return _merge_allow_rule(settings, SIGNAL_RULE)
+def merge_inbox_permission(settings):
+    """`session inbox` only reads, and the spec allows it in every session."""
+    return _merge_allow_rule(settings, INBOX_RULE)
+def merge_pause_status_permission(settings):
+    """`pause --status` only reads, and the spec allows it in every session."""
+    return _merge_allow_rule(settings, PAUSE_STATUS_RULE)
 
 def supervised_launch_permission_notes():
     notes = []
@@ -4206,6 +4216,66 @@ def resolve_launch_tier(tier, agent, resume=None):
             "effort_source": entry["effort_source"], "table_effort": entry["table_effort"]}
 CODEX_SANDBOX_MODES = ("read-only", "workspace-write", "danger-full-access")
 CODEX_APPROVAL_POLICIES = ("on-request", "never")
+# The features that can give a Codex session a command tool, and the tools' names.
+CODEX_COMMAND_FEATURES = ("shell_tool", "unified_exec", "apps", "plugins", "browser_use", "computer_use")
+CODEX_COMMAND_TOOLS = ("exec_command", "write_stdin", "shell", "shell_command", "local_shell")
+CODEX_NESTED_TOOL_RE = re.compile(r"declare const tools: \{ (\w+)\(")
+def codex_offline_json(cwd, *args):
+    """The parsed JSON of one offline `codex` subcommand run in `cwd`. Raises when
+    Codex cannot answer."""
+    try:
+        result = subprocess.run(["codex", *args], cwd=cwd, stdin=subprocess.DEVNULL, text=True,
+                                capture_output=True, timeout=30)
+        items = json.loads(result.stdout) if result.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
+        raise RuntimeError(f"cannot read `codex {' '.join(args[:2])}`; launch refused") from exc
+    if not isinstance(items, list):
+        raise RuntimeError(f"cannot read `codex {' '.join(args[:2])}`; launch refused")
+    return items
+def codex_rendered_tools(cwd, model=None, disabled=()):
+    """The tool names Codex would offer `model` in `cwd`, read offline from
+    `codex debug prompt-input` (no model call), including those nested under its
+    code-mode `exec` tool. The list differs per model, and it omits MCP tools."""
+    args = ["debug", "prompt-input"]
+    if model:
+        args += ["-c", f"model={json.dumps(model)}"]
+    for feature in disabled:
+        args += ["--disable", feature]
+    names = set()
+    def walk(tools):
+        for tool in tools if isinstance(tools, list) else []:
+            if isinstance(tool, dict):
+                if isinstance(tool.get("name"), str):
+                    names.add(tool["name"])
+                names.update(CODEX_NESTED_TOOL_RE.findall(str(tool.get("description"))))
+                walk(tool.get("tools"))
+    for item in codex_offline_json(cwd, *args):
+        if isinstance(item, dict) and item.get("type") == "additional_tools":
+            walk(item.get("tools"))
+    return names
+def verify_codex_no_commands(cwd, model=None):
+    """Prove the installed Codex offers `model` no command tool once
+    `CODEX_COMMAND_FEATURES` are disabled, and return those features. A baseline
+    without `exec_command` means the tool list is no longer readable as evidence,
+    a tool that only appears with the features off may be a fallback, and an
+    enabled MCP server's tools never appear in the list, so each of those refuses:
+    a run that must not execute commands never starts on an unproven removal."""
+    servers = sorted(str(server.get("name") if isinstance(server, dict) else server)
+                     for server in codex_offline_json(cwd, "mcp", "list", "--json")
+                     if not (isinstance(server, dict) and server.get("enabled") is False))
+    if servers:
+        raise RuntimeError(f"Codex has MCP servers enabled ({', '.join(servers)}), whose tools its "
+                           "tool list does not show; a no-commands launch is refused")
+    baseline = codex_rendered_tools(cwd, model)
+    if "exec_command" not in baseline:
+        raise RuntimeError("cannot find the command tool in the Codex tool list; "
+                           "a no-commands launch is refused")
+    after = codex_rendered_tools(cwd, model, CODEX_COMMAND_FEATURES)
+    left = sorted((set(CODEX_COMMAND_TOOLS) | (after - baseline)) & after)
+    if left:
+        raise RuntimeError(f"Codex still offers {', '.join(left)} with its command features "
+                           "disabled; a no-commands launch is refused")
+    return CODEX_COMMAND_FEATURES
 def load_codex_spec(path):
     """Read a `.codex.toml` launch fragment: the three required flat keys
     `sandbox`, `ask_for_approval`, `network_access`, plus the optional `model`
@@ -4404,7 +4474,7 @@ def session_helper_diagnostics():
                  "--sandbox", "--approval", "--network", "--readonly-root",
                  "--provider", "--model", "--reasoning-effort", "--effort", "--mode", "--session-id", "--resume", "--remote-control"):
         argv += [flag, "probe"]
-    argv += ["--read-only", "--continue"]
+    argv += ["--read-only", "--instructions-only", "--no-commands", "--continue"]
     try:
         contract = helper_contract(wrapper)
         for agent in ("claude", "codex", "pi", "antigravity"):
@@ -5136,40 +5206,48 @@ def loop_launch_model(run):
     """The model a run will use, so usage is observed for the real windows."""
     return run.get("model") or resolve_launch_tier(run["tier"], resolve_agent(run["agent"]))["model"]
 
-def loop_runner_for_main():
-    """Build the scheduler adapter over the canonical orchestrator and sender."""
+def loop_runner_module():
     lib = str(Path(__file__).resolve().parent / "lib")
     if lib not in sys.path:
         sys.path.insert(0, lib)
     import loop_runner
+    return loop_runner
+
+def orchestrator_target():
+    """The canonical orchestrator and its state: the one target of every send run
+    and every wake digest. Send only in `loop_runner.SEND_STATES`."""
+    records = [rec for _, rec in session_records(orchestrator_sessions_dir())
+               if rec.get("role") == "orchestrator"]
+    if not records:
+        return None, "target-not-running"
+    record = max(records, key=lambda rec: rec.get("started_at", ""))
+    live = tmux_sessions()
+    if record.get("name") not in live:
+        return None, "target-not-running"
+    return record, classify_session(record, live)[0]
+
+def orchestrator_send(record, message):
+    """The verified send. The composer refusal protects typed input, and `transient`
+    says whether a retry can help."""
+    try:
+        session_send(record["name"], message, verify=True)
+    except Exception as exc:
+        detail = str(exc).lower()
+        exc.transient = any(token in detail for token in
+                            ("timeout", "deadline", "refused", "not live", "not running"))
+        raise
+
+def loop_runner_for_main():
+    """Build the scheduler adapter over the canonical orchestrator and sender."""
+    loop_runner = loop_runner_module()
     from types import SimpleNamespace
     definitions = ORCHESTRATOR_HOME / scfg("loops_file", ".nogging/loops.json")
-
-    def target():
-        records = [rec for _, rec in session_records(orchestrator_sessions_dir())
-                   if rec.get("role") == "orchestrator"]
-        if not records:
-            return None, "target-not-running"
-        record = max(records, key=lambda rec: rec.get("started_at", ""))
-        live = tmux_sessions()
-        if record.get("name") not in live:
-            return None, "target-not-running"
-        return record, classify_session(record, live)[0]
-
-    def send(record, message):
-        try:
-            session_send(record["name"], message, verify=True)
-        except Exception as exc:
-            detail = str(exc).lower()
-            exc.transient = any(token in detail for token in
-                                ("timeout", "deadline", "refused", "not live", "not running"))
-            raise
-
     sessions = SimpleNamespace(model=loop_launch_model, start=start_loop_run, state=loop_session_state,
                                retire=retire_loop_run, adopt=adopt_loop_run)
-    return loop_runner.LoopRunner(ORCHESTRATOR_HOME, definitions, target=target,
-                                  usage=loop_usage_admission, send=send, sessions=sessions,
-                                  multi_machine=CFG.get("multi_machine", False), redact=redact)
+    return loop_runner.LoopRunner(ORCHESTRATOR_HOME, definitions, target=orchestrator_target,
+                                  usage=loop_usage_admission, send=orchestrator_send, sessions=sessions,
+                                  multi_machine=CFG.get("multi_machine", False), redact=redact,
+                                  pause=current_pause)
 def session_state_grants(bead, explicit=(), records=None):
     if os.environ.get("NOGG_CODEX_EXTRA_WRITABLE_ROOTS"):
         raise RuntimeError("use agent_state_roots and the agent-state:<agent> label; NOGG_CODEX_EXTRA_WRITABLE_ROOTS is retired")
@@ -5250,6 +5328,9 @@ def session_launch_notes(role_or_agent, agent_or_profile=None, profile_label=Non
         notes.append(f"NOTE: restricted {norm_agent} planning stops at approval prompts; attach to approve each step")
     if norm_agent == "codex" and p == "restricted":
         notes.append("NOTE: restricted Codex has no network; a Dolt-server-backed bd is unreachable from its sandbox")
+    if r == "loop" and norm_agent == "codex" and p == "restricted":
+        notes.append("NOTE: a restricted Codex loop run has no command tools: it cannot read the checkout, "
+                     "so it reports only from its prompt; use authority trusted or Claude to inspect files")
     return notes
 
 
@@ -5389,7 +5470,8 @@ LOOP_DENY = [f"Bash({prefix}nogg {command}:*)"
              for prefix in ("./scripts/", "scripts/")
              for command in ("session launch", "session send", "session kickoff", "session stop",
                              "loop add", "loop approve", "loop remove", "loop pause", "loop resume",
-                             "loop edit", "loop run-now", "loop tick")]
+                             "loop edit", "loop run-now", "loop tick",
+                             "pause --until", "pause --days", "pause --keep-loop", "resume")]
 LOOP_NAME_MAX = 40
 LOOP_RUN_ID_RE = re.compile(r"[A-Za-z0-9._:-]{1,128}")
 LOOP_KICKOFF_MAX = 256 * 1024
@@ -5472,6 +5554,11 @@ def _session_launch(role, bead, cwd, read_only, owner,
     require_agent_binary(agent)
     if agent == "codex" and resume is not None:
         validate_codex_resume_id(resume)
+    # Codex cannot stop at a first command, so a restricted run gets none, and a
+    # read-only sandbox so `apply_patch`, the tool it keeps, must ask.
+    restricted_codex_loop = bool(loop) and agent == "codex" and loop["authority"] == "restricted"
+    if restricted_codex_loop:
+        read_only = True
     role_meta, role_slug = normalize_role(role)
     planning_launch_authority(role_meta, agent, profile, full_access)
     unwritable = read_only_launch_path(role_meta, ignore_usage_gate)
@@ -5650,7 +5737,8 @@ def _session_launch(role, bead, cwd, read_only, owner,
         # `--model` argv element, never as a second settings value.
         base_settings = {k: v for k, v in source_settings.items()
                          if k not in ("//", "nogging_floor", "nogging_openspec_readonly", "model", "effort")}
-        base_settings = merge_supervised_launch_permissions(base_settings, role_meta)
+        base_settings = merge_inbox_permission(merge_supervised_launch_permissions(base_settings, role_meta))
+        base_settings = merge_pause_status_permission(base_settings)
         if role_meta == "lead":
             base_settings = merge_signal_permission(base_settings)
         settings_out = base_settings if floor_lifted else merge_floor(base_settings)
@@ -5695,6 +5783,10 @@ def _session_launch(role, bead, cwd, read_only, owner,
             inner += ["--reasoning-effort", reasoning_effort]
         if resume is not None:
             inner += ["--resume", resume]
+        if loop:
+            inner.append("--instructions-only")
+        if restricted_codex_loop:
+            inner.append("--no-commands")
     elif agent == "antigravity":
         effective_settings_path = None
         if not allocate_planning:
@@ -5793,9 +5885,10 @@ def _session_launch(role, bead, cwd, read_only, owner,
         "antigravity_conversation_id": resume if agent == "antigravity" else None,
         "codex_thread_id": resume if agent == "codex" else None,
         # Cold Codex launches pass this positional prompt and start a turn;
-        # exact resumes do not pass a startup prompt.
+        # exact resumes do not pass a startup prompt, and a loop run's prompt is
+        # developer instructions, so its kickoff is the first turn.
         "codex_startup_prompt": bool(
-            agent == "codex" and resume is None and prompt_path is not None
+            agent == "codex" and resume is None and not loop and prompt_path is not None
             and Path(prompt_path).is_file()),
         "antigravity_initial_turn": agent == "antigravity",
         "planning_id": planning_id, "description": description,
@@ -6102,6 +6195,9 @@ def session_list():
     warning = tmux_sandboxed_warning()
     if warning:
         print(f"NOTE: {warning}")
+    pause = current_pause()
+    if pause:
+        print(f"PAUSED until {pause_module().until_text(pause)}")
     if not recs:
         print("no managed sessions"); return
     alive, unknown = session_liveness()
@@ -6738,6 +6834,16 @@ def dispatch_module():
     sys.dont_write_bytecode = True
     import session_dispatch
     return session_dispatch
+def wake_module():
+    """Load the pure wake digest from scripts/lib beside this script."""
+    dispatch_module()
+    import session_wake
+    return session_wake
+def pause_module():
+    """Load the pure pause logic from scripts/lib beside this script."""
+    dispatch_module()
+    import session_pause
+    return session_pause
 def _read_hook_stdin(limit, wait=1.0):
     """At most `limit` bytes of hook JSON from stdin, or b'' for a terminal, a
     closed stdin or a writer that stays silent for `wait` seconds."""
@@ -7701,6 +7807,13 @@ def _codex_rollout_session_meta(path):
     payload = line.get("payload") or {}
     thread_id, cwd, ts = payload.get("id"), payload.get("cwd"), payload.get("timestamp")
     return (thread_id, cwd, ts) if (thread_id and cwd and ts) else None
+def _codex_rollout_mentions(path, marker):
+    """Whether the head of a rollout holds `marker`; a first turn sits well inside it."""
+    try:
+        with path.open("rb") as fh:
+            return marker in fh.read(1024 * 1024)
+    except OSError:
+        return False
 def resolve_codex_thread_id(rec, merge=False):
     """Discover and cache the Codex-internal thread UUID for a codex session
     `scripts/nogg` launched, by matching the session's `working_dir` against
@@ -7714,9 +7827,14 @@ def resolve_codex_thread_id(rec, merge=False):
     one this launch itself produced. Caches the result on the session record
     once found. Returns None (never raises) when no match exists yet — the
     thread may simply not have started (e.g. still sitting at Codex's
-    hook-trust prompt)."""
+    hook-trust prompt). A loop run starts no turn before its kickoff, so it has no
+    rollout until then and another same-cwd session's would match: it binds only
+    to the rollout holding its own run header, and no other session binds to one
+    holding a run header."""
     if rec.get("codex_thread_id"):
         return rec["codex_thread_id"]
+    own_marker = (f"[nogg loop {rec.get('loop_name')} run {rec['loop_run_id']}]".encode()
+                  if rec.get("loop_run_id") else None)
     try:
         started = parse_iso(rec["started_at"]) - dt.timedelta(seconds=5)
     except (KeyError, ValueError):
@@ -7734,7 +7852,8 @@ def resolve_codex_thread_id(rec, merge=False):
             ts_dt = parse_iso(ts)
         except ValueError:
             continue
-        if ts_dt < started:
+        if ts_dt < started or (_codex_rollout_mentions(path, own_marker or b"[nogg loop ")
+                               != bool(own_marker)):
             continue
         candidates.append((ts_dt, thread_id))
     if not candidates:
@@ -8590,28 +8709,71 @@ def resume_step(name, message=None):
 # a fact unknown, and no action depends on an unknown fact.
 DISPATCH_AUDIT_BYTES = 1024 * 1024
 DISPATCH_AUDIT_GENERATIONS = 3
-def dispatch_dir(): return STATE / "dispatch"
+DISPATCH_TAIL_BYTES = 64 * 1024
+DISPATCH_STATE_BYTES = 16 * 1024 * 1024
+DISPATCH_AUDIT_ROWS_BYTES = 2 * DISPATCH_AUDIT_BYTES
+PAUSE_LOCK_WAIT_SECONDS = 60
+# What the send path says when it stopped before anything was submitted.
+WAKE_NOT_SENT = ("nothing was", "cannot send", "refusing", "timed out waiting for session lock")
+def dispatch_dir(): return ORCHESTRATOR_HOME / ".nogging/state/dispatch"
+@contextmanager
+def _dispatch_lock(wait=0):
+    """Hold `dispatch.lock`, and yield whether it was won within `wait` seconds."""
+    with (data_dir(ORCHESTRATOR_LOCKS) / "dispatch.lock").open("a") as lock:
+        deadline = time.monotonic() + wait
+        while True:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    yield False
+                    return
+                time.sleep(0.2)
+        yield True
 def _read_dispatch_state(filename):
     try:
-        value = json.loads((dispatch_dir() / filename).read_text())
-    except (OSError, ValueError):
+        value = json.loads(pause_module().read_regular(dispatch_dir() / filename, DISPATCH_STATE_BYTES))
+    except (OSError, ValueError, RecursionError):
         return {}
     return value if isinstance(value, dict) else {}
 def _append_dispatch_audit(row):
-    path = data_dir(dispatch_dir()) / "dispatch.jsonl"
+    """One row, or a line on stderr: a log that cannot be kept must not cost a pass."""
     encoded = (json.dumps(row, sort_keys=True) + "\n").encode()
-    if path.exists() and path.stat().st_size + len(encoded) > DISPATCH_AUDIT_BYTES:
-        for index in range(DISPATCH_AUDIT_GENERATIONS - 1, 0, -1):
-            source = path.with_name(f"{path.name}.{index}")
-            if source.exists():
-                os.replace(source, path.with_name(f"{path.name}.{index + 1}"))
-        os.replace(path, path.with_name(path.name + ".1"))
-    with path.open("ab") as stream:
-        stream.write(encoded)
-def dispatch_policy():
-    """The one place a host-wide hold sets `hold_sends`: a pause (TASK-SWK-009) stops
-    nudges and resumes here, and items and retirement carry on."""
-    return dispatch_module().policy_from(CFG.get("session_dispatch"))
+    try:
+        path = data_dir(dispatch_dir()) / "dispatch.jsonl"
+        pause_module().set_aside(path)
+        if path.exists() and path.stat().st_size + len(encoded) > DISPATCH_AUDIT_BYTES:
+            for index in range(DISPATCH_AUDIT_GENERATIONS - 1, 0, -1):
+                source = path.with_name(f"{path.name}.{index}")
+                if source.exists():
+                    os.replace(source, path.with_name(f"{path.name}.{index + 1}"))
+            os.replace(path, path.with_name(path.name + ".1"))
+        with path.open("ab") as stream:
+            stream.write(encoded)
+    except OSError as exc:
+        print(f"nogg: the dispatch audit log could not be written: {exc}", file=sys.stderr)
+def pause_path(): return ORCHESTRATOR_HOME / ".nogging/state/pause.json"
+def current_pause(moment=None):
+    """The pause in force, or None. Past its end it no longer holds anything, even
+    before a pass has ended it."""
+    module, moment = pause_module(), moment or dt.datetime.now(dt.timezone.utc)
+    state = module.read(pause_path(), moment)[0]
+    return state if module.is_active(state, moment) else None
+def dispatch_policy(pause=None):
+    """The one place a host-wide hold sets `hold_sends`: a pause stops nudges and
+    resumes here, and items and retirement carry on."""
+    return dispatch_module().policy_from(CFG.get("session_dispatch"), hold_sends=pause is not None)
+def wake_policy():
+    return wake_module().policy_from((CFG.get("session_dispatch") or {}).get("wake"))
+def dispatch_wake_hold(pause=None, failed_end=False):
+    """The one place a host-wide hold stops the digest, urgent items included: a pause
+    and quiet hours (TASK-SWK-010) return their reason here. The queue goes on being
+    evaluated. A pause whose end failed holds only the digest, whose summary would
+    otherwise go out on every pass."""
+    if failed_end:
+        return "the pause could not be ended"
+    return f"paused until {pause_module().until_text(pause)}" if pause else None
 def _dispatch_issues(dry_run):
     """The Bead list, cached 300 s across passes. A failed read is None, never the
     older copy: a stale Bead must not retire or report a session."""
@@ -8717,9 +8879,7 @@ def _dispatch_targets(records):
             yield rec
 def _dispatch_run(action, fact, memory, queue, moment):
     module, name, kind = dispatch_module(), action["session"], action["type"]
-    if kind == "queue":
-        module.enqueue(queue, action["item"], moment)
-    elif kind == "nudge":
+    if kind == "nudge":
         # The gather may be seconds old; idle is proved at the send, never assumed.
         if classify_session(load_session(name)[1])[0] != "idle":
             if action.get("once"):
@@ -8734,29 +8894,177 @@ def _dispatch_run(action, fact, memory, queue, moment):
         module.report_retired(queue, fact, moment)
     module.record(memory, action, moment)
     return "done"
+def _audit_item(row, outcome, moment):
+    """An item that appeared or cleared. A pause summarizes from these rows."""
+    _append_dispatch_audit({"time": dispatch_module().iso(moment), "session": row.get("session"), "action": "item",
+                            "kind": row.get("kind"), "key": row["key"], "reason": row.get("reason"),
+                            "outcome": outcome})
 def _dispatch_apply(action, fact, memory, queue, moment):
     """Run one action and persist it at once, so a crash repeats nothing recorded. A
     failed step is spent like one that ran: an unverified send may still have landed,
     so retrying it unbounded could message a session on every pass. A failed nudge
     climbs its ladder, and a failed resume or retirement goes up."""
-    module = dispatch_module()
+    module, failure = dispatch_module(), None
     try:
         with redirect_stdout(io.StringIO()):
             outcome = _dispatch_run(action, fact, memory, queue, moment)
     except (Exception, SystemExit) as exc:
-        detail = signals_module().clean_excerpt(str(exc), redact, 200) or "unknown error"
+        detail = wake_module().text(str(exc), redact, 200) or "unknown error"
         outcome = f"failed: {detail}"
         if action["type"] in ("resume", "retire"):
-            module.enqueue(queue, module.failure_item(fact, action, detail)["item"], moment)
+            failure = module.failure_item(fact, action, detail)["item"]
+            module.enqueue(queue, failure, moment)
         module.record(memory, action, moment)
     atomic_json_state(data_dir(dispatch_dir()) / "state.json", memory)
     atomic_json_state(dispatch_dir() / "queue.json", queue)
     _append_dispatch_audit({"time": module.iso(moment), "session": action["session"], "action": action["type"],
-                            "kind": (action.get("item") or {}).get("kind"), "key": action["key"],
-                            "reason": action.get("reason"), "outcome": outcome})
+                            "key": action["key"], "reason": action.get("reason"), "outcome": outcome})
+    if failure:
+        _audit_item(failure, "queued", moment)
     return outcome
+def _orchestrator_usage(record):
+    """The orchestrator's usage windows, or None: what cannot be read holds nothing."""
+    try:
+        usage = usage_module()
+        return usage.observe(record.get("agent") or "claude", usage.gate_config(CFG.get("usage_gate")),
+                             model=record.get("requested_model"))
+    except Exception:
+        return None
+def _wake_target(plan, policy):
+    """(record, reason to hold). The state is the last thing read before the send,
+    after the usage read, because a gather may be seconds old."""
+    def at_prompt():
+        record, state = orchestrator_target()
+        held = record is None or state not in loop_runner_module().SEND_STATES
+        return (None, f"orchestrator {state}") if held else (record, None)
+    record, hold = at_prompt()
+    if hold or plan["urgent"]:
+        return record, hold
+    hold = wake_module().usage_hold(_orchestrator_usage(record), policy)
+    return (None, hold) if hold else at_prompt()
+def _note_wake_hold(queue, hold, moment):
+    """Write down a hold once, when its reason changes, and not on every pass."""
+    if queue.get("hold") != hold:
+        _append_dispatch_audit({"time": dispatch_module().iso(moment), "action": "wake", "outcome": f"held: {hold}"})
+    queue["hold"] = hold
+def _send_wake(queue, wake, message, shown, told, record, moment):
+    """The send, with its record written first, so a state directory that cannot be
+    written costs a pass and never a message on every pass. A failed delivery keeps
+    the items, and a later pass retries."""
+    module = wake_module()
+    module.begin_send(queue, wake, shown, moment)
+    atomic_json_state(data_dir(dispatch_dir()) / "queue.json", queue)
+    try:
+        with redirect_stdout(io.StringIO()):
+            orchestrator_send(record, message)
+    except (Exception, SystemExit) as exc:
+        detail = module.text(str(exc), redact, 200) or "unknown error"
+        landed = not any(token in str(exc) for token in WAKE_NOT_SENT)
+        repeated = queue.get("last_error") == detail
+        module.mark_failed(queue, detail, moment, landed)
+        outcome = f"failed: {detail}"
+        audit = landed or not repeated
+    else:
+        module.mark_delivered(queue, shown, told, moment)
+        outcome, audit = "delivered", True
+    atomic_json_state(data_dir(dispatch_dir()) / "queue.json", queue)
+    if audit:
+        _append_dispatch_audit({"time": dispatch_module().iso(moment), "action": "wake", "id": wake,
+                                "keys": [item["key"] for item in shown], "outcome": outcome})
+    return outcome
+def _deliver_wake(queue, moment, dry_run=False, pause=None, failed_end=False):
+    """One digest, or why not (design Decision 8). None means nothing is due."""
+    module = wake_module()
+    if queue.get("sending") and not dry_run:
+        _append_dispatch_audit({"time": dispatch_module().iso(moment), "action": "wake", "id": queue["sending"].get("id"),
+                                "outcome": "failed: the delivery was interrupted"})
+        module.mark_failed(queue, "the last delivery was interrupted", moment, True)
+    policy = wake_policy()
+    plan = module.plan(queue, policy, moment, dispatch_wake_hold(pause, failed_end))
+    if not plan["items"]:
+        queue.pop("hold", None)
+        return None
+    record, hold = (None, plan["hold"]) if plan["hold"] else _wake_target(plan, policy)
+    if hold:
+        if not dry_run:
+            _note_wake_hold(queue, hold, moment)
+        return {"outcome": f"held: {hold}", "items": len(plan["items"])}
+    wake = module.wake_id(moment)
+    message, shown, told = module.render(wake, plan["items"], queue.get("retired") or [], redact)
+    if dry_run:
+        return {"outcome": "dry-run", "id": wake, "items": len(shown), "text": message}
+    return {"outcome": _send_wake(queue, wake, message, shown, told, record, moment), "id": wake, "items": len(shown)}
+def _quarantine_dispatch_state(filename):
+    """Move a file that does not parse aside: read as empty it would lose the rate
+    history and the sticky items without a word."""
+    path = dispatch_dir() / filename
+    try:
+        if isinstance(json.loads(pause_module().read_regular(path, DISPATCH_STATE_BYTES)), dict):
+            return
+    except OSError:
+        return
+    except (ValueError, RecursionError):
+        pass
+    os.replace(path, path.with_name(filename + ".corrupt"))
+    _append_dispatch_audit({"time": dispatch_module().iso(dt.datetime.now(dt.timezone.utc)), "action": "state",
+                            "outcome": f"{filename} could not be read and was moved aside"})
+def _read_dispatch_queue(moment, dry_run=False):
+    """The queue with only its well-formed rows, for a holder of the dispatch lock."""
+    if not dry_run:
+        _quarantine_dispatch_state("queue.json")
+    queue = wake_module().normalized(_read_dispatch_state("queue.json"))
+    malformed = queue.pop("malformed", 0)
+    if malformed and not dry_run:
+        _append_dispatch_audit({"time": dispatch_module().iso(moment), "action": "state",
+                                "outcome": f"dropped {malformed} malformed row(s) from queue.json"})
+    return queue
+def _end_pause(state, moment):
+    """End a pause, under the dispatch lock. The summary is queued before the state goes,
+    so that a crash between the two repeats the end, and its key keeps it one item."""
+    module, lib = pause_module(), dispatch_module()
+    item = module.resumed_item(state, _dispatch_audit_rows(), moment)
+    if item:
+        queue = _read_dispatch_queue(moment)
+        lib.enqueue(queue, item, moment)
+        atomic_json_state(data_dir(dispatch_dir()) / "queue.json", queue)
+    module.clear(pause_path())
+    _append_dispatch_audit({"time": lib.iso(moment), "action": "pause",
+                            "outcome": f"ended: {item['reason'] if item else 'nothing happened'}"})
+def _end_pause_if_due(moment):
+    module = pause_module()
+    state = module.read(pause_path(), moment)[0]
+    if module.is_due(state, moment):
+        _end_pause(state, moment)
+def _end_pause_guarded(moment):
+    """A fault here costs neither a tick nor a pass. The state that stays holds the digest
+    in `_dispatch_pass`, and `doctor` warns about it."""
+    try:
+        _end_pause_if_due(moment)
+    except Exception as exc:
+        print(f"nogg: the pause could not be ended: {exc}", file=sys.stderr)
+def end_due_pause():
+    """The end of a pause outside a pass, which needs no dispatcher. A tick with nothing
+    to end touches no dispatch lock. With the lock busy a pass is running, and it or the
+    next tick ends the pause."""
+    module, moment = pause_module(), dt.datetime.now(dt.timezone.utc)
+    if not module.is_due(module.read(pause_path(), moment)[0], moment):
+        return
+    try:
+        with _dispatch_lock() as held:
+            if held:
+                _end_pause_guarded(moment)
+    except OSError as exc:
+        print(f"nogg: the pause could not be ended: {exc}", file=sys.stderr)
 def _dispatch_pass(dry_run, as_json):
-    module = dispatch_module()
+    module, wake_lib = dispatch_module(), wake_module()
+    started = dt.datetime.now(dt.timezone.utc)
+    if not dry_run:
+        _end_pause_guarded(started)
+    # One read for the whole pass, which holds the lock, so an end falling inside the
+    # gather waits for the next pass and its one digest.
+    state = pause_module().read(pause_path(), started)[0]
+    pause = state if pause_module().is_active(state, started) else None
+    failed_end = bool(state) and pause is None and not dry_run
     records = [rec for _path, rec in session_records()]
     alive, unknown = session_liveness(records, strict=True)
     live = alive | unknown
@@ -8766,23 +9074,38 @@ def _dispatch_pass(dry_run, as_json):
     issues = _dispatch_issues(dry_run) if targets else None
     facts = [_dispatch_fact(rec, live, unknown, issues, live_beads, dry_run) for rec in targets]
     moment = dt.datetime.now(dt.timezone.utc)
-    queue = _read_dispatch_state("queue.json")
-    actions, memory = module.decide(facts, _read_dispatch_state("state.json"), dispatch_policy(), moment)
+    queue = _read_dispatch_queue(moment, dry_run)
+    if not dry_run:
+        _quarantine_dispatch_state("state.json")
+    actions, memory = module.decide(facts, _read_dispatch_state("state.json"), dispatch_policy(pause), moment)
     memory["last_pass_at"] = module.iso(moment)
     by_session = {fact["session"]: fact for fact in facts}
     results = []
     for action in actions:
-        outcome = "dry-run" if dry_run else _dispatch_apply(action, by_session[action["session"]], memory, queue, moment)
-        results.append({**action, "outcome": outcome})
+        if action["type"] != "queue":
+            outcome = "dry-run" if dry_run else _dispatch_apply(action, by_session[action["session"]], memory, queue, moment)
+            results.append({**action, "outcome": outcome})
+    added, cleared = wake_lib.reconcile(queue, actions, facts, memory, wake_policy(), moment, redact)
+    results.extend({"type": "queue", "session": item["session"], "key": item["key"], "reason": item.get("reason"),
+                    "kind": item["kind"], "outcome": "dry-run" if dry_run else "queued"} for item in added)
     if not dry_run:
+        for row, outcome in [*((item, "queued") for item in added), *((item, "cleared") for item in cleared)]:
+            _audit_item(row, outcome, moment)
+        # Saved before the delivery, so a fault there cannot lose this pass.
         atomic_json_state(data_dir(dispatch_dir()) / "state.json", memory)
+        atomic_json_state(dispatch_dir() / "queue.json", queue)
+    wake = _deliver_wake(queue, moment, dry_run, pause, failed_end)
+    if not dry_run:
+        atomic_json_state(dispatch_dir() / "queue.json", queue)
     items = queue.get("items") or []
     if as_json:
         print(json.dumps({"enabled": True, "dry_run": dry_run, "sessions": len(facts), "actions": results,
-                          "queue": items, "states": {fact["session"]: fact["state"] for fact in facts}}))
+                          "queue": items, "wake": wake, "states": {fact["session"]: fact["state"] for fact in facts}}))
         return
     for result in results:
         print(f"{result['type']} {result['session']} ({result.get('reason')}): {result['outcome']}")
+    if wake:
+        print(f"wake {wake.get('id') or '-'} ({wake['items']} item(s)): {wake['outcome']}")
     for item in items:
         print(f"queued {item.get('kind')} {item.get('session')}: {item.get('reason')}")
     print(f"session dispatch: {len(facts)} session(s), {len(results)} action(s), {len(items)} queued")
@@ -8804,19 +9127,120 @@ def session_dispatch(dry_run=False, as_json=False):
     if errors:
         raise RuntimeError("session dispatch: " + "; ".join(errors))
     if not dispatch_policy()["enabled"]:
+        if not dry_run:
+            end_due_pause()
         print(json.dumps({"enabled": False, "dry_run": dry_run, "sessions": 0, "actions": [], "queue": []}) if as_json
               else "session dispatch is disabled (session_dispatch.enabled is not true)")
         return
     if dry_run:
         _dispatch_pass(True, as_json)
         return
-    with (data_dir(ORCHESTRATOR_LOCKS) / "dispatch.lock").open("a") as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
+    with _dispatch_lock() as held:
+        if not held:
             print(json.dumps({"enabled": True, "busy": True}) if as_json else "session dispatch: another pass holds the lock")
             return
         _dispatch_pass(False, as_json)
+def _audit_rows(lines):
+    rows = []
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except (ValueError, RecursionError):
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
+def _dispatch_audit_tail():
+    """The newest audit rows. It runs in any session, so a bad line is skipped."""
+    try:
+        data = pause_module().read_regular(dispatch_dir() / "dispatch.jsonl", DISPATCH_TAIL_BYTES, tail=True)
+    except OSError:
+        return []
+    return _audit_rows(data.decode(errors="replace").splitlines())
+def _dispatch_audit_rows():
+    """Every kept row, oldest first: a pause can outlast the tail and a rotation."""
+    path, rows = dispatch_dir() / "dispatch.jsonl", []
+    for source in [*(path.with_name(f"{path.name}.{index}") for index in range(DISPATCH_AUDIT_GENERATIONS, 0, -1)), path]:
+        try:
+            data = pause_module().read_regular(source, DISPATCH_AUDIT_ROWS_BYTES, tail=True)
+        except OSError:
+            continue
+        rows.extend(_audit_rows(data.decode(errors="replace").splitlines()))
+    return rows
+def session_inbox(as_json=False):
+    """The queue, the last wakes and the audit tail. It only reads, works with the
+    dispatcher off and in every session, and takes no lock."""
+    module, pause = wake_module(), current_pause()
+    view = module.inbox(_read_dispatch_state("queue.json"), _dispatch_audit_tail(), redact,
+                        paused_until=pause_module().until_text(pause) if pause else None)
+    if as_json:
+        print(json.dumps(view))
+    else:
+        print("\n".join(module.inbox_lines(view, redact)))
+def _pause_authority(command):
+    """Who may hold the host: an operator shell and the Orchestration Agent, in the main
+    checkout, like `loop run-now`. The name is what `set_by` records."""
+    records = [rec for _path, rec in session_records(orchestrator_sessions_dir())]
+    record = calling_session_record(records, purpose=f"nogg {command}")
+    if record is not None and record.get("role") != "orchestrator":
+        raise RuntimeError(f"nogg {command} is refused inside supervised session {record.get('name')} "
+                           f"({record.get('role')}); only the Orchestration Agent may {command} automation")
+    if ROOT.resolve() != ORCHESTRATOR_HOME.resolve():
+        raise RuntimeError(f"nogg {command} runs only in the main checkout: {ORCHESTRATOR_HOME}")
+    return record.get("name") if record else "operator"
+def _known_loops():
+    dispatch_module()
+    import loop_config
+    config = loop_config.load(ORCHESTRATOR_HOME / scfg("loops_file", ".nogging/loops.json"))
+    return (config or {"loops": {}})["loops"]
+def pause_cmd(args):
+    """Hold automation (design Decision 16). `--status` only reads and runs anywhere. The
+    rest waits for a running pass, so that no further digest or nudge follows it."""
+    module, moment = pause_module(), dt.datetime.now(dt.timezone.utc)
+    if args.status:
+        if args.until or args.days or args.keep_loop:
+            raise RuntimeError("pause --status takes no other option but --json")
+        state, problem = module.read(pause_path(), moment)
+        view = module.status(state, moment, problem)
+        print(json.dumps(view) if args.json else "\n".join(module.status_lines(view)))
+        return
+    if args.json:
+        raise RuntimeError("pause --json needs --status")
+    set_by = _pause_authority("pause")
+    end = module.parse_end(args.until, args.days, moment)
+    keep = module.kept_loops(args.keep_loop or [], _known_loops() if args.keep_loop else ())
+    with _dispatch_lock(PAUSE_LOCK_WAIT_SECONDS) as held:
+        if not held:
+            raise RuntimeError("pause: a dispatch pass still holds the lock; nothing was changed, try again")
+        state = module.read(pause_path(), moment)[0]
+        if module.is_due(state, moment):
+            _end_pause(state, moment)
+            state = None
+        replaced = module.begin(state, end, keep, set_by, moment)
+        module.write(pause_path(), replaced)
+        if module.read(pause_path(), moment) != (replaced, None):
+            raise RuntimeError(f"pause: {pause_path()} does not read back as this pause")
+        _append_dispatch_audit({"time": dispatch_module().iso(moment), "session": set_by, "action": "pause",
+                                "outcome": f"until {replaced['until']}"})
+    print("\n".join(module.status_lines(module.status(replaced, moment))))
+def resume_cmd():
+    """End a pause now. Its summary and the held items go out on the next idle pass."""
+    module, moment = pause_module(), dt.datetime.now(dt.timezone.utc)
+    _pause_authority("resume")
+    with _dispatch_lock(PAUSE_LOCK_WAIT_SECONDS) as held:
+        if not held:
+            raise RuntimeError("resume: a dispatch pass still holds the lock; nothing was changed, try again")
+        state, problem = module.read(pause_path(), moment)
+        if state:
+            _end_pause(state, moment)
+            print(f"resumed: the pause until {module.until_text(state)} has ended")
+            return
+        try:
+            module.clear(pause_path())
+        except OSError as exc:
+            print(f"nothing was paused; remove {pause_path()} by hand: {exc.strerror}")
+            return
+    print(f"nothing was paused{f'; removed the unusable pause.json ({problem})' if problem else ''}")
 # --- orchestrator: the always-on supervisor ------------------------------
 # `orchestrator run` is the idempotent process the systemd user service starts.
 # The thing kept alive is a normal supervised Claude session (a durable record,
@@ -9738,19 +10162,31 @@ def session_dispatch_diagnostics():
     `nogg validate` shares this path through `doctor`. Fine blocks print nothing."""
     return [(f"session dispatch config: {error}", False) for error in dispatch_module().config_errors(CFG)]
 
+def pause_diagnostics():
+    """(warnings, notes): a pause is a NOTE and never a FAIL, and a file that cannot be
+    used is a WARN, because it silently does not pause anything."""
+    module, moment = pause_module(), dt.datetime.now(dt.timezone.utc)
+    state, problem = module.read(pause_path(), moment)
+    warnings = [f"{pause_path()} cannot be used ({problem}); this host counts as not paused"] if problem else []
+    if module.is_due(state, moment):
+        warnings.append(f"{pause_path()} is past its end, {module.until_text(state)}, and nothing has ended it; "
+                        "`nogg resume` does, and until then a failed end holds the digest")
+    return warnings, [f"paused until {module.until_text(state)}"] if module.is_active(state, moment) else []
+
 LOOP_TICK_WARN_SECONDS = 300
 
 def loop_timer_state():
-    """The loop scheduler timer of the main checkout and its unit-file state,
-    `unavailable` without a usable systemctl."""
+    """The loop scheduler timer of the main checkout and its unit-file state:
+    `unavailable` without systemctl on PATH, `unknown` when systemctl is there
+    but gives no answer (a fenced session where it is denied)."""
     timer = f"nogg-loops-{slugify(ORCHESTRATOR_HOME.name)}.timer"
     if not tool_on_path("systemctl"):
         return timer, "unavailable"
     try:
         res = run("systemctl", "--user", "is-enabled", timer, check=False, timeout=5)
     except (OSError, subprocess.TimeoutExpired):
-        return timer, "unavailable"
-    state = res.stdout.strip() or "unavailable"
+        return timer, "unknown"
+    state = res.stdout.strip() or "unknown"
     return timer, "enabled" if state in ("enabled", "enabled-runtime") else state
 
 def loop_health_diagnostics(now=None):
@@ -9793,8 +10229,16 @@ def loop_health_diagnostics(now=None):
             warnings.append(f"loop {name} is suspended after repeated failures; "
                             f"check `nogg loop log {name}`, then `nogg loop resume {name}`")
     timer, timer_state = loop_timer_state()
-    if timer_state == "enabled":
-        last_tick = state.get("last_tick")
+    last_tick = state.get("last_tick")
+    if timer_state == "unknown":
+        # systemctl cannot answer from here, so say so rather than imply the
+        # loops are stopped; the last tick is the evidence a timer is firing.
+        if loops and not (last_tick and (now - parse_iso(last_tick)).total_seconds() <= LOOP_TICK_WARN_SECONDS):
+            seen = f"the last tick was {humanize_age(last_tick, now)} ago" if last_tick else "no tick is recorded"
+            notes.append(f"loop scheduler: the state of {timer} is unknown from this session "
+                         f"(systemctl is not usable here) and {seen}; check it from a shell outside the session "
+                         "or run `nogg loop tick` (docs/scheduled-loops.md)")
+    elif timer_state == "enabled":
         if not last_tick:
             warnings.append(f"loop scheduler: {timer} is enabled but no tick is recorded")
         elif (now - parse_iso(last_tick)).total_seconds() > LOOP_TICK_WARN_SECONDS:
@@ -9834,6 +10278,8 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
     except Exception as exc:
         loop_warnings, loop_notes = [], [f"loop health check unavailable: {exc}"]
     warnings.extend(loop_warnings)
+    pause_warnings, pause_notes = pause_diagnostics()
+    warnings.extend(pause_warnings)
     if FAILURE_RECORD.exists():
         try: rec = json.loads(FAILURE_RECORD.read_text())
         except (ValueError, OSError): rec = {}
@@ -9869,6 +10315,7 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
              "(docs/nogging/compatibility.md)"]
     notes.extend(routing_notes)
     notes.extend(loop_notes)
+    notes.extend(pause_notes)
     notes.extend(mapping_health_lines())
     try:
         integrity_lines, _integrity_attention = worktree_integrity_diagnostics()
@@ -10523,6 +10970,8 @@ def main():
     sdsp.add_argument("--once", action="store_true", help="run one pass and exit, which every run does")
     sdsp.add_argument("--dry-run", action="store_true", help="report the decided actions and change nothing")
     sdsp.add_argument("--json", action="store_true")
+    sinb = ssub.add_parser("inbox", help="show the pending wake items, the last deliveries and recent actions")
+    sinb.add_argument("--json", action="store_true")
     # `run-quiet` owns everything after its first `--` verbatim (the command's
     # own options and any later `--` included): split it off before argparse,
     # whose `--` handling differs across Python versions.
@@ -10560,6 +11009,13 @@ def main():
             item.add_argument("--json", action="store_true")
         if command_name == "log":
             item.add_argument("--limit", type=int, default=20)
+    pa = sub.add_parser("pause", help="hold automation for a few days: no digest, nudge or scheduled loop until it ends")
+    pa.add_argument("--until", help="the end: YYYY-MM-DD (the start of that local day) or YYYY-MM-DDTHH:MM")
+    pa.add_argument("--days", help="the end: this many times 24 hours from now, at most 60")
+    pa.add_argument("--keep-loop", action="append", metavar="NAME", help="a loop that keeps running; may repeat")
+    pa.add_argument("--status", action="store_true", help="show the pause and change nothing; allowed in every session")
+    pa.add_argument("--json", action="store_true", help="with --status, print JSON")
+    sub.add_parser("resume", help="end a pause now; what it held goes out as one digest")
     argv, run_quiet_command = sys.argv[1:], None
     if argv[:1] == ["run-quiet"] and "--" in argv:
         split = argv.index("--")
@@ -10606,6 +11062,7 @@ def main():
                     raise RuntimeError("nogg loop tick is refused inside every supervised session")
                 if ROOT.resolve() != ORCHESTRATOR_HOME.resolve():
                     raise RuntimeError(f"nogg loop tick runs only in the main checkout: {ORCHESTRATOR_HOME}")
+                end_due_pause()
                 loop_runner_for_main().tick()
                 return
             if args.loop_command == "run-now":
@@ -10621,7 +11078,8 @@ def main():
             if not defs.resolve().is_relative_to(ORCHESTRATOR_HOME.resolve()):
                 raise RuntimeError("configured loops_file must remain inside the main checkout")
             loop_command(args, main_checkout=ORCHESTRATOR_HOME, definitions_path=defs,
-                         session_record=record, multi_machine=CFG.get("multi_machine", False))
+                         session_record=record, multi_machine=CFG.get("multi_machine", False),
+                         pause=current_pause())
         except (ValueError, OSError) as exc:
             raise RuntimeError(str(exc)) from exc
     elif args.command == "plan-begin":
@@ -10662,6 +11120,8 @@ def main():
     elif args.command == "discoveries": ack_discoveries(args.ack) if args.ack else discoveries()
     elif args.command == "session": session_cmd(args)
     elif args.command == "orchestrator": orchestrator_cmd(args)
+    elif args.command == "pause": pause_cmd(args)
+    elif args.command == "resume": resume_cmd()
     else: doctor(args.command == "audit", getattr(args, "recover", False), getattr(args, "sandbox", False))
 def session_cmd(args):
     if args.session_command == "herdr-server":
@@ -10717,6 +11177,8 @@ def session_cmd(args):
         session_signal(args.kind, args.reason)
     elif args.session_command == "dispatch":
         session_dispatch(args.dry_run, args.json)
+    elif args.session_command == "inbox":
+        session_inbox(args.json)
 if __name__ == "__main__":
     try: main()
     except PartialSyncError as exc: print(f"nogg: {exc}", file=sys.stderr); sys.exit(3)

@@ -18,6 +18,21 @@ and GitHub Releases for that history.
   `retire_merged` is on, and queues what needs a decision. New
   `session_dispatch` and `orchestrator_context` config blocks refuse unknown
   keys in `validate` and `doctor`.
+- The wake digest: `session dispatch` re-evaluates its queue on every pass and
+  delivers what stays ready to the orchestrator as one message of at most
+  1.5 KiB, idle-only, through the verified send, with quiet periods, a rate
+  ceiling, a usage hold and one reminder. Item text is bounded, redacted and
+  labelled as data. `nogg session inbox [--json]` shows the queue in every
+  session, and the orchestrator prompt gains the wake protocol, the no-watcher
+  rule and the capability check for kickoffs.
+- `nogg pause [--until|--days] [--keep-loop <name> ...]`, `pause --status
+  [--json]` and `nogg resume`: hold automation for up to 60 days. No digest,
+  nudge, `limit` resume or scheduled loop goes out, the queue and retirement go
+  on, and the pause ends by itself at the first `loop tick` or `session dispatch
+  --once` past its end. What it held goes out as one digest with a `resumed`
+  summary, and a pause in which nothing happened costs no wake. Mutations run
+  from an operator shell and the Orchestration Agent; `--status` reads in every
+  session. `doctor`, `session list`, `loop list` and `session inbox` show it.
 - Launch-mode loops: a fresh, bounded `loop` session per run with the loop's
   exact agent, tier and authority, stopped and retired when it finishes or
   passes `max_runtime`. `init` and `update` render

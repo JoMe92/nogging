@@ -1,0 +1,10 @@
+{
+  "code": 200,
+  "success": true,
+  "data": {
+    "level": "placeholder-level",
+    "limits": [
+      {"type": "TOKENS_LIMIT", "unit": 3, "number": 5, "percentage": 37, "nextResetTime": 1792000000000}
+    ]
+  }
+}

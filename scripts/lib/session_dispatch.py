@@ -22,6 +22,7 @@ which no action may depend:
 from __future__ import annotations
 
 import copy
+import hashlib
 import re
 from datetime import datetime, timezone
 from typing import Any
@@ -32,6 +33,7 @@ CHECKS_INTERVAL_SECONDS = 120
 BEADS_CACHE_SECONDS = 300
 FAILED_CHECKS_SHOWN = 5
 DONE_KEYS_KEPT = 64
+KEY_PART_CHARS = 80
 EXCERPT_LINES = 6
 
 # Retrying these cannot help, so they skip the retry nudge.
@@ -51,6 +53,8 @@ NUDGE_STALL = ("Nogging dispatcher: your session log has been silent for {minute
                + BLOCK_HINT)
 
 _CHECK_NAME_DROP = re.compile(r"[^\w .:/()+-]+")
+_KEY_DROP = re.compile(r"[^\w:.+@-]+")
+_PLAIN_MARK = re.compile(r"[0-9a-fTZ:.+@-]{1,80}")
 _DURATION = re.compile(r"^(\d+)([smh]?)$")
 _UNITS = {"": 1, "s": 1, "m": 60, "h": 3600}
 _QUIET_WINDOW = re.compile(r"^([01]\d|2[0-3]):[0-5]\d-([01]\d|2[0-3]):[0-5]\d$")
@@ -151,14 +155,18 @@ def seconds_since(stamp: Any, now: datetime) -> float | None:
     stamp without a zone is local time, which is what `resolve_clock_time` returns."""
     try:
         moment = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
-    except ValueError:
+        return (now - (moment if moment.tzinfo else moment.astimezone())).total_seconds()
+    except (ValueError, OverflowError, OSError):
         return None
-    return (now - (moment if moment.tzinfo else moment.astimezone())).total_seconds()
 
 
 def dedupe_key(session: str, kind: str, *marks: Any) -> str:
-    """Session, kind and the head or fingerprint that makes this occurrence new."""
-    return "|".join(str(part) for part in (session, kind, *marks))
+    """Session, kind and the head or fingerprint that makes this occurrence new. A
+    mark can come from an event line, so one that is no stamp or head is hashed: the
+    key stays stable and repeats no agent text."""
+    marks = [mark if isinstance(mark, str) and _PLAIN_MARK.fullmatch(mark)
+             else hashlib.sha256(str(mark).encode()).hexdigest()[:16] for mark in marks]
+    return "|".join(_KEY_DROP.sub("", str(part))[:KEY_PART_CHARS] for part in (session, kind, *marks))
 
 
 def check_names(failed: list[Any]) -> str:
@@ -184,16 +192,20 @@ def _diffstat(checks: dict[str, Any]) -> str | None:
 def _queue(fact: dict[str, Any], kind: str, mark: Any, reason: str, next_step: str) -> dict[str, Any]:
     checks = fact.get("checks") or {}
     key = dedupe_key(fact["session"], kind, mark)
+    pr = checks.get("pr_number")
     return {"type": "queue", "session": fact["session"], "key": key, "reason": reason,
             "item": {"key": key, "kind": kind, "session": fact["session"], "bead": fact.get("bead"),
-                     "pr": checks.get("pr_number"), "ci": ci_summary(checks), "diff": _diffstat(checks),
+                     "pr": pr if type(pr) is int else None, "ci": ci_summary(checks), "diff": _diffstat(checks),
                      "head": (fact.get("head") or "")[:12] or None, "reason": reason, "next": next_step}}
 
 
 def failure_item(fact: dict[str, Any], action: dict[str, Any], detail: str) -> dict[str, Any]:
-    """The `error` item for a resume or retirement that failed."""
-    return _queue(fact, "error", action["key"], f"{action['type']} failed: {detail}",
-                  f"./scripts/nogg session log {fact['session']}")
+    """The `error` item for a resume or retirement that failed. Its action is spent, so
+    no later pass can report it again, and it is `sticky` until it has gone out."""
+    failure = _queue(fact, "error", action["key"], f"{action['type']} failed: {detail}",
+                     f"./scripts/nogg session log {fact['session']}")
+    failure["item"]["sticky"] = True
+    return failure
 
 
 def _nudge_or_escalate(fact: dict[str, Any], memory: dict[str, Any], budget: str, limit: int,
@@ -380,7 +392,7 @@ def _decide_session(fact: dict[str, Any], memory: dict[str, Any], policy: dict[s
         return []
     signal = fact.get("signal") or {}
     if signal.get("kind") == "blocked":
-        return [_queue(fact, "blocked", signal.get("at"), signal.get("reason") or "blocked",
+        return [_queue(fact, "blocked", f"{signal.get('at')}@{fact.get('head')}", signal.get("reason") or "blocked",
                        f"./scripts/nogg session log {name}")]
     sweep = fact.get("sweep") or ""
     if fact.get("bead_status") == "blocked" or sweep.startswith("bead-blocked"):
@@ -400,21 +412,44 @@ def _observe(fact: dict[str, Any], memory: dict[str, Any], now: datetime) -> Non
         memory.update(head=head, budget={})
 
 
+def _decide_remembering(fact: dict[str, Any], session: dict[str, Any], policy: dict[str, Any],
+                        now: datetime) -> list[dict[str, Any]]:
+    """One session's decision. `state.json` and the checks cache lie inside a tree some
+    Leads can write. A memory this code cannot use is forgotten, and a fact it cannot
+    use costs that session this pass, so neither can stop the pass for every session."""
+    failures = (AttributeError, KeyError, TypeError, ValueError)
+    try:
+        if not isinstance(session.get("done", []), list):
+            raise TypeError("done")
+        _observe(fact, session, now)
+        return _decide_session(fact, session, policy, now)
+    except failures:
+        session.clear()
+    try:
+        _observe(fact, session, now)
+        return _decide_session(fact, session, policy, now)
+    except failures:
+        return []
+
+
 def decide(facts: list[dict[str, Any]], memory: dict[str, Any], policy: dict[str, Any],
            now: datetime) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """The actions for one pass and the memory to carry forward. Spending an action
-    is `record`'s job, so one held back at the send stays due. A session with no
-    fact any more is forgotten; `unknown` keeps what it had."""
-    known = memory.get("sessions") or {}
+    is `record`'s job, so one held back at the send stays due. A queue action is
+    never spent: it reports a condition on every pass while it holds, which is what
+    keeps the queue level-triggered. A session with no fact any more is forgotten;
+    `unknown` keeps what it had."""
+    known = memory.get("sessions") if isinstance(memory.get("sessions"), dict) else {}
     next_memory, actions = {**memory, "sessions": {}}, []
     for fact in facts:
-        session = copy.deepcopy(known.get(fact["session"]) or {})
+        remembered = known.get(fact["session"])
+        session = copy.deepcopy(remembered) if isinstance(remembered, dict) else {}
         next_memory["sessions"][fact["session"]] = session
         if fact.get("state", "unknown") == "unknown":
             continue
-        _observe(fact, session, now)
-        actions.extend(action for action in _decide_session(fact, session, policy, now)
-                       if action["key"] not in session.get("done", [])
+        chosen = _decide_remembering(fact, session, policy, now)
+        actions.extend(action for action in chosen
+                       if (action["type"] == "queue" or action["key"] not in session.get("done", []))
                        and not (policy.get("hold_sends") and action["type"] in SENDS))
     return actions, next_memory
 
@@ -433,7 +468,7 @@ def record(memory: dict[str, Any], action: dict[str, Any], now: datetime) -> Non
 
 
 def enqueue(queue: dict[str, Any], item: dict[str, Any], now: datetime) -> None:
-    """Add an item once, by key. TASK-SWK-005 delivers and drops them."""
+    """Add an item once, by key. session_wake re-evaluates, delivers and drops them."""
     items = queue.setdefault("items", [])
     if not any(existing.get("key") == item["key"] for existing in items):
         items.append({**item, "created_at": iso(now)})

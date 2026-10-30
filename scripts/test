@@ -28,6 +28,8 @@ export CODEX_HOME="$usage_home/codex" XDG_CACHE_HOME="$usage_home/cache"
 # Antigravity quota comes from a runtime `/usage` probe; tests must never run the
 # developer's real agy. Fixtures that exercise the probe stub `agy` and opt in.
 export AGY_NOGG_USAGE_PROBE=0
+# Likewise Pi's Z.ai quota probe must never run the developer's real `pi auth print-api-key`.
+export PI_NOGG_USAGE_PROBE=0
 # Stub-backed launch fixtures need not wait out the full 2 s launch settle
 # window per launch; the override can only shorten it (see settle_launch).
 export NOGG_LAUNCH_SETTLE_SECONDS=0.25

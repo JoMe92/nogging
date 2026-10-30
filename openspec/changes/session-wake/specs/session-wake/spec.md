@@ -31,18 +31,34 @@ the actions and performs none. It SHALL take a non-blocking lock on
 - **WHEN** `session dispatch --dry-run --json` runs inside a supervised session
 - **THEN** it prints the decided actions and sends, stops and writes nothing
 
-### Requirement: Dispatch is opt-in
+### Requirement: Dispatch is on by default and can be switched off
 
-Dispatch SHALL be controlled by `session_dispatch.enabled`, default `false`.
-With it off or absent, `session dispatch` SHALL print that it is disabled and
-perform no action, and no session SHALL be nudged, retired or woken. `validate`
-and `doctor` SHALL refuse an unknown key in `session_dispatch` or
+Dispatch SHALL be controlled by `session_dispatch.enabled`, whose default is `true`:
+the template carries `true` and a missing `session_dispatch` block or a missing
+`enabled` key SHALL mean on, decided by one function used by `session dispatch`,
+`session signal`, the scheduler tick and `doctor`. Only an explicit `false` SHALL
+switch it off. With it off, `session dispatch` SHALL print that it is disabled and
+perform no action, and no session SHALL be nudged, retired or woken. `retire_merged`
+SHALL stay `false` by default, so a default install retires no session. A user
+pause (`nogg pause`) SHALL hold an enabled dispatcher as specified for the pause.
+`validate` and `doctor` SHALL refuse an unknown key in `session_dispatch` or
 `orchestrator_context`, naming it.
 
-#### Scenario: A default install nudges nobody
+#### Scenario: A default install is on
 
 - **WHEN** a repository has no `session_dispatch` key and a Lead idles with uncommitted work
-- **THEN** no message reaches that session and no item is queued
+- **THEN** the pass nudges that Lead once with the fixed message after the settle period
+- **AND** `session signal` tells the Lead that dispatch is on
+
+#### Scenario: An explicit false switches it off
+
+- **WHEN** `session_dispatch.enabled` is `false` and a Lead idles with uncommitted work
+- **THEN** `session dispatch` prints that it is disabled, no message reaches that session and no item is queued
+
+#### Scenario: A default install retires nothing
+
+- **WHEN** a repository has no `retire_merged` key and a session's pull request is merged, its Bead closed and its tree clean
+- **THEN** the session is left running
 
 #### Scenario: A typo is refused
 
@@ -51,7 +67,7 @@ and `doctor` SHALL refuse an unknown key in `session_dispatch` or
 
 ### Requirement: Routine transitions are handled without a model
 
-With dispatch enabled, a pass SHALL handle these transitions deterministically,
+With dispatch on, a pass SHALL handle these transitions deterministically,
 each after a settle period of 60 seconds: a Lead idle with gaps is nudged; a pull
 request with pending checks is waited on; a new failing check fingerprint nudges
 the Lead with up to five failing check names; a usage limit is waited out and
@@ -173,7 +189,7 @@ make it a new item.
 #### Scenario: No orchestrator is running
 
 - **WHEN** no live orchestrator session exists
-- **THEN** items stay queued and `doctor` reports the queue depth
+- **THEN** items stay queued and `doctor` reports the queue depth in its one NOTE, as specified for dispatch without an orchestrator
 
 #### Scenario: Quiet hours and a pause hold delivery
 
@@ -193,7 +209,7 @@ SHALL be written atomically and SHALL survive a restart. The audit log SHALL rec
 each action with its reason and SHALL be rotated at 1 MiB to 3 generations, and
 SHALL contain no secret. `nogg session inbox [--json]` SHALL show the pending items,
 last deliveries and recent actions, SHALL be read-only and SHALL be allowed in every
-session. `doctor` SHALL report, without failing, a disabled or stale dispatcher, the
+session. `doctor` SHALL report, without failing, a disabled or stale dispatcher (a stale one only where a timer is installed), the
 queue depth, the oldest item's age, and a session that exhausted its budget.
 
 #### Scenario: A restart loses nothing
@@ -203,7 +219,7 @@ queue depth, the oldest item's age, and a session that exhausted its budget.
 
 #### Scenario: Doctor shows a silent dispatcher
 
-- **WHEN** dispatch is enabled and no pass has run for 5 minutes
+- **WHEN** dispatch is on and the timer is installed but no pass has run for 5 minutes
 - **THEN** `doctor` prints a WARN naming the last pass time
 
 ### Requirement: The dispatch pass runs from the loops scheduler
@@ -221,8 +237,48 @@ from an external scheduler.
 
 #### Scenario: A consumer without systemd
 
-- **WHEN** an install has no timer and dispatch is enabled
-- **THEN** `doctor` says nothing fires automatically and names `session dispatch --once`
+- **WHEN** an install has no timer and dispatch is on
+- **THEN** `doctor` prints one NOTE saying nothing fires automatically and names `session dispatch --once`
+
+### Requirement: Dispatch without an orchestrator or a timer degrades quietly
+
+With dispatch on and no live orchestrator session, a pass SHALL still observe every
+Lead, track checks and send the fixed nudges to idle Leads, because they use no
+orchestrator turn. Queue items SHALL still be created, re-evaluated and dropped when
+their condition clears, so the queue holds only live decisions. Delivery SHALL have no
+target: the items SHALL be held, never dropped, never reported as an error and never
+retried in a loop, and SHALL go out as one digest under the normal rules once an
+orchestrator session is idle. With no loops timer, nothing fires the pass
+automatically and `session dispatch --once` SHALL keep working by hand or from an
+external scheduler. In neither case SHALL a pass fail, exit non-zero or write more
+than its normal audit record. `doctor` SHALL print one NOTE, never a WARN or FAIL, for
+each missing piece: for a missing orchestrator, the number of held items and how to
+start one (`nogg orchestrator run`); for a missing timer, that nothing fires
+automatically and how to enable it, naming `session dispatch --once` meanwhile; and in
+either case that `session_dispatch.enabled: false` switches dispatch off. With dispatch
+off or a pause active, `doctor` SHALL NOT print these notes.
+
+#### Scenario: A Lead is nudged although nobody is listening
+
+- **WHEN** dispatch is on, no orchestrator session exists and a Lead idles with uncommitted work
+- **THEN** the Lead receives the fixed nudge, the pass exits 0 and prints no error
+
+#### Scenario: The digest is held, then delivered
+
+- **WHEN** a `ready_for_review` item becomes ready while no orchestrator session exists
+- **THEN** it stays queued across passes with no message, no error and no repeated log line
+- **AND** after an orchestrator session starts and idles, the item is delivered in one digest
+
+#### Scenario: A cleared condition leaves nothing behind
+
+- **WHEN** an item was held without an orchestrator and its condition then clears
+- **THEN** the item is dropped and a later orchestrator is not woken for it
+
+#### Scenario: Doctor explains once
+
+- **WHEN** dispatch is on, no orchestrator session exists and no loops timer is installed
+- **THEN** `doctor` prints exactly one NOTE for the orchestrator and one for the timer, each with its fix and the switch-off key, and no WARN or FAIL
+- **AND** with `enabled` set to `false` neither note is printed
 
 ### Requirement: The orchestrator is not woken inside quiet hours
 

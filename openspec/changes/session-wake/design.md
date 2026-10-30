@@ -476,7 +476,9 @@ own session besides delivery.
 
 ### Decision 7: Follow-ups that need no model
 
-`session_dispatch.enabled` defaults to `false`. With it on:
+`session_dispatch.enabled` defaults to `true`, in the template and when the key is
+missing (Product Owner decision 6); `false` switches the dispatcher off and
+`nogg pause` holds it for a while. A pass with it on:
 
 | Condition, after a 60 s settle | Deterministic action | Reaches the orchestrator when |
 | --- | --- | --- |
@@ -505,6 +507,30 @@ The limit case cannot call the blocking `session_resume_when_ready`, so its
 second half, dismissing a model-switch prompt and sending the resume, is factored
 into a non-blocking `resume_step`. The tick does nothing until the state stops
 being `limit`, and no process is left waiting.
+
+*On, but without an orchestrator or a timer.* Defaulting to on means many hosts will
+run the dispatcher with nothing to wake or nothing to fire it. The rule is that it
+degrades quietly and never fails:
+
+- **No live orchestrator session.** The pass still observes every Lead and still
+  sends the fixed nudges to idle Leads, because a nudge uses no orchestrator turn and
+  is safe wherever the send path verifies idle. Checks tracking and `retire_merged`
+  (still `false` by default) behave as before. Items still enter the queue and are
+  re-evaluated, so a condition that clears drops out and the queue holds only live
+  decisions. Delivery has no target and is **held, never dropped or errored**; when
+  an orchestrator session appears, the held items that still hold go out as one
+  digest under the normal rules. Nothing is retried in a loop or logged per pass.
+- **No loops timer.** Nothing fires the pass automatically; `session dispatch --once`
+  still works by hand or from an external scheduler, and `signal` still tells a Lead
+  that dispatch is on.
+- **One NOTE.** `doctor` prints a single NOTE (never a WARN or FAIL) for each
+  missing piece: the held queue depth and how to start an orchestrator
+  (`nogg orchestrator run`), the missing timer and how to enable it
+  (`session dispatch --once` meanwhile), and in both cases that
+  `session_dispatch.enabled: false` switches it off. A host without either gets the
+  two lines once per `doctor` run, not per pass.
+- **A fresh install on a host with a running orchestrator** has nothing to
+  configure: the next tick of the loops timer delivers the first digest.
 
 Antigravity sessions are reported through the same `crashed` and `needs_input`
 items from the evidence they already produce, and get no nudge and no guard.
@@ -647,7 +673,7 @@ completion the scheduler already tracks.
 ```json
 {
   "session_dispatch": {
-    "enabled": false,
+    "enabled": true,
     "max_nudges": 2,
     "max_ci_nudges": 2,
     "stall_after": "15m",
@@ -670,8 +696,11 @@ completion the scheduler already tracks.
 (Decision 15). Unknown keys are refused by `validate` and `doctor`, as `usage_gate`
 does, and so is a malformed window. A pause is not configuration: it is host-local
 state written by a command (Decision 16). The template carries the block with
-`enabled: false`, `keep_warm: true` and `retire_merged: false`. This
-repository sets both to `true` in TASK-SWK-007.
+`enabled: true`, `keep_warm: true` and `retire_merged: false`; a missing `enabled`
+key reads as `true` in the module's policy, in `session signal`, in `session
+dispatch` and in `doctor`, so one function decides it. `update` never writes over an
+existing `enabled` value. This repository sets only `retire_merged` to `true` in
+TASK-SWK-007, because `enabled` is already on.
 
 ### Decision 14: Acceptance on the delivery host
 
@@ -851,6 +880,13 @@ which `docs/configuration.md` also documents.
 - **A pause forgotten or mistyped.** It always has an end, at most 60 days away, and
   `doctor`, `session list` and the inbox say it is on. A broken state file means not
   paused, so a fault cannot hold work back.
+- **On by default surprises an existing install.** After `update`, a repository with no
+  `enabled` key starts nudging idle Leads and queueing decisions. The effect is bounded
+  (fixed nudges, `max_nudges`, no model, no merge, no retirement) and is stated in the
+  CHANGELOG, the guide and a one-line `update` note; `session_dispatch.enabled: false`
+  or `nogg pause` stops it, and an explicit value is never overwritten. Without an
+  orchestrator or a timer it holds its digest and prints one `doctor` NOTE
+  (Decision 7), so it neither errors nor spams.
 - **Quiet hours delay an urgent item.** By the Product Owner's rule the orchestrator is
   never woken inside a window, so a blocked Lead waits until it ends. Windows are
   opt-in and the default is none.
@@ -876,7 +912,8 @@ Branches are `<type>/session-wake`. Lanes: `feat/` 001, then 002, 003, 004, 005,
 2. **`retire_merged`: yes for this repository, off by default elsewhere.** The
    dispatcher may stop and clean a session once its PR is merged, its Bead closed and
    its tree clean. The template default stays `false`, and TASK-SWK-007 sets `true` in
-   this repository's own configuration (Decisions 7 and 13).
+   this repository's own configuration (Decisions 7 and 13). Decision 6 does not
+   change it.
 3. **Codex hook install: yes.** TASK-SWK-007 may add one `Stop` hook and its trust
    record to the Product Owner's `~/.codex` on this host (Decision 3). `init` and
    `update` still never do this.
@@ -890,3 +927,13 @@ Branches are `<type>/session-wake`. Lanes: `feat/` 001, then 002, 003, 004, 005,
    (Decisions 15 and 16). Where the proposed command names needed adjusting, the
    existing `nogg loop pause|resume` convention was kept for the per-loop commands and
    the new global commands are top-level.
+6. **Session wake is on by default (2026-10-30).** The Product Owner (German, verbatim):
+   "Das Feature soll auf jeden Fall in den Release mit rein. ... Es soll aber
+   standardmäßig nicht aus sein, sondern soll standardmäßig an sein." So
+   `session_dispatch.enabled` defaults to `true` (template and missing key), replacing the
+   opt-in of the first plan. `retire_merged` stays `false` by default, quiet hours stay
+   empty, keep-warm and pause behave as specified. When the installation has no
+   orchestrator session or no loops timer the dispatcher degrades quietly (Decision 7),
+   existing installations keep an explicit `enabled` value, and the release notes and
+   `docs/session-wake.md` say plainly that dispatch is on, what it does and how to
+   switch it off (`session_dispatch.enabled: false`) or pause it (`nogg pause`).

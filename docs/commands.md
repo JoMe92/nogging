@@ -775,16 +775,28 @@ prose.
 Run one deterministic follow-up pass, with no model. It reads every live Lead with a
 Bead and every planning session, decides from their real state, and acts: an idle
 Lead with gaps or red CI gets a fixed nudge, and what needs a decision is queued in
-`.nogging/state/dispatch/queue.json` and printed. Nothing depends on a hook having
-fired, and a pass that is repeated does nothing twice. A fact it cannot read, such as
-a failing `gh` or `bd`, is `unknown` and produces no action. It never merges, answers
-a prompt, launches a session or chooses a model.
+`.nogging/state/dispatch/queue.json`. Nothing depends on a hook having fired, and a
+pass that is repeated does nothing twice. A fact it cannot read, such as a failing
+`gh` or `bd`, is `unknown` and produces no action. It never merges, answers a prompt,
+launches a session or chooses a model.
+
+Every pass re-evaluates the queue, so a condition that clears before delivery simply
+disappears. What stays ready goes to the orchestrator as one digest of at most 1.5 KiB
+that starts with `[nogg wake`, through the same verified send as a `send` loop and only
+while the orchestrator sits at its prompt: idle, or waiting on nothing but its own
+background job. A busy or absent orchestrator, or typed input in its composer, keeps
+the items for a later pass. The `wake` keys of
+[`session_dispatch`](configuration.md#session_dispatch) set the timing.
 
 It needs `session_dispatch.enabled`, and otherwise prints that it is disabled. It runs
 only in the main checkout and is refused in every supervised session, except with
 `--dry-run`, which reports the actions and sends, stops and writes nothing. When
 another pass holds `.nogging/locks/dispatch.lock` it exits 0. Every run is one pass,
 and `--once` says so for a scheduler.
+
+During a [`pause`](#pause) a pass still observes, queues, audits and retires merged
+sessions, and sends no digest, nudge or `limit` resume. The first pass at or after the
+end of a pause ends it.
 
 ```bash
 ./scripts/nogg session dispatch --once
@@ -794,6 +806,21 @@ and `--once` says so for a scheduler.
 **Used by.** An operator or an external scheduler. State, the queue and the
 `dispatch.jsonl` audit log live under `.nogging/state/dispatch/`. See
 [`session_dispatch`](configuration.md#session_dispatch).
+
+### session inbox
+
+Show the wake queue: the pending items, why delivery is held, the last wakes and the
+recent actions from the audit log. During a pause it says so and counts the held items.
+It only reads, and works with the dispatcher off. Item text is agent output, cleaned
+and labelled as data.
+
+```bash
+./scripts/nogg session inbox
+./scripts/nogg session inbox --json
+```
+
+**Used by.** Every session. The orchestrator reads it when a digest ends in
+`Overflow:`.
 ## loop
 
 **Purpose.** Define recurring work in a repository file, approve its exact
@@ -873,3 +900,58 @@ Remove the definition and its prompt while retaining run history.
 Evaluate every enabled loop once. The command runs only in the main checkout,
 refuses every supervised session, and exits successfully when another tick
 holds the scheduler lock.
+
+During a [`pause`](#pause) it logs each due slot of a loop outside `keep_loops` once as
+`paused-global`, starts nothing for that loop and writes no state for it, so a loop
+paused on its own stays paused. It goes on supervising runs that already started. It
+ends a pause at its time first, with the dispatcher on or off.
+
+## pause
+
+**Purpose.** Hold automation while you are away. The orchestrator gets no digest,
+running Leads get no nudge or `limit` resume, and loops outside `--keep-loop` do not
+run. The queue, the audit log and the retirement of merged sessions go on, nothing is
+lost, and when the pause ends what it held reaches the orchestrator as one digest of
+at most 1.5 KiB. What does not fit follows in the next wake, and `session inbox` shows it.
+A pause stops no session and no timer, and blocks no launch made on purpose: `loop
+run-now` and `session launch` still work.
+
+**Common forms.**
+
+```bash
+./scripts/nogg pause --until 2026-11-03            # until 00:00 local on that date
+./scripts/nogg pause --until 2026-11-03T08:30      # until that local time
+./scripts/nogg pause --days 3 --keep-loop morning-report
+./scripts/nogg pause --status
+./scripts/nogg pause --status --json
+```
+
+`--days n` is `n` times 24 hours from now. The end must lie in the future and at most
+60 days away, so a forgotten pause ends by itself, at the first `loop tick` or
+`session dispatch --once` at or after it. `--keep-loop` may repeat, and each name must
+exist in the loops file. A refused end or name writes nothing. A second `pause`
+replaces the end and the kept loops and keeps the original start. The state is
+`.nogging/state/pause.json` in the main checkout, and a file that cannot be used counts
+as not paused and is a `doctor` WARN.
+
+**Used by.** An operator, and the Orchestration Agent when the Product Owner says they
+will be away. `pause` is refused in every other supervised session and outside the main
+checkout. `--status` only reads and works in every session. `doctor`, `session list`,
+`loop list` and `session inbox` show a pause too.
+
+## resume
+
+**Purpose.** End a pause now. If an item appeared or cleared during it, one `resumed`
+item is queued with the length of the pause, how many items were seen, how many cleared
+on their own and the sessions that finished, and it goes out with the held items as one
+digest on the next idle pass. A pause in which nothing happened queues nothing and costs
+no wake. With no pause it says so and exits 0.
+
+**Common forms.**
+
+```bash
+./scripts/nogg resume
+```
+
+**Used by.** The same callers as `pause`, under the same refusals. A loop paused with
+`loop pause` stays paused.

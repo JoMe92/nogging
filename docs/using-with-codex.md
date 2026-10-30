@@ -56,6 +56,12 @@ the Claude trusted path: it pushes the feature branch, fast-forward-merges into
 session has no network, so `git push`, `bd sync`, and `dolt push|pull` all fail;
 it stops and reports instead.
 
+`on-request` asks only before a command leaves the sandbox: a command inside the
+sandbox runs without a prompt, and Codex no longer accepts `untrusted`. The
+restricted boundary is the sandbox and the command floor, not a per-command
+approval. A restricted [scheduled loop](scheduled-loops.md) run must not execute
+commands unapproved, so it starts with no command tools at all.
+
 ### Model and reasoning effort selection
 
 Codex sessions support launch-time model and reasoning effort selection:
