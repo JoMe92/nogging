@@ -68,10 +68,116 @@ class LoopTickTests(unittest.TestCase):
         self.runner.tick()
         self.assertEqual(self.sent, [])
         self.assertEqual(self.events()[-1]["reason"], "target-busy")
+        self.assertEqual(self.events()[-1]["run_id"], "night-work-20260101T000500Z")
+        self.clock[0] = datetime(2026, 1, 1, 0, 7, tzinfo=UTC)
+        self.runner.tick()
+        self.assertEqual(sum(row["event"] == "deferred" for row in self.events()), 1)
         self.clock[0] = datetime(2026, 1, 1, 0, 7, tzinfo=UTC)
         self.target_state[0] = "idle"
         self.runner.tick()
         self.assertEqual(len(self.sent), 1)
+
+    def test_run_now_bypasses_schedule_but_still_skips_a_busy_target(self):
+        self.clock[0] = datetime(2026, 1, 1, 0, 1, tzinfo=UTC)
+        self.target_state[0] = "working"
+        self.runner.run_now("night-work")
+        self.assertEqual(self.sent, [])
+        self.assertEqual(self.events()[-1]["trigger"], "manual")
+        self.assertEqual(self.events()[-1]["event"], "skipped")
+        self.assertEqual(self.events()[-1]["reason"], "target-busy")
+        self.assertNotIn("deferred", loop_state.read_state(self.root)["loops"]["night-work"])
+
+    def test_run_now_can_start_before_the_next_scheduled_slot(self):
+        self.clock[0] = datetime(2026, 1, 1, 0, 1, tzinfo=UTC)
+        self.runner.run_now("night-work")
+        self.assertEqual(len(self.sent), 1)
+        self.assertEqual(self.events()[-1]["trigger"], "manual")
+        self.assertEqual(self.events()[-1]["event"], "delivered")
+
+    def test_transient_failure_retries_at_two_minutes_and_keeps_the_slot_id(self):
+        raw = json.loads(self.defs.read_text())
+        raw["loops"]["night-work"]["schedule"] = {"at": ["00:05"]}
+        self.defs.write_text(json.dumps(raw))
+        config = __import__("loop_config").load(self.defs)
+        loop_state.approve(self.root, self.defs, config, "night-work",
+                           at=self.anchor.isoformat(), user="operator")
+        calls = []
+
+        class TemporarySendError(RuntimeError):
+            transient = True
+
+        def send(record, message):
+            calls.append(message)
+            if len(calls) == 1:
+                raise TemporarySendError("delivery timed out")
+
+        self.runner.send = send
+        self.runner.tick()
+        self.assertEqual(self.events()[-1]["event"], "retry-scheduled")
+        self.assertEqual(self.events()[-1]["run_id"], "night-work-20260101T000500Z")
+        self.clock[0] = datetime(2026, 1, 1, 0, 7, tzinfo=UTC)
+        self.runner.tick()
+        self.assertEqual(len(calls), 1)
+        self.clock[0] = datetime(2026, 1, 1, 0, 8, tzinfo=UTC)
+        self.runner.tick()
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(self.events()[-1]["event"], "delivered")
+
+    def test_transient_start_attempts_are_bounded_and_do_not_restart_forever(self):
+        raw = json.loads(self.defs.read_text())
+        raw["loops"]["night-work"]["schedule"] = {"at": ["00:05"]}
+        self.defs.write_text(json.dumps(raw))
+        config = __import__("loop_config").load(self.defs)
+        loop_state.approve(self.root, self.defs, config, "night-work",
+                           at=self.anchor.isoformat(), user="operator")
+        calls = []
+
+        class TemporarySendError(RuntimeError):
+            transient = True
+
+        def send(record, message):
+            calls.append(message)
+            raise TemporarySendError("delivery timeout")
+
+        self.runner.send = send
+        for minute in (6, 8, 12):
+            self.clock[0] = datetime(2026, 1, 1, 0, minute, tzinfo=UTC)
+            self.runner.tick()
+        self.assertEqual(len(calls), 3)
+        self.assertEqual([row["event"] for row in self.events()].count("retry-scheduled"), 2)
+        self.assertEqual(self.events()[-1]["event"], "failed")
+        state = loop_state.read_state(self.root)["loops"]["night-work"]
+        self.assertFalse(state.get("retry"))
+        self.assertEqual(state["consecutive_failures"], 1)
+
+    def test_failed_slots_suspend_at_the_configured_threshold(self):
+        raw = json.loads(self.defs.read_text())
+        raw["scheduler"] = {"suspend_after_failures": 2}
+        self.defs.write_text(json.dumps(raw))
+        base = {"loop": "night-work", "run_id": "night-work-test",
+                "slot": "2026-01-01T00:05:00Z", "trigger": "scheduled",
+                "mode": "send"}
+        item = {}
+        self.runner._failure(item, "night-work", base, self.clock[0], "failed one")
+        self.assertNotIn("suspended", item)
+        self.runner._failure(item, "night-work", base, self.clock[0], "failed two")
+        self.assertTrue(item["suspended"])
+        self.assertEqual(self.events()[-1]["event"], "suspended")
+
+    def test_due_slots_coalesce_to_one_latest_candidate(self):
+        self.clock[0] = datetime(2026, 1, 1, 0, 16, tzinfo=UTC)
+        self.runner.tick()
+        missed = [row for row in self.events() if row["event"] == "missed"]
+        self.assertEqual(len(missed), 1)
+        self.assertEqual(missed[0]["count"], 2)
+        self.assertEqual(self.events()[-1]["slot"], "2026-01-01T00:15:00Z")
+
+    def test_slot_past_its_grace_deadline_is_not_sent(self):
+        self.clock[0] = datetime(2026, 1, 1, 0, 8, tzinfo=UTC)
+        self.runner.tick()
+        self.assertEqual(self.sent, [])
+        self.assertEqual(self.events()[-1]["event"], "missed")
+        self.assertEqual(self.events()[-1]["reason"], "deadline")
 
     def test_usage_denial_is_a_hard_skip(self):
         self.runner.usage = lambda *args: (False, "usage-gate: weekly 91%", {"decision": "denied"})
@@ -79,6 +185,7 @@ class LoopTickTests(unittest.TestCase):
         self.assertEqual(self.sent, [])
         self.assertEqual(self.events()[-1]["event"], "skipped")
         self.assertIn("weekly", self.events()[-1]["reason"])
+        self.assertEqual(self.events()[-1]["run_id"], "night-work-20260101T000500Z")
 
     def test_missing_target_is_not_started(self):
         self.target_record = None

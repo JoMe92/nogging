@@ -60,6 +60,8 @@ def _write_state(root, state):
 
 
 def _base_event(name, run_id, slot, trigger, loop):
+    if isinstance(run_id, datetime):
+        run_id = f"{name}-{run_id.astimezone(UTC).strftime('%Y%m%dT%H%M%SZ')}"
     run = loop["run"]
     return {"at": None, "loop": name, "run_id": run_id,
             "slot": iso(slot), "trigger": trigger, "mode": run["mode"],
@@ -319,6 +321,9 @@ class LoopRunner:
     def _skip(self, instant, name, loop, item, base, reason, usage=None):
         self._emit_outcome(instant, base, name, "skipped", reason, usage=usage)
         item["last_outcome"] = "skipped"
+        if item.get("deferred", {}).get("run_id") == base["run_id"]:
+            item.pop("deferred", None)
+        item.get("retry", {}).pop(base["run_id"], None)
 
     def _defer_or_skip(self, instant, name, loop, item, base, reason, deadline, manual):
         if manual or instant >= deadline:
@@ -343,6 +348,7 @@ class LoopRunner:
                                    attempt=attempt, retry_at=iso(retry_at))
                 return
         self._emit_outcome(instant, base, name, "failed", reason, attempt=attempt)
+        item.get("retry", {}).pop(base["run_id"], None)
         self._failure(item, name, base, instant, reason)
 
     def _failure(self, item, name, base, instant, reason):
@@ -359,6 +365,7 @@ class LoopRunner:
         if count >= threshold:
             item["suspended"] = True
             item["suspend_reason"] = "consecutive-failures"
+            item["last_outcome"] = "suspended"
             _emit(self.root, instant, base, name, "suspended", reason="consecutive-failures")
 
     def _emit_outcome(self, instant, base, name, event, reason=None, **fields):
