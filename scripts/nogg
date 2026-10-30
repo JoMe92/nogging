@@ -3922,8 +3922,9 @@ def agent_routing_path(path=None):
 def load_agent_routing(path=None):
     """(routing, errors) from the routing file; routing is {} when absent."""
     mod = agent_routing_module()
+    location = agent_routing_path(path)   # absolute, so load_routing resolves nothing itself
     return mod.load_routing(
-        agent_routing_path(path), main_checkout=canonical_repository_state(ROOT)["main_checkout"],
+        location, main_checkout=location.parent,
         validate_model=validate_model_name, efforts_by_agent=MODEL_SELECTION_EFFORTS,
         tiers=MODEL_SELECTION_TIERS)
 
@@ -4182,21 +4183,26 @@ def launch_tier_sources(tier):
         return load_model_selection(), overrides
     except RuntimeError as exc:
         raise RuntimeError(f"{exc}\n--tier {tier} launch refused")
-def resolve_launch_tier(tier, agent, resume=None):
+def resolve_launch_tier(tier, agent, resume=None, routed=False):
     """Resolve `session launch --tier` for an already resolved agent, before any
     side effect. Returns `{tier, model, effort, effort_source, table_effort}`
     (`effort` is the effective one: a project `tier_overrides` entry, else the
     table's); refuses (with a remedy) an unknown tier, a missing or invalid
     table, a malformed `tier_overrides` block, and an agent without entries
-    (Pi). An exact Claude/Antigravity resume keeps the selection recorded for
-    that conversation and never re-resolves against a possibly changed table
-    or re-reads `tier_overrides`."""
+    (Pi) unless the launch is `routed` to an entry for it, which records the
+    tier with no table lookup. An exact Claude/Antigravity resume keeps the
+    selection recorded for that conversation and never re-resolves against a
+    possibly changed table, `tier_overrides` block or routing file."""
     require_launch_tier(tier)
     if agent not in MODEL_SELECTION_AGENTS:
+        if routed:
+            return {"tier": tier, "model": None, "effort": None, "effort_source": None,
+                    "table_effort": None}
         raise RuntimeError(f"--tier is not supported for agent {agent!r}: the model-selection table "
                            f"has no {agent} entries (its model namespace is provider-dependent); "
-                           "drop --tier and select the model with --model or the launch profile; "
-                           "launch refused")
+                           "drop --tier and select the model with --model or the launch profile, "
+                           f"or add a {agent} entry to the role's agent routing list to record the "
+                           "tier (see `nogg route`); launch refused")
     if resume and agent in ("claude", "antigravity"):
         key = "claude_session_id" if agent == "claude" else "antigravity_conversation_id"
         prior = [rec for _, rec in session_records()
@@ -5078,20 +5084,23 @@ def usage_gate_config():
         return usage_module().gate_config(CFG.get("usage_gate"))
     except ValueError as exc:
         raise RuntimeError(f"invalid usage_gate in .nogging/config.json: {exc}; launch refused") from exc
-def usage_gate_admission(role_meta, agent, records, ignore, model=None, provider=None):
+def usage_gate_admission(role_meta, agent, records, ignore, model=None, provider=None, on_unknown=None):
     """Admit or refuse a launch against the `usage_gate` config.
 
     Returns the decision recorded on the session. The config is validated for
     every launch, so a bad `usage_gate` refuses even an excluded role. A known
     window whose used + reserved + estimate exceeds the cap raises
     UsageGateDenied (exit 75) naming its reset time; unknown usage warns and
-    continues, or is denied with `on_unknown: "deny"`. `--ignore-usage-gate`
-    skips observation and is recorded. Same-host reservations of running
-    launches are serialized through the same-host reservation ledger."""
+    continues, or is denied with `on_unknown: "deny"`; a routing entry's own
+    `on_unknown` replaces the configured one. `--ignore-usage-gate` skips
+    observation and is recorded. Same-host reservations of running launches are
+    serialized through the same-host reservation ledger."""
     usage = usage_module()
     describe_denial, launch_estimate, observe = (
         usage.describe_denial, usage.launch_estimate, usage.observe)
     config = usage_gate_config()
+    if on_unknown is not None:
+        config["on_unknown"] = on_unknown
     group = "specialist" if role_meta.startswith("specialist:") else role_meta
     if not config["enabled"]:
         return {"decision": "disabled"}
@@ -5118,13 +5127,16 @@ def usage_gate_admission(role_meta, agent, records, ignore, model=None, provider
                 base_estimate_percent=estimate["base_percent"],
                 model=model, start_observation=obs)
     if gate["decision"] in ("denied", "unknown-denied"):
-        raise UsageGateDenied(f"usage gate denied {agent} launch: {describe_denial(gate)}")
+        denial = UsageGateDenied(f"usage gate denied {agent} launch: {describe_denial(gate)}")
+        denial.gate = gate
+        raise denial
     if gate["decision"] == "unknown-admitted":
         reasons = "; ".join(
             f"{w['bucket']}: {w['reason']}" + (f" — {w['hint']}" if w.get("hint") else "")
             for w in gate["windows"] if w["status"] != "known")
+        policy = "the routing entry's on_unknown" if on_unknown else "usage_gate.on_unknown"
         print(f"WARN: {agent} usage is unknown ({reasons}); launch admitted WITHOUT known headroom "
-              '(usage_gate.on_unknown is warn; set it to "deny" to block)', file=sys.stderr)
+              f'({policy} is warn; set it to "deny" to block)', file=sys.stderr)
     return gate
 
 
@@ -5573,6 +5585,8 @@ def loop_launch_request(role, loop, *, bead, cwd, profile, prompt, full_access, 
                            f"{', '.join(LOOP_AUTHORITIES)}, got {authority!r}")
     return {"name": name, "run_id": run_id, "kickoff_message": message, "authority": authority}
 
+# Roles driven by their own commands; a routing list never decides their agent.
+UNROUTED_ROLES = ("orchestrator", "loop")
 def validate_launch_effort(agent, effort):
     if effort is None:
         return
@@ -5631,10 +5645,11 @@ def launch_selection(agent, spec, model, effort, tier_selection):
             reasoning_effort = tier_effort
             reasoning_effort_source = tier_reasoning_source
     return selected_model, model_source, reasoning_effort, reasoning_effort_source
-def admit_launch_usage(role_meta, agent, records, ignore, model, provider=None):
+def admit_launch_usage(role_meta, agent, records, ignore, model, provider=None, on_unknown=None):
     """Usage admission; a ledger this caller cannot write is a launch refusal."""
     try:
-        return usage_gate_admission(role_meta, agent, records, ignore, model=model, provider=provider)
+        return usage_gate_admission(role_meta, agent, records, ignore, model=model, provider=provider,
+                                    on_unknown=on_unknown)
     except OSError as exc:
         if exc.errno not in (errno.EROFS, errno.EACCES, errno.EPERM):
             raise
@@ -5653,11 +5668,158 @@ def launch_bead_state(bead, agent_state, is_planning):
             raise RuntimeError(
                 f"Bead {bead} has an unmet dependency on {', '.join(blocking)}; launch refused")
     return records, grants
+def launch_routing_lists():
+    """role -> entries from the routing file, {} without one. A root that is no
+    Git checkout is its own main checkout. A checkout whose Git state cannot be read
+    refuses: launching unrouted would silently drop its allow lists."""
+    try:
+        location = agent_routing_path()
+    except RuntimeError:
+        if (ROOT / ".git").exists():
+            raise
+        location = ROOT / scfg("agent_routing_file", DEFAULT_AGENT_ROUTING_FILE)
+    if not location.exists():
+        return {}
+    routing, errors = load_agent_routing(location)
+    if errors:
+        raise RuntimeError("invalid agent routing file:\n  " + "\n  ".join(errors)
+                           + "\nrun scripts/nogg route check; launch refused")
+    return routing
+def routing_preconditions(role_meta, bead, agent_state, planning_id, description, tier, complexity,
+                          ignore_usage_gate):
+    """Refuse what no entry could change, before any entry is evaluated, so a
+    defect never turns into a skip (design Decision 4). Returns `launch_bead_state`."""
+    is_planning = role_meta == "planning"
+    unwritable = read_only_launch_path(role_meta, ignore_usage_gate)
+    if unwritable is not None:
+        raise RuntimeError(LAUNCH_REFUSAL.format(reason=f"{unwritable} is read-only here"))
+    if is_planning:
+        require_kebab(planning_id, "planning ID")
+        require_kebab(description, "planning description")
+    elif planning_id is not None or description is not None:
+        raise RuntimeError("--planning-id and --description require --role planning")
+    elif not bead:
+        raise RuntimeError("--bead is required for every execution role (optional for planning and orchestrator)")
+    state = launch_bead_state(bead or None, agent_state, is_planning)
+    complexity_snapshot(tier, complexity)
+    if tier is not None:
+        require_launch_tier(tier)
+        launch_tier_sources(tier)
+    usage_gate_config()
+    return state
+def route_launch(role, agent, skip_agents, *, backend, tier, model, effort, resume, profile, prompt,
+                 full_access, bead, agent_state, planning_id, description, complexity,
+                 ignore_usage_gate):
+    """The agent routing decision of one launch (design Decisions 4-6), made before
+    any side effect, or None when the role has no list or `--agent` was given.
+
+    Returns `agent`, `backend`, the record's `block`, `selection`, `tier_selection`,
+    `gate` and `bead`. The launch takes the first entry that passes every check and
+    refuses, listing each skip, when none does (exit 75 with the earliest retry when
+    one was skipped for usage-denied). Only the chosen entry's admission reserves:
+    it is the last check."""
+    lists = {} if role in UNROUTED_ROLES else launch_routing_lists()
+    role_meta = normalize_role(role)[0] if lists else None
+    key = role_meta and role_meta.split(":", 1)[0]
+    entries = lists.get(key)
+    if not entries:
+        if skip_agents:
+            raise RuntimeError("--skip-agent needs a routing list for this role; launch refused")
+        return None
+    mod = agent_routing_module()
+    skip = list(dict.fromkeys(mod.normalize_agent(name) for name in skip_agents))
+    block = {"mode": "routed", "file": str(agent_routing_path()), "role": key,
+             "chosen": None, "skipped": [], "skip_agents": skip}
+    if agent is not None:
+        if skip:
+            raise RuntimeError("--skip-agent is valid only on a routed launch, which has no --agent; "
+                               "launch refused")
+        return None
+    for flag, value, why in (("--model", model, "model names belong to one agent"),
+                             ("--effort", effort, "effort values belong to one agent"),
+                             ("--resume", resume, "a resume keeps its recorded agent")):
+        if value is not None:
+            raise RuntimeError(f"{flag} is refused on a routed launch, because {why}; "
+                               "pass --agent; launch refused")
+    records, grants = routing_preconditions(role_meta, bead, agent_state, planning_id, description,
+                                            tier, complexity, ignore_usage_gate)
+    launch_prompt = prompt or ("planning" if role_meta == "planning" else None)
+    def refusal(check, *args, errors=RuntimeError):
+        """The detail of what `check` refuses."""
+        try:
+            check(*args)
+        except errors as exc:
+            return str(exc)
+        return None
+    def backend_refusal(entry, name):
+        substrate = session_backend(choose_launch_backend(False, name, CFG.get("session_backend", "tmux")))
+        if not hasattr(substrate, "preflight"):
+            return None
+        return refusal(substrate.preflight, entry["agent"], errors=session_backend_module().BackendError)
+    def entry_spec(name):
+        return load_launch_spec(name, resolved_launch_pair(profile, launch_prompt, full_access, name)[0])
+    def baseline(entry, entry_tier):
+        name = entry["agent"]
+        tier_selection = None if entry_tier is None else resolve_launch_tier(
+            entry_tier, name, resume, routed=True)
+        spec = entry_spec(name)
+        chosen_model, model_source, chosen_effort, effort_source = launch_selection(
+            name, spec, None, None, tier_selection)
+        return {"model": chosen_model, "model_source": model_source,
+                "effort": chosen_effort, "effort_source": effort_source,
+                "tier_effort": tier_selection and tier_selection["effort"],
+                "tier_effort_source": tier_selection and tier_selection["effort_source"]}
+    def usage(entry, selection):
+        try:
+            gate = admit_launch_usage(role_meta, entry["agent"], records, ignore_usage_gate,
+                                      selection["model"], on_unknown=entry.get("on_unknown"),
+                                      provider=entry_spec("pi").get("provider") if entry["agent"] == "pi" else None)
+        except UsageGateDenied as exc:
+            if exc.gate["decision"] == "unknown-denied":
+                return {"state": "unknown", "on_unknown": "deny", "detail": str(exc)}
+            return {"state": "denied", "retry_at": exc.gate["retry_after"], "detail": str(exc)}
+        state = "unknown" if gate["decision"] == "unknown-admitted" else "ok"
+        return {"state": state, "on_unknown": "warn", "gate": gate}
+    decision = mod.evaluate_route(
+        entries, tier=tier, skip=skip, backend=backend, redact=redact,
+        probes={"binary": lambda name: refusal(require_agent_binary, name) is None,
+                "authority": lambda entry: refusal(planning_launch_authority, role_meta,
+                                                   entry["agent"], profile, full_access),
+                "backend": backend_refusal, "selection": baseline, "usage": usage})
+    block["skipped"] = [{"index": item["index"], "agent": item["agent"], "reason": item["reason"],
+                         "backend": choose_launch_backend(False, item["backend"],
+                                                          CFG.get("session_backend", "tmux")),
+                         "detail": item["detail"]} for item in decision["skipped"]]
+    chosen = decision["chosen"]
+    if chosen is None:
+        lines = [f"routing: every {key} entry was skipped:"] + [
+            f"  #{item['index']} {item['agent']}/{item['backend']}: {item['reason']} ({item['detail']})"
+            for item in block["skipped"]]
+        if decision["exit_code"] == mod.EXIT_USAGE_WAIT:
+            if decision["retry_at"]:
+                lines.append(f"retry after {decision['retry_at']}")
+            raise UsageGateDenied("\n".join(lines + ["launch refused"]))
+        raise RuntimeError("\n".join(lines + ["launch refused"]))
+    block["chosen"] = {"index": chosen["index"], "agent": chosen["agent"]}
+    selection = chosen["selection"]
+    return {"agent": chosen["agent"], "backend": chosen["backend"], "block": block,
+            "selection": selection, "gate": chosen["usage"]["gate"], "bead": (records, grants),
+            "tier_selection": None if tier is None else {
+                "tier": tier, "model": selection["model"], "effort": selection["tier_effort"],
+                "effort_source": selection["tier_effort_source"], "table_effort": None}}
+def routing_line(block):
+    """The one `routing=` line of a launch, for the orchestrator's Bead note."""
+    chosen = block["chosen"]
+    line = f"routing={block['role']}#{chosen['index']} {chosen['agent']}/{chosen['backend']}"
+    return "; ".join([line] + [f"skipped #{item['index']} {item['agent']}/{item['backend']}: "
+                               f"{item['reason']} ({item['detail']})" for item in block["skipped"]])
+
 def _session_launch(role, bead, cwd, read_only, owner,
                    profile=None, prompt=None, full_access=False, agent=None,
                    resume=None, kickoff=False, planning_id=None, description=None,
                    model=None, agent_state=(), tier=None, effort=None,
-                   ignore_usage_gate=False, complexity=None, backend=None, loop=None):
+                   ignore_usage_gate=False, complexity=None, backend=None, loop=None,
+                   skip_agents=()):
     """Start a supervised agent session for a Bead.
 
     `resume` names the exact prior conversation: Claude and Codex use
@@ -5679,6 +5841,13 @@ def _session_launch(role, bead, cwd, read_only, owner,
     if loop:
         # Fixed by the role: restricted/trusted only, the loop prompt, the main checkout.
         profile, prompt, cwd = loop["authority"], "loop", str(ORCHESTRATOR_HOME)
+    route = route_launch(role, agent, skip_agents, backend=backend, tier=tier, model=model, effort=effort,
+                         resume=resume, profile=profile, prompt=prompt, full_access=full_access, bead=bead,
+                         agent_state=agent_state, planning_id=planning_id, description=description,
+                         complexity=complexity, ignore_usage_gate=ignore_usage_gate)
+    if route:
+        agent, backend = route["agent"], route["backend"]
+    routed = route
     agent = resolve_agent(agent)
     require_agent_binary(agent)
     if agent == "codex" and resume is not None:
@@ -5699,8 +5868,12 @@ def _session_launch(role, bead, cwd, read_only, owner,
         session_state_grants(None)
     validate_launch_effort(agent, effort)
     # `--tier` resolves the model-selection table right after the agent and
-    # before anything else, so every refusal precedes all side effects.
-    tier_selection = resolve_launch_tier(tier, agent, resume) if tier is not None else None
+    # before anything else, so every refusal precedes all side effects. A routed
+    # or pinned launch already resolved it for the chosen entry.
+    if routed:
+        tier_selection = routed["tier_selection"]
+    else:
+        tier_selection = resolve_launch_tier(tier, agent, resume) if tier is not None else None
     # Complexity is snapshotted for usage attribution only; it never selects a
     # model. A disagreement with the tier refuses before any side effect.
     complexity, complexity_source = complexity_snapshot(tier_selection and tier_selection["tier"], complexity)
@@ -5709,6 +5882,8 @@ def _session_launch(role, bead, cwd, read_only, owner,
     selected_backend = session_backend(backend_name)
     if hasattr(selected_backend, "preflight"):
         selected_backend.preflight(agent)
+    if route:
+        route["block"]["chosen"]["backend"] = backend_name
     allocate_planning = False
     if is_planning:
         planning_id = require_kebab(planning_id, "planning ID")
@@ -5754,8 +5929,13 @@ def _session_launch(role, bead, cwd, read_only, owner,
     # exist yet is checked against the main checkout it is created from.
     pi_extensions = validate_pi_extensions(
         CFG.get("pi_extensions"), ROOT if allocate_planning else Path(cwd or ROOT).resolve()) if agent == "pi" else []
-    selected_model, model_source, reasoning_effort, reasoning_effort_source = launch_selection(
-        agent, launch_spec, model, effort, tier_selection)
+    if routed:
+        selected_model, model_source = routed["selection"]["model"], routed["selection"]["model_source"]
+        reasoning_effort = routed["selection"]["effort"]
+        reasoning_effort_source = routed["selection"]["effort_source"]
+    else:
+        selected_model, model_source, reasoning_effort, reasoning_effort_source = launch_selection(
+            agent, launch_spec, model, effort, tier_selection)
     tier_effort = tier_selection and tier_selection["effort"]
     tier_effort_source = tier_selection and tier_selection["effort_source"]
     if agent == "codex" and resume is not None:
@@ -5777,11 +5957,12 @@ def _session_launch(role, bead, cwd, read_only, owner,
         floor_lifted = source_settings.get("nogging_floor") is False
         if source_settings.get("nogging_openspec_readonly") is False:
             openspec_readonly = False
-    records, grants = launch_bead_state(bead, agent_state, is_planning)
+    records, grants = routed["bead"] if routed else launch_bead_state(bead, agent_state, is_planning)
     # Usage admission is the last refusal before helper negotiation, worktree,
-    # trust, tmux or record side effects.
-    usage_gate = admit_launch_usage(role_meta, agent, records, ignore_usage_gate, selected_model,
-                                    provider=(pi_spec or {}).get("provider"))
+    # trust, tmux or record side effects. Routing admitted its chosen entry.
+    usage_gate = routed["gate"] if routed else admit_launch_usage(
+        role_meta, agent, records, ignore_usage_gate, selected_model,
+        provider=(pi_spec or {}).get("provider"))
     # The orchestrator is a singleton: a fixed, nonce-free `nogg-orchestrator-<slug>`
     # name (a stale terminal record of the same name is reused in place). Every
     # other role gets the deterministic `sf-<role>-<bead>-<nonce>` shape.
@@ -5991,8 +6172,9 @@ def _session_launch(role, bead, cwd, read_only, owner,
         # kept so an exact resume reuses the same selection.
         "selection_tier": tier_selection and tier_selection["tier"],
         "selection_tier_effort": tier_effort,
-        # `project` when selection_tier_effort is a tier_overrides entry, `table`
-        # otherwise; null without a tier and for Antigravity (no effort).
+        # `route` when selection_tier_effort is a routing entry's, `project` when
+        # it is a tier_overrides entry, `table` otherwise; null without a tier and
+        # for an agent without table efforts (Antigravity, Pi).
         "selection_tier_effort_source": tier_effort_source,
         "usage_gate": usage_gate,
         "session_pid": None, "session_pid_start": None,
@@ -6003,8 +6185,12 @@ def _session_launch(role, bead, cwd, read_only, owner,
     }
     if pi_extensions:
         record["pi_extensions"] = pi_extensions
-    record["usage_attribution"] = [launch_attribution(record, records, complexity, complexity_source,
-                                                      tier_selection, resume)]
+    if route:
+        record["routing"] = route["block"]
+    # A table-less agent's tier is recorded without any table lookup to attribute.
+    record["usage_attribution"] = [launch_attribution(
+        record, records, complexity, complexity_source,
+        tier_selection if agent in MODEL_SELECTION_AGENTS else None, resume)]
     identity_receipt = sdir / f".{name}.pid-receipt"
     identity_receipt.unlink(missing_ok=True)
     write_session(rec_path, record)                       # metadata before exec
@@ -6092,6 +6278,8 @@ def _session_launch(role, bead, cwd, read_only, owner,
     if tier_selection:
         print(f"  tier={tier_selection['tier']} model={selected_model}"
               + (f" effort={reasoning_effort}" if agent in ("codex", "claude") and reasoning_effort else ""))
+    if route:
+        print(f"  {routing_line(route['block'])}")
     print(session_launch_profile_line(profile_label, prompt_path))
     for note in session_launch_notes(role_meta, agent, profile_label, profile=profile, full_access=full_access):
         print(note)
@@ -11145,8 +11333,11 @@ def main():
     sl.add_argument("--cwd"); sl.add_argument("--read-only", action="store_true")
     sl.add_argument("--owner")
     sl.add_argument("--agent", choices=("claude", "codex", "pi", "antigravity", "agy"),
-                    help="agent binary to launch; defaults to the session_agent config key, "
-                         "then 'claude'")
+                    help="agent binary to launch; defaults to the role's routing list, then the "
+                         "session_agent config key, then 'claude'")
+    sl.add_argument("--skip-agent", action="append", default=[],
+                    choices=("claude", "codex", "pi", "antigravity", "agy"),
+                    help="on a routed launch, skip this agent's entries (repeatable)")
     sl.add_argument("--profile", help="named launch profile or a path to a settings JSON file")
     sl.add_argument("--prompt", help="named launch prompt or a path to a system-prompt file")
     sl.add_argument("--full-access", action="store_true",
@@ -11383,7 +11574,7 @@ def session_cmd(args):
                        resume=args.resume, kickoff=args.kickoff, planning_id=args.planning_id, description=args.description,
                        model=args.model, agent_state=args.agent_state, tier=args.tier, effort=args.effort,
                        ignore_usage_gate=args.ignore_usage_gate, complexity=args.complexity,
-                       backend=args.backend)
+                       backend=args.backend, skip_agents=args.skip_agent)
     elif args.session_command == "list":
         session_list()
     elif args.session_command == "attach":
