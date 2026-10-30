@@ -193,7 +193,7 @@ out=$(NOGG_SESSION_NAME=s1 NOGG_SESSION_AGENT=claude "$nogg" session signal bloc
 row=$(last)
 expect "signal: appends a blocked event" "blocked" "$(field "$row" event)"
 expect "signal: the reason is the redacted excerpt" "worktree rebase refused: needs ***EMAIL***" "$(field "$row" excerpt)"
-case "$out" in *dispatch*off*|*dispatch*disabled*) ok "signal: prints that dispatch is off" ;; *) bad "signal: no dispatch status in: $out" ;; esac
+case "$out" in *"dispatch is on"*) ok "signal: a config with no key says dispatch is on" ;; *) bad "signal: no dispatch status in: $out" ;; esac
 read -r state source _ <<<"$(cls claude '❯ ')"
 expect "signal: a blocked signal does not change the classified state" "idle event" "$state $source"
 NOGG_SESSION_NAME=s1 "$nogg" session signal done "PR #321 open" >/dev/null && expect "signal: done is recorded" "done" "$(field "$(last)" event)"
@@ -207,6 +207,19 @@ expect "signal: the reason is limited to 300 characters" "True" \
   "$(python3 -c "import json,sys; print(len(json.loads(sys.argv[1])['excerpt'])<=300)" "$(last)")"
 out=$(PATH="$work/nobin:/usr/bin:/bin" NOGG_SESSION_NAME=s1 "$nogg" session signal done "needs neither bd nor network" 2>&1) \
   && ok "signal: works with no bd, no Dolt and no network" || bad "signal: needed a service: $out"
+cp "$root/.nogging/config.json" "$work/config.kept"
+edit_dispatch() { python3 -c '
+import json, sys
+config = json.load(open(sys.argv[1])); config["session_dispatch"] = json.loads(sys.argv[2])
+json.dump(config, open(sys.argv[1], "w"))' "$root/.nogging/config.json" "$1"; }
+edit_dispatch '{"enabled": false}'
+out=$(NOGG_SESSION_NAME=s1 "$nogg" session signal done "PR #321 open" 2>&1)
+case "$out" in *"dispatch is off"*"Wait for CI yourself"*) ok "signal: an explicit false says dispatch is off" ;; *) bad "signal: unclear: $out" ;; esac
+edit_dispatch '{"stall_after": "soon"}'
+out=$(NOGG_SESSION_NAME=s1 "$nogg" session signal done "PR #321 open" 2>&1) \
+  && ok "signal: a config validate refuses costs no signal" || bad "signal: a bad block failed it: $out"
+case "$out" in *"dispatch is on"*) ok "signal: and it still says dispatch is on" ;; *) bad "signal: unclear: $out" ;; esac
+cp "$work/config.kept" "$root/.nogging/config.json"
 
 # --- watch reports a signal as its own event --------------------------------
 rm -f "$events"; set_events turn_start turn_end

@@ -12,7 +12,7 @@ and GitHub Releases for that history.
 ### Added
 
 - `nogg session dispatch [--once] [--dry-run] [--json]`: one deterministic
-  follow-up pass with no model, off until `session_dispatch.enabled`. It
+  follow-up pass with no model. It
   derives each Lead's state from live evidence, sends fixed, budgeted nudges
   to idle sessions, waits out usage limits, retires merged sessions when
   `retire_merged` is on, and queues what needs a decision. New
@@ -66,6 +66,15 @@ and GitHub Releases for that history.
 
 ### Changed
 
+- Session dispatch is on by default: `session_dispatch.enabled` is `true` in the
+  template, and a missing key or block reads as on. Only an explicit `false`
+  switches it off, `retire_merged` stays `false`, and `update` keeps an existing
+  value. Without an orchestrator or a timer it degrades quietly: nudges and CI
+  tracking go on, the digest is held and `doctor` prints one NOTE each. See
+  `docs/session-wake.md`.
+- `nogg loop tick` runs one dispatch pass first, under its own lock and exception
+  boundary, and `orchestrator run` writes the `orchestrator_context` values into
+  the session's effective settings `env`.
 - `session watch` also reads herdr's `agent_status` (`blocked` is a question,
   `done` is idle, `unknown` proves nothing), between the rollout and the pane.
 - `session watch` classifies every agent from one evidence order (structured

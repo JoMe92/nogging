@@ -786,7 +786,8 @@ background job. A busy or absent orchestrator, or typed input in its composer, k
 the items for a later pass. The `wake` keys of
 [`session_dispatch`](configuration.md#session_dispatch) set the timing.
 
-It needs `session_dispatch.enabled`, and otherwise prints that it is disabled. It runs
+Dispatch is on by default. With `session_dispatch.enabled: false` it prints that it is
+disabled and does nothing. It runs
 only in the main checkout and is refused in every supervised session, except with
 `--dry-run`, which reports the actions and sends, stops and writes nothing. When
 another pass holds `.nogging/locks/dispatch.lock` it exits 0. Every run is one pass,

@@ -60,11 +60,35 @@ def keys(actions):
 
 
 class Config(unittest.TestCase):
-    def test_absent_blocks_are_fine_and_the_defaults_are_off(self):
+    def test_absent_blocks_are_fine_and_dispatch_is_on_without_retirement(self):
         self.assertEqual(d.config_errors({}), [])
         policy = d.policy_from(None)
-        self.assertEqual((policy["enabled"], policy["retire_merged"]), (False, False))
+        self.assertEqual((policy["enabled"], policy["retire_merged"]), (True, False))
         self.assertEqual((policy["max_nudges"], policy["stall_after"], policy["ci_timeout"]), (2, 900, 3600))
+
+    def test_only_an_explicit_false_switches_dispatch_off(self):
+        for block, enabled in ((None, True), ({}, True), ({"max_nudges": 1}, True), ({"enabled": True}, True),
+                               ({"enabled": False}, False)):
+            self.assertEqual(d.is_on(block), enabled, block)
+            self.assertEqual(d.policy_from(block)["enabled"], enabled, block)
+
+    def test_is_on_reads_a_block_no_other_key_of_which_parses(self):
+        self.assertTrue(d.is_on({"stall_after": "soon"}))
+        self.assertTrue(d.is_on(["not", "a", "block"]))
+        self.assertFalse(d.is_on({"enabled": False, "stall_after": "soon"}))
+
+    def test_the_context_budget_defaults_and_its_values_reach_the_environment(self):
+        wanted = {"CLAUDE_CODE_AUTO_COMPACT_WINDOW": "200000", "CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS": "100000"}
+        self.assertEqual(d.context_env(None), wanted)
+        self.assertEqual(d.context_env({"auto_compact_window": 150000})["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], "150000")
+        self.assertEqual(d.context_env({"auto_compact_window": "wide"}), wanted)
+
+    def test_a_spent_budget_is_named_and_a_budget_in_hand_or_a_zero_limit_is_not(self):
+        policy = d.policy_from({"max_nudges": 2, "max_ci_nudges": 1})
+        memory = {"sessions": {"a": {"budget": {"nudges": 2}}, "b": {"budget": {"nudges": 1}, "ci": {"nudges": 1}},
+                               "c": {}}}
+        self.assertEqual(d.spent_budgets(memory, policy), [("a", "nudge"), ("b", "CI")])
+        self.assertEqual(d.spent_budgets(memory, d.policy_from({"max_nudges": 0, "max_ci_nudges": 0})), [])
 
     def test_the_full_block_of_decision_13_is_accepted(self):
         block = {"enabled": False, "max_nudges": 2, "max_ci_nudges": 2, "stall_after": "15m", "ci_timeout": "60m",

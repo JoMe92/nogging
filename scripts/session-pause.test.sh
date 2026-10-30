@@ -355,8 +355,7 @@ python3 - "$root/.nogging/config.json" "$sock" <<'PY'
 import json, sys
 path, sock = sys.argv[1:3]
 config = json.load(open(path))
-config.update(session_tmux_socket=sock, session_backend="tmux")
-config.pop("session_dispatch", None)
+config.update(session_tmux_socket=sock, session_backend="tmux", session_dispatch={"enabled": False})
 config["usage_gate"] = {"enabled": False}
 json.dump(config, open(path, "w"), indent=2)
 PY
@@ -473,7 +472,7 @@ lacks "ended: session list does not call it paused" "PAUSED" "$("$nogg" session 
 
 # A disabled dispatcher still clears a pause past its end, and prints only that it is off.
 write_pause 1 2
-expect "disabled: it says so" "session dispatch is disabled (session_dispatch.enabled is not true)" "$("$nogg" session dispatch --once)"
+expect "disabled: it says so" "session dispatch is disabled (session_dispatch.enabled is false)" "$("$nogg" session dispatch --once)"
 [[ ! -e "$pause_file" ]] && ok "disabled: the pause is gone" || bad "disabled: the pass left it"
 
 # A directory planted at the path is reported, and resume still exits 0.
@@ -631,11 +630,11 @@ PY
   write_pause 1 2
   "$nogg" loop tick
   [[ ! -e "$pause_file" ]] && ok "end: a tick removes the state" || bad "end: the tick left it"
-  expect "end: the summary is queued" "error,error,resumed" "$(items)"
-  dispatch --once >/dev/null
+  # The pass of the same tick delivers, so the summary leaves no queue behind.
   for _ in $(seq 1 50); do [[ "$(wakes)" == 2 ]] && break; sleep 0.1; done
   sleep 0.3
   expect "end: one digest" "2" "$(wakes)"
+  expect "end: the tick's own pass delivered it" "" "$(items)"
   has "end: it holds the summary and the two items" "items=3" "$(tail -n 12 "$work/$orch.inbox")"
   has "end: the counts" "3 item(s) seen, 1 cleared on their own; finished: gone-3" "$(cat "$work/$orch.inbox")"
 

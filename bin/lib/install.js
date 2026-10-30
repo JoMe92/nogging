@@ -188,6 +188,23 @@ function recordVersion(ctx) {
   fsops.writeFile(rel, JSON.stringify(data, null, 2) + '\n', ctx);
 }
 
+// The one line `update` prints for a repository that never chose: a missing
+// `session_dispatch.enabled` reads as on. Nothing is written, so an explicit value,
+// `false` included, stays the repository's own, and it prints no line.
+function dispatchDefaultNotice(ctx) {
+  let data;
+  try {
+    data = JSON.parse(fsops.readTarget('.nogging/config.json', ctx));
+  } catch (_) {
+    return null;
+  }
+  const block = data ? data.session_dispatch : null;
+  if (block && typeof block === 'object' && 'enabled' in block) return null;
+  return 'Session dispatch is on: idle Leads get fixed nudges, CI is tracked and decisions wait in one digest ' +
+    'for the orchestrator, with no model of its own; `session_dispatch.enabled: false` switches it off ' +
+    '(docs/nogging/session-wake.md).';
+}
+
 // Install the two git hooks, unless core.hooksPath diverts Git away from
 // .git/hooks (the known Beads collision) — in that case warn instead.
 function installGitHooks(ctx) {
@@ -275,6 +292,7 @@ module.exports = {
   src,
   migrateLegacyStateRoot,
   readRecordedVersion,
+  dispatchDefaultNotice,
   copyVerbatim,
   copyDocs,
   writeScaffold,

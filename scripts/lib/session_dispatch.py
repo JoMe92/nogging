@@ -113,6 +113,8 @@ _DISPATCH_SCHEMA = {"enabled": _is_bool, "max_nudges": _is_count, "max_ci_nudges
                     "wake": _WAKE_SCHEMA, "precompact_after": _is_duration,
                     "precompact_min_tokens": _is_positive}
 _CONTEXT_SCHEMA = {"auto_compact_window": _is_positive, "idle_compact_min_tokens": _is_positive}
+_CONTEXT_ENV = {"auto_compact_window": ("CLAUDE_CODE_AUTO_COMPACT_WINDOW", 200000),
+                "idle_compact_min_tokens": ("CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS", 100000)}
 
 
 def _block_errors(block: Any, where: str, schema: dict[str, Any]) -> list[str]:
@@ -141,16 +143,38 @@ def config_errors(config: dict[str, Any]) -> list[str]:
     return errors
 
 
+def is_on(block: Any) -> bool:
+    """The one test of `session_dispatch.enabled`: only an explicit `false` is off, so a
+    missing block or key is on. It reads no other key, because `session signal` must
+    answer on a config that `validate` would refuse."""
+    return not (isinstance(block, dict) and block.get("enabled") is False)
+
+
+def context_env(block: Any) -> dict[str, str]:
+    """The `orchestrator_context` values as the settings `env` of the orchestrator. A value
+    `validate` would refuse keeps its default, and must not cost it a start."""
+    block = block if isinstance(block, dict) else {}
+    return {name: str(block[key] if _is_positive(block.get(key)) else default)
+            for key, (name, default) in _CONTEXT_ENV.items()}
+
+
 def policy_from(block: dict[str, Any] | None, hold_sends: bool = False) -> dict[str, Any]:
     """The validated block with its defaults, durations in seconds."""
     block = block or {}
-    return {"enabled": block.get("enabled") is True,
+    return {"enabled": is_on(block),
             "max_nudges": block.get("max_nudges", 2),
             "max_ci_nudges": block.get("max_ci_nudges", 2),
             "stall_after": seconds(block.get("stall_after", "15m")),
             "ci_timeout": seconds(block.get("ci_timeout", "60m")),
             "retire_merged": block.get("retire_merged") is True,
             "hold_sends": hold_sends}
+
+
+def spent_budgets(memory: dict[str, Any], policy: dict[str, Any]) -> list[tuple[str, str]]:
+    """Each session and budget with no nudge left, for `doctor`."""
+    budgets = (("budget", "nudge", policy["max_nudges"]), ("ci", "CI", policy["max_ci_nudges"]))
+    return [(name, label) for name, session in sorted((memory.get("sessions") or {}).items())
+            for slot, label, limit in budgets if 0 < limit <= (session.get(slot) or {}).get("nudges", 0)]
 
 
 def iso(moment: datetime) -> str:

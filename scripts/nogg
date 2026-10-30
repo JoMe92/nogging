@@ -5738,6 +5738,9 @@ def _session_launch(role, bead, cwd, read_only, owner,
         base_settings = merge_pause_status_permission(base_settings)
         if role_meta == "lead":
             base_settings = merge_signal_permission(base_settings)
+        if is_orchestrator:
+            context_env = dispatch_module().context_env(CFG.get("orchestrator_context"))
+            base_settings = {**base_settings, "env": {**(base_settings.get("env") or {}), **context_env}}
         settings_out = base_settings if floor_lifted else merge_floor(base_settings)
         if openspec_readonly:
             settings_out = deny_openspec_writes(settings_out)
@@ -7020,7 +7023,7 @@ def session_signal(kind, reason):
     except ValueError as exc:
         raise RuntimeError(f"session signal: {exc}") from exc
     _append_session_event(name, record)
-    enabled = (CFG.get("session_dispatch") or {}).get("enabled") is True
+    enabled = dispatch_module().is_on(CFG.get("session_dispatch"))
     print(f"{name}: {kind} recorded ({record['excerpt']})")
     if enabled:
         print("dispatch is on: " + SIGNAL_NEXT_STEP[kind]
@@ -9267,7 +9270,7 @@ def session_dispatch(dry_run=False, as_json=False):
         if not dry_run:
             end_due_pause()
         print(json.dumps({"enabled": False, "dry_run": dry_run, "sessions": 0, "actions": [], "queue": []}) if as_json
-              else "session dispatch is disabled (session_dispatch.enabled is not true)")
+              else "session dispatch is disabled (session_dispatch.enabled is false)")
         return
     if dry_run:
         _dispatch_pass(True, as_json)
@@ -9277,6 +9280,15 @@ def session_dispatch(dry_run=False, as_json=False):
             print(json.dumps({"enabled": True, "busy": True}) if as_json else "session dispatch: another pass holds the lock")
             return
         _dispatch_pass(False, as_json)
+def dispatch_tick():
+    """The pass ahead of the loops in `loop tick` (design Decision 12), with its own lock
+    and its own exception boundary. Its record is the audit log, so a queue held for hours
+    repeats no line in the journal."""
+    try:
+        with redirect_stdout(io.StringIO()):
+            session_dispatch()
+    except (Exception, SystemExit) as exc:
+        print(f"loop tick: the dispatch pass failed: {wake_module().text(str(exc), redact, 200)}", file=sys.stderr)
 def _audit_rows(lines):
     rows = []
     for line in lines:
@@ -10364,6 +10376,50 @@ def loop_health_diagnostics(now=None):
                      "enable the timer or run `nogg loop tick` (docs/nogging/scheduled-loops.md)")
     return warnings, notes
 
+def dispatch_health_diagnostics(moment=None):
+    """`(warnings, notes)` on the dispatcher, never a FAIL. A missing orchestrator or timer
+    is one NOTE each and says so only while dispatch is on and not paused. A broken block
+    is the FAIL of `session_dispatch_diagnostics`, so it adds nothing here."""
+    module = dispatch_module()
+    if module.config_errors(CFG):
+        return [], []
+    policy = dispatch_policy()
+    if not policy["enabled"]:
+        return [], ["session dispatch: off (session_dispatch.enabled is false); nothing nudges a Lead or wakes "
+                    "the orchestrator, which keeps its own watchers"]
+    moment = moment or dt.datetime.now(dt.timezone.utc)
+    switch_off = "`session_dispatch.enabled: false` switches dispatch off"
+    memory = _read_dispatch_state("state.json")
+    items = wake_module().normalized(_read_dispatch_state("queue.json")).get("items") or []
+    record, _state = orchestrator_target()
+    timer, timer_state = loop_timer_state()
+    last_pass = memory.get("last_pass_at")
+    age = module.seconds_since(last_pass, moment)
+    running = age is not None and age <= LOOP_TICK_WARN_SECONDS
+    warnings, notes = [], []
+    if timer_state == "enabled" and not running:
+        warnings.append(f"session dispatch: {timer} is enabled but "
+                        + (f"the last pass was at {last_pass}" if last_pass else "no pass is recorded"))
+    if not current_pause(moment):
+        if record is None:
+            notes.append(f"session dispatch: no orchestrator session, so {len(items)} item(s) are held; "
+                         f"start one with `nogg orchestrator run`; {switch_off}")
+        if timer_state not in ("enabled", "unknown"):
+            notes.append(f"session dispatch: nothing fires a pass automatically, because {timer} is {timer_state}; "
+                         f"enable it with `systemctl --user enable --now {timer}` or run "
+                         f"`nogg session dispatch --once` meanwhile; {switch_off}")
+    if record is not None:
+        notes.append(f"session dispatch: running, last pass {humanize_age(last_pass, moment)} ago; the orchestrator "
+                     "needs no watchers of its own" if running
+                     else "session dispatch: not running; the orchestrator keeps its own watchers")
+    if items:
+        oldest = min(items, key=lambda item: str(item.get("created_at")))
+        notes.append(f"session dispatch: {len(items)} item(s) queued, the oldest {humanize_age(oldest.get('created_at'), moment)} "
+                     f"old ({oldest.get('kind')} {oldest.get('session')}); see `nogg session inbox`")
+    notes.extend(f"session dispatch: {name} has spent its {budget} budget"
+                 for name, budget in module.spent_budgets(memory, policy))
+    return warnings, notes
+
 def doctor(audit=False, with_recover=False, with_sandbox=False):
     # A fresh install starts with the OpenSpec write boundary closed. Bootstrap
     # the sentinel once, only when nothing has toggled the boundary yet (no
@@ -10395,6 +10451,11 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
     warnings.extend(loop_warnings)
     pause_warnings, pause_notes = pause_diagnostics()
     warnings.extend(pause_warnings)
+    try:
+        dispatch_warnings, dispatch_notes = dispatch_health_diagnostics()
+    except Exception as exc:
+        dispatch_warnings, dispatch_notes = [], [f"session dispatch health unavailable: {exc}"]
+    warnings.extend(dispatch_warnings)
     if FAILURE_RECORD.exists():
         try: rec = json.loads(FAILURE_RECORD.read_text())
         except (ValueError, OSError): rec = {}
@@ -10431,6 +10492,7 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
     notes.extend(routing_notes)
     notes.extend(loop_notes)
     notes.extend(pause_notes)
+    notes.extend(dispatch_notes)
     notes.extend(warm_diagnostics())
     notes.extend(mapping_health_lines())
     try:
@@ -11179,6 +11241,7 @@ def main():
                 if ROOT.resolve() != ORCHESTRATOR_HOME.resolve():
                     raise RuntimeError(f"nogg loop tick runs only in the main checkout: {ORCHESTRATOR_HOME}")
                 end_due_pause()
+                dispatch_tick()
                 loop_runner_for_main().tick()
                 return
             if args.loop_command == "run-now":
