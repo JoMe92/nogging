@@ -419,6 +419,18 @@ class LoopTickTests(unittest.TestCase):
         self.runner.tick()
         self.assertEqual(len(self.sent), 1)
 
+    def test_waiting_background_target_is_deliverable_like_idle(self):
+        self.target_state[0] = "waiting_background"
+        self.runner.tick()
+        self.assertEqual(len(self.sent), 1)
+        self.assertEqual([row["event"] for row in self.events()], ["starting", "delivered"])
+
+    def test_unknown_target_state_is_logged_as_a_target_reason_not_raw(self):
+        self.target_state[0] = "some_future_state"
+        self.runner.tick()
+        self.assertEqual(self.sent, [])
+        self.assertEqual(self.events()[-1]["reason"], "target-unavailable")
+
     def test_run_now_bypasses_schedule_but_still_skips_a_busy_target(self):
         self.clock[0] = datetime(2026, 1, 1, 0, 1, tzinfo=UTC)
         self.target_state[0] = "working"

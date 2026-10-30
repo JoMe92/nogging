@@ -409,9 +409,13 @@ class LoopRunner:
             record, target_state = self.target()
             if record is None or target_state == "ended":
                 target_state = "target-not-running"
-            if target_state != "idle":
+            # waiting_background: the session sits at its prompt with only its
+            # own background job running, so it accepts a message like idle.
+            if target_state not in ("idle", "waiting_background"):
                 mapped = {"working": "target-busy", "needs_input": "target-needs-input",
-                          "limit": "target-limit"}.get(target_state, target_state)
+                          "limit": "target-limit"}.get(target_state)
+                if mapped is None:
+                    mapped = target_state if target_state.startswith("target-") else "target-unavailable"
                 self._defer_or_skip(instant, name, loop, item, base, mapped, deadline, manual)
                 return
             agent, model = record.get("agent", "claude"), record.get("requested_model")

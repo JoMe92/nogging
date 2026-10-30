@@ -238,9 +238,12 @@ checks but ignores the schedule and window.
 
 Send mode targets only the canonical Orchestration Agent session. It sends the
 prompt with the `[nogg loop <name> run <id>]` header through verified delivery
-only while the target is idle. Working, waiting for input, rate limited or
-absent targets defer scheduled work until the slot deadline; a manual run-now
-reports the reason as skipped. The scheduler never queues to a busy session,
+only while the target is idle or waiting on its own background tasks
+(`waiting_background`: the session sits at its prompt and accepts a message).
+Working, waiting for input, rate limited or absent targets defer scheduled work
+until the slot deadline; a manual run-now reports the reason as skipped. The run
+log records a `target-busy`, `target-needs-input`, `target-limit`,
+`target-not-running` or `target-unavailable` reason, never the raw state. The scheduler never queues to a busy session,
 starts or restarts the orchestrator, or stops it. A delivered run completes
 after two consecutive idle observations. A run beyond `max_runtime` is logged
 as unconfirmed and does not stop the orchestrator. Transient delivery failures
