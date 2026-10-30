@@ -11,14 +11,14 @@ and GitHub Releases for that history.
 
 ### Added
 
-- `nogg loop add`, `list`, `show`, `log`, `pause`, `resume`, `approve` and
-  `remove` for managing host-approved recurring work, with atomic host state,
-  hash-bound approvals, orchestrator guidance and the scheduled-loops guide.
 - Launch-mode loops: a fresh, bounded `loop` session per run with the loop's
   exact agent, tier and authority, stopped and retired when it finishes or
   passes `max_runtime`. `init` and `update` render
   `nogg-loops-<slug>.service` and `.timer`, and `doctor` reports the timer, a
   stalled tick and unapproved, suspended or stale loops.
+- `nogg loop add`, `list`, `show`, `log`, `pause`, `resume`, `approve` and
+  `remove` for managing host-approved recurring work, with atomic host state,
+  hash-bound approvals, orchestrator guidance and the scheduled-loops guide.
 
 ## [3.4.0] - 2026-10-30
 

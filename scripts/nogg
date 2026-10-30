@@ -5,7 +5,7 @@ It intentionally contains no LLM call and makes no semantic product decision.
 """
 from __future__ import annotations
 
-import argparse, base64, datetime as dt, fcntl, fnmatch, getpass, hashlib, importlib.util, json, math, os, re, shlex, shutil, signal, socket, subprocess, sys, tempfile, time, types, uuid
+import argparse, base64, datetime as dt, fcntl, fnmatch, getpass, hashlib, importlib.util, json, math, os, re, shlex, shutil, signal, socket, subprocess, sys, tempfile, time, uuid
 import urllib.parse, urllib.request
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -5013,6 +5013,7 @@ def loop_runner_for_main():
     if lib not in sys.path:
         sys.path.insert(0, lib)
     import loop_runner
+    from types import SimpleNamespace
     definitions = ORCHESTRATOR_HOME / scfg("loops_file", ".nogging/loops.json")
 
     def target():
@@ -5035,8 +5036,8 @@ def loop_runner_for_main():
                                 ("timeout", "deadline", "refused", "not live", "not running"))
             raise
 
-    sessions = types.SimpleNamespace(model=loop_launch_model, start=start_loop_run, state=loop_session_state,
-                                     retire=retire_loop_run, adopt=adopt_loop_run)
+    sessions = SimpleNamespace(model=loop_launch_model, start=start_loop_run, state=loop_session_state,
+                               retire=retire_loop_run, adopt=adopt_loop_run)
     return loop_runner.LoopRunner(ORCHESTRATOR_HOME, definitions, target=target,
                                   usage=loop_usage_admission, send=send, sessions=sessions,
                                   multi_machine=CFG.get("multi_machine", False), redact=redact)
