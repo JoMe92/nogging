@@ -573,3 +573,62 @@ class LoopTickTests(unittest.TestCase):
 
 unittest.main()
 PY
+
+# --- TASK-SWK-006: the dispatch pass of a real tick, in a checkout with no sessions ---
+source "$ROOT/scripts/lib/test-fixture-config.sh"
+while IFS= read -r inherited; do
+  case "$inherited" in
+    NOGG_*|NOGGING_*|HERDR_*|TMUX|TMUX_*|GIT_*) unset "$inherited" ;;
+  esac
+done < <(compgen -e)
+work=$(mktemp -d); trap 'rm -rf "${work:?}"' EXIT
+root="$work/root"; mkdir -p "$root/.nogging/state" "$root/scripts"
+ln -s "$ROOT/scripts/lib" "$root/scripts/lib"
+copy_host_config "$ROOT/.nogging/config.json" "$root/.nogging/config.json"
+git -C "$root" init -q -b develop
+export NOGGING_ROOT="$root"
+nogg="$ROOT/scripts/nogg"
+fail=0
+ok() { echo "ok   - $1"; }
+bad() { echo "FAIL - $1"; fail=1; }
+dispatch_block() { # dispatch_block <json>: set the block, or remove it with `null`
+  python3 - "$root/.nogging/config.json" "$1" <<'PY'
+import json, sys
+path, block = sys.argv[1], json.loads(sys.argv[2])
+config = json.load(open(path))
+config.pop("session_dispatch", None)
+if block is not None:
+    config["session_dispatch"] = block
+json.dump(config, open(path, "w"), indent=2)
+PY
+}
+last_tick() { python3 -c '
+import sys
+sys.path.insert(0, sys.argv[2])
+import loop_state
+from pathlib import Path
+print(loop_state.read_state(Path(sys.argv[1])).get("last_tick") or "none")' "$root" "$ROOT/scripts/lib"; }
+passes() { [[ -f "$root/.nogging/state/dispatch/state.json" ]] && echo ran || echo none; }
+
+dispatch_block null
+out=$("$nogg" loop tick 2>&1) && ok "tick: a config with no block exits 0" || bad "tick: failed: $out"
+[[ "$(passes)" == ran ]] && ok "tick: a missing block reads as on and a pass runs" || bad "tick: no pass ran"
+[[ -z "$out" ]] && ok "tick: a pass with nothing to do prints nothing" || bad "tick: printed: $out"
+grep -q last_pass_at "$root/.nogging/state/dispatch/state.json" && ok "tick: the pass is recorded" || bad "tick: no last pass"
+
+rm -r "${root:?}/.nogging/state/dispatch"
+dispatch_block '{"max_nudges": 1}'
+"$nogg" loop tick >/dev/null
+[[ "$(passes)" == ran ]] && ok "tick: a block with no enabled key reads as on" || bad "tick: no pass ran"
+
+rm -r "${root:?}/.nogging/state/dispatch"
+dispatch_block '{"enabled": false}'
+"$nogg" loop tick >/dev/null
+[[ "$(passes)" == none ]] && ok "tick: an explicit false runs no pass" || bad "tick: a pass ran"
+
+before=$(last_tick); sleep 1.1
+dispatch_block '{"max_nudge": 1}'
+out=$("$nogg" loop tick 2>&1) && ok "tick: a failed pass does not fail the tick" || bad "tick: failed: $out"
+case "$out" in *"the dispatch pass failed"*max_nudge*) ok "tick: the failure is logged" ;; *) bad "tick: no log in: $out" ;; esac
+[[ "$(last_tick)" != "$before" ]] && ok "tick: the loops still ran" || bad "tick: the loops did not run"
+[[ $fail -eq 0 ]] || { echo "loop-tick: checks failed" >&2; exit 1; }
