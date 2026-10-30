@@ -102,7 +102,7 @@ assert not about(health(pause={"until": "x"})[1], "`nogg orchestrator run`")
 assert not about(health(pause={"until": "x"})[1], "`nogg session dispatch --once`")
 # A timer and a fresh pass: it runs, and the orchestrator is told it needs no watcher.
 warnings, notes = health(target=live, timer_state="enabled", last=now - timedelta(seconds=40))
-assert not warnings and notes == ["session dispatch: running, last pass 40s ago; the orchestrator needs no watchers of its own"], notes
+assert not warnings and notes == ["dispatcher: running, last pass 40s ago; the orchestrator needs no watchers of its own"], notes
 # A timer and a silent dispatcher: one WARN naming the last pass, and the watchers stay.
 last = now - timedelta(minutes=6)
 warnings, notes = health(target=live, timer_state="enabled", last=last)
@@ -117,6 +117,30 @@ assert not about(health(target=live, timer_state="unknown", last=now)[1], "fires
 notes = health(target=live, timer_state="enabled", last=now, budget={"lead-1": {"budget": {"nudges": 2}}})[1]
 assert about(notes, "lead-1 has spent its nudge budget"), notes
 assert health({"max_nudge": 2}) == ([], [])
+# Every line reads as the dispatcher's, never as the `session <name>:` note of one session.
+warnings, notes = health(target=live, timer_state="enabled", last=last, items=[item], budget={"lead-1": {"budget": {"nudges": 2}}})
+assert len(warnings + notes) >= 4 and all(line.startswith("dispatcher: ") for line in warnings + notes), warnings + notes
+assert all(line.startswith("dispatcher: ") for line in health()[1] + health({"enabled": False})[1])
+PY
+
+# The real path of `session_records` and `orchestrator_target` on a herdr config, with no
+# herdr to ask: nothing here is stubbed that takes the session directory.
+python3 - "$nogg" "$work/herdr" <<'PY' && ok "doctor: the health path runs on a herdr config" || bad "doctor: herdr, see above"
+import json, pathlib, sys
+from importlib.machinery import SourceFileLoader
+from unittest.mock import patch
+m = SourceFileLoader("sf_swk006h", sys.argv[1]).load_module()
+base = pathlib.Path(sys.argv[2]); sessions, state = base / "sessions", base / "dispatch"
+sessions.mkdir(parents=True); state.mkdir()
+(sessions / "nogg-orchestrator-x.json").write_text(json.dumps({
+    "name": "nogg-orchestrator-x", "bead_id": None, "role": "orchestrator", "agent": "claude", "state": "running",
+    "backend": "herdr", "backend_ref": {"label": "nogg-orchestrator-x", "herdr_session": "nogging"},
+    "started_at": "2026-10-30T00:00:00+00:00", "working_dir": str(base), "log_path": str(base / "o.log")}))
+with patch.dict(m.CFG, {"session_backend": "herdr"}), patch.object(m, "orchestrator_sessions_dir", return_value=sessions), \
+     patch.object(m, "dispatch_dir", return_value=state), patch.object(m, "loop_timer_state", return_value=("t.timer", "not-found")):
+    warnings, notes = m.dispatch_health_diagnostics()
+    assert warnings == [] and any("nothing fires a pass" in line for line in notes), (warnings, notes)
+    assert not any("unavailable" in line for line in notes + m.warm_diagnostics()), notes
 PY
 
 # --- the tick: the pass comes first and neither side can fail the other ------------

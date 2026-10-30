@@ -10379,13 +10379,14 @@ def loop_health_diagnostics(now=None):
 def dispatch_health_diagnostics(moment=None):
     """`(warnings, notes)` on the dispatcher, never a FAIL. A missing orchestrator or timer
     is one NOTE each and says so only while dispatch is on and not paused. A broken block
-    is the FAIL of `session_dispatch_diagnostics`, so it adds nothing here."""
+    is the FAIL of `session_dispatch_diagnostics`, so it adds nothing here. Each line opens
+    with `dispatcher:`, because `session <name>:` is the shape of a note about one session."""
     module = dispatch_module()
     if module.config_errors(CFG):
         return [], []
     policy = dispatch_policy()
     if not policy["enabled"]:
-        return [], ["session dispatch: off (session_dispatch.enabled is false); nothing nudges a Lead or wakes "
+        return [], ["dispatcher: off (session_dispatch.enabled is false); nothing nudges a Lead or wakes "
                     "the orchestrator, which keeps its own watchers"]
     moment = moment or dt.datetime.now(dt.timezone.utc)
     switch_off = "`session_dispatch.enabled: false` switches dispatch off"
@@ -10398,25 +10399,25 @@ def dispatch_health_diagnostics(moment=None):
     running = age is not None and age <= LOOP_TICK_WARN_SECONDS
     warnings, notes = [], []
     if timer_state == "enabled" and not running:
-        warnings.append(f"session dispatch: {timer} is enabled but "
+        warnings.append(f"dispatcher: {timer} is enabled but "
                         + (f"the last pass was at {last_pass}" if last_pass else "no pass is recorded"))
     if not current_pause(moment):
         if record is None:
-            notes.append(f"session dispatch: no orchestrator session, so {len(items)} item(s) are held; "
+            notes.append(f"dispatcher: no orchestrator session, so {len(items)} item(s) are held; "
                          f"start one with `nogg orchestrator run`; {switch_off}")
         if timer_state not in ("enabled", "unknown"):
-            notes.append(f"session dispatch: nothing fires a pass automatically, because {timer} is {timer_state}; "
+            notes.append(f"dispatcher: nothing fires a pass automatically, because {timer} is {timer_state}; "
                          f"enable it (docs/nogging/scheduled-loops.md) or run "
                          f"`nogg session dispatch --once` meanwhile; {switch_off}")
     if record is not None:
-        notes.append(f"session dispatch: running, last pass {humanize_age(last_pass, moment)} ago; the orchestrator "
+        notes.append(f"dispatcher: running, last pass {humanize_age(last_pass, moment)} ago; the orchestrator "
                      "needs no watchers of its own" if running
-                     else "session dispatch: not running; the orchestrator keeps its own watchers")
+                     else "dispatcher: not running; the orchestrator keeps its own watchers")
     if items:
         oldest = min(items, key=lambda item: str(item.get("created_at")))
-        notes.append(f"session dispatch: {len(items)} item(s) queued, the oldest {humanize_age(oldest.get('created_at'), moment)} "
+        notes.append(f"dispatcher: {len(items)} item(s) queued, the oldest {humanize_age(oldest.get('created_at'), moment)} "
                      f"old ({oldest.get('kind')} {oldest.get('session')}); see `nogg session inbox`")
-    notes.extend(f"session dispatch: {name} has spent its {budget} budget"
+    notes.extend(f"dispatcher: {name} has spent its {budget} budget"
                  for name, budget in module.spent_budgets(memory, policy))
     return warnings, notes
 
@@ -10454,7 +10455,7 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
     try:
         dispatch_warnings, dispatch_notes = dispatch_health_diagnostics()
     except Exception as exc:
-        dispatch_warnings, dispatch_notes = [], [f"session dispatch health unavailable: {exc}"]
+        dispatch_warnings, dispatch_notes = [], [f"dispatcher: health unavailable: {exc}"]
     warnings.extend(dispatch_warnings)
     if FAILURE_RECORD.exists():
         try: rec = json.loads(FAILURE_RECORD.read_text())

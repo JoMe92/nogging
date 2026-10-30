@@ -523,9 +523,9 @@ PY
       test "$(grep -c 'held: orchestrator' "$wake/.nogging/state/dispatch/dispatch.jsonl")" -eq 1
     doctor_out=$(in_wake ./scripts/nogg doctor 2>&1 || true)
     check "doctor: one NOTE for the missing orchestrator" \
-      test "$(grep -c '^NOTE  session dispatch: no orchestrator session' <<<"$doctor_out")" -eq 1
+      test "$(grep -c '^NOTE  dispatcher: no orchestrator session' <<<"$doctor_out")" -eq 1
     check "doctor: one NOTE for the missing timer" \
-      test "$(grep -c '^NOTE  session dispatch: nothing fires a pass' <<<"$doctor_out")" -eq 1
+      test "$(grep -c '^NOTE  dispatcher: nothing fires a pass' <<<"$doctor_out")" -eq 1
     check "doctor: both name the switch" \
       test "$(grep -c 'session_dispatch.enabled: false. switches dispatch off' <<<"$doctor_out")" -eq 2
     check "doctor: no WARN or FAIL about dispatch" bash -c "! grep -Eiq '^(WARN|FAIL).*dispatch' <<<\"\$1\"" _ "$doctor_out"

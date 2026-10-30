@@ -463,12 +463,12 @@ See [Scheduled loops](scheduled-loops.md).
 Session dispatch is on by default, and a missing orchestrator or timer is no failure.
 `doctor` says which applies.
 
-- **`session dispatch: no orchestrator session`**: the items are held, not lost. Run
+- **`dispatcher: no orchestrator session`**: the items are held, not lost. Run
   `nogg orchestrator run`, and the items that still hold go out as one digest.
-- **`session dispatch: nothing fires a pass automatically`**: the loops timer is off.
+- **`dispatcher: nothing fires a pass automatically`**: the loops timer is off.
   Enable it as the [timer section](scheduled-loops.md#the-scheduler-timer) shows, or run
   `nogg session dispatch --once` from your own scheduler.
-- **`WARN session dispatch: ... is enabled but the last pass was at ...`**: read
+- **`WARN dispatcher: ... is enabled but the last pass was at ...`**: read
   `journalctl --user -u nogg-loops-<slug>.service` for `the dispatch pass failed`. A
   failed pass never stops the loops, and neither do the loops stop a pass.
 - **A digest stays queued**: `nogg session inbox` names the hold. A pause, quiet hours,
