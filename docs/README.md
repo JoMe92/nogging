@@ -29,6 +29,7 @@ documentation site is available at <https://jome92.github.io/nogging/>.
 | [Using Nogging with Claude Code](https://jome92.github.io/nogging/using-with-claude-code/) | Run Nogging workflows from Claude Code |
 | [Using Nogging with Codex](using-with-codex.md) | Run Nogging workflows from OpenAI Codex |
 | [Using Nogging with Pi](using-with-pi.md) | Run Nogging workflows from Pi |
+| [Pi extensions](pi-extensions.md) | Optional Pi extensions, including the `glm-usage` Z.ai quota footer |
 | [Using Nogging with Antigravity](using-with-antigravity.md) | Experimental Antigravity integration |
 | [Running work in sessions](running-work-in-sessions.md) | Start, monitor, and steer supervised agent sessions |
 | [Using Nogging with herdr](using-with-herdr.md) | Experimental herdr session backend |
