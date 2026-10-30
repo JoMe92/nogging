@@ -412,16 +412,12 @@ while True:
         assert kinds('scan')[-1] == 'started' and session in live(), 'a live run was failed'
         assert m.loop_session_gone(m.load_session(session)[1]) is False
 
-        # --- only tmux's own words prove a session gone -------------------------
+        # --- the tmux backend decides what proves a session gone ----------------
         from types import SimpleNamespace
-        for text, gone in (("can't find session: x\n", True), ('no server running on /tmp/x\n', True),
-                           ('error connecting to /tmp/x (No such file or directory)\n', True),
-                           ('error connecting to /tmp/x (Too many open files)\n', False),
-                           ('error connecting to /tmp/x (Permission denied)\n', False)):
-            answer = SimpleNamespace(returncode=1, stderr=text)
+        for gone in (True, False):
             with patch.object(m, 'session_backend',
-                              return_value=SimpleNamespace(command=lambda *a, **k: answer)):
-                assert m.loop_session_gone({'name': 'x', 'backend': 'tmux'}) is gone, text
+                              return_value=SimpleNamespace(proves_gone=lambda name: gone)):
+                assert m.loop_session_gone({'name': 'x', 'backend': 'tmux'}) is gone
 
         # --- a session tmux cannot confirm is not retired blind -----------------
         session = events('scan')[-1]['session']

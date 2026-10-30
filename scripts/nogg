@@ -4957,14 +4957,8 @@ def adopt_loop_run(run_id):
 def loop_session_gone(rec):
     """Whether the backend proves a session gone. tmux's listing is empty on any
     error, so an empty one is not proof; other backends report unknown liveness
-    themselves. A connect failure proves it only for a missing socket: tmux
-    words every other cause, such as no free descriptors, the same way."""
-    if record_backend_name(rec) != "tmux":
-        return True
-    result = session_backend("tmux").command("has-session", "-t", rec["name"], check=False)
-    detail = (result.stderr or "").lower()
-    return result.returncode != 0 and any(
-        text in detail for text in ("can't find session", "no server running", "no such file or directory"))
+    themselves."""
+    return record_backend_name(rec) != "tmux" or session_backend("tmux").proves_gone(rec["name"])
 
 def loop_session_state(name):
     """A run session's classified state, `ended` once it is proved gone. A
