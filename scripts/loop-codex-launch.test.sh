@@ -21,10 +21,15 @@ args = sys.argv[1:]
 if args == ["--help"]:
     print("Usage: codex [OPTIONS]")
     sys.exit(0)
+if args[:2] == ["mcp", "list"]:
+    print((state / "mcp").read_text())
+    sys.exit(0)
 if args[:2] != ["debug", "prompt-input"]:
     with (state / "launches").open("a") as log:
         log.write(json.dumps(args) + "\n")
     sys.exit(0)
+with (state / "renders").open("a") as log:
+    log.write(json.dumps(args) + "\n")
 mode = (state / "mode").read_text().strip()
 if mode == "fail":
     print("Error: unknown subcommand", file=sys.stderr)
@@ -34,8 +39,13 @@ if mode == "garbage":
     sys.exit(0)
 disabled = [args[i + 1] for i, arg in enumerate(args) if arg == "--disable"]
 nested = ["apply_patch", "view_image"]
+if mode == "no-list":
+    print(json.dumps([{"type": "message", "role": "user", "content": []}]))
+    sys.exit(0)
 if mode != "renamed" and (mode == "leaky" or "shell_tool" not in disabled):
     nested += ["exec_command", "write_stdin"]
+if mode == "fallback" and disabled:
+    nested += ["run_anything"]
 decls = "\n".join(f"declare const tools: {{ {name}(args: {{}}): Promise<string>; }};" for name in nested)
 print(json.dumps([
     {"type": "additional_tools", "role": "developer", "tools": [
@@ -55,13 +65,16 @@ with tempfile.TemporaryDirectory(prefix='nogg loop codex ') as td:
     stub.write_text(STUB)
     stub.chmod(0o755)
     env = dict(os.environ, PATH=f'{bin_dir}{os.pathsep}{os.environ["PATH"]}', STUB_STATE=str(state))
-    loop_text = 'Loop rules: "quoted", \\backslash, ümlaut\nsecond line\n'
+    loop_text = 'Loop rules: "quoted", \\backslash, ümlaut, del \x7f\nsecond line\n'
+    features = ['shell_tool', 'unified_exec', 'apps', 'plugins', 'browser_use', 'computer_use']
     prompt = scratch / 'loop.md'
     prompt.write_text(loop_text, encoding='utf-8')
 
-    def launch(*extra, mode='sound', agent='codex', prompt_path=prompt):
+    def launch(*extra, mode='sound', agent='codex', prompt_path=prompt, mcp='[]'):
         (state / 'mode').write_text(mode)
+        (state / 'mcp').write_text(mcp)
         (state / 'launches').write_text('')
+        (state / 'renders').write_text('')
         argv = [str(wrapper), '--agent', agent, '--sandbox', 'workspace-write', '--approval', 'on-request',
                 '--network', 'off', '--writable-roots', '[]', '--prompt', str(prompt_path), '--cwd', str(work)]
         result = subprocess.run(argv + list(extra), env=env, capture_output=True, text=True)
@@ -81,13 +94,21 @@ with tempfile.TemporaryDirectory(prefix='nogg loop codex ') as td:
     assert result.returncode == 0, result.stderr
     assert len(launches) == 1, launches
     argv = launches[0]
-    assert flag_values(argv, '--disable') == ['shell_tool', 'unified_exec'], argv
+    assert flag_values(argv, '--disable') == features, argv
     assert flag_values(argv, '--sandbox') == ['read-only'], argv
     assert '--add-dir' not in argv, argv
     assert instructions(argv) == loop_text
     assert 'no command tools' in result.stdout
     # Every argument is a flag or its value: nothing could start a turn.
     assert argv[-2] == '-c' and argv[-1].startswith('developer_instructions='), argv
+
+    # --- the proof is for the model the run will use ------------------------
+    result, launches = launch('--read-only', '--no-commands', '--model', 'gpt-test')
+    assert result.returncode == 0, result.stderr
+    renders = [json.loads(row) for row in (state / 'renders').read_text().splitlines()]
+    assert len(renders) == 2 and all(flag_values(row, '-c') == ['model="gpt-test"'] for row in renders), renders
+    assert flag_values(renders[0], '--disable') == [] and flag_values(renders[1], '--disable') == features, renders
+    assert flag_values(launches[0], '--model') == ['gpt-test'], launches
 
     # --- trusted: commands stay, the first turn is still the kickoff -------
     result, launches = launch('--instructions-only')
@@ -106,11 +127,29 @@ with tempfile.TemporaryDirectory(prefix='nogg loop codex ') as td:
 
     # --- an unproven removal never starts the agent ------------------------
     for mode, expected in (('leaky', 'exec_command, write_stdin'), ('renamed', 'cannot find the command tool'),
-                           ('fail', 'cannot read the Codex tool list'), ('garbage', 'cannot read the Codex tool list')):
+                           ('no-list', 'cannot find the command tool'), ('fallback', 'run_anything'),
+                           ('fail', 'cannot read `codex debug prompt-input`'),
+                           ('garbage', 'cannot read `codex debug prompt-input`')):
         result, launches = launch('--read-only', '--instructions-only', '--no-commands', mode=mode)
         assert result.returncode != 0, mode
         assert expected in result.stderr, (mode, result.stderr)
         assert launches == [], (mode, launches)
+
+    # --- an MCP server is invisible to the proof, so it refuses -------------
+    enabled = json.dumps([{'name': 'off', 'enabled': False}, {'name': 'demo', 'enabled': True}])
+    result, launches = launch('--read-only', '--no-commands', mcp=enabled)
+    assert result.returncode != 0 and 'MCP servers enabled (demo)' in result.stderr, result.stderr
+    assert launches == [] and (state / 'renders').read_text() == '', 'a render started the MCP server'
+    result, launches = launch('--read-only', '--no-commands', mcp=json.dumps([{'name': 'off', 'enabled': False}]))
+    assert result.returncode == 0 and len(launches) == 1, result.stderr
+    result, launches = launch('--read-only', '--no-commands', mcp='not json')
+    assert result.returncode != 0 and 'cannot read `codex mcp list`' in result.stderr, result.stderr
+    assert launches == []
+
+    # --- no commands needs the read-only sandbox, or apply_patch writes unasked
+    result, launches = launch('--no-commands')
+    assert result.returncode == 2 and 'read-only sandbox' in result.stderr, result.stderr
+    assert launches == []
 
     # --- the flags are Codex-only and take no resume or missing prompt -----
     for flag in ('--instructions-only', '--no-commands'):
@@ -135,8 +174,8 @@ with tempfile.TemporaryDirectory(prefix='nogg loop codex ') as td:
         try:
             m.verify_codex_no_commands(str(work))
         except RuntimeError as exc:
-            assert 'cannot read the Codex tool list' in str(exc)
+            assert 'cannot read `codex mcp list`' in str(exc)
         else:
-            raise AssertionError('a hung tool-list render was accepted')
+            raise AssertionError('a hung Codex call was accepted')
 print('loop-codex-launch: ok')
 PY

@@ -122,10 +122,11 @@ code goes through the Orchestration Agent as a send loop.
 stops at the first Bash prompt: it waits in `needs_input` until `max_runtime`
 stops it. Codex has no such prompt, because `on-request` asks only before a
 command leaves the sandbox and Codex no longer accepts `untrusted`. A restricted
-Codex run therefore starts with no command tools and a read-only sandbox, and the
-launch is refused unless Codex's own tool list shows the tools gone. It cannot
-read the checkout, so it reports only from its prompt, and a Codex loop that
-inspects files needs `trusted`. Work that needs `bd` or `gh` needs
+Codex run therefore starts with no command tools, apps or plugins and a read-only
+sandbox. The launch is refused when an MCP server is enabled, and unless Codex's
+own tool list for the run's model shows the tools gone. The run cannot read the
+checkout, so it reports only from its prompt, and a Codex loop that inspects
+files needs `trusted`. Work that needs `bd` or `gh` needs
 `authority: "trusted"`, set explicitly and covered by the loop's approval. The
 scheduler never raises a run's authority,
 including on a retry, and never passes `--ignore-usage-gate`. Every run keeps

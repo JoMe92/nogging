@@ -66,6 +66,8 @@ if sys.argv[1:3] == ["debug", "prompt-input"]:
     tools = [] if "shell_tool" in sys.argv and not pathlib.Path({str(leaky)!r}).exists() else ["exec_command"]
     print(json.dumps([{{"type": "additional_tools", "tools": [{{"name": name}} for name in tools]}}]))
     sys.exit(0)
+if sys.argv[1:3] == ["mcp", "list"]:
+    print("[]"); sys.exit(0)
 with open({str(launches)!r}, "a") as log:
     log.write(json.dumps(sys.argv[1:]) + "\\n")
 tty.setraw(0)
@@ -339,7 +341,7 @@ while True:
         rec = records('scan-')[0]
         assert rec['read_only'] is True and rec['codex_startup_prompt'] is False, rec
         argv = json.loads(launches.read_text().splitlines()[-1])
-        assert [argv[i + 1] for i, arg in enumerate(argv) if arg == '--disable'] == ['shell_tool', 'unified_exec'], argv
+        assert {argv[i + 1] for i, arg in enumerate(argv) if arg == '--disable'} >= {'shell_tool', 'unified_exec'}, argv
         assert argv[argv.index('--sandbox') + 1] == 'read-only' and argv[-2] == '-c', argv
         assert argv[-1].startswith('developer_instructions=') and 'scheduled, unattended' in argv[-1], argv
 

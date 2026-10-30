@@ -255,6 +255,9 @@ CODEX_ID
     [ "$read_only" -eq 1 ] && sandbox="read-only"
     : "${sandbox:=workspace-write}"
     : "${approval:=on-request}"
+    [ "$no_commands" -eq 0 ] || [ "$sandbox" = "read-only" ] || {
+      echo "session-launch: --no-commands needs the read-only sandbox" >&2; exit 2;
+    }
     case "$approval" in
       on-request|never) ;;
       *) echo "session-launch: unsupported Codex --approval value: $approval (expected on-request or never)" >&2; exit 2 ;;
@@ -331,12 +334,12 @@ POLICY
     # session that must not run commands unapproved has the tools removed, once
     # Codex's own rendered tool list proves the removal works (SPEC-h9k5).
     if [ "$no_commands" -eq 1 ]; then
-      command_features=$(python3 - "$repo_root/scripts/nogg" "$(pwd)" <<'NO_COMMANDS'
+      command_features=$(python3 - "$repo_root/scripts/nogg" "$(pwd)" "$model" <<'NO_COMMANDS'
 import sys
 from importlib.machinery import SourceFileLoader
 m = SourceFileLoader("nogg_no_commands", sys.argv[1]).load_module()
 try:
-    print("\n".join(m.verify_codex_no_commands(sys.argv[2])))
+    print("\n".join(m.verify_codex_no_commands(sys.argv[2], sys.argv[3])))
 except RuntimeError as exc:
     sys.stderr.write(str(exc) + "\n")
     sys.exit(2)
@@ -354,7 +357,7 @@ NO_COMMANDS
     # Developer instructions start no turn, so the caller's kickoff is the first
     # and only one. JSON string escapes are valid in a TOML basic string.
     if [ "$instructions_only" -eq 1 ]; then
-      instructions=$(python3 -c 'import json,sys; print(json.dumps(open(sys.argv[1],encoding="utf-8").read(),ensure_ascii=False))' "$prompt")
+      instructions=$(python3 -c 'import json,sys; print(json.dumps(open(sys.argv[1],encoding="utf-8").read(),ensure_ascii=False).replace("\x7f","\\u007f"))' "$prompt")
       exec codex "$@" -c "developer_instructions=$instructions"
     fi
     if [ -n "$prompt" ] && [ -f "$prompt" ]; then
