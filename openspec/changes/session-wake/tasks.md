@@ -73,7 +73,7 @@
 
 ## 2. Dispatcher (feat/)
 
-- [ ] TASK-SWK-004 [complex] [~900 loc] The dispatcher: a level-triggered pass with deterministic follow-ups and no model.
+- [x] TASK-SWK-004 [complex] [~900 loc] The dispatcher: a level-triggered pass with deterministic follow-ups and no model.
   Per design Decisions 6, 7 and 13 and the session-wake requirements on reconciling,
   opt-in, routine transitions and nudges. Add pure scripts/lib/session_dispatch.py with
   decide(facts, memory, policy, now) and dedupe keys, shipped in the manifest. Add `nogg

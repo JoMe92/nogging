@@ -29,6 +29,7 @@ module.exports = {
     'scripts/lib/session_codex_delivery.py',
     'scripts/lib/session_signals.py',
     'scripts/lib/session_hooks.py',
+    'scripts/lib/session_dispatch.py',
     'scripts/lib/token_usage_adapters.py',
     'scripts/lib/token_usage_antigravity.py',
     'scripts/lib/token_usage_collect.py',

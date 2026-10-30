@@ -11,6 +11,23 @@
   "change_states": ["open", "done", "archived"],
   "tier_overrides": {},
   "task_sizing": {"bead_prod_lines": [400, 1000], "commit_lines": [100, 600]},
+  "session_dispatch": {
+    "enabled": false,
+    "max_nudges": 2,
+    "max_ci_nudges": 2,
+    "stall_after": "15m",
+    "ci_timeout": "60m",
+    "retire_merged": false,
+    "wake": {
+      "urgent_quiet": "90s", "normal_quiet": "300s", "max_hold": "900s",
+      "min_gap": "300s", "max_wakes_per_hour": 4, "remind_after": "4h",
+      "hold_above_percent": 85,
+      "keep_warm": true, "keep_warm_after": "50m", "quiet_hours": []
+    },
+    "precompact_after": "50m",
+    "precompact_min_tokens": 100000
+  },
+  "orchestrator_context": {"auto_compact_window": 200000, "idle_compact_min_tokens": 100000},
   "nogging_version": "0.0.0",
   "personas": {
     "planner": {"name": "Nogging Planner", "email": "planner@nogging.bot"},
