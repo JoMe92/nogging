@@ -101,8 +101,10 @@ are read-only and available to all roles.
 A launch loop starts one fresh supervised session per run in the main checkout,
 with the internal `loop` role, the loop launch prompt and exactly the agent,
 tier, model, effort and authority the loop names. The kickoff is the
-`[nogg loop <name> run <id>]` header plus the prompt. `session list` shows the
-run as `loop:<name>`.
+`[nogg loop <name> run <id>]` header plus the prompt. On Codex the loop launch
+prompt reaches the run as developer instructions, not as a startup prompt, so
+the kickoff is its only first turn. `session list` shows the run as
+`loop:<name>`.
 
 ```bash
 ./scripts/nogg loop add issue-scan --every 6h --start 01:00 --mode launch \
@@ -116,10 +118,17 @@ claiming a Bead. That rule is prompt-borne beyond the command floor and the
 `openspec/` fence, as with any `trusted` session. Recurring work that changes
 code goes through the Orchestration Agent as a send loop.
 
-`restricted` is the default and suits read-only analysis. A restricted run stops
-at the first Bash prompt: it waits in `needs_input` until `max_runtime` stops it.
-Work that needs `bd` or `gh` needs `authority: "trusted"`, set explicitly and
-covered by the loop's approval. The scheduler never raises a run's authority,
+`restricted` is the default and suits read-only analysis. A restricted Claude run
+stops at the first Bash prompt: it waits in `needs_input` until `max_runtime`
+stops it. Codex has no such prompt, because `on-request` asks only before a
+command leaves the sandbox and Codex no longer accepts `untrusted`. A restricted
+Codex run therefore starts with no command tools, apps or plugins and a read-only
+sandbox. The launch is refused when an MCP server is enabled, and unless Codex's
+own tool list for the run's model shows the tools gone. The run cannot read the
+checkout, so it reports only from its prompt, and a Codex loop that inspects
+files needs `trusted`. Work that needs `bd` or `gh` needs
+`authority: "trusted"`, set explicitly and covered by the loop's approval. The
+scheduler never raises a run's authority,
 including on a retry, and never passes `--ignore-usage-gate`. Every run keeps
 the command floor and the `openspec/` fence.
 

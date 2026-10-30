@@ -83,6 +83,15 @@ with tempfile.TemporaryDirectory(prefix='nogg loop role ') as td:
                     assert not any('nogg session' in a for a in allow if a != m.INBOX_RULE), 'loop gained child-control rules'
                 else:
                     assert any('--readonly-root' in str(a) for a in rec['command']) or agent == 'pi'
+                restricted_codex = agent == 'codex' and authority == 'restricted'
+                # SPEC-h9k5: a Codex run has no turn of its own, and a restricted one no commands.
+                assert ('--instructions-only' in rec['command']) == (agent == 'codex'), rec['command']
+                assert ('--no-commands' in rec['command']) == restricted_codex, rec['command']
+                assert rec['read_only'] is restricted_codex and rec['codex_startup_prompt'] is False, rec
+                if agent == 'codex':
+                    sandbox = rec['command'][rec['command'].index('--sandbox') + 1]
+                    assert sandbox == ('read-only' if restricted_codex else 'workspace-write'), rec['command']
+                    assert ('no command tools' in out) == restricted_codex, out
         # default authority is restricted
         d = loop(); d.pop('authority', None); d['run_id'] = 'dflt'
         name, _ = launch(loop_data=d)

@@ -4209,6 +4209,66 @@ def resolve_launch_tier(tier, agent, resume=None):
             "effort_source": entry["effort_source"], "table_effort": entry["table_effort"]}
 CODEX_SANDBOX_MODES = ("read-only", "workspace-write", "danger-full-access")
 CODEX_APPROVAL_POLICIES = ("on-request", "never")
+# The features that can give a Codex session a command tool, and the tools' names.
+CODEX_COMMAND_FEATURES = ("shell_tool", "unified_exec", "apps", "plugins", "browser_use", "computer_use")
+CODEX_COMMAND_TOOLS = ("exec_command", "write_stdin", "shell", "shell_command", "local_shell")
+CODEX_NESTED_TOOL_RE = re.compile(r"declare const tools: \{ (\w+)\(")
+def codex_offline_json(cwd, *args):
+    """The parsed JSON of one offline `codex` subcommand run in `cwd`. Raises when
+    Codex cannot answer."""
+    try:
+        result = subprocess.run(["codex", *args], cwd=cwd, stdin=subprocess.DEVNULL, text=True,
+                                capture_output=True, timeout=30)
+        items = json.loads(result.stdout) if result.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
+        raise RuntimeError(f"cannot read `codex {' '.join(args[:2])}`; launch refused") from exc
+    if not isinstance(items, list):
+        raise RuntimeError(f"cannot read `codex {' '.join(args[:2])}`; launch refused")
+    return items
+def codex_rendered_tools(cwd, model=None, disabled=()):
+    """The tool names Codex would offer `model` in `cwd`, read offline from
+    `codex debug prompt-input` (no model call), including those nested under its
+    code-mode `exec` tool. The list differs per model, and it omits MCP tools."""
+    args = ["debug", "prompt-input"]
+    if model:
+        args += ["-c", f"model={json.dumps(model)}"]
+    for feature in disabled:
+        args += ["--disable", feature]
+    names = set()
+    def walk(tools):
+        for tool in tools if isinstance(tools, list) else []:
+            if isinstance(tool, dict):
+                if isinstance(tool.get("name"), str):
+                    names.add(tool["name"])
+                names.update(CODEX_NESTED_TOOL_RE.findall(str(tool.get("description"))))
+                walk(tool.get("tools"))
+    for item in codex_offline_json(cwd, *args):
+        if isinstance(item, dict) and item.get("type") == "additional_tools":
+            walk(item.get("tools"))
+    return names
+def verify_codex_no_commands(cwd, model=None):
+    """Prove the installed Codex offers `model` no command tool once
+    `CODEX_COMMAND_FEATURES` are disabled, and return those features. A baseline
+    without `exec_command` means the tool list is no longer readable as evidence,
+    a tool that only appears with the features off may be a fallback, and an
+    enabled MCP server's tools never appear in the list, so each of those refuses:
+    a run that must not execute commands never starts on an unproven removal."""
+    servers = sorted(str(server.get("name") if isinstance(server, dict) else server)
+                     for server in codex_offline_json(cwd, "mcp", "list", "--json")
+                     if not (isinstance(server, dict) and server.get("enabled") is False))
+    if servers:
+        raise RuntimeError(f"Codex has MCP servers enabled ({', '.join(servers)}), whose tools its "
+                           "tool list does not show; a no-commands launch is refused")
+    baseline = codex_rendered_tools(cwd, model)
+    if "exec_command" not in baseline:
+        raise RuntimeError("cannot find the command tool in the Codex tool list; "
+                           "a no-commands launch is refused")
+    after = codex_rendered_tools(cwd, model, CODEX_COMMAND_FEATURES)
+    left = sorted((set(CODEX_COMMAND_TOOLS) | (after - baseline)) & after)
+    if left:
+        raise RuntimeError(f"Codex still offers {', '.join(left)} with its command features "
+                           "disabled; a no-commands launch is refused")
+    return CODEX_COMMAND_FEATURES
 def load_codex_spec(path):
     """Read a `.codex.toml` launch fragment: the three required flat keys
     `sandbox`, `ask_for_approval`, `network_access`, plus the optional `model`
@@ -4407,7 +4467,7 @@ def session_helper_diagnostics():
                  "--sandbox", "--approval", "--network", "--readonly-root",
                  "--provider", "--model", "--reasoning-effort", "--effort", "--mode", "--session-id", "--resume", "--remote-control"):
         argv += [flag, "probe"]
-    argv += ["--read-only", "--continue"]
+    argv += ["--read-only", "--instructions-only", "--no-commands", "--continue"]
     try:
         contract = helper_contract(wrapper)
         for agent in ("claude", "codex", "pi", "antigravity"):
@@ -5260,6 +5320,9 @@ def session_launch_notes(role_or_agent, agent_or_profile=None, profile_label=Non
         notes.append(f"NOTE: restricted {norm_agent} planning stops at approval prompts; attach to approve each step")
     if norm_agent == "codex" and p == "restricted":
         notes.append("NOTE: restricted Codex has no network; a Dolt-server-backed bd is unreachable from its sandbox")
+    if r == "loop" and norm_agent == "codex" and p == "restricted":
+        notes.append("NOTE: a restricted Codex loop run has no command tools: it cannot read the checkout, "
+                     "so it reports only from its prompt; use authority trusted or Claude to inspect files")
     return notes
 
 
@@ -5482,6 +5545,11 @@ def _session_launch(role, bead, cwd, read_only, owner,
     require_agent_binary(agent)
     if agent == "codex" and resume is not None:
         validate_codex_resume_id(resume)
+    # Codex cannot stop at a first command, so a restricted run gets none, and a
+    # read-only sandbox so `apply_patch`, the tool it keeps, must ask.
+    restricted_codex_loop = bool(loop) and agent == "codex" and loop["authority"] == "restricted"
+    if restricted_codex_loop:
+        read_only = True
     role_meta, role_slug = normalize_role(role)
     planning_launch_authority(role_meta, agent, profile, full_access)
     unwritable = read_only_launch_path(role_meta, ignore_usage_gate)
@@ -5705,6 +5773,10 @@ def _session_launch(role, bead, cwd, read_only, owner,
             inner += ["--reasoning-effort", reasoning_effort]
         if resume is not None:
             inner += ["--resume", resume]
+        if loop:
+            inner.append("--instructions-only")
+        if restricted_codex_loop:
+            inner.append("--no-commands")
     elif agent == "antigravity":
         effective_settings_path = None
         if not allocate_planning:
@@ -5803,9 +5875,10 @@ def _session_launch(role, bead, cwd, read_only, owner,
         "antigravity_conversation_id": resume if agent == "antigravity" else None,
         "codex_thread_id": resume if agent == "codex" else None,
         # Cold Codex launches pass this positional prompt and start a turn;
-        # exact resumes do not pass a startup prompt.
+        # exact resumes do not pass a startup prompt, and a loop run's prompt is
+        # developer instructions, so its kickoff is the first turn.
         "codex_startup_prompt": bool(
-            agent == "codex" and resume is None and prompt_path is not None
+            agent == "codex" and resume is None and not loop and prompt_path is not None
             and Path(prompt_path).is_file()),
         "antigravity_initial_turn": agent == "antigravity",
         "planning_id": planning_id, "description": description,
@@ -7716,6 +7789,13 @@ def _codex_rollout_session_meta(path):
     payload = line.get("payload") or {}
     thread_id, cwd, ts = payload.get("id"), payload.get("cwd"), payload.get("timestamp")
     return (thread_id, cwd, ts) if (thread_id and cwd and ts) else None
+def _codex_rollout_mentions(path, marker):
+    """Whether the head of a rollout holds `marker`; a first turn sits well inside it."""
+    try:
+        with path.open("rb") as fh:
+            return marker in fh.read(1024 * 1024)
+    except OSError:
+        return False
 def resolve_codex_thread_id(rec, merge=False):
     """Discover and cache the Codex-internal thread UUID for a codex session
     `scripts/nogg` launched, by matching the session's `working_dir` against
@@ -7729,9 +7809,14 @@ def resolve_codex_thread_id(rec, merge=False):
     one this launch itself produced. Caches the result on the session record
     once found. Returns None (never raises) when no match exists yet — the
     thread may simply not have started (e.g. still sitting at Codex's
-    hook-trust prompt)."""
+    hook-trust prompt). A loop run starts no turn before its kickoff, so it has no
+    rollout until then and another same-cwd session's would match: it binds only
+    to the rollout holding its own run header, and no other session binds to one
+    holding a run header."""
     if rec.get("codex_thread_id"):
         return rec["codex_thread_id"]
+    own_marker = (f"[nogg loop {rec.get('loop_name')} run {rec['loop_run_id']}]".encode()
+                  if rec.get("loop_run_id") else None)
     try:
         started = parse_iso(rec["started_at"]) - dt.timedelta(seconds=5)
     except (KeyError, ValueError):
@@ -7749,7 +7834,8 @@ def resolve_codex_thread_id(rec, merge=False):
             ts_dt = parse_iso(ts)
         except ValueError:
             continue
-        if ts_dt < started:
+        if ts_dt < started or (_codex_rollout_mentions(path, own_marker or b"[nogg loop ")
+                               != bool(own_marker)):
             continue
         candidates.append((ts_dt, thread_id))
     if not candidates:

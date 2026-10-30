@@ -69,7 +69,10 @@ sessions cannot mutate loop definitions or host state.
 - **Codex:** restricted sessions use Codex's sandbox with outbound network off;
   trusted sessions use workspace-write with approvals disabled and network on.
   The repository execpolicy floor loads only after Codex trusts the `.codex/`
-  layer. It is not a host-wide policy.
+  layer. It is not a host-wide policy. Under `on-request` a command inside the
+  sandbox runs without a prompt, and one matching an `allow` rule in the user's
+  `$CODEX_HOME/rules/` leaves the sandbox without one. A restricted scheduled-loop
+  run therefore starts with no command tools and a read-only sandbox.
 - **Pi:** neither restricted nor trusted mode has a filesystem or network
   sandbox. The project guard extension enforces only the command floor and the
   OpenSpec boundary. Supervised Pi explicitly loads the extension with run-scoped approval; no standing trust change is required. Treat Pi
