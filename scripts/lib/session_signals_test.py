@@ -121,5 +121,40 @@ class EvidenceOrderTests(unittest.TestCase):
         self.assertEqual(("waiting_background", "event"), sig.resolve_state("waiting_background", None, "working"))
 
 
+class HerdrEvidenceTests(unittest.TestCase):
+    def test_herdr_status_meaning(self):
+        self.assertEqual("needs_input", sig.herdr_state("blocked"))
+        self.assertEqual("idle", sig.herdr_state("done"))
+        self.assertEqual("idle", sig.herdr_state("idle"))
+        self.assertEqual("working", sig.herdr_state("working"))
+        self.assertIsNone(sig.herdr_state("unknown"))
+        self.assertIsNone(sig.herdr_state(None))
+        self.assertIsNone(sig.herdr_state("surprise"))
+
+    def test_herdr_sits_between_rollout_and_pane(self):
+        self.assertEqual(("idle", "herdr"), sig.resolve_state(None, None, "working", herdr="done"))
+        self.assertEqual(("needs_input", "herdr"), sig.resolve_state(None, None, "idle", herdr="blocked"))
+        self.assertEqual(("idle", "rollout"), sig.resolve_state(None, "idle", "idle", herdr="done"))
+        self.assertEqual(("working", "herdr"), sig.resolve_state(None, "idle", "idle", herdr="working"))
+        self.assertEqual(("idle", "event"), sig.resolve_state("idle", None, "idle", herdr="done"))
+
+    def test_unknown_herdr_proves_nothing(self):
+        self.assertEqual(("working", "pane"), sig.resolve_state(None, None, "working", herdr="unknown"))
+        self.assertEqual(("unknown", "none"), sig.resolve_state(None, None, None, herdr="unknown"))
+
+    def test_a_pi_session_on_herdr_without_a_pane_adapter_is_classified(self):
+        self.assertEqual(("working", "herdr"), sig.resolve_state(None, None, None, herdr="working"))
+        self.assertEqual(("idle", "herdr"), sig.resolve_state(None, None, None, herdr="idle"))
+
+    def test_live_herdr_working_beats_a_stale_idle_event(self):
+        self.assertEqual(("working", "herdr"), sig.resolve_state("idle", None, None, herdr="working"))
+        self.assertEqual(("idle", "herdr"), sig.resolve_state("needs_input", None, None, herdr="done"))
+
+    def test_the_pane_still_reports_what_herdr_cannot_express(self):
+        self.assertEqual(("limit", "pane"), sig.resolve_state(None, None, "limit", herdr="idle"))
+        self.assertEqual(("waiting_background", "pane"),
+                         sig.resolve_state(None, None, "waiting_background", herdr="working"))
+
+
 if __name__ == "__main__":
     unittest.main()
