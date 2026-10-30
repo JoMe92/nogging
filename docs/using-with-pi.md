@@ -78,6 +78,25 @@ otherwise need — left to the operator, not managed by Nogging). Treat a Pi
 session's `restricted` level as weaker than the same word for Claude or
 Codex.
 
+## Enabling optional extensions — `pi_extensions`
+
+The extensions under `.pi/nogging/extensions/` load only when you enable them.
+List their names in `.nogging/config.json`:
+
+```json
+{ "pi_extensions": ["glm-usage"] }
+```
+
+Every `session launch --agent pi` then passes
+`--extension <working directory>/.pi/nogging/extensions/<name>/index.ts` to Pi
+after the guard, in the order you listed. The session record stores
+`pi_extensions`, and the launch output prints `pi-extensions=<names>`. A value
+that is not an array of unique kebab-case names, or a name without an
+`index.ts`, refuses the launch before any side effect, and `validate` and
+`doctor` report it as a FAIL; run `nogg update` to restore a missing extension,
+or remove the name. An empty or absent list launches exactly as before, and
+other agents ignore the key.
+
 ## The lifecycle extension — `.pi/extensions/nogging-lifecycle.ts`
 
 Pi has no hook file, so a supervised session reports its own lifecycle through
