@@ -794,7 +794,13 @@ and `--once` says so for a scheduler.
 
 During a [`pause`](#pause) a pass still observes, queues, audits and retires merged
 sessions, and sends no digest, nudge or `limit` resume. The first pass at or after the
-end of a pause ends it.
+end of a pause ends it. Inside `quiet_hours` it sends the orchestrator no digest, urgent
+items included, and goes on nudging Leads.
+
+A pass also keeps a Claude orchestrator's cache warm while work is active, with one
+fixed line after `keep_warm_after`. With nothing active, in quiet hours or during a
+pause it sends one `/compact` instead, and the cache then lapses. Both go only to an
+idle orchestrator with an empty composer, and neither counts as a wake.
 
 ```bash
 ./scripts/nogg session dispatch --once

@@ -57,7 +57,6 @@ _KEY_DROP = re.compile(r"[^\w:.+@-]+")
 _PLAIN_MARK = re.compile(r"[0-9a-fTZ:.+@-]{1,80}")
 _DURATION = re.compile(r"^(\d+)([smh]?)$")
 _UNITS = {"": 1, "s": 1, "m": 60, "h": 3600}
-_QUIET_WINDOW = re.compile(r"^([01]\d|2[0-3]):[0-5]\d-([01]\d|2[0-3]):[0-5]\d$")
 
 
 def seconds(value: Any) -> int:
@@ -91,8 +90,15 @@ def _is_percent(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value <= 100
 
 
+def _bad_windows(value: Any) -> list[Any]:
+    """What `quiet_hours` holds that is no window. Imported here because session_warm,
+    which owns the format, imports this module."""
+    from session_warm import is_window
+    return [window for window in value if not is_window(window)] if isinstance(value, list) else [value]
+
+
 def _is_windows(value: Any) -> bool:
-    return isinstance(value, list) and all(isinstance(w, str) and _QUIET_WINDOW.match(w) for w in value)
+    return not _bad_windows(value)
 
 
 _WANTS = {_is_duration: "a duration such as 90s, 15m or 4h", _is_bool: "true or false",
@@ -120,7 +126,8 @@ def _block_errors(block: Any, where: str, schema: dict[str, Any]) -> list[str]:
         elif isinstance(check, dict):
             errors.extend(_block_errors(value, f"{where}.{key}", check))
         elif not check(value):
-            errors.append(f"{where}.{key}: must be {_WANTS[check]}")
+            named = ": " + ", ".join(repr(bad) for bad in _bad_windows(value)) if check is _is_windows else ""
+            errors.append(f"{where}.{key}: must be {_WANTS[check]}{named}")
     return errors
 
 

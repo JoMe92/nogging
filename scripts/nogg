@@ -6841,6 +6841,11 @@ def pause_module():
     dispatch_module()
     import session_pause
     return session_pause
+def warm_module():
+    """Load the pure keep-warm and quiet-hours logic from scripts/lib beside this script."""
+    dispatch_module()
+    import session_warm
+    return session_warm
 def _read_hook_stdin(limit, wait=1.0):
     """At most `limit` bytes of hook JSON from stdin, or b'' for a terminal, a
     closed stdin or a writer that stays silent for `wait` seconds."""
@@ -6871,8 +6876,10 @@ def _append_session_event(name, record):
     except OSError:
         pass
     # The hook may run outside the session's sandbox and this file is the session's
-    # to replace, so a symlink must never redirect the append.
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o644)
+    # to replace, so a symlink must never redirect the append and a FIFO must never
+    # hold a `Stop` open.
+    pause_module().set_aside(path)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_NONBLOCK, 0o644)
     with os.fdopen(fd, "a") as fh:
         fh.write(json.dumps(record) + "\n")
 def _supervised_session_name(command):
@@ -6953,6 +6960,17 @@ def session_completion_check(as_json=False):
         print(f"{name}: " + (", ".join(gaps) if gaps else "no gaps"))
     if gaps:
         sys.exit(1)
+def _hook_context_tokens(payload):
+    """The size of the conversation, from the tail of the transcript the `Stop` input
+    names. It is read here, by the session's own hook, so that a pass never opens a path
+    from a shared file, and only a number leaves. Any fault is None and never costs the
+    `turn_end` this hook is there to write."""
+    try:
+        module = warm_module()
+        return module.context_tokens(pause_module().read_regular(payload.get("transcript_path"),
+                                                                 module.TRANSCRIPT_TAIL_BYTES, tail=True))
+    except Exception:
+        return None
 def session_emit(event, guard=False, runtime=None):
     """Append one normalized schema 2 line to the calling session's own
     `<name>.events.jsonl` (session-wake design Decision 2). The session name is
@@ -6983,7 +7001,10 @@ def session_emit(event, guard=False, runtime=None):
         _append_session_event(name, signals.build_event(name, signals.GUARD_CONTINUE, payload, now(), agent, redact))
         print(json.dumps({"decision": "block", "reason": message}))
         return
-    _append_session_event(name, signals.build_event(name, event, payload, now(), agent, redact))
+    record = signals.build_event(name, event, payload, now(), agent, redact)
+    if event == "turn_end" and agent == "claude" and os.environ.get("NOGG_SESSION_ROLE") == "orchestrator":
+        record["context_tokens"] = _hook_context_tokens(payload)
+    _append_session_event(name, record)
 SIGNAL_NEXT_STEP = {
     "blocked": "Record the detail in the Bead note (a discovery if it blocks), then end your turn.",
     "done": "End your turn now.",
@@ -8710,6 +8731,7 @@ DISPATCH_TAIL_BYTES = 64 * 1024
 DISPATCH_STATE_BYTES = 16 * 1024 * 1024
 DISPATCH_AUDIT_ROWS_BYTES = 2 * DISPATCH_AUDIT_BYTES
 PAUSE_LOCK_WAIT_SECONDS = 60
+DISPATCH_GH_TIMEOUT_SECONDS = 30
 # What the send path says when it stopped before anything was submitted.
 WAKE_NOT_SENT = ("nothing was", "cannot send", "refusing", "timed out waiting for session lock")
 def dispatch_dir(): return ORCHESTRATOR_HOME / ".nogging/state/dispatch"
@@ -8763,14 +8785,19 @@ def dispatch_policy(pause=None):
     return dispatch_module().policy_from(CFG.get("session_dispatch"), hold_sends=pause is not None)
 def wake_policy():
     return wake_module().policy_from((CFG.get("session_dispatch") or {}).get("wake"))
-def dispatch_wake_hold(pause=None, failed_end=False):
+def warm_policy():
+    return warm_module().policy_from(CFG.get("session_dispatch"))
+def dispatch_wake_hold(pause=None, failed_end=False, moment=None):
     """The one place a host-wide hold stops the digest, urgent items included: a pause
-    and quiet hours (TASK-SWK-010) return their reason here. The queue goes on being
-    evaluated. A pause whose end failed holds only the digest, whose summary would
-    otherwise go out on every pass."""
+    and quiet hours return their reason here. The queue goes on being evaluated, and
+    nudges, retirement and CI tracking use no turn of the orchestrator. A pause whose end
+    failed holds only the digest, whose summary would otherwise go out on every pass."""
     if failed_end:
         return "the pause could not be ended"
-    return f"paused until {pause_module().until_text(pause)}" if pause else None
+    if pause:
+        return f"paused until {pause_module().until_text(pause)}"
+    window = warm_module().quiet_window(warm_policy()["quiet_hours"], moment or dt.datetime.now(dt.timezone.utc))
+    return f"quiet hours {window}" if window else None
 def _dispatch_issues(dry_run):
     """The Bead list, cached 300 s across passes. A failed read is None, never the
     older copy: a stale Bead must not retire or report a session."""
@@ -8977,7 +9004,7 @@ def _deliver_wake(queue, moment, dry_run=False, pause=None, failed_end=False):
                                 "outcome": "failed: the delivery was interrupted"})
         module.mark_failed(queue, "the last delivery was interrupted", moment, True)
     policy = wake_policy()
-    plan = module.plan(queue, policy, moment, dispatch_wake_hold(pause, failed_end))
+    plan = module.plan(queue, policy, moment, dispatch_wake_hold(pause, failed_end, moment))
     if not plan["items"]:
         queue.pop("hold", None)
         return None
@@ -8991,6 +9018,113 @@ def _deliver_wake(queue, moment, dry_run=False, pause=None, failed_end=False):
     if dry_run:
         return {"outcome": "dry-run", "id": wake, "items": len(shown), "text": message}
     return {"outcome": _send_wake(queue, wake, message, shown, told, record, moment), "id": wake, "items": len(shown)}
+def _open_pull_request(dry_run):
+    """Whether a pull request is open, cached like the Bead list. A failed read is None,
+    never the older copy: no message may depend on it."""
+    cached = _read_dispatch_state("pulls.json")
+    fetched = cached.get("fetched_at")
+    if (isinstance(fetched, (int, float)) and isinstance(cached.get("open"), bool)
+            and 0 <= time.time() - fetched < dispatch_module().BEADS_CACHE_SECONDS):
+        return cached["open"]
+    try:
+        res = run("gh", "pr", "list", "--state", "open", "--limit", "1", "--json", "number", check=False,
+                  timeout=DISPATCH_GH_TIMEOUT_SECONDS)
+        rows = json.loads(res.stdout or "[]") if res.returncode == 0 else None
+    except Exception:
+        return None
+    if not isinstance(rows, list):
+        return None
+    if not dry_run:
+        atomic_json_state(data_dir(dispatch_dir()) / "pulls.json", {"fetched_at": time.time(), "open": bool(rows)})
+    return bool(rows)
+def _work_is_active(facts, dry_run):
+    """A live Lead with a Bead or a live planner, the targets of this pass, or an open pull
+    request. A session that could not be read leaves it unknown unless another is live."""
+    states = {fact["state"] for fact in facts}
+    if states - {"gone", "unknown"}:
+        return True
+    return None if "unknown" in states else _open_pull_request(dry_run)
+def _warm_facts(record, state, memory, pause):
+    """The orchestrator's side of `warm_plan`: only a turn that ended starts an interval."""
+    module, signals = warm_module(), signals_module()
+    _, last = signals.latest_state(signals.read_events(session_events_path(record["name"])))
+    turn = last if last and last.get("event") == "turn_end" else {}
+    return {"agent": record.get("agent") or "claude", "state": state, "paused": pause is not None,
+            "idle_since": turn.get("timestamp"), "context_tokens": turn.get("context_tokens"),
+            "warmed_at": memory.get("warmed_at"),
+            "compacted_at": module.latest(memory.get("compacted_at"), (pause or {}).get("compacted_at"))}
+def _note_warm(memory, detail, moment):
+    """Write down why nothing went out once, when it changes, like a wake hold."""
+    if memory.get("note") != detail:
+        memory["note"] = detail
+        _append_dispatch_audit({"time": dispatch_module().iso(moment), "action": "warm", "outcome": detail})
+        atomic_json_state(data_dir(dispatch_dir()) / "warm.json", memory)
+def _warm_target(action, record):
+    """(record, reason to hold). A keep-warm waits under the usage hold. It is no wake, so
+    it counts against neither limit of the digest. The state is the last thing read."""
+    module = warm_module()
+    if action == module.KEEP_WARM:
+        hold = wake_module().usage_hold(_orchestrator_usage(record), wake_policy())
+        if hold:
+            return None, hold
+    record, state = orchestrator_target()
+    return (record, None) if record is not None and state == "idle" else (None, f"orchestrator {state}")
+def _send_warm(action, record, memory, pause, moment):
+    """One fixed message, with its record written first, so a state directory that cannot
+    be written sends nothing. A send that stopped before it submitted anything reached
+    nobody and a later pass tries again. One that may have landed is spent: at most one
+    per interval."""
+    module, lib = warm_module(), dispatch_module()
+    key = "warmed_at" if action == module.KEEP_WARM else "compacted_at"
+    before, memory[key] = memory.get(key), lib.iso(moment)
+    atomic_json_state(data_dir(dispatch_dir()) / "warm.json", memory)
+    outcome = "sent"
+    try:
+        with redirect_stdout(io.StringIO()):
+            orchestrator_send(record, module.MESSAGES[action])
+    except (Exception, SystemExit) as exc:
+        outcome = "failed: " + (wake_module().text(str(exc), redact, 200) or "unknown error")
+        if any(token in str(exc) for token in WAKE_NOT_SENT):
+            memory[key] = before
+            atomic_json_state(dispatch_dir() / "warm.json", memory)
+            _note_warm(memory, f"{action} {outcome}", moment)
+            return outcome
+    if action == module.COMPACT and pause:
+        pause_module().write(pause_path(), {**pause, "compacted_at": memory[key]})
+    memory.pop("note", None)
+    atomic_json_state(dispatch_dir() / "warm.json", memory)
+    _append_dispatch_audit({"time": lib.iso(moment), "action": "warm", "kind": action, "outcome": outcome})
+    return outcome
+def _warm_step(facts, moment, dry_run, pause):
+    """At most one fixed message to an idle orchestrator (design Decision 15), or None.
+    `active` costs a `gh` call, so it is read only where its answer can send something."""
+    module, policy = warm_module(), warm_policy()
+    record, state = orchestrator_target()
+    if record is None:
+        return None
+    memory = _read_dispatch_state("warm.json")
+    view = _warm_facts(record, state, memory, pause)
+    if not module.may_act(view, policy, moment):
+        return None
+    if pause is None and not module.quiet_window(policy["quiet_hours"], moment):
+        view["active"] = _work_is_active(facts, dry_run)
+    action = module.warm_plan(view, policy, moment)
+    if not action:
+        return None
+    if dry_run:
+        return {"action": action, "outcome": "dry-run"}
+    record, hold = _warm_target(action, record)
+    if hold:
+        _note_warm(memory, f"{action} held: {hold}", moment)
+        return {"action": action, "outcome": f"held: {hold}"}
+    return {"action": action, "outcome": _send_warm(action, record, memory, pause, moment)}
+def _warm_guarded(facts, moment, dry_run, pause):
+    """A fault here costs no pass: the queue is saved and the cache only lapses."""
+    try:
+        return _warm_step(facts, moment, dry_run, pause)
+    except Exception as exc:
+        print(f"nogg: the keep-warm step failed: {exc}", file=sys.stderr)
+        return None
 def _quarantine_dispatch_state(filename):
     """Move a file that does not parse aside: read as empty it would lose the rate
     history and the sticky items without a word."""
@@ -9094,15 +9228,21 @@ def _dispatch_pass(dry_run, as_json):
     wake = _deliver_wake(queue, moment, dry_run, pause, failed_end)
     if not dry_run:
         atomic_json_state(dispatch_dir() / "queue.json", queue)
+    # A wake that went out, or may have, starts a turn, and nothing follows it in this pass.
+    woken = wake is not None and not wake["outcome"].startswith("held")
+    warm = None if woken else _warm_guarded(facts, moment, dry_run, pause)
     items = queue.get("items") or []
     if as_json:
         print(json.dumps({"enabled": True, "dry_run": dry_run, "sessions": len(facts), "actions": results,
-                          "queue": items, "wake": wake, "states": {fact["session"]: fact["state"] for fact in facts}}))
+                          "queue": items, "wake": wake, "warm": warm,
+                          "states": {fact["session"]: fact["state"] for fact in facts}}))
         return
     for result in results:
         print(f"{result['type']} {result['session']} ({result.get('reason')}): {result['outcome']}")
     if wake:
         print(f"wake {wake.get('id') or '-'} ({wake['items']} item(s)): {wake['outcome']}")
+    if warm:
+        print(f"warm {warm['action']}: {warm['outcome']}")
     for item in items:
         print(f"queued {item.get('kind')} {item.get('session')}: {item.get('reason')}")
     print(f"session dispatch: {len(facts)} session(s), {len(results)} action(s), {len(items)} queued")
@@ -10132,6 +10272,22 @@ def pause_diagnostics():
                         "`nogg resume` does, and until then a failed end holds the digest")
     return warnings, [f"paused until {module.until_text(state)}"] if module.is_active(state, moment) else []
 
+def warm_diagnostics():
+    """The NOTE of a host whose dispatcher is on: keep-warm, quiet hours and the next
+    compaction. It reads no pull request, so it says what that compaction still needs.
+    A missing orchestrator has a NOTE of its own, and this adds none."""
+    try:
+        if not dispatch_policy()["enabled"]:
+            return []
+        module, moment = warm_module(), dt.datetime.now(dt.timezone.utc)
+        record, state = orchestrator_target()
+        if record is None:
+            return []
+        view = _warm_facts(record, state, _read_dispatch_state("warm.json"), current_pause(moment))
+        return [module.status_line(view, warm_policy(), moment)]
+    except Exception as exc:
+        return [f"session warm: unavailable: {exc}"]
+
 LOOP_TICK_WARN_SECONDS = 300
 
 def loop_timer_state():
@@ -10275,6 +10431,7 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
     notes.extend(routing_notes)
     notes.extend(loop_notes)
     notes.extend(pause_notes)
+    notes.extend(warm_diagnostics())
     notes.extend(mapping_health_lines())
     try:
         integrity_lines, _integrity_attention = worktree_integrity_diagnostics()
