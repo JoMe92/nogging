@@ -71,12 +71,17 @@ install the statusline capture used by the launch usage gate.
 ```bash
 ./scripts/nogg usage --agent claude
 ./scripts/nogg usage --agent codex --model <model-name> --json
+./scripts/nogg usage --agent pi
 ./scripts/nogg usage install-statusline
 ```
 
+For `--agent pi` the command reads the shared Z.ai snapshot and, when it is
+stale, runs one bounded probe through Pi's own key resolver; set
+`PI_NOGG_USAGE_PROBE=0` to make it cache-only.
+
 **Used by.** The operator and the Orchestration Agent.
 
-**Read more.** [Usage limits](usage-limits.md) and the
+**Read more.** [Usage limits](usage-limits.md) (see [Pi via Z.ai](usage-limits.md#pi-via-zai)) and the
 [launch usage gate](running-work-in-sessions.md#launch-usage-gate).
 
 ## validate

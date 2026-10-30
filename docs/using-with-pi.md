@@ -6,9 +6,9 @@ whichever agent runs it. This page is for users who run the Nogging loop from
 **Pi** (`https://pi.dev/`, package `@earendil-works/pi-coding-agent`) instead
 of Claude Code or Codex, and covers what is specific to that setup.
 
-Everything verified below was checked hands-on against the installed
-`@earendil-works/pi-coding-agent@0.85.0` package (source and shipped example
-extensions), not just pi.dev's docs. Pi moves fast; where a detail is
+Everything verified below was checked against the installed
+`@earendil-works/pi-coding-agent@1.4.0` package (its source, shipped docs and
+type definitions), not just pi.dev's docs. Pi moves fast; where a detail is
 version-dependent it is called out so you can re-check.
 
 ## Prerequisites
@@ -42,7 +42,7 @@ In addition to the usual target-repo prerequisites (`bd`/Beads, `python3`,
 
 ## What the installer places under `.pi/`
 
-`npx github:JoMe92/nogging#<tag> init` (or `update`) ships two directories,
+`npx github:JoMe92/nogging#<tag> init` (or `update`) ships three directories,
 copied verbatim on every `init`/`update`:
 
 | Path | Behaviour |
@@ -50,6 +50,7 @@ copied verbatim on every `init`/`update`:
 | `.pi/prompts/{plan,discovery-review,sync-now}.md` | The **workflow prompts** — Pi reads `.pi/prompts/*.md` directly from the repository (confirmed from source: `resource-loader.js` resolves `<repo>/.pi/prompts` literally), so — unlike Codex — **no symlink helper is needed**. |
 | `.pi/extensions/nogging-guard.ts` | The **guard extension**: Pi's project-local floor, since Pi ships no native sandbox or execution-policy mechanism of its own. See *The guard extension* below. |
 | `.pi/extensions/nogging-lifecycle.ts` | The **lifecycle extension**: reports a supervised session's turns so `session watch` and `session send` can tell `working` from `idle`. See *The lifecycle extension* below. |
+| `.pi/nogging/` | The **optional extensions** home: a README of conventions, shared helpers under `lib/`, and one directory per extension under `extensions/` (today `glm-usage`). Pi never discovers it, so nothing in it loads until you enable it; see [Pi extensions](pi-extensions.md). `init` writes it and enables nothing, and `update` refreshes it and keeps your `pi_extensions` value. |
 
 A user's own `.pi/settings.json` or other `.pi/*` content is never touched.
 
@@ -89,13 +90,17 @@ List their names in `.nogging/config.json`:
 
 Every `session launch --agent pi` then passes
 `--extension <working directory>/.pi/nogging/extensions/<name>/index.ts` to Pi
-after the guard, in the order you listed. The session record stores
+after the guard (and the lifecycle extension), in the order you listed, resolved
+from the session's working directory like the guard. They load beside the guard
+and cannot replace or disable it. The session record stores
 `pi_extensions`, and the launch output prints `pi-extensions=<names>`. A value
 that is not an array of unique kebab-case names, or a name without an
 `index.ts`, refuses the launch before any side effect, and `validate` and
 `doctor` report it as a FAIL; run `nogg update` to restore a missing extension,
 or remove the name. An empty or absent list launches exactly as before, and
-other agents ignore the key.
+other agents ignore the key. To load an extension in a Pi you start yourself,
+use `nogg pi-ext install <name>` instead. The extension itself, its footer and
+its conventions are described in [Pi extensions](pi-extensions.md).
 
 ## The lifecycle extension — `.pi/extensions/nogging-lifecycle.ts`
 
@@ -226,6 +231,7 @@ are reported back to the Lead Agent as discoveries.
 
 ## See also
 
+- [Pi extensions](pi-extensions.md) — the optional extensions home and the `glm-usage` quota footer.
 - `AGENTS.md` — the canonical, tool-neutral instruction file (its *Tool notes*
   section has the Claude-vs-Codex-vs-Pi summary).
 - [Operating model](operating-model.md) — roles, the delegation model, session supervision.
