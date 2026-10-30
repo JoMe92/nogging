@@ -23,6 +23,7 @@ SEND_STATES = ("idle", "waiting_background")
 MAX_ATTEMPTS = 3
 START_RECONCILE_MINUTES = 10
 REASON_MAX = 300
+PAUSED_GLOBAL = "paused-global"
 
 
 def iso(value):
@@ -89,12 +90,13 @@ class LoopRunner:
     verified delivery path. `sessions` carries the launch-mode operations:
     `model(run)`, `start(name, run, run_id, message)`, `state(session)`,
     `retire(run_id, reason)` and `adopt(run_id)`. They are injected so the
-    scheduler is testable without starting a real session.
+    scheduler is testable without starting a real session. `pause(now)` returns
+    the host-wide pause in force, or None.
     """
 
     def __init__(self, root, definitions, *, target, usage, send, sessions=None,
                  now=lambda: datetime.now(UTC), host=None, multi_machine=False,
-                 redact=lambda text: text):
+                 redact=lambda text: text, pause=lambda _now: None):
         self.root = Path(root).resolve()
         self.definitions = Path(definitions)
         self.target = target
@@ -105,6 +107,7 @@ class LoopRunner:
         self.host = host or os.uname().nodename
         self.multi_machine = multi_machine
         self.redact = redact
+        self.pause = pause
         self.lock_path = self.root / ".nogging/locks/loops.lock"
 
     @contextmanager
@@ -137,6 +140,9 @@ class LoopRunner:
         state = loop_state.read_state(self.root)
         state.setdefault("loops", {})
         self._state, self._seen = state, loop_state.operator_fields(state)
+        # A pause stops automation, not people: `run-now` is someone's decision.
+        self._pause = None if manual else self.pause(instant)
+        self._skips_logged = self._paused_rows() if self._pause else set()
         if not manual:
             state["last_tick"] = iso(instant)
             self._save()
@@ -176,6 +182,9 @@ class LoopRunner:
         state = self._state
         loop = config["loops"][name]
         if loop.get("host") and loop["host"] != self.host:
+            return
+        if self._pause and name not in self._pause["keep_loops"]:
+            self._tick_paused(instant, config, name, loop)
             return
         item = state["loops"].setdefault(name, {})
         self._advance_active(instant, name, loop, item)
@@ -244,6 +253,41 @@ class LoopRunner:
         base = _base_event(name, slot, slot, "manual" if manual else "scheduled", loop)
         self._evaluate(instant, config, state, name, loop, item, slot, base,
                        manual=manual)
+
+    def _paused_rows(self):
+        """The slots already logged `paused-global`. No loop state may record one, so that
+        `resume` finds every loop as it was, and the run log is what keeps a slot from
+        being logged on every tick. A row lost to rotation costs one repeated line."""
+        rows = set()
+        try:
+            lines = event_path(self.root).read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            return rows
+        for line in lines:
+            if PAUSED_GLOBAL in line:
+                try:
+                    row = json.loads(line)
+                    rows.add((row.get("loop"), row.get("slot")))
+                except (ValueError, AttributeError, TypeError, RecursionError):
+                    continue
+        return rows
+
+    def _tick_paused(self, instant, config, name, loop):
+        """A loop outside `keep_loops`. A run already going is still supervised, because
+        a pause stops no session. Nothing starts, and nothing else is written for it."""
+        item = self._state["loops"].get(name) or {}
+        if item.get("active_run"):
+            self._advance_active(instant, name, loop, item)
+        _, approval = loop_state.approval_status(self.root, self.definitions, config, name)
+        anchors = [parse_time(self._pause["started_at"])]
+        anchors.extend(parse_time(stamp) for stamp in (item.get("last_evaluated"), (approval or {}).get("approved_at"))
+                       if stamp)
+        due = loop_schedule.due({"timezone": config["timezone"], **loop["schedule"]}, max(anchors), instant)
+        if due is None or (name, iso(due["slot"])) in self._skips_logged:
+            return
+        base = _base_event(name, due["slot"], due["slot"], "scheduled", loop)
+        self._emit_outcome(instant, base, name, "skipped", PAUSED_GLOBAL)
+        self._skips_logged.add((name, iso(due["slot"])))
 
     def _save(self):
         self._seen = loop_state.save_tick_state(self.root, self._state, self._seen)
