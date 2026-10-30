@@ -773,10 +773,18 @@ prose.
 Run one deterministic follow-up pass, with no model. It reads every live Lead with a
 Bead and every planning session, decides from their real state, and acts: an idle
 Lead with gaps or red CI gets a fixed nudge, and what needs a decision is queued in
-`.nogging/state/dispatch/queue.json` and printed. Nothing depends on a hook having
-fired, and a pass that is repeated does nothing twice. A fact it cannot read, such as
-a failing `gh` or `bd`, is `unknown` and produces no action. It never merges, answers
-a prompt, launches a session or chooses a model.
+`.nogging/state/dispatch/queue.json`. Nothing depends on a hook having fired, and a
+pass that is repeated does nothing twice. A fact it cannot read, such as a failing
+`gh` or `bd`, is `unknown` and produces no action. It never merges, answers a prompt,
+launches a session or chooses a model.
+
+Every pass re-evaluates the queue, so a condition that clears before delivery simply
+disappears. What stays ready goes to the orchestrator as one digest of at most 1.5 KiB
+that starts with `[nogg wake`, through the same verified send as a `send` loop and only
+while the orchestrator sits at its prompt: idle, or waiting on nothing but its own
+background job. A busy or absent orchestrator, or typed input in its composer, keeps
+the items for a later pass. The `wake` keys of
+[`session_dispatch`](configuration.md#session_dispatch) set the timing.
 
 It needs `session_dispatch.enabled`, and otherwise prints that it is disabled. It runs
 only in the main checkout and is refused in every supervised session, except with
@@ -792,6 +800,20 @@ and `--once` says so for a scheduler.
 **Used by.** An operator or an external scheduler. State, the queue and the
 `dispatch.jsonl` audit log live under `.nogging/state/dispatch/`. See
 [`session_dispatch`](configuration.md#session_dispatch).
+
+### session inbox
+
+Show the wake queue: the pending items, why delivery is held, the last wakes and the
+recent actions from the audit log. It only reads, and works with the dispatcher off.
+Item text is agent output, cleaned and labelled as data.
+
+```bash
+./scripts/nogg session inbox
+./scripts/nogg session inbox --json
+```
+
+**Used by.** Every session. The orchestrator reads it when a digest ends in
+`Overflow:`.
 ## loop
 
 **Purpose.** Define recurring work in a repository file, approve its exact

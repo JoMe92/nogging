@@ -2,6 +2,7 @@ import importlib.util
 import json
 import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -13,6 +14,11 @@ spec.loader.exec_module(sig)
 STAMP = "2026-10-30T10:00:00Z"
 
 
+def pem(edge, kind=""):
+    """A PEM marker built at runtime: the credential scan refuses the literal."""
+    return f"-----{edge} {kind}PRIVATE" + " KEY-----"
+
+
 class ExcerptTests(unittest.TestCase):
     def test_single_line_control_free_bounded_and_scrubbed(self):
         text = "a\nb\t\x07c owner@example.com " + "x" * 400
@@ -20,6 +26,33 @@ class ExcerptTests(unittest.TestCase):
         self.assertTrue(out.startswith("a B c ***EMAIL*** "))
         self.assertLessEqual(len(out), 300)
         self.assertNotRegex(out, r"[\x00-\x1f]")
+
+    def test_secret_shapes_go_without_any_help_from_redact(self):
+        for leak in ("token: s3cr3tvalue", '"api_key": "s3cr3tvalue"', "Authorization: Basic s3cr3tvalue",
+                     "password=s3cr3tvalue", "ghp_" + "a" * 36, "sk-ant-" + "b" * 30, "glpat-" + "c" * 20,
+                     "https://user:s3cr3tvalue@host/x", "aB3" * 14,
+                     pem("BEGIN", "RSA ") + "\ns3cr3tvalue\nmore\n" + pem("END", "RSA "),
+                     pem("BEGIN") + "\ns3cr3tvalue cut off here"):
+            out = sig.clean_excerpt(f"saw {leak} there")
+            self.assertIn("***REDACTED***", out, leak)
+            self.assertNotIn("s3cr3tvalue", out, leak)
+
+    def test_ordinary_text_and_heads_stay(self):
+        for text in ("max_tokens: 4096", "author: a teammate", "head " + "a1b2c3d4" * 5, "sf-lead-spec-rn7m-20261030"):
+            self.assertEqual(sig.clean_excerpt(text), text)
+
+    def test_an_address_with_a_wide_character_goes_whole(self):
+        self.assertEqual(sig.clean_excerpt("j\u00f6nas@b\u00fccher.de"), "***EMAIL***")
+
+    def test_size_cannot_stall_it(self):
+        started = time.monotonic()
+        for text in ("a" * 256 * 1024, "a-" * 128 * 1024, "." * 256 * 1024):
+            sig.clean_excerpt(text, lambda s: s)
+        self.assertLess(time.monotonic() - started, 2)
+
+    def test_a_secret_across_the_limit_is_still_seen_whole(self):
+        out = sig.clean_excerpt("x " * 148 + "ghp_" + "a" * 36)
+        self.assertNotIn("ghp_", out)
 
     def test_non_text_and_blank_are_none(self):
         self.assertIsNone(sig.clean_excerpt(None))
