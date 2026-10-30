@@ -25,6 +25,14 @@ and GitHub Releases for that history.
   labelled as data. `nogg session inbox [--json]` shows the queue in every
   session, and the orchestrator prompt gains the wake protocol, the no-watcher
   rule and the capability check for kickoffs.
+- `nogg pause [--until|--days] [--keep-loop <name> ...]`, `pause --status
+  [--json]` and `nogg resume`: hold automation for up to 60 days. No digest,
+  nudge, `limit` resume or scheduled loop goes out, the queue and retirement go
+  on, and the pause ends by itself at the first `loop tick` or `session dispatch
+  --once` past its end. What it held goes out as one digest with a `resumed`
+  summary, and a pause in which nothing happened costs no wake. Mutations run
+  from an operator shell and the Orchestration Agent; `--status` reads in every
+  session. `doctor`, `session list`, `loop list` and `session inbox` show it.
 - Launch-mode loops: a fresh, bounded `loop` session per run with the loop's
   exact agent, tier and authority, stopped and retired when it finishes or
   passes `max_runtime`. `init` and `update` render

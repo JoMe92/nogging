@@ -17,6 +17,8 @@
       "Bash(./scripts/nogg session stop:*)",
       "Bash(./scripts/nogg session list:*)",
       "Bash(./scripts/nogg session inbox:*)",
+      "Bash(./scripts/nogg pause:*)",
+      "Bash(./scripts/nogg resume:*)",
       "Bash(./scripts/nogg session capabilities:*)",
       "Bash(./scripts/nogg session log:*)",
       "Bash(./scripts/nogg session watch:*)",

@@ -210,6 +210,10 @@ A duration is a whole number with an optional `s`, `m` or `h`. `quiet_hours` is 
 of `"HH:MM-HH:MM"` windows. An unknown key or a bad value fails `validate` and
 `doctor`, naming it, and `session dispatch` refuses to run.
 
+A pause is a command and no key: [`nogg pause`](commands.md#pause) holds an enabled
+dispatcher for a few days and ends by itself, which a forgotten config edit would not.
+Its state, `.nogging/state/pause.json`, is host-local and never committed.
+
 ### `orchestrator_context`
 
 An optional object, with unknown keys refused the same way:
