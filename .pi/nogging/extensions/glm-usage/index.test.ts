@@ -415,6 +415,35 @@ test("loading twice yields one instance; shutdown releases for a reload", async 
   } finally { await h.cleanup(); }
 });
 
+test("a forced /glm-usage waits for an unforced refresh and then fetches itself", async () => {
+  let release: (() => void) | undefined;
+  const gate = new Promise<void>((r) => { release = r; });
+  const h = harness({ key: async () => { await gate; return KEY; } });
+  try {
+    writeUsageCache("pi-zai.json", {
+      schema_version: 1, provider: "zai", source: "pi-extension",
+      observed_at: new Date(T - 1000).toISOString(),
+      windows: { short: { used_percent: 10, resets_at: new Date(T + HOUR).toISOString() } },
+    }, h.env);
+    h.load();
+    void h.handlers.get("session_start")!({}, h.ctx);
+    const cmd = h.commands.get("glm-usage").handler("", h.ctx);
+    await idle();
+    release!();
+    await cmd;
+    await idle();
+    assert.equal(h.requests.length, 1, "the tick used the snapshot; the forced refresh made the one request");
+  } finally { await h.cleanup(); }
+});
+
+test("requests refuse redirects", async () => {
+  const h = harness();
+  try {
+    await h.start();
+    assert.equal(h.requests[0].init.redirect, "error");
+  } finally { await h.cleanup(); }
+});
+
 test("a key never leaves the request header", async () => {
   const h = harness();
   try {

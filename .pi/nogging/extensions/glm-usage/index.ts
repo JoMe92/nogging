@@ -27,7 +27,7 @@ const CLOCK_SKEW_MS = 5_000;
 const REGISTRY = Symbol.for("nogging.glm-usage.active");
 
 export type Deps = {
-  fetch?: (url: string, init: { headers: Record<string, string>; signal: AbortSignal }) => Promise<any>;
+  fetch?: (url: string, init: { headers: Record<string, string>; signal: AbortSignal; redirect: "error" }) => Promise<any>;
   now?: () => number;
   env?: CacheEnv;
   setInterval?: (fn: () => void, ms: number) => any;
@@ -55,6 +55,7 @@ export function create(deps: Deps = {}) {
     let timer: any;
     let uiCtx: Ctx | undefined;
     let inflight: Promise<void> | undefined;
+    let inflightForced = false;
     let lastFetchMs = -Infinity;
     let snapshotError: string | undefined;
 
@@ -75,6 +76,8 @@ export function create(deps: Deps = {}) {
         const res = await doFetch(ENDPOINT, {
           headers: { Authorization: `Bearer ${key}`, Accept: "application/json" },
           signal: controller.signal,
+          // The key must not follow a redirect anywhere.
+          redirect: "error",
         });
         if (!res.ok) return { ok: false, reason: `http-${Number.isInteger(res.status) ? res.status : 0}` };
         try {
@@ -129,12 +132,19 @@ export function create(deps: Deps = {}) {
     }
 
     // One refresh at a time: a tick that lands during a slow request joins it.
+    // A forced refresh never joins an unforced one, which may only have read the
+    // shared snapshot; it runs after it.
     function refresh(ctx: Ctx, force: boolean): Promise<void> {
-      if (!inflight) {
-        inflight = doRefresh(ctx, force)
+      const run = (): Promise<void> => {
+        inflightForced = force;
+        const p: Promise<void> = doRefresh(ctx, force)
           .catch(() => { state = { quota: state.quota, observedAtMs: state.observedAtMs, error: "malformed" }; })
-          .finally(() => { inflight = undefined; });
-      }
+          .finally(() => { if (inflight === p) inflight = undefined; });
+        inflight = p;
+        return p;
+      };
+      if (!inflight) return run();
+      if (force && !inflightForced) return inflight.then(run);
       return inflight;
     }
 
@@ -152,7 +162,7 @@ export function create(deps: Deps = {}) {
         if (!ctx.hasUI) return;
         uiCtx = ctx;
         if (!timer) {
-          timer = startTimer(() => { void tick(ctx); }, POLL_MS);
+          timer = startTimer(() => { void tick(uiCtx ?? ctx); }, POLL_MS);
           timer?.unref?.();
         }
         void tick(ctx);

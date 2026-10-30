@@ -30,7 +30,8 @@ function instant(v: unknown): number | undefined {
 }
 
 function level(v: unknown): string | undefined {
-  return typeof v === "string" && v.length > 0 && v.length <= MAX_LEVEL_LENGTH ? v : undefined;
+  // Server text reaches the terminal, so only plain label characters pass.
+  return typeof v === "string" && v.length <= MAX_LEVEL_LENGTH && /^[A-Za-z0-9 ._-]+$/.test(v) ? v : undefined;
 }
 
 function windowOf(entry: Record<string, unknown>): QuotaWindow | undefined {

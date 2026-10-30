@@ -82,6 +82,14 @@ test("an invalid window does not stop the valid one; level must be a short strin
   }
 });
 
+test("a plan level with control characters is dropped", () => {
+  const body = (level: string) => ({ code: 200, data: { level, limits: [{ type: "TOKENS_LIMIT", unit: 3, percentage: 1, nextResetTime: T }] } });
+  const r = parseQuota(body("\u001b[31mpro"));
+  assert.equal(r.ok && r.quota.level, undefined);
+  const ok = parseQuota(body("pro-plus 2"));
+  assert.equal(ok.ok && ok.quota.level, "pro-plus 2");
+});
+
 test("relative time formatting", () => {
   assert.equal(formatRelative(2 * HOUR + 14 * MIN), "2h 14m");
   assert.equal(formatRelative(3 * DAY + 6 * HOUR + 59 * MIN), "3d 6h");
