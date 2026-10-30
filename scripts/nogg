@@ -5133,39 +5133,46 @@ def loop_launch_model(run):
     """The model a run will use, so usage is observed for the real windows."""
     return run.get("model") or resolve_launch_tier(run["tier"], resolve_agent(run["agent"]))["model"]
 
-def loop_runner_for_main():
-    """Build the scheduler adapter over the canonical orchestrator and sender."""
+def loop_runner_module():
     lib = str(Path(__file__).resolve().parent / "lib")
     if lib not in sys.path:
         sys.path.insert(0, lib)
     import loop_runner
+    return loop_runner
+
+def orchestrator_target():
+    """The canonical orchestrator and its state: the one target of every send run
+    and every wake digest. Send only in `loop_runner.SEND_STATES`."""
+    records = [rec for _, rec in session_records(orchestrator_sessions_dir())
+               if rec.get("role") == "orchestrator"]
+    if not records:
+        return None, "target-not-running"
+    record = max(records, key=lambda rec: rec.get("started_at", ""))
+    live = tmux_sessions()
+    if record.get("name") not in live:
+        return None, "target-not-running"
+    return record, classify_session(record, live)[0]
+
+def orchestrator_send(record, message):
+    """The verified send. The composer refusal protects typed input, and `transient`
+    says whether a retry can help."""
+    try:
+        session_send(record["name"], message, verify=True)
+    except Exception as exc:
+        detail = str(exc).lower()
+        exc.transient = any(token in detail for token in
+                            ("timeout", "deadline", "refused", "not live", "not running"))
+        raise
+
+def loop_runner_for_main():
+    """Build the scheduler adapter over the canonical orchestrator and sender."""
+    loop_runner = loop_runner_module()
     from types import SimpleNamespace
     definitions = ORCHESTRATOR_HOME / scfg("loops_file", ".nogging/loops.json")
-
-    def target():
-        records = [rec for _, rec in session_records(orchestrator_sessions_dir())
-                   if rec.get("role") == "orchestrator"]
-        if not records:
-            return None, "target-not-running"
-        record = max(records, key=lambda rec: rec.get("started_at", ""))
-        live = tmux_sessions()
-        if record.get("name") not in live:
-            return None, "target-not-running"
-        return record, classify_session(record, live)[0]
-
-    def send(record, message):
-        try:
-            session_send(record["name"], message, verify=True)
-        except Exception as exc:
-            detail = str(exc).lower()
-            exc.transient = any(token in detail for token in
-                                ("timeout", "deadline", "refused", "not live", "not running"))
-            raise
-
     sessions = SimpleNamespace(model=loop_launch_model, start=start_loop_run, state=loop_session_state,
                                retire=retire_loop_run, adopt=adopt_loop_run)
-    return loop_runner.LoopRunner(ORCHESTRATOR_HOME, definitions, target=target,
-                                  usage=loop_usage_admission, send=send, sessions=sessions,
+    return loop_runner.LoopRunner(ORCHESTRATOR_HOME, definitions, target=orchestrator_target,
+                                  usage=loop_usage_admission, send=orchestrator_send, sessions=sessions,
                                   multi_machine=CFG.get("multi_machine", False), redact=redact)
 def session_state_grants(bead, explicit=(), records=None):
     if os.environ.get("NOGG_CODEX_EXTRA_WRITABLE_ROOTS"):
@@ -6735,6 +6742,11 @@ def dispatch_module():
     sys.dont_write_bytecode = True
     import session_dispatch
     return session_dispatch
+def wake_module():
+    """Load the pure wake digest from scripts/lib beside this script."""
+    dispatch_module()
+    import session_wake
+    return session_wake
 def _read_hook_stdin(limit, wait=1.0):
     """At most `limit` bytes of hook JSON from stdin, or b'' for a terminal, a
     closed stdin or a writer that stays silent for `wait` seconds."""
@@ -8587,7 +8599,8 @@ def resume_step(name, message=None):
 # a fact unknown, and no action depends on an unknown fact.
 DISPATCH_AUDIT_BYTES = 1024 * 1024
 DISPATCH_AUDIT_GENERATIONS = 3
-def dispatch_dir(): return STATE / "dispatch"
+DISPATCH_TAIL_BYTES = 64 * 1024
+def dispatch_dir(): return ORCHESTRATOR_HOME / ".nogging/state/dispatch"
 def _read_dispatch_state(filename):
     try:
         value = json.loads((dispatch_dir() / filename).read_text())
@@ -8609,6 +8622,13 @@ def dispatch_policy():
     """The one place a host-wide hold sets `hold_sends`: a pause (TASK-SWK-009) stops
     nudges and resumes here, and items and retirement carry on."""
     return dispatch_module().policy_from(CFG.get("session_dispatch"))
+def wake_policy():
+    return wake_module().policy_from((CFG.get("session_dispatch") or {}).get("wake"))
+def dispatch_wake_hold():
+    """The one place a host-wide hold stops the digest, urgent items included: a pause
+    (TASK-SWK-009) and quiet hours (TASK-SWK-010) return their reason here. The queue
+    goes on being evaluated."""
+    return None
 def _dispatch_issues(dry_run):
     """The Bead list, cached 300 s across passes. A failed read is None, never the
     older copy: a stale Bead must not retire or report a session."""
@@ -8714,9 +8734,7 @@ def _dispatch_targets(records):
             yield rec
 def _dispatch_run(action, fact, memory, queue, moment):
     module, name, kind = dispatch_module(), action["session"], action["type"]
-    if kind == "queue":
-        module.enqueue(queue, action["item"], moment)
-    elif kind == "nudge":
+    if kind == "nudge":
         # The gather may be seconds old; idle is proved at the send, never assumed.
         if classify_session(load_session(name)[1])[0] != "idle":
             if action.get("once"):
@@ -8749,9 +8767,59 @@ def _dispatch_apply(action, fact, memory, queue, moment):
     atomic_json_state(data_dir(dispatch_dir()) / "state.json", memory)
     atomic_json_state(dispatch_dir() / "queue.json", queue)
     _append_dispatch_audit({"time": module.iso(moment), "session": action["session"], "action": action["type"],
-                            "kind": (action.get("item") or {}).get("kind"), "key": action["key"],
-                            "reason": action.get("reason"), "outcome": outcome})
+                            "key": action["key"], "reason": action.get("reason"), "outcome": outcome})
     return outcome
+def _orchestrator_usage(record):
+    """The orchestrator's usage windows, or None: what cannot be read holds nothing."""
+    usage = usage_module()
+    try:
+        return usage.observe(record.get("agent") or "claude", usage.gate_config(CFG.get("usage_gate")),
+                             model=record.get("requested_model"))
+    except Exception:
+        return None
+def _wake_target(plan, policy):
+    """(record, reason to hold). State is read here, right before the send, because a
+    gather may be seconds old."""
+    record, state = orchestrator_target()
+    if record is None or state not in loop_runner_module().SEND_STATES:
+        return None, f"orchestrator {state}"
+    return record, None if plan["urgent"] else wake_module().usage_hold(_orchestrator_usage(record), policy)
+def _note_wake_hold(queue, hold, moment):
+    """Write down a hold once, when its reason changes, and not on every pass."""
+    if queue.get("hold") != hold:
+        _append_dispatch_audit({"time": dispatch_module().iso(moment), "action": "wake", "outcome": f"held: {hold}"})
+    queue["hold"] = hold
+def _deliver_wake(queue, moment, dry_run=False):
+    """One digest, or why not (design Decision 8). A failed delivery keeps the items
+    and a later pass retries, so the send can never lose one. None means nothing is due."""
+    module = wake_module()
+    policy = wake_policy()
+    plan = module.plan(queue, policy, moment, dispatch_wake_hold())
+    if not plan["items"]:
+        queue.pop("hold", None)
+        return None
+    record, hold = (None, plan["hold"]) if plan["hold"] else _wake_target(plan, policy)
+    if hold:
+        if not dry_run:
+            _note_wake_hold(queue, hold, moment)
+        return {"outcome": f"held: {hold}", "items": len(plan["items"])}
+    wake = module.wake_id(moment)
+    message, shown, told = module.render(wake, plan["items"], queue.get("retired") or [], redact)
+    if dry_run:
+        return {"outcome": "dry-run", "id": wake, "items": len(shown), "text": message}
+    try:
+        with redirect_stdout(io.StringIO()):
+            orchestrator_send(record, message)
+    except (Exception, SystemExit) as exc:
+        detail = module.text(str(exc), redact, 200) or "unknown error"
+        module.mark_failed(queue, detail, moment)
+        outcome = f"failed: {detail}"
+    else:
+        module.mark_delivered(queue, wake, shown, told, moment)
+        outcome = "delivered"
+    atomic_json_state(data_dir(dispatch_dir()) / "queue.json", queue)
+    _append_dispatch_audit({"time": dispatch_module().iso(moment), "action": "wake", "id": wake, "keys": [item["key"] for item in shown], "outcome": outcome})
+    return {"outcome": outcome, "id": wake, "items": len(shown)}
 def _dispatch_pass(dry_run, as_json):
     module = dispatch_module()
     records = [rec for _path, rec in session_records()]
@@ -8769,17 +8837,30 @@ def _dispatch_pass(dry_run, as_json):
     by_session = {fact["session"]: fact for fact in facts}
     results = []
     for action in actions:
-        outcome = "dry-run" if dry_run else _dispatch_apply(action, by_session[action["session"]], memory, queue, moment)
-        results.append({**action, "outcome": outcome})
+        if action["type"] != "queue":
+            outcome = "dry-run" if dry_run else _dispatch_apply(action, by_session[action["session"]], memory, queue, moment)
+            results.append({**action, "outcome": outcome})
+    added, cleared = wake_module().reconcile(queue, actions, facts, wake_policy(), moment, redact)
+    results.extend({"type": "queue", "session": item["session"], "key": item["key"], "reason": item.get("reason"),
+                    "kind": item["kind"], "outcome": "dry-run" if dry_run else "queued"} for item in added)
+    if not dry_run:
+        for row, outcome in [*((item, "queued") for item in added), *((item, "cleared") for item in cleared)]:
+            _append_dispatch_audit({"time": module.iso(moment), "session": row.get("session"), "action": "item",
+                                    "kind": row.get("kind"), "key": row["key"], "reason": row.get("reason"),
+                                    "outcome": outcome})
+    wake = _deliver_wake(queue, moment, dry_run)
     if not dry_run:
         atomic_json_state(data_dir(dispatch_dir()) / "state.json", memory)
+        atomic_json_state(dispatch_dir() / "queue.json", queue)
     items = queue.get("items") or []
     if as_json:
         print(json.dumps({"enabled": True, "dry_run": dry_run, "sessions": len(facts), "actions": results,
-                          "queue": items, "states": {fact["session"]: fact["state"] for fact in facts}}))
+                          "queue": items, "wake": wake, "states": {fact["session"]: fact["state"] for fact in facts}}))
         return
     for result in results:
         print(f"{result['type']} {result['session']} ({result.get('reason')}): {result['outcome']}")
+    if wake:
+        print(f"wake {wake.get('id') or '-'} ({wake['items']} item(s)): {wake['outcome']}")
     for item in items:
         print(f"queued {item.get('kind')} {item.get('session')}: {item.get('reason')}")
     print(f"session dispatch: {len(facts)} session(s), {len(results)} action(s), {len(items)} queued")
@@ -8814,6 +8895,33 @@ def session_dispatch(dry_run=False, as_json=False):
             print(json.dumps({"enabled": True, "busy": True}) if as_json else "session dispatch: another pass holds the lock")
             return
         _dispatch_pass(False, as_json)
+def _dispatch_audit_tail():
+    """The newest audit rows. It runs in any session, so a bad line is skipped."""
+    try:
+        with (dispatch_dir() / "dispatch.jsonl").open("rb") as stream:
+            stream.seek(0, os.SEEK_END)
+            stream.seek(max(0, stream.tell() - DISPATCH_TAIL_BYTES))
+            lines = stream.read().decode(errors="replace").splitlines()
+    except OSError:
+        return []
+    rows = []
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
+def session_inbox(as_json=False):
+    """The queue, the last wakes and the audit tail. It only reads, works with the
+    dispatcher off and in every session, and takes no lock."""
+    module = wake_module()
+    view = module.inbox(_read_dispatch_state("queue.json"), _dispatch_audit_tail(), redact)
+    if as_json:
+        print(json.dumps(view))
+    else:
+        print("\n".join(module.inbox_lines(view, redact)))
 # --- orchestrator: the always-on supervisor ------------------------------
 # `orchestrator run` is the idempotent process the systemd user service starts.
 # The thing kept alive is a normal supervised Claude session (a durable record,
@@ -10482,6 +10590,8 @@ def main():
     sdsp.add_argument("--once", action="store_true", help="run one pass and exit, which every run does")
     sdsp.add_argument("--dry-run", action="store_true", help="report the decided actions and change nothing")
     sdsp.add_argument("--json", action="store_true")
+    sinb = ssub.add_parser("inbox", help="show the pending wake items, the last deliveries and recent actions")
+    sinb.add_argument("--json", action="store_true")
     # `run-quiet` owns everything after its first `--` verbatim (the command's
     # own options and any later `--` included): split it off before argparse,
     # whose `--` handling differs across Python versions.
@@ -10676,6 +10786,8 @@ def session_cmd(args):
         session_signal(args.kind, args.reason)
     elif args.session_command == "dispatch":
         session_dispatch(args.dry_run, args.json)
+    elif args.session_command == "inbox":
+        session_inbox(args.json)
 if __name__ == "__main__":
     try: main()
     except PartialSyncError as exc: print(f"nogg: {exc}", file=sys.stderr); sys.exit(3)

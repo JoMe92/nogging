@@ -17,6 +17,9 @@ UTC = timezone.utc
 LOG_MAX = 1024 * 1024
 LOG_GENERATIONS = 3
 RETRY_MINUTES = (2, 4)
+# waiting_background: the session sits at its prompt with only its own background
+# job running, so it accepts a message like idle.
+SEND_STATES = ("idle", "waiting_background")
 MAX_ATTEMPTS = 3
 START_RECONCILE_MINUTES = 10
 REASON_MAX = 300
@@ -409,9 +412,7 @@ class LoopRunner:
             record, target_state = self.target()
             if record is None or target_state == "ended":
                 target_state = "target-not-running"
-            # waiting_background: the session sits at its prompt with only its
-            # own background job running, so it accepts a message like idle.
-            if target_state not in ("idle", "waiting_background"):
+            if target_state not in SEND_STATES:
                 mapped = {"working": "target-busy", "needs_input": "target-needs-input",
                           "limit": "target-limit"}.get(target_state)
                 if mapped is None:
