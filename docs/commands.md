@@ -344,6 +344,34 @@ model first.
 
 **Read more.** [Using Nogging with Codex](using-with-codex.md).
 
+## pi-ext
+
+**Purpose.** List the Nogging Pi extensions under `.pi/nogging/extensions/`,
+and install or remove one for standalone Pi through Pi's own package command.
+`list` is read-only: it shows whether `pi_extensions` enables each extension
+and whether your personal Pi `settings.json` (under `PI_CODING_AGENT_DIR` or
+`~/.pi/agent`, never `auth.json`) names its path. `install` and `remove` run
+`pi install` or `pi remove` with the main checkout's
+`.pi/nogging/extensions/<name>/index.ts`, even from a linked worktree, so the
+entry survives worktree cleanup. They refuse an unknown name or a missing `pi`,
+never edit Pi's settings themselves and never pass `-l`.
+
+**Common forms.**
+
+```bash
+./scripts/nogg pi-ext list
+./scripts/nogg pi-ext install glm-usage
+./scripts/nogg pi-ext remove glm-usage
+```
+
+**Used by.** The operator, once per machine, when using standalone Pi. `init`
+and `update` never do this, because it writes personal configuration. `doctor`
+prints a NOTE for an enabled extension that is not installed, for
+`npm:pi-glm-usage` configured next to `glm-usage` (run `pi remove
+npm:pi-glm-usage`), and for an install whose path no longer exists.
+
+**Read more.** [Using Nogging with Pi](using-with-pi.md#enabling-optional-extensions--pi_extensions).
+
 ## models
 
 **Purpose.** Print the model-selection table, look up the model and effort for
