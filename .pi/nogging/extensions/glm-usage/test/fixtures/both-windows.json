@@ -1,0 +1,12 @@
+{
+  "code": 200,
+  "msg": "operation successful",
+  "success": true,
+  "data": {
+    "level": "placeholder-level",
+    "limits": [
+      {"type": "TOKENS_LIMIT", "unit": 3, "number": 5, "percentage": 37, "nextResetTime": 1792000000000},
+      {"type": "TOKENS_LIMIT", "unit": 6, "number": 1, "percentage": 21, "nextResetTime": 1792200000000}
+    ]
+  }
+}
