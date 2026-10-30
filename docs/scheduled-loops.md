@@ -98,3 +98,41 @@ approved change before running `nogg loop approve`. If its status is paused or
 suspended, inspect the host-local state before resuming it. A loop definition
 alone does not schedule work; the operator must enable the scheduler timer when
 that capability is installed, or invoke the supported scheduler manually.
+
+### Tick and run-now
+
+The scheduler evaluates approved definitions once per minute from the main
+checkout. Each pass records `last_tick` and takes a non-blocking lock; an
+overlapping pass reports that it is busy and exits without evaluating loops.
+Missed schedule slots are coalesced, and the latest slot is considered only
+until its grace period, next slot, or window end. A loop added or approved now
+starts evaluating from that approval time, so it never catches up on earlier
+slots. `nogg loop run-now <name>` uses the same approval, pause, usage and target
+checks but ignores the schedule and window.
+
+Send mode targets only the canonical Orchestration Agent session. It sends the
+prompt with the `[nogg loop <name> run <id>]` header through verified delivery
+only while the target is idle. Working, waiting for input, rate limited or
+absent targets defer scheduled work until the slot deadline; a manual run-now
+reports the reason as skipped. The scheduler never queues to a busy session,
+starts or restarts the orchestrator, or stops it. A delivered run completes
+after two consecutive idle observations. A run beyond `max_runtime` is logged
+as unconfirmed and does not stop the orchestrator.
+
+### Usage admission
+
+Every send observes the target agent's usage windows and applies the repository
+usage gate, including its estimate and outstanding reservations. A loop's
+`usage.max_used_percent` can impose a stricter limit. Known over-budget and
+unknown-denied observations skip the slot with the bucket and reset details;
+unknown-warn is recorded on the run. A denial never changes the agent or model.
+
+### Run log
+
+The host-local `runs.jsonl` file contains one version 1 JSON object per event,
+including the loop, run ID, slot, trigger, event, and any known reason, target,
+agent, tier, attempt or usage observation. Events include `missed`, `deferred`,
+`skipped`, `starting`, `delivered`, `retry-scheduled`, `completed`, `failed`,
+`unconfirmed` and `suspended`. `starting` is recorded before delivery begins.
+The log never stores prompt text and rotates at 1 MiB, keeping three older
+generations.

@@ -4872,6 +4872,72 @@ def usage_gate_admission(role_meta, agent, records, ignore, model=None):
         print(f"WARN: {agent} usage is unknown ({reasons}); launch admitted WITHOUT known headroom "
               '(usage_gate.on_unknown is warn; set it to "deny" to block)', file=sys.stderr)
     return gate
+
+
+def loop_usage_admission(agent, model, options):
+    """Apply both the repository usage gate and a loop's stricter budget."""
+    usage = usage_module()
+    config = usage.gate_config(CFG.get("usage_gate"))
+    observation = usage.observe(agent, config, model=model)
+    windows = observation.get("windows", [])
+    budget = options.get("max_used_percent")
+    if budget is not None:
+        for window in windows:
+            if window.get("status") == "known" and window.get("used_percent", 0) > budget:
+                reset = window.get("resets_at") or "unknown"
+                reason = (f"usage-gate: {window.get('bucket')} {window.get('used_percent')}% "
+                          f"(loop cap {budget:g}%), resets {reset}")
+                return False, reason, {"decision": "denied", "windows": windows}
+    unknown = [window for window in windows if window.get("status") != "known"]
+    on_unknown = options.get("on_unknown", config["on_unknown"])
+    if unknown and on_unknown == "deny":
+        detail = "; ".join(f"{w.get('bucket')}: {w.get('reason', 'unknown')}" for w in unknown)
+        return False, f"usage-gate: unknown usage denied ({detail})", {
+            "decision": "unknown-denied", "windows": windows}
+    if config["enabled"]:
+        estimate = usage.launch_estimate(agent, (), config, model=model)["estimate_percent"]
+        reserved = usage.Reservations().totals(observation)
+        gate = usage.evaluate_gate(observation, {**config, "on_unknown": on_unknown}, estimate, reserved)
+        if gate["decision"] in ("denied", "unknown-denied"):
+            return False, "usage-gate: " + usage.describe_denial(gate), gate
+    else:
+        gate = {"decision": "unknown-admitted" if unknown else "admitted", "windows": windows}
+    if unknown and on_unknown == "warn":
+        gate = {**gate, "decision": "unknown-admitted"}
+    return True, None, gate
+
+
+def loop_runner_for_main():
+    """Build the scheduler adapter over the canonical orchestrator and sender."""
+    lib = str(Path(__file__).resolve().parent / "lib")
+    if lib not in sys.path:
+        sys.path.insert(0, lib)
+    import loop_runner
+    definitions = ORCHESTRATOR_HOME / scfg("loops_file", ".nogging/loops.json")
+
+    def target():
+        records = [rec for _, rec in session_records(orchestrator_sessions_dir())
+                   if rec.get("role") == "orchestrator"]
+        if not records:
+            return None, "target-not-running"
+        record = max(records, key=lambda rec: rec.get("started_at", ""))
+        live = tmux_sessions()
+        if record.get("name") not in live:
+            return None, "target-not-running"
+        return record, classify_session(record, live)[0]
+
+    def send(record, message):
+        try:
+            session_send(record["name"], message, verify=True)
+        except Exception as exc:
+            detail = str(exc).lower()
+            exc.transient = any(token in detail for token in
+                                ("timeout", "deadline", "refused", "not live", "not running"))
+            raise
+
+    return loop_runner.LoopRunner(ORCHESTRATOR_HOME, definitions, target=target,
+                                  usage=loop_usage_admission, send=send,
+                                  multi_machine=CFG.get("multi_machine", False))
 def session_state_grants(bead, explicit=(), records=None):
     if os.environ.get("NOGG_CODEX_EXTRA_WRITABLE_ROOTS"):
         raise RuntimeError("use agent_state_roots and the agent-state:<agent> label; NOGG_CODEX_EXTRA_WRITABLE_ROOTS is retired")
@@ -9514,10 +9580,13 @@ def main():
                                     ("log", "show newest run events first"),
                                     ("pause", "pause one loop on this host"),
                                     ("resume", "resume one loop on this host"),
+                                    ("run-now", "run one loop now through normal admission"),
                                     ("approve", "approve the current definition on this host"),
-                                    ("remove", "remove a definition and prompt, retaining history")):
+                                    ("remove", "remove a definition and prompt, retaining history"),
+                                    ("tick", "evaluate scheduled loops once")):
         item = lps.add_parser(command_name, help=help_text)
-        item.add_argument("name")
+        if command_name != "tick":
+            item.add_argument("name")
         if command_name in ("show", "log"):
             item.add_argument("--json", action="store_true")
         if command_name == "log":
@@ -9559,10 +9628,24 @@ def main():
             sys.path.insert(0, lib)
         from loop_cli import command as loop_command
         try:
+            canonical_sessions = [rec for _, rec in session_records(orchestrator_sessions_dir())]
             record = None
-            if args.loop_command in {"add", "approve", "remove", "pause", "resume"}:
-                canonical_sessions = [rec for _, rec in session_records(orchestrator_sessions_dir())]
+            if args.loop_command in {"add", "approve", "remove", "pause", "resume", "run-now", "tick"}:
                 record = calling_session_record(canonical_sessions, purpose="loop management")
+            if args.loop_command == "tick":
+                if record is not None:
+                    raise RuntimeError("nogg loop tick is refused inside every supervised session")
+                if ROOT.resolve() != ORCHESTRATOR_HOME.resolve():
+                    raise RuntimeError(f"nogg loop tick runs only in the main checkout: {ORCHESTRATOR_HOME}")
+                loop_runner_for_main().tick()
+                return
+            if args.loop_command == "run-now":
+                if record is not None and record.get("role") != "orchestrator":
+                    raise RuntimeError("nogg loop run-now is refused inside supervised sessions other than the Orchestration Agent")
+                if ROOT.resolve() != ORCHESTRATOR_HOME.resolve():
+                    raise RuntimeError(f"nogg loop run-now runs only in the main checkout: {ORCHESTRATOR_HOME}")
+                loop_runner_for_main().run_now(args.name)
+                return
             defs = ORCHESTRATOR_HOME / scfg("loops_file", ".nogging/loops.json")
             # The configured path is repository-relative and must stay inside the
             # canonical checkout even if its parent contains symlinks.
