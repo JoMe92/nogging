@@ -4395,6 +4395,101 @@ def pi_extensions_diagnostics():
     shares this path through `doctor`. A valid or absent key prints nothing."""
     return [(error, False) for error in pi_extensions_errors(CFG.get("pi_extensions"), ROOT)]
 
+PI_COMMUNITY_GLM_PACKAGE = "npm:pi-glm-usage"
+def pi_agent_dir():
+    """The Pi agent directory: `$PI_CODING_AGENT_DIR` if set, else `~/.pi/agent`."""
+    return Path(os.environ.get("PI_CODING_AGENT_DIR") or (Path.home() / ".pi/agent")).expanduser()
+def pi_personal_packages():
+    """The package sources in Pi's personal `settings.json`, as written. Reads
+    only that file, never `auth.json`; an absent or unreadable file is empty."""
+    try:
+        data = json.loads((pi_agent_dir() / "settings.json").read_text())
+    except (OSError, ValueError):
+        return []
+    packages = data.get("packages") if isinstance(data, dict) else None
+    sources = []
+    for entry in packages if isinstance(packages, list) else []:
+        source = entry.get("source") if isinstance(entry, dict) else entry
+        if isinstance(source, str):
+            sources.append(source)
+    return sources
+def pi_local_package_path(source):
+    """The absolute path a local package source names, or None for `npm:`, git
+    and URL sources. Pi writes local paths relative to the settings directory."""
+    if not source.startswith(("/", ".", "~")):
+        return None
+    path = Path(source).expanduser()
+    return Path(os.path.normpath(path if path.is_absolute() else pi_agent_dir() / path))
+def pi_main_checkout():
+    """The main checkout, even from a linked worktree, so a personal install
+    survives worktree cleanup. Falls back to this checkout outside Git."""
+    try:
+        return Path(canonical_repository_state(ROOT)["main_checkout"])
+    except RuntimeError:
+        return ROOT
+def pi_available_extensions(base):
+    """Names of the extensions shipped under `<base>/.pi/nogging/extensions/`."""
+    home = Path(base) / PI_EXTENSIONS_DIR
+    return sorted(p.name for p in home.iterdir() if (p / "index.ts").is_file()) if home.is_dir() else []
+def pi_installed_paths():
+    """Every local package path the personal Pi settings name, as `(path, real)`."""
+    paths = [pi_local_package_path(s) for s in pi_personal_packages()]
+    return [(p, p.resolve()) for p in paths if p is not None]
+def pi_extension_installed(main, name, installed=None):
+    target = Path(main) / PI_EXTENSIONS_DIR / name / "index.ts"
+    real = target.resolve()
+    return any(p == target or r == real for p, r in (pi_installed_paths() if installed is None else installed))
+def pi_ext_list():
+    """Read-only: each available extension, whether `pi_extensions` enables it
+    and whether the personal Pi settings name its path."""
+    main = pi_main_checkout()
+    names = pi_available_extensions(main)
+    if not names:
+        print(f"no extensions under {main / PI_EXTENSIONS_DIR}")
+        return
+    enabled = CFG.get("pi_extensions")
+    enabled = enabled if isinstance(enabled, list) else []
+    installed = pi_installed_paths()
+    width = max(len(n) for n in names)
+    for name in names:
+        print(f"{name:<{width}}  {'enabled' if name in enabled else 'not enabled'}, "
+              f"{'installed' if pi_extension_installed(main, name, installed) else 'not installed'}")
+def pi_ext_run(action, name):
+    """Run `pi install|remove <main checkout>/.pi/nogging/extensions/<name>/index.ts`.
+    Pi edits its own settings; this never does, and never passes `-l`."""
+    main = pi_main_checkout()
+    names = pi_available_extensions(main)
+    if name not in names:
+        raise RuntimeError(f"unknown extension {name!r}; available: {', '.join(names) or 'none'}")
+    pi = shutil.which("pi")
+    if pi is None:
+        raise RuntimeError("pi is not installed or not on PATH; install Pi, then re-run "
+                           f"`nogg pi-ext {action} {name}`")
+    sys.exit(subprocess.run([pi, action, str(main / PI_EXTENSIONS_DIR / name / "index.ts")], cwd=main).returncode)
+def pi_extension_notes():
+    """NOTE lines, never FAILs, for the personal Pi settings: an enabled
+    extension that is not installed, the community `npm:pi-glm-usage` beside
+    `glm-usage`, and a Nogging extension install whose path is gone."""
+    notes = []
+    main = pi_main_checkout()
+    sources = pi_personal_packages()
+    installed = pi_installed_paths()
+    enabled = CFG.get("pi_extensions")
+    enabled = [n for n in enabled if isinstance(n, str)] if isinstance(enabled, list) else []
+    for name in enabled:
+        if not pi_extension_installed(main, name, installed):
+            notes.append(f"pi extension {name} is enabled in pi_extensions but not personally installed "
+                         f"(standalone Pi only; run: ./scripts/nogg pi-ext install {name})")
+    community = any(s == PI_COMMUNITY_GLM_PACKAGE or s.startswith(PI_COMMUNITY_GLM_PACKAGE + "@") for s in sources)
+    if community and ("glm-usage" in enabled or pi_extension_installed(main, "glm-usage", installed)):
+        notes.append(f"{PI_COMMUNITY_GLM_PACKAGE} is configured next to glm-usage, which gives two footers and "
+                     f"double polling; run: pi remove {PI_COMMUNITY_GLM_PACKAGE}")
+    for path, _ in installed:
+        if path.name == "index.ts" and path.parent.parent.as_posix().endswith(PI_EXTENSIONS_DIR) and not path.exists():
+            notes.append(f"personal Pi install {path} no longer exists; "
+                         f"run: pi remove {path}, then ./scripts/nogg pi-ext install {path.parent.name}")
+    return notes
+
 def resolve_agent(agent):
     """The agent binary a launch runs: the explicit `--agent` flag wins, then
     the `session_agent` config key, then the historical `claude` default. No
@@ -10592,6 +10687,7 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
     pi_present = tool_on_path("pi")
     notes.append("pi available" if pi_present
                  else "pi not installed; only needed for the Pi agent path")
+    notes.extend(pi_extension_notes())
     notes.extend(herdr_notes)
     try:
         repository = canonical_repository_state(ROOT)
@@ -11047,6 +11143,10 @@ def main():
         help="symlink .codex/prompts/*.md into <CODEX_HOME>/prompts/ as nogging-<name>.md")
     cpl.add_argument("--unlink", action="store_true",
         help="remove only the nogging-* prompt symlinks this command created")
+    pie = sub.add_parser("pi-ext",
+        help="list, install or remove a Nogging Pi extension through Pi's own package command")
+    pie.add_argument("action", choices=("list", "install", "remove"))
+    pie.add_argument("name", nargs="?", help="extension name under .pi/nogging/extensions/")
     mod = sub.add_parser("models", help="print or check the model-selection rule table (no live probe)")
     mod.add_argument("action", nargs="?", choices=("check",),
         help="validate the table and exit non-zero on error")
@@ -11313,6 +11413,15 @@ def main():
                      "rules or the command floor deny; a wrapper never lifts them")
         sys.exit(run_quiet(run_quiet_command, args.log, args.tail))
     elif args.command == "codex-prompts-link": codex_prompts_link(args.unlink)
+    elif args.command == "pi-ext":
+        if args.action == "list":
+            if args.name:
+                pie.error("list takes no extension name")
+            pi_ext_list()
+        elif not args.name:
+            pie.error(f"{args.action} needs an extension name, e.g. nogg pi-ext {args.action} glm-usage")
+        else:
+            pi_ext_run(args.action, args.name)
     elif args.command == "session-hooks": session_hooks(args.action)
     elif args.command == "models": models_cmd(args.action, args.agent, args.tier, args.json)
     elif args.command == "route": route_cmd(args.action)
