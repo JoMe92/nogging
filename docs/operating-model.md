@@ -172,6 +172,13 @@ that inspects and reports, then is stopped and retired. Its launch prompt
 forbids changing code, and a usage denial skips the slot. See
 [Scheduled loops](scheduled-loops.md).
 
+**Waiting is dispatch's job.** Session dispatch is on by default. The tick first runs
+one deterministic pass that nudges idle Leads, tracks CI and holds what needs a decision
+as one digest, so the Orchestration Agent starts no watcher of its own while `doctor`
+says dispatch runs. A wake ends its turn quickly, and a keep-warm is answered in one line
+with no tool. It pauses automation only when the Product Owner says they will be away.
+See [Session wake](session-wake.md).
+
 **A tier on every launch.** Before every `session launch` of any role
 (planning, lead, specialist) the Orchestration Agent classifies the task into a
 model-selection tier — `routine`, `standard` or `complex` — and writes a

@@ -10406,7 +10406,7 @@ def dispatch_health_diagnostics(moment=None):
                          f"start one with `nogg orchestrator run`; {switch_off}")
         if timer_state not in ("enabled", "unknown"):
             notes.append(f"session dispatch: nothing fires a pass automatically, because {timer} is {timer_state}; "
-                         f"enable it with `systemctl --user enable --now {timer}` or run "
+                         f"enable it (docs/nogging/scheduled-loops.md) or run "
                          f"`nogg session dispatch --once` meanwhile; {switch_off}")
     if record is not None:
         notes.append(f"session dispatch: running, last pass {humanize_age(last_pass, moment)} ago; the orchestrator "

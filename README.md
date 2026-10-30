@@ -159,7 +159,10 @@ Full access removes that restriction. Read the
 - `./scripts/nogg session stop <name>` ends it.
 
 An optional always-on Orchestration Agent can drive these for you; see
-[Orchestration](docs/operating-model.md#orchestration).
+[Orchestration](docs/operating-model.md#orchestration). Session dispatch is on by
+default: it nudges idle Leads, tracks CI and wakes the orchestrator only for decisions.
+[Session wake](docs/session-wake.md) says what that costs, how to pause it and how to
+switch it off.
 
 ### Close out
 
