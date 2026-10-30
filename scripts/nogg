@@ -9860,16 +9860,17 @@ def session_dispatch_diagnostics():
 LOOP_TICK_WARN_SECONDS = 300
 
 def loop_timer_state():
-    """The loop scheduler timer of the main checkout and its unit-file state,
-    `unavailable` without a usable systemctl."""
+    """The loop scheduler timer of the main checkout and its unit-file state:
+    `unavailable` without systemctl on PATH, `unknown` when systemctl is there
+    but gives no answer (a fenced session where it is denied)."""
     timer = f"nogg-loops-{slugify(ORCHESTRATOR_HOME.name)}.timer"
     if not tool_on_path("systemctl"):
         return timer, "unavailable"
     try:
         res = run("systemctl", "--user", "is-enabled", timer, check=False, timeout=5)
     except (OSError, subprocess.TimeoutExpired):
-        return timer, "unavailable"
-    state = res.stdout.strip() or "unavailable"
+        return timer, "unknown"
+    state = res.stdout.strip() or "unknown"
     return timer, "enabled" if state in ("enabled", "enabled-runtime") else state
 
 def loop_health_diagnostics(now=None):
@@ -9912,8 +9913,16 @@ def loop_health_diagnostics(now=None):
             warnings.append(f"loop {name} is suspended after repeated failures; "
                             f"check `nogg loop log {name}`, then `nogg loop resume {name}`")
     timer, timer_state = loop_timer_state()
-    if timer_state == "enabled":
-        last_tick = state.get("last_tick")
+    last_tick = state.get("last_tick")
+    if timer_state == "unknown":
+        # systemctl cannot answer from here, so say so rather than imply the
+        # loops are stopped; the last tick is the evidence a timer is firing.
+        if loops and not (last_tick and (now - parse_iso(last_tick)).total_seconds() <= LOOP_TICK_WARN_SECONDS):
+            seen = f"the last tick was {humanize_age(last_tick, now)} ago" if last_tick else "no tick is recorded"
+            notes.append(f"loop scheduler: the state of {timer} is unknown from this session "
+                         f"(systemctl is not usable here) and {seen}; check it from a shell outside the session "
+                         "or run `nogg loop tick` (docs/scheduled-loops.md)")
+    elif timer_state == "enabled":
         if not last_tick:
             warnings.append(f"loop scheduler: {timer} is enabled but no tick is recorded")
         elif (now - parse_iso(last_tick)).total_seconds() > LOOP_TICK_WARN_SECONDS:
