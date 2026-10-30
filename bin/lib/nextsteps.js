@@ -123,7 +123,8 @@ function unitState(name, env = process.env) {
 function enableHint(unit, state) {
   const suffix = state === 'unknown' ? ' if not already enabled' : '';
   if (unit.kind === 'timer') {
-    return `Enable the sync timer${suffix}: \`systemctl --user enable --now "$PWD/${unit.rel}"\``;
+    const label = path.basename(unit.rel).startsWith('nogg-loops-') ? 'loop scheduler timer' : 'sync timer';
+    return `Enable the ${label}${suffix}: \`systemctl --user enable --now "$PWD/${unit.rel}"\``;
   }
   return `Enable the always-on Orchestration Agent${suffix}: ` +
     `\`systemctl --user enable --now "$PWD/${unit.rel}"\` and ` +

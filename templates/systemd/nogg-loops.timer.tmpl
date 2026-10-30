@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the Nogging loop scheduler every minute ({{NAME}})
+
+[Timer]
+OnCalendar=minutely
+AccuracySec=5s
+Persistent=false
+Unit=nogg-loops-{{SLUG}}.service
+
+[Install]
+WantedBy=timers.target
