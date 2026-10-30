@@ -146,7 +146,7 @@ def iso(moment: datetime) -> str:
     return moment.astimezone(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def _age(stamp: Any, now: datetime) -> float | None:
+def seconds_since(stamp: Any, now: datetime) -> float | None:
     """Seconds since an ISO stamp, negative for one ahead, None when unreadable. A
     stamp without a zone is local time, which is what `resolve_clock_time` returns."""
     try:
@@ -203,7 +203,7 @@ def _nudge_or_escalate(fact: dict[str, Any], memory: dict[str, Any], budget: str
     if fact["state"] != "idle" or not fact.get("nudgeable"):
         return []
     slot = memory.setdefault(budget, {})
-    last = _age(slot.get("last_nudge"), now) if slot.get("last_nudge") else None
+    last = seconds_since(slot.get("last_nudge"), now) if slot.get("last_nudge") else None
     if last is not None and last < SETTLE_SECONDS:
         return []
     used = slot.get("nudges", 0)
@@ -221,7 +221,7 @@ def _limit_step(fact: dict[str, Any], memory: dict[str, Any], now: datetime) -> 
     if state == "limit":
         limit = memory["limit"] = {"since": (limit or {}).get("since") or iso(now),
                                    "until": (limit or {}).get("until") or fact.get("limit_until")}
-        remaining = _age(limit["until"], now) if limit["until"] else None
+        remaining = seconds_since(limit["until"], now) if limit["until"] else None
         if fact.get("limit_source") != "event" or remaining is None or remaining < 0:
             return []
     elif not limit:
@@ -291,7 +291,7 @@ def _ci_step(fact: dict[str, Any], memory: dict[str, Any], policy: dict[str, Any
     if status == "pending":
         if ci.get("pending_head") != head:
             ci.update(pending_head=head, pending_since=iso(now))
-        waited = _age(ci["pending_since"], now)
+        waited = seconds_since(ci["pending_since"], now)
         if waited is None or waited < policy["ci_timeout"]:
             return []
         return [_queue(fact, "ci_timeout", head, f"CI still pending after {int(waited // 60)} minutes",
@@ -351,7 +351,7 @@ def _worktree_step(fact: dict[str, Any], memory: dict[str, Any], policy: dict[st
 def _decide_session(fact: dict[str, Any], memory: dict[str, Any], policy: dict[str, Any],
                     now: datetime) -> list[dict[str, Any]]:
     state, name, agent = fact["state"], fact["session"], fact.get("agent")
-    held = _age(memory.get("since"), now) or 0
+    held = seconds_since(memory.get("since"), now) or 0
     if state == "gone":
         if held < SETTLE_SECONDS or fact.get("bead_status") != "in_progress" or fact.get("superseded"):
             return []

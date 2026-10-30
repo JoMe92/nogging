@@ -5,9 +5,9 @@ It intentionally contains no LLM call and makes no semantic product decision.
 """
 from __future__ import annotations
 
-import argparse, base64, datetime as dt, errno, fcntl, fnmatch, getpass, hashlib, importlib.util, json, math, os, re, select, shlex, shutil, signal, socket, subprocess, sys, tempfile, time, uuid
+import argparse, base64, datetime as dt, errno, fcntl, fnmatch, getpass, hashlib, importlib.util, io, json, math, os, re, select, shlex, shutil, signal, socket, subprocess, sys, tempfile, time, uuid
 import urllib.parse, urllib.request
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stdout
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -6776,16 +6776,17 @@ def _supervised_session_name(command):
             f"{command}: NOGG_SESSION_NAME is not set (not running inside "
             "a session `scripts/nogg session launch` started)")
     return name
+def _bead_worktree_record(bead):
+    return "implementation--" + re.sub(r"[^a-z0-9-]", "-", bead.lower()) + ".json"
 def _session_checkout(rec):
     """The checkout a session's work is in: its Bead's implementation worktree while
     that allocation exists, else the directory it was launched in. None for the
     shared checkout, whose changes may be anyone's."""
     bead = rec.get("bead_id")
     if bead:
-        safe_id = re.sub(r"[^a-z0-9-]", "-", bead.lower())
         store = ORCHESTRATOR_HOME / WORKTREE_STATE.relative_to(ROOT)
         try:
-            allocation = json.loads((store / f"implementation--{safe_id}.json").read_text())
+            allocation = json.loads((store / _bead_worktree_record(bead)).read_text())
             if allocation.get("bead_id") == bead and Path(allocation["path"]).is_dir():
                 return allocation["path"]
         except (OSError, ValueError, KeyError, TypeError):
@@ -8341,11 +8342,12 @@ def _idle_minutes(rec):
     if newest is None:
         return None
     return max(0, int((time.time() - newest) // 60))
-def _sweep_state(rec):
-    """Read-only proof for the assigned mapped task or explicit change scope."""
+def _sweep_state(rec, issues=None, pr_lookup=None):
+    """Read-only proof for the assigned mapped task or explicit change scope. The
+    dispatcher passes its cached `issues` and a `pr_lookup` that spends no `gh` call."""
     try:
         tasks, duplicates = task_map(include_archived=True)
-        issues = beads()
+        issues = beads() if issues is None else issues
         assigned = [issue for issue in issues if str(issue_id(issue)) == rec.get("bead_id")]
         if duplicates or len(assigned) != 1:
             return "active (work evidence unknown)"
@@ -8365,8 +8367,11 @@ def _sweep_state(rec):
             if completion.reason != "mapped work or blocking dependencies unresolved":
                 return "active (work evidence unknown)"
             return "active"
-        branch = _session_worktree_branch(rec)
-        pr_state = _pr_state_for_branch(branch) if branch else None
+        if pr_lookup is not None:
+            pr_state = pr_lookup(rec)
+        else:
+            branch = _session_worktree_branch(rec)
+            pr_state = _pr_state_for_branch(branch) if branch else None
         if pr_state == "MERGED" or (pr_state == "ABSENT" and _local_integration_verified(rec)):
             return "change-complete"
         if pr_state is None or pr_state == "ABSENT":
@@ -8435,7 +8440,7 @@ def _observe_checks(branch):
     if not branch:
         return dict(obs, status="unknown", error="session branch unknown")
     res = run("gh", "pr", "list", "--head", branch, "--base", "develop", "--state", "all",
-              "--json", "number,url,state,headRefOid,statusCheckRollup", check=False)
+              "--json", "number,url,state,headRefOid,statusCheckRollup,mergeable,additions,deletions", check=False)
     if res.returncode != 0:
         return dict(obs, status="unknown", error="pull request lookup failed")
     try:
@@ -8465,6 +8470,7 @@ def _observe_checks(branch):
     return dict(obs, status=status, pr_number=row.get("number"), pr_url=row.get("url"),
                 pr_state=row.get("state"), head_sha=head, fingerprint=digest,
                 failed=failed, pending=pending, total=len(entries),
+                mergeable=row.get("mergeable"), additions=row.get("additions"), deletions=row.get("deletions"),
                 local_head=local.stdout.strip() if local.returncode == 0 else None)
 def _checks_stale_seconds():
     return int(CFG.get("session_checks_stale_seconds", 1800))
@@ -8543,7 +8549,6 @@ def session_resume_when_ready(name, message=None, poll_interval=60):
     prompt by keeping the current model (design.md Decision 2: switching
     models never clears a genuine account-wide limit), then send the resume
     instruction via `session_send`."""
-    message = message or DEFAULT_RESUME_MESSAGE
     while True:
         _, rec = load_session(name)
         state, pane = classify_session(rec)
@@ -8566,13 +8571,15 @@ def session_resume_when_ready(name, message=None, poll_interval=60):
             time.sleep(max(0.0, min(wait, poll_interval)) if wait > poll_interval else max(0.0, wait))
         else:
             time.sleep(poll_interval)
-    pane = session_pane_text(name)
-    if _SWITCH_MODEL_RE.search(pane):
-        # Dismiss the residual "switch model?" prompt without acting on it —
-        # Escape cancels the prompt and leaves the current model selected.
-        session_action(name, "send_keys", "escape")
-    session_send(name, message, verify=True)
+    resume_step(name, message)
     print(f"resumed {name}")
+def resume_step(name, message=None):
+    """The non-blocking half of a resume, once the limit is over: dismiss a residual
+    "switch model?" prompt without acting on it, because Escape cancels the prompt
+    and leaves the current model selected, then send the resume instruction."""
+    if _SWITCH_MODEL_RE.search(session_pane_text(name)):
+        session_action(name, "send_keys", "escape")
+    session_send(name, message or DEFAULT_RESUME_MESSAGE, verify=True)
 # --- orchestrator: the always-on supervisor ------------------------------
 # `orchestrator run` is the idempotent process the systemd user service starts.
 # The thing kept alive is a normal supervised Claude session (a durable record,

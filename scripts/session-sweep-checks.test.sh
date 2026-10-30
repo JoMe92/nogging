@@ -51,6 +51,11 @@ with tempfile.TemporaryDirectory() as tmp:
             m.session_checks_ack('sf-lead-x', fingerprint=fp)
         text, attention = m._checks_summary(m._load_checks_cache('sf-lead-x'))
         assert 'acknowledged' in text and not attention, text
+        # The observation carries what a pull request decision needs.
+        remote['rows'] = [dict(pr(run_check('test', 'SUCCESS', 1))[0], mergeable='CONFLICTING', additions=12, deletions=3)]
+        m.session_sweep_checks(rec)
+        obs = m._load_checks_cache('sf-lead-x')['observation']
+        assert (obs['mergeable'], obs['additions'], obs['deletions']) == ('CONFLICTING', 12, 3), obs
         # A new failing CI run (new run id) appears unchecked again.
         remote['rows'] = pr(run_check('test', 'FAILURE', 2))
         line = m.session_sweep_checks(rec)
