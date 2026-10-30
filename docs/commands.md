@@ -675,14 +675,40 @@ Wait out an account-wide usage limit, then send the session its resume message.
 
 ### session emit
 
-Append a structured event to the calling session's own event file. Agent hooks
-call it; it only works inside a launched session.
+Append a normalized lifecycle event to the calling session's own event file.
+Agent hooks call it; it only works inside a launched session. Hook JSON on
+stdin is read up to 64 KiB, invalid input is tolerated, and only a fixed set
+of fields is kept: the source, an error kind, the notification type, the count
+of background tasks and a redacted one-line excerpt of the last agent message
+(at most 300 characters). The file is rotated at 256 KiB. A `Notification`
+other than a question (for example `idle_prompt`) records nothing.
 
 ```bash
 ./scripts/nogg session emit <event>
 ```
 
+The events are `turn_start`, `turn_end`, `needs_input`, `turn_error` and
+`session_end`; Claude Code's launch settings wire them to `UserPromptSubmit`,
+`Stop`, `Notification`, `StopFailure` and `SessionEnd`.
+
 **Used by.** Agent hooks, not people.
+
+### session signal
+
+State that this supervised session is `blocked` or `done`, with a reason of at
+most 300 characters. It needs neither the network nor Dolt, so a restricted
+Lead can run it, and it refuses outside a supervised session. A signal is a
+fact for `session watch`, which reports it as its own event; it never changes
+the classified state, so a session that signalled still reads `idle`. The
+command prints whether dispatch is on and what to do next.
+
+```bash
+./scripts/nogg session signal blocked "worktree rebase refused: needs an unfenced operator"
+./scripts/nogg session signal done "PR #321 open"
+```
+
+**Used by.** A Lead, at the end of its work. The Bead note still carries the
+prose.
 ## loop
 
 **Purpose.** Define recurring work in a repository file, approve its exact

@@ -335,6 +335,16 @@ with a different model as a workaround; wait it out, or run
 `resume-when-ready <name>`, which dismisses a residual "switch model?" prompt
 by keeping the current model rather than switching.
 
+## How Nogging sees a Codex turn
+
+A Codex session needs no hook install for `session watch` to work. The end of
+a turn is read from the session's own rollout, found by its exact thread, so a
+finished turn classifies `idle` and `watch` shows the first line of Codex's
+last message. An aborted turn is also `idle`; a rollout with nothing
+recognizable is ignored and the pane decides. A Codex Lead states the end of
+its work with `./scripts/nogg session signal done|blocked "<reason>"`, which
+works in the restricted sandbox because it needs no network and no Dolt.
+
 ## Specialists
 
 Codex has **no in-process subagent mechanism** — there is no Codex equivalent
