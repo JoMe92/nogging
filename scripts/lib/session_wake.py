@@ -56,7 +56,7 @@ _SHAPES = {name: re.compile(shape) for name, shape in {
     "kind": r"[a-z_]+", "bead": _NAME, "session": _NAME, "ci": r"[a-z-]+ \(\d+/\d+\)",
     "diff": r"\+\d+ -\d+", "head": r"[0-9a-f]{7,40}",
     "next": rf"gh pr (?:view|checks) \d+|bd show {_NAME}|\./scripts/nogg session (?:log|attach) {_NAME}"
-            rf"|\./scripts/nogg worktree rebase {_NAME}"}.items()}
+            rf"|\./scripts/nogg worktree rebase {_NAME}|\./scripts/nogg session inbox"}.items()}
 
 
 def policy_from(block: dict[str, Any] | None) -> dict[str, Any]:
@@ -237,13 +237,15 @@ def plan(queue: dict[str, Any], policy: dict[str, Any], now: datetime, hold: str
     wait for a calm `normal_quiet` so that several landing together make one wake, and
     `max_hold` bounds that wait for the oldest. `hold` is a host-wide stop, for every
     item: it comes first and nothing bypasses it. An item only unreadable evidence
-    keeps does not go out: no action depends on an unknown fact."""
+    keeps does not go out: no action depends on an unknown fact. A `resumed` item takes
+    all the others with it: a pause held them long enough, and it ends in one digest."""
     items = [item for item in queue.get("items") or [] if not item.get("unsure_since")]
     urgent = [item for item in items if _is_urgent(item) and _age(item, now) >= policy["urgent_quiet"]]
     normal = [item for item in items if not _is_urgent(item)]
     ready = [item for item in normal if _age(item, now) >= policy["normal_quiet"]]
     settled = len(ready) == len(normal) or any(_age(item, now) >= policy["max_hold"] for item in ready)
-    due = urgent + ready if urgent or settled else []
+    resumed = any(item.get("kind") == "resumed" for item in items)
+    due = items if resumed else urgent + ready if urgent or settled else []
     return {"items": due, "urgent": bool(urgent),
             "hold": hold or _retry_hold(queue, policy, now) or (None if urgent else _limit_hold(queue, policy, now))}
 
@@ -275,7 +277,9 @@ def _item_lines(item: dict[str, Any], redact: Callable[[str], str] | None) -> st
              f"PR #{pr}" if type(pr) is int else None, f"CI {ci}" if ci else None, field("diff"),
              f"head {head}" if head else None]
     lines = [" ".join(part for part in title if part)]
-    reason, step = text(item.get("reason"), redact, SHOWN_CHARS), field("next")
+    # The summary of a pause is one item carrying all of it, and it stays within the digest.
+    limit = FIELD_CHARS if item.get("kind") == "resumed" else SHOWN_CHARS
+    reason, step = text(item.get("reason"), redact, limit), field("next")
     if reason:
         lines.append(f'  why: "{reason}"')
     if step:
@@ -295,9 +299,10 @@ def _retired_line(retired: list[dict[str, Any]], redact: Callable[[str], str] | 
 def render(wake: str, items: list[dict[str, Any]], retired: list[dict[str, Any]],
            redact: Callable[[str], str] | None = None) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]]:
     """The message of at most DIGEST_BYTES, and the items and retirements it carries.
-    Urgent items and then the oldest go first. What does not fit stays queued for the
-    next wake, and the last line points to the inbox."""
-    ordered = sorted(items, key=lambda item: (not _is_urgent(item), str(item.get("created_at") or "")))
+    The summary of a pause, urgent items and then the oldest go first. What does not fit
+    stays queued for the next wake, and the last line points to the inbox."""
+    ordered = sorted(items, key=lambda item: (item.get("kind") != "resumed", not _is_urgent(item),
+                                              str(item.get("created_at") or "")))
     budget = DIGEST_BYTES - len(_header(wake, len(items), len(items)).encode()) - len(OVERFLOW.encode()) - 2
     shown, lines = [], []
     for item in ordered:
@@ -343,7 +348,8 @@ def mark_delivered(queue: dict[str, Any], shown: list[dict[str, Any]], told: lis
     queue["items"] = [item for item in queue.get("items") or [] if item["key"] not in keys]
     delivered = queue.setdefault("delivered", {})
     for item in shown:
-        if item.get("sticky") and item.get("reminder"):
+        # A summary is told once: a repeat four hours on would be a wake about nothing.
+        if item.get("kind") == "resumed" or (item.get("sticky") and item.get("reminder")):
             delivered.pop(item["key"], None)
         else:
             delivered[item["key"]] = {**item, "delivered_at": iso(now), "reminded": bool(item.get("reminder"))}
@@ -363,7 +369,8 @@ def mark_failed(queue: dict[str, Any], detail: str, now: datetime, landed: bool)
         queue.update(failures=(queue.get("failures") or 0) + 1, failed_at=iso(now))
 
 
-def inbox(queue: dict[str, Any], audit: list[dict[str, Any]], redact: Callable[[str], str] | None = None) -> dict[str, Any]:
+def inbox(queue: dict[str, Any], audit: list[dict[str, Any]], redact: Callable[[str], str] | None = None,
+          paused_until: str | None = None) -> dict[str, Any]:
     """What `session inbox` shows. A Lead can read it, so it is cleaned on the way out too."""
     queue = normalized(queue)
     wakes = [{"id": wake.get("id"), "at": wake.get("at"), "urgent": wake.get("urgent"),
@@ -373,6 +380,7 @@ def inbox(queue: dict[str, Any], audit: list[dict[str, Any]], redact: Callable[[
             "pending": [clean_item(item, redact) for item in queue["items"]],
             "delivered": [clean_item(item, redact) for item in queue["delivered"].values()],
             "retired": [clean_item(entry, redact) for entry in queue["retired"]],
+            "pause": {"until": paused_until, "held": len(queue["items"])} if paused_until else None,
             "hold": text(queue.get("hold"), redact), "last_error": text(queue.get("last_error"), redact),
             "deliveries": [clean_item(wake, redact) for wake in wakes],
             "recent": [clean_item({**row, "key": None}, redact) for row in audit[-AUDIT_SHOWN:]]}
@@ -380,6 +388,8 @@ def inbox(queue: dict[str, Any], audit: list[dict[str, Any]], redact: Callable[[
 
 def inbox_lines(view: dict[str, Any], redact: Callable[[str], str] | None = None) -> list[str]:
     lines = [f"session inbox: {len(view['pending'])} pending, {len(view['delivered'])} delivered ({DATA_NOTE})"]
+    if view["pause"]:
+        lines.append(f"PAUSED until {view['pause']['until']}: {view['pause']['held']} item(s) held")
     if view["hold"]:
         lines.append(f"delivery held: {view['hold']}")
     if view["last_error"]:

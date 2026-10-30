@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 import loop_config
 import loop_schedule
 import loop_state
+import session_pause
 
 
 def _atomic_bytes(path: Path, data: bytes):
@@ -95,11 +96,20 @@ def _local_utc(instant, zone):
     return f"{local.strftime('%Y-%m-%d %H:%M %Z')} ({instant.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%MZ')})"
 
 
+def _held_state(run_state, name, pause):
+    """A loop's state under the host-wide pause. Only a loop that would run is `kept`."""
+    if pause is None or run_state == "other-host":
+        return run_state
+    if name not in pause["keep_loops"]:
+        return f"paused (global, until {session_pause.until_text(pause)})"
+    return "kept" if run_state == "enabled" else run_state
+
+
 def _loop_state(state, name):
     return state.setdefault("loops", {}).setdefault(name, {})
 
 
-def command(args, *, main_checkout, definitions_path, session_record, multi_machine=False):
+def command(args, *, main_checkout, definitions_path, session_record, multi_machine=False, pause=None):
     action = args.loop_command
     mutating = action in {"add", "approve", "remove", "pause", "resume"}
     if mutating:
@@ -200,6 +210,7 @@ def command(args, *, main_checkout, definitions_path, session_record, multi_mach
             run_state = "other-host" if loop.get("host") and loop["host"] != os.uname().nodename else (
                 "suspended" if ls.get("suspended") else "paused" if ls.get("paused") else
                 "disabled" if not loop["enabled"] else "unapproved" if not status else "enabled")
+            run_state = _held_state(run_state, name, pause)
             slots = loop_schedule.next_slots({"timezone": config["timezone"], **loop["schedule"]}, now, 1)
             next_slot = _local_utc(slots[0], zone)
             last = ls.get("last_outcome", "-")
