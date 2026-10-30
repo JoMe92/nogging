@@ -12,6 +12,7 @@ import tempfile
 
 import loop_schedule
 import loop_state
+import session_pause
 
 UTC = timezone.utc
 LOG_MAX = 1024 * 1024
@@ -47,6 +48,7 @@ def append_event(root, event):
                           default=lambda value: iso(value) if isinstance(value, datetime) else str(value)) + "\n").encode()
     with path.with_suffix(".lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
+        session_pause.set_aside(path)
         if path.exists() and path.stat().st_size + len(encoded) > LOG_MAX:
             path.with_name(path.name + f".{LOG_GENERATIONS}").unlink(missing_ok=True)
             for index in range(LOG_GENERATIONS - 1, 0, -1):
@@ -140,9 +142,7 @@ class LoopRunner:
         state = loop_state.read_state(self.root)
         state.setdefault("loops", {})
         self._state, self._seen = state, loop_state.operator_fields(state)
-        # A pause stops automation, not people: `run-now` is someone's decision.
-        self._pause = None if manual else self.pause(instant)
-        self._skips_logged = self._paused_rows() if self._pause else set()
+        self._skips_logged = None
         if not manual:
             state["last_tick"] = iso(instant)
             self._save()
@@ -183,8 +183,11 @@ class LoopRunner:
         loop = config["loops"][name]
         if loop.get("host") and loop["host"] != self.host:
             return
-        if self._pause and name not in self._pause["keep_loops"]:
-            self._tick_paused(instant, config, name, loop)
+        # A pause stops automation, not people: `run-now` is someone's decision. It is read
+        # per loop, so that one set while this tick runs holds the loops still to come.
+        pause = None if manual else self.pause(instant)
+        if pause and name not in pause["keep_loops"]:
+            self._tick_paused(instant, config, name, loop, pause)
             return
         item = state["loops"].setdefault(name, {})
         self._advance_active(instant, name, loop, item)
@@ -260,10 +263,10 @@ class LoopRunner:
         being logged on every tick. A row lost to rotation costs one repeated line."""
         rows = set()
         try:
-            lines = event_path(self.root).read_text(encoding="utf-8", errors="replace").splitlines()
+            data = session_pause.read_regular(event_path(self.root), 2 * LOG_MAX)
         except OSError:
             return rows
-        for line in lines:
+        for line in data.decode(errors="replace").splitlines():
             if PAUSED_GLOBAL in line:
                 try:
                     row = json.loads(line)
@@ -272,17 +275,19 @@ class LoopRunner:
                     continue
         return rows
 
-    def _tick_paused(self, instant, config, name, loop):
+    def _tick_paused(self, instant, config, name, loop, pause):
         """A loop outside `keep_loops`. A run already going is still supervised, because
         a pause stops no session. Nothing starts, and nothing else is written for it."""
         item = self._state["loops"].get(name) or {}
         if item.get("active_run"):
             self._advance_active(instant, name, loop, item)
         _, approval = loop_state.approval_status(self.root, self.definitions, config, name)
-        anchors = [parse_time(self._pause["started_at"])]
+        anchors = [parse_time(pause["started_at"])]
         anchors.extend(parse_time(stamp) for stamp in (item.get("last_evaluated"), (approval or {}).get("approved_at"))
                        if stamp)
         due = loop_schedule.due({"timezone": config["timezone"], **loop["schedule"]}, max(anchors), instant)
+        if self._skips_logged is None:
+            self._skips_logged = self._paused_rows()
         if due is None or (name, iso(due["slot"])) in self._skips_logged:
             return
         base = _base_event(name, due["slot"], due["slot"], "scheduled", loop)

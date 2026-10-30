@@ -11,6 +11,7 @@ the 60-day bound, and a text field cannot reach a session unshaped.
 """
 from __future__ import annotations
 
+import errno
 import json
 import os
 import re
@@ -24,7 +25,8 @@ from session_dispatch import dedupe_key, iso
 
 SCHEMA = 1
 MAX_DAYS = 60
-MAX_BYTES = 4096
+MAX_AGE_DAYS = 3660
+MAX_BYTES = 64 * 1024
 HOST_SESSION = "host"
 FINISHED_KINDS = frozenset({"ready_for_review", "planner_finished"})
 FINISHED_CHARS = 200
@@ -58,6 +60,28 @@ def _moment(value: Any) -> datetime | None:
     except ValueError:
         return None
     return moment if moment.tzinfo else None
+
+
+def read_regular(path: Any, limit: int) -> bytes:
+    """At most `limit` bytes of a regular file. The open neither follows a link nor
+    waits on a planted FIFO, because the state, the queue and the audit log lie in the
+    shared checkout and every tick reads them. OSError for anything else."""
+    descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+    with os.fdopen(descriptor, "rb") as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise OSError(errno.EINVAL, "not a regular file")
+        return stream.read(limit)
+
+
+def set_aside(path: Any) -> None:
+    """Move what is no regular file out of the way of an append, which would block on a
+    planted FIFO or write through a link."""
+    try:
+        if stat.S_ISREG(os.lstat(path).st_mode):
+            return
+    except FileNotFoundError:
+        return
+    os.replace(path, f"{path}.corrupt")
 
 
 def parse_end(until: str | None, days: str | None, now: datetime) -> datetime:
@@ -107,6 +131,8 @@ def _problem(value: Any, now: datetime) -> str | None:
         return "no usable start and end"
     if until - now > timedelta(days=MAX_DAYS):
         return f"an end more than {MAX_DAYS} days away"
+    if started > now or now - started > timedelta(days=MAX_AGE_DAYS):
+        return "a start no pause can have"
     keep = value.get("keep_loops")
     if not isinstance(keep, list) or not all(isinstance(name, str) and _NAME.fullmatch(name) for name in keep):
         return "no usable kept loops"
@@ -118,23 +144,13 @@ def _problem(value: Any, now: datetime) -> str | None:
 
 
 def read(path: Any, now: datetime) -> tuple[dict[str, Any] | None, str | None]:
-    """(state, problem): both None without a file, and a state only for a usable one.
-    The open neither follows a link nor waits on a planted FIFO, because every
-    `session list` and every tick comes through here."""
+    """(state, problem): both None without a file, and a state only for a usable one."""
     try:
-        descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+        data = read_regular(path, MAX_BYTES + 1)
     except FileNotFoundError:
         return None, None
     except OSError as exc:
         return None, exc.strerror or "unreadable"
-    try:
-        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-            return None, "not a regular file"
-        data = os.read(descriptor, MAX_BYTES + 1)
-    except OSError as exc:
-        return None, exc.strerror or "unreadable"
-    finally:
-        os.close(descriptor)
     if len(data) > MAX_BYTES:
         return None, f"larger than {MAX_BYTES} bytes"
     try:
@@ -220,7 +236,7 @@ def summarize(rows: list[dict[str, Any]], state: dict[str, Any]) -> dict[str, An
         action, outcome, session = row.get("action"), row.get("outcome"), row.get("session")
         if action == "item" and isinstance(row.get("key"), str) and outcome in ("queued", "cleared"):
             last[row["key"]] = outcome
-            done = row.get("kind") in FINISHED_KINDS
+            done = isinstance(row.get("kind"), str) and row["kind"] in FINISHED_KINDS
         else:
             done = action == "retire" and outcome == "done"
         if done and isinstance(session, str) and _NAME.fullmatch(session):

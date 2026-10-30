@@ -5404,7 +5404,8 @@ LOOP_DENY = [f"Bash({prefix}nogg {command}:*)"
              for prefix in ("./scripts/", "scripts/")
              for command in ("session launch", "session send", "session kickoff", "session stop",
                              "loop add", "loop approve", "loop remove", "loop pause", "loop resume",
-                             "loop edit", "loop run-now", "loop tick")]
+                             "loop edit", "loop run-now", "loop tick",
+                             "pause --until", "pause --days", "resume")]
 LOOP_NAME_MAX = 40
 LOOP_RUN_ID_RE = re.compile(r"[A-Za-z0-9._:-]{1,128}")
 LOOP_KICKOFF_MAX = 256 * 1024
@@ -8620,6 +8621,8 @@ def resume_step(name, message=None):
 DISPATCH_AUDIT_BYTES = 1024 * 1024
 DISPATCH_AUDIT_GENERATIONS = 3
 DISPATCH_TAIL_BYTES = 64 * 1024
+DISPATCH_STATE_BYTES = 16 * 1024 * 1024
+DISPATCH_AUDIT_ROWS_BYTES = 2 * DISPATCH_AUDIT_BYTES
 PAUSE_LOCK_WAIT_SECONDS = 60
 # What the send path says when it stopped before anything was submitted.
 WAKE_NOT_SENT = ("nothing was", "cannot send", "refusing", "timed out waiting for session lock")
@@ -8641,13 +8644,14 @@ def _dispatch_lock(wait=0):
         yield True
 def _read_dispatch_state(filename):
     try:
-        value = json.loads((dispatch_dir() / filename).read_text())
+        value = json.loads(pause_module().read_regular(dispatch_dir() / filename, DISPATCH_STATE_BYTES))
     except (OSError, ValueError, RecursionError):
         return {}
     return value if isinstance(value, dict) else {}
 def _append_dispatch_audit(row):
     path = data_dir(dispatch_dir()) / "dispatch.jsonl"
     encoded = (json.dumps(row, sort_keys=True) + "\n").encode()
+    pause_module().set_aside(path)
     if path.exists() and path.stat().st_size + len(encoded) > DISPATCH_AUDIT_BYTES:
         for index in range(DISPATCH_AUDIT_GENERATIONS - 1, 0, -1):
             source = path.with_name(f"{path.name}.{index}")
@@ -8663,17 +8667,16 @@ def current_pause(moment=None):
     module, moment = pause_module(), moment or dt.datetime.now(dt.timezone.utc)
     state = module.read(pause_path(), moment)[0]
     return state if module.is_active(state, moment) else None
-def dispatch_policy():
+def dispatch_policy(pause=None):
     """The one place a host-wide hold sets `hold_sends`: a pause stops nudges and
     resumes here, and items and retirement carry on."""
-    return dispatch_module().policy_from(CFG.get("session_dispatch"), hold_sends=current_pause() is not None)
+    return dispatch_module().policy_from(CFG.get("session_dispatch"), hold_sends=pause is not None)
 def wake_policy():
     return wake_module().policy_from((CFG.get("session_dispatch") or {}).get("wake"))
-def dispatch_wake_hold():
+def dispatch_wake_hold(pause=None):
     """The one place a host-wide hold stops the digest, urgent items included: a pause
     and quiet hours (TASK-SWK-010) return their reason here. The queue goes on being
     evaluated."""
-    pause = current_pause()
     return f"paused until {pause_module().until_text(pause)}" if pause else None
 def _dispatch_issues(dry_run):
     """The Bead list, cached 300 s across passes. A failed read is None, never the
@@ -8873,7 +8876,7 @@ def _send_wake(queue, wake, message, shown, told, record, moment):
         _append_dispatch_audit({"time": dispatch_module().iso(moment), "action": "wake", "id": wake,
                                 "keys": [item["key"] for item in shown], "outcome": outcome})
     return outcome
-def _deliver_wake(queue, moment, dry_run=False):
+def _deliver_wake(queue, moment, dry_run=False, pause=None):
     """One digest, or why not (design Decision 8). None means nothing is due."""
     module = wake_module()
     if queue.get("sending") and not dry_run:
@@ -8881,7 +8884,7 @@ def _deliver_wake(queue, moment, dry_run=False):
                                 "outcome": "failed: the delivery was interrupted"})
         module.mark_failed(queue, "the last delivery was interrupted", moment, True)
     policy = wake_policy()
-    plan = module.plan(queue, policy, moment, dispatch_wake_hold())
+    plan = module.plan(queue, policy, moment, dispatch_wake_hold(pause))
     if not plan["items"]:
         queue.pop("hold", None)
         return None
@@ -8900,7 +8903,7 @@ def _quarantine_dispatch_state(filename):
     history and the sticky items without a word."""
     path = dispatch_dir() / filename
     try:
-        if isinstance(json.loads(path.read_text()), dict):
+        if isinstance(json.loads(pause_module().read_regular(path, DISPATCH_STATE_BYTES)), dict):
             return
     except OSError:
         return
@@ -8936,17 +8939,28 @@ def _end_pause_if_due(moment):
     state = module.read(pause_path(), moment)[0]
     if module.is_due(state, moment):
         _end_pause(state, moment)
+def _end_pause_guarded(moment):
+    """A fault here costs neither a tick nor a pass. The state that stays holds the digest
+    in `_dispatch_pass`, and `doctor` warns about it."""
+    try:
+        _end_pause_if_due(moment)
+    except Exception as exc:
+        print(f"nogg: the pause could not be ended: {exc}", file=sys.stderr)
 def end_due_pause():
-    """The end of a pause in `loop tick`, which needs no dispatcher. With the lock busy a
+    """The end of a pause outside a pass, which needs no dispatcher. With the lock busy a
     pass is running, and it or the next tick ends the pause."""
-    moment = dt.datetime.now(dt.timezone.utc)
     with _dispatch_lock() as held:
         if held:
-            _end_pause_if_due(moment)
+            _end_pause_guarded(dt.datetime.now(dt.timezone.utc))
 def _dispatch_pass(dry_run, as_json):
     module, wake_lib = dispatch_module(), wake_module()
+    started = dt.datetime.now(dt.timezone.utc)
     if not dry_run:
-        _end_pause_if_due(dt.datetime.now(dt.timezone.utc))
+        _end_pause_guarded(started)
+    # One read for the whole pass, which holds the lock, so an end falling inside the
+    # gather waits for the next pass and its one digest. What is still there after the end
+    # check holds too: delivering past a failed end would queue its summary on every pass.
+    pause = current_pause(started) if dry_run else pause_module().read(pause_path(), started)[0]
     records = [rec for _path, rec in session_records()]
     alive, unknown = session_liveness(records, strict=True)
     live = alive | unknown
@@ -8959,7 +8973,7 @@ def _dispatch_pass(dry_run, as_json):
     queue = _read_dispatch_queue(moment, dry_run)
     if not dry_run:
         _quarantine_dispatch_state("state.json")
-    actions, memory = module.decide(facts, _read_dispatch_state("state.json"), dispatch_policy(), moment)
+    actions, memory = module.decide(facts, _read_dispatch_state("state.json"), dispatch_policy(pause), moment)
     memory["last_pass_at"] = module.iso(moment)
     by_session = {fact["session"]: fact for fact in facts}
     results = []
@@ -8976,7 +8990,7 @@ def _dispatch_pass(dry_run, as_json):
         # Saved before the delivery, so a fault there cannot lose this pass.
         atomic_json_state(data_dir(dispatch_dir()) / "state.json", memory)
         atomic_json_state(dispatch_dir() / "queue.json", queue)
-    wake = _deliver_wake(queue, moment, dry_run)
+    wake = _deliver_wake(queue, moment, dry_run, pause)
     if not dry_run:
         atomic_json_state(dispatch_dir() / "queue.json", queue)
     items = queue.get("items") or []
@@ -9009,6 +9023,8 @@ def session_dispatch(dry_run=False, as_json=False):
     if errors:
         raise RuntimeError("session dispatch: " + "; ".join(errors))
     if not dispatch_policy()["enabled"]:
+        if not dry_run:
+            end_due_pause()
         print(json.dumps({"enabled": False, "dry_run": dry_run, "sessions": 0, "actions": [], "queue": []}) if as_json
               else "session dispatch is disabled (session_dispatch.enabled is not true)")
         return
@@ -9033,20 +9049,19 @@ def _audit_rows(lines):
 def _dispatch_audit_tail():
     """The newest audit rows. It runs in any session, so a bad line is skipped."""
     try:
-        with (dispatch_dir() / "dispatch.jsonl").open("rb") as stream:
-            stream.seek(0, os.SEEK_END)
-            stream.seek(max(0, stream.tell() - DISPATCH_TAIL_BYTES))
-            return _audit_rows(stream.read().decode(errors="replace").splitlines())
+        data = pause_module().read_regular(dispatch_dir() / "dispatch.jsonl", DISPATCH_AUDIT_ROWS_BYTES)
     except OSError:
         return []
+    return _audit_rows(data[-DISPATCH_TAIL_BYTES:].decode(errors="replace").splitlines())
 def _dispatch_audit_rows():
     """Every kept row, oldest first: a pause can outlast the tail and a rotation."""
     path, rows = dispatch_dir() / "dispatch.jsonl", []
     for source in [*(path.with_name(f"{path.name}.{index}") for index in range(DISPATCH_AUDIT_GENERATIONS, 0, -1)), path]:
         try:
-            rows.extend(_audit_rows(source.read_text(errors="replace").splitlines()))
+            data = pause_module().read_regular(source, DISPATCH_AUDIT_ROWS_BYTES)
         except OSError:
             continue
+        rows.extend(_audit_rows(data.decode(errors="replace").splitlines()))
     return rows
 def session_inbox(as_json=False):
     """The queue, the last wakes and the audit tail. It only reads, works with the
@@ -9076,7 +9091,7 @@ def _known_loops():
     return (config or {"loops": {}})["loops"]
 def pause_cmd(args):
     """Hold automation (design Decision 16). `--status` only reads and runs anywhere. The
-    rest waits for a running pass, so that nothing more goes out after it returns."""
+    rest waits for a running pass, so that no further digest or nudge follows it."""
     module, moment = pause_module(), dt.datetime.now(dt.timezone.utc)
     if args.status:
         if args.until or args.days or args.keep_loop:
@@ -9099,6 +9114,8 @@ def pause_cmd(args):
             state = None
         replaced = module.begin(state, end, keep, set_by, moment)
         module.write(pause_path(), replaced)
+        if module.read(pause_path(), moment) != (replaced, None):
+            raise RuntimeError(f"pause: {pause_path()} does not read back as this pause")
         _append_dispatch_audit({"time": dispatch_module().iso(moment), "session": set_by, "action": "pause",
                                 "outcome": f"until {replaced['until']}"})
     print("\n".join(module.status_lines(module.status(replaced, moment))))
@@ -9114,7 +9131,11 @@ def resume_cmd():
             _end_pause(state, moment)
             print(f"resumed: the pause until {module.until_text(state)} has ended")
             return
-        module.clear(pause_path())
+        try:
+            module.clear(pause_path())
+        except OSError as exc:
+            print(f"nothing was paused; remove {pause_path()} by hand: {exc.strerror}")
+            return
     print(f"nothing was paused{f'; removed the unusable pause.json ({problem})' if problem else ''}")
 # --- orchestrator: the always-on supervisor ------------------------------
 # `orchestrator run` is the idempotent process the systemd user service starts.
@@ -10004,8 +10025,11 @@ def pause_diagnostics():
     used is a WARN, because it silently does not pause anything."""
     module, moment = pause_module(), dt.datetime.now(dt.timezone.utc)
     state, problem = module.read(pause_path(), moment)
-    return ([f"{pause_path()} cannot be used ({problem}); this host counts as not paused"] if problem else [],
-            [f"paused until {module.until_text(state)}"] if module.is_active(state, moment) else [])
+    warnings = [f"{pause_path()} cannot be used ({problem}); this host counts as not paused"] if problem else []
+    if module.is_due(state, moment):
+        warnings.append(f"{pause_path()} is past its end, {module.until_text(state)}, and nothing has ended it; "
+                        "`nogg resume` does, and a pass holds the digest until then")
+    return warnings, [f"paused until {module.until_text(state)}"] if module.is_active(state, moment) else []
 
 LOOP_TICK_WARN_SECONDS = 300
 
@@ -10887,10 +10911,7 @@ def main():
                     raise RuntimeError("nogg loop tick is refused inside every supervised session")
                 if ROOT.resolve() != ORCHESTRATOR_HOME.resolve():
                     raise RuntimeError(f"nogg loop tick runs only in the main checkout: {ORCHESTRATOR_HOME}")
-                try:
-                    end_due_pause()
-                except OSError as exc:   # A pause past its end holds nothing, so the tick goes on.
-                    print(f"loop tick: the pause could not be ended: {exc}", file=sys.stderr)
+                end_due_pause()
                 loop_runner_for_main().tick()
                 return
             if args.loop_command == "run-now":

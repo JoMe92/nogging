@@ -42,7 +42,7 @@ fi
 
 # --- the loop runner with an injected clock --------------------------------------
 PYTHONPATH="$here/lib" python3 - >"$work/loops.out" 2>&1 <<'PY' && ok "loops: a pause skips, keeps and leaves state alone" || { bad "loops: see above"; cat "$work/loops.out"; }
-import json, tempfile, unittest
+import json, os, stat, tempfile, unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -102,6 +102,21 @@ class PausedTicks(unittest.TestCase):
         self.tick(5)
         self.assertEqual(len([row for row in self.rows("alpha") if row.get("reason") == "paused-global"]), 2)
 
+    def test_a_pause_set_during_a_tick_holds_the_loops_still_to_come(self):
+        self.runner.send = lambda _record, text: (self.sent.append(text), self.held())
+        self.tick(5)
+        self.assertEqual(len(self.sent), 1, "alpha ran, and report comes after the pause")
+        self.assertEqual(self.rows("report"), [], "held, and its slot came before the pause began")
+
+    def test_a_planted_run_log_stops_no_tick(self):
+        self.held()
+        path = loop_runner.event_path(self.root)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        os.mkfifo(path)
+        self.tick(5)
+        self.assertTrue(stat.S_ISREG(path.lstat().st_mode), "the node is set aside")
+        self.assertEqual([row["reason"] for row in self.rows("alpha")], ["paused-global"])
+
     def test_a_kept_loop_runs_by_its_schedule(self):
         self.held(["report"])
         self.tick(5)
@@ -119,7 +134,7 @@ class PausedTicks(unittest.TestCase):
         self.assertEqual(self.sent, [])
         self.pause = None
         self.tick(5)
-        self.assertEqual(self.sent and [text for text in self.sent], [text for text in self.sent])
+        self.assertEqual(len(self.sent), 1, "alpha runs again and report stays paused")
         self.assertTrue(self.loop_state_of("report")["paused"], "resume leaves a loop's own pause alone")
         self.assertFalse([row for row in self.rows("report") if row["event"] == "started"])
 
@@ -209,13 +224,86 @@ source = pathlib.Path(sys.argv[1]).read_text()
 assert 'base_settings = merge_pause_status_permission(base_settings)' in source
 
 # A hold reaches the dispatcher whatever `enabled` says or leaves out.
-with patch.object(m, "current_pause", return_value={"until": "2026-11-03T00:00:00+00:00"}):
-    for block in (None, {}, {"enabled": True}, {"enabled": False}):
-        with patch.dict(m.CFG, {"session_dispatch": block}):
-            assert m.dispatch_policy()["hold_sends"] is True, block
-    assert m.dispatch_wake_hold().startswith("paused until "), m.dispatch_wake_hold()
-with patch.object(m, "current_pause", return_value=None):
-    assert m.dispatch_policy()["hold_sends"] is False and m.dispatch_wake_hold() is None
+held = {"until": "2026-11-03T00:00:00+00:00"}
+for block in (None, {}, {"enabled": True}, {"enabled": False}):
+    with patch.dict(m.CFG, {"session_dispatch": block}):
+        assert m.dispatch_policy(held)["hold_sends"] is True, block
+assert m.dispatch_wake_hold(held).startswith("paused until "), m.dispatch_wake_hold(held)
+assert m.dispatch_policy()["hold_sends"] is False and m.dispatch_wake_hold() is None
+
+# A loop run cannot pause or resume, and its deny rule leaves the status alone.
+assert "Bash(./scripts/nogg pause --days:*)" in m.LOOP_DENY and "Bash(./scripts/nogg resume:*)" in m.LOOP_DENY
+assert not [rule for rule in m.LOOP_DENY if "pause --status" in rule or rule.endswith("nogg pause:*)")]
+
+# --- the end of a pause inside a pass ---------------------------------------------
+import os, time
+from datetime import datetime, timedelta, timezone
+module = m.pause_module()
+queue_path = state / "queue.json"
+item = {"key": "s1|blocked|m", "kind": "blocked", "session": "s1", "reason": "r", "next": "bd show B1"}
+
+def one_pass(gather=lambda: []):
+    sent = []
+    with patch.object(m, "pause_path", return_value=path), patch.object(m, "dispatch_dir", return_value=state), \
+         patch.object(m, "ORCHESTRATOR_LOCKS", locks), patch.object(m, "session_records", side_effect=lambda *_a: gather()), \
+         patch.object(m, "session_liveness", return_value=(set(), set())), \
+         patch.object(m, "orchestrator_target", return_value=({"name": "orch"}, "idle")), \
+         patch.object(m, "_orchestrator_usage", return_value=None), \
+         patch.object(m, "orchestrator_send", side_effect=lambda _r, text: sent.append(text)):
+        m._dispatch_pass(False, True)
+    return sent
+
+def seed(ends_in):
+    moment = datetime.now(timezone.utc)
+    old = (moment - timedelta(hours=2)).isoformat()
+    module.write(path, {"schema": 1, "started_at": old, "until": (moment + timedelta(seconds=ends_in)).isoformat(),
+                        "keep_loops": [], "set_by": "operator", "compacted_at": None})
+    queue_path.write_text(json.dumps({"items": [{**item, "sticky": True, "created_at": old}]}))
+    (state / "dispatch.jsonl").write_text(json.dumps({"time": (moment - timedelta(hours=1)).isoformat(), "action": "item",
+                                                      "key": item["key"], "kind": "blocked", "outcome": "queued"}) + "\n")
+
+# An end falling inside the gather holds this pass, so that the next one sends one digest.
+seed(0.4)
+assert one_pass(lambda: time.sleep(0.8) or []) == [] and path.exists(), "the pass read the pause twice"
+sent = one_pass()
+assert len(sent) == 1 and "resumed" in sent[0] and "items=2" in sent[0] and not path.exists(), sent
+
+# A failed end costs no pass and no repeated digest: the state that stays holds delivery.
+seed(-60)
+with patch.object(module, "clear", side_effect=OSError("read-only file system")):
+    for _ in range(3):
+        assert one_pass() == []
+assert len(json.loads(queue_path.read_text())["items"]) == 2 and path.exists()
+with patch.object(m, "dispatch_dir", return_value=state), patch.object(m, "pause_path", return_value=path):
+    warnings, notes = m.pause_diagnostics()
+assert any("past its end" in line for line in warnings) and notes == [], (warnings, notes)
+sent = one_pass()
+assert len(sent) == 1 and not path.exists(), sent
+
+# One wrong row and a planted audit generation stop neither a pass nor a tick.
+seed(-60)
+with (state / "dispatch.jsonl").open("a") as stream:
+    stream.write(json.dumps({"time": datetime.now(timezone.utc).isoformat(), "action": "item", "key": "a",
+                             "outcome": "queued", "kind": []}) + "\n")
+os.mkfifo(state / "dispatch.jsonl.2")
+sent = one_pass()
+assert len(sent) == 1 and not path.exists(), sent
+seed(-60)
+(state / "dispatch.jsonl").unlink()
+os.mkfifo(state / "dispatch.jsonl")
+queue_path.unlink()
+os.mkfifo(queue_path)
+one_pass()
+assert not path.exists() and queue_path.is_file() and (state / "dispatch.jsonl").is_file()
+for name in ("dispatch.jsonl.2", "dispatch.jsonl.corrupt"):
+    (state / name).unlink()
+
+# A fault in the end never leaves `loop tick`.
+seed(-60)
+with patch.object(m, "pause_path", return_value=path), patch.object(m, "ORCHESTRATOR_LOCKS", locks), \
+     patch.object(m, "_end_pause", side_effect=TypeError("a bad row")):
+    m.end_due_pause()
+assert path.exists()
 PY
 
 # --- the commands in a scratch repository ----------------------------------------
@@ -350,6 +438,16 @@ lacks "ended: session list does not call it paused" "PAUSED" "$("$nogg" session 
 "$nogg" loop tick
 [[ ! -e "$pause_file" ]] && ok "uneventful: a tick ends it without the dispatcher" || bad "uneventful: the tick left it"
 [[ ! -e "$queue_file" ]] && ok "uneventful: nothing is queued" || bad "uneventful: $(cat "$queue_file")"
+
+# A disabled dispatcher still clears a pause past its end, and prints only that it is off.
+write_pause 1 2
+expect "disabled: it says so" "session dispatch is disabled (session_dispatch.enabled is not true)" "$("$nogg" session dispatch --once)"
+[[ ! -e "$pause_file" ]] && ok "disabled: the pause is gone" || bad "disabled: the pass left it"
+
+# A directory planted at the path is reported, and resume still exits 0.
+mkdir "$pause_file"
+has "planted: resume says what to do" "by hand" "$("$nogg" resume)"
+rmdir "$pause_file"
 
 # With a live pause the tick ends nothing.
 "$nogg" pause --days 1 >/dev/null; "$nogg" loop tick

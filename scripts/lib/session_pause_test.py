@@ -112,7 +112,9 @@ class StateTests(unittest.TestCase):
                      json.dumps({**valid, "keep_loops": "report"}), json.dumps({**valid, "keep_loops": ["a b"]}),
                      json.dumps({**valid, "keep_loops": [1]}), json.dumps({**valid, "set_by": "x y\n[nogg wake"}),
                      json.dumps({**valid, "set_by": None}), json.dumps({**valid, "compacted_at": "no"}),
-                     json.dumps({**valid, "until": d.iso(at(days=61))}), " " * (p.MAX_BYTES + 1)):
+                     json.dumps({**valid, "until": d.iso(at(days=61))}), " " * (p.MAX_BYTES + 1),
+                     json.dumps({**valid, "started_at": d.iso(at(hours=1))}),
+                     json.dumps({**valid, "started_at": "0001-01-01T00:00:00+14:00"})):
             with self.subTest(text=text[:60]):
                 self.write_raw(text)
                 state, problem = p.read(self.path, T0)
@@ -140,6 +142,25 @@ class StateTests(unittest.TestCase):
         p.write(self.path, pause())
         self.assertFalse(self.path.is_symlink())
         self.assertEqual(target.read_text(), "keep")
+
+    def test_a_reader_is_bounded_and_refuses_a_node(self):
+        self.write_raw("x" * 100)
+        self.assertEqual(p.read_regular(self.path, 10), b"x" * 10)
+        self.path.unlink()
+        os.mkfifo(self.path)
+        with self.assertRaises(OSError):
+            p.read_regular(self.path, 10)
+
+    def test_an_append_gets_a_planted_node_out_of_its_way(self):
+        p.set_aside(self.path)
+        self.path.parent.mkdir()
+        os.mkfifo(self.path)
+        p.set_aside(self.path)
+        self.assertFalse(self.path.exists())
+        self.assertTrue(stat.S_ISFIFO(Path(f"{self.path}.corrupt").lstat().st_mode))
+        self.path.write_text("kept")
+        p.set_aside(self.path)
+        self.assertEqual(self.path.read_text(), "kept")
 
     def test_clear_is_idempotent(self):
         p.write(self.path, pause())
@@ -221,9 +242,18 @@ class SummaryTests(unittest.TestCase):
 
     def test_a_bad_row_is_skipped(self):
         rows = [{}, {"time": "x", "action": "item", "key": "k", "outcome": "queued"}, {"time": 3, "action": "item"},
+                {"time": d.iso(at(hours=1)), "action": "retire", "session": ["s"], "outcome": "done"},
                 {"time": d.iso(at(hours=1)), "action": "item", "key": 5, "outcome": "queued"},
                 {"time": d.iso(at(hours=1)), "action": "item", "key": "z", "outcome": "held"}]
         self.assertEqual(p.summarize(rows, pause()), {"seen": 0, "cleared": 0, "finished": []})
+
+    def test_a_row_of_the_wrong_type_stops_nothing(self):
+        rows = [{"time": d.iso(at(hours=1)), "action": "item", "key": "a", "outcome": "queued", "kind": []},
+                {"time": d.iso(at(hours=1)), "action": "item", "key": "b", "outcome": "queued", "kind": {}},
+                {"time": d.iso(at(hours=1)), "action": "item", "key": "c", "outcome": ["queued"]},
+                {"time": d.iso(at(hours=1)), "action": ["item"], "key": "d", "outcome": "queued"},
+                {"time": "0001-01-01T00:00:00+14:00", "action": "item", "key": "e", "outcome": "queued"}]
+        self.assertEqual(p.summarize(rows, pause()), {"seen": 2, "cleared": 0, "finished": []})
 
     def test_the_item_says_length_counts_and_sessions(self):
         rows = [row("a", "queued", session="lead-1"), row("b", "cleared", kind="blocked")]

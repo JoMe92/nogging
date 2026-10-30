@@ -909,7 +909,8 @@ ends a pause at its time first, with the dispatcher on or off.
 **Purpose.** Hold automation while you are away. The orchestrator gets no digest,
 running Leads get no nudge or `limit` resume, and loops outside `--keep-loop` do not
 run. The queue, the audit log and the retirement of merged sessions go on, nothing is
-lost, and every held item reaches the orchestrator as one digest when the pause ends.
+lost, and when the pause ends what it held reaches the orchestrator as one digest of
+at most 1.5 KiB. What does not fit follows in the next wake, and `session inbox` shows it.
 A pause stops no session and no timer, and blocks no launch made on purpose: `loop
 run-now` and `session launch` still work.
 
