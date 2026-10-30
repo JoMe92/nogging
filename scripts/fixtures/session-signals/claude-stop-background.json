@@ -1,0 +1,1 @@
+{"hook_event_name":"Stop","stop_hook_active":false,"background_tasks":[{"id":"bg-1","status":"running"},{"id":"bg-2","status":"completed"}],"last_assistant_message":"Waiting for the build."}

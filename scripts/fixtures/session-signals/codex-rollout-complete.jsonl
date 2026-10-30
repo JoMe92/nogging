@@ -1,0 +1,5 @@
+{"type":"session_meta","payload":{"id":"thread-0001","cwd":"/scratch/work","timestamp":"2026-10-30T10:00:00Z"}}
+{"type":"event_msg","payload":{"type":"task_started","turn_id":"t1"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"working"}]}}
+{"type":"event_msg","payload":{"type":"task_complete","turn_id":"t1","last_agent_message":"Opened PR #321.\nCI is running."}}
+{"type":"event_msg","payload":{"type":"future_event_kind","detail":"ignored"}}

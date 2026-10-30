@@ -1,0 +1,4 @@
+{"type":"session_meta","payload":{"id":"thread-0001","cwd":"/scratch/work","timestamp":"2026-10-30T10:00:00Z"}}
+{"type":"event_msg","payload":{"type":"future_event_kind"}}
+not json at all
+{"type":"event_msg","payload":{"type":"task_complete","last_agent_message":"never started"}}
