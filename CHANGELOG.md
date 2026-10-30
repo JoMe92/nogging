@@ -21,9 +21,16 @@ and GitHub Releases for that history.
   one-line excerpts and rotation at 256 KiB. Claude's launch settings now also
   wire `UserPromptSubmit`, `StopFailure` and `SessionEnd`, and Codex turns are
   read from the rollout with no hook install.
+- Supervised Pi sessions load `.pi/extensions/nogging-lifecycle.ts`, which
+  reports `agent_start`, `agent_settled`, extension prompts and shutdown through
+  `session emit`, so Pi reads `working`, `idle` or `needs_input` in `watch`
+  instead of `unknown`. It does nothing outside a supervised session, never
+  uses `agent_end` as completion, and a missing file only warns at launch.
 
 ### Changed
 
+- `session watch` also reads herdr's `agent_status` (`blocked` is a question,
+  `done` is idle, `unknown` proves nothing), between the rollout and the pane.
 - `session watch` classifies every agent from one evidence order (structured
   event, Codex rollout, pane adapter): an idle event yields to a pane that is
   working, a Claude session no longer reads `idle` during a later turn, and

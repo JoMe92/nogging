@@ -291,7 +291,11 @@ the subsection for the tool you are running as, and ignore the others.
   event and rejects a write/edit under `openspec/` unless the
   `.nogging/locks/openspec.readonly` sentinel is absent (a planning session
   is active); `plan-begin` / `plan-end` toggle it. The same extension
-  enforces the Nogging command floor on the shell tool. Pi's `restricted`
+  enforces the Nogging command floor on the shell tool. A second extension,
+  `.pi/extensions/nogging-lifecycle.ts`, loaded beside it in every supervised
+  session, reports `agent_start`, `agent_settled`, prompts and shutdown through
+  `session emit` (never `agent_end`), so `session watch` classifies Pi; it is
+  inert outside a supervised session and a missing file only warns. Pi's `restricted`
   authority level is **floor-only**: unlike Claude and Codex, there is no
   network or filesystem sandbox at either authority level — the guard
   extension and the `openspec/` write boundary are the only enforcement.

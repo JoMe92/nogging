@@ -49,6 +49,7 @@ copied verbatim on every `init`/`update`:
 | --- | --- |
 | `.pi/prompts/{plan,discovery-review,sync-now}.md` | The **workflow prompts** — Pi reads `.pi/prompts/*.md` directly from the repository (confirmed from source: `resource-loader.js` resolves `<repo>/.pi/prompts` literally), so — unlike Codex — **no symlink helper is needed**. |
 | `.pi/extensions/nogging-guard.ts` | The **guard extension**: Pi's project-local floor, since Pi ships no native sandbox or execution-policy mechanism of its own. See *The guard extension* below. |
+| `.pi/extensions/nogging-lifecycle.ts` | The **lifecycle extension**: reports a supervised session's turns so `session watch` and `session send` can tell `working` from `idle`. See *The lifecycle extension* below. |
 
 A user's own `.pi/settings.json` or other `.pi/*` content is never touched.
 
@@ -76,6 +77,32 @@ container (a genuine option, but a new infra dependency this repo does not
 otherwise need — left to the operator, not managed by Nogging). Treat a Pi
 session's `restricted` level as weaker than the same word for Claude or
 Codex.
+
+## The lifecycle extension — `.pi/extensions/nogging-lifecycle.ts`
+
+Pi has no hook file, so a supervised session reports its own lifecycle through
+an extension that `session launch` loads beside the guard, with `--extension`.
+It lives in `.pi/extensions/`, not under `.pi/nogging/`, because it must load in
+every supervised session. It maps Pi's events onto `scripts/nogg session emit`:
+
+| Pi event | Reported as | State in `watch` |
+| --- | --- | --- |
+| `agent_start` | `turn_start` | `working` |
+| `agent_settled` | `turn_end`, with the last assistant message as the excerpt | `idle` |
+| `agent_before_settle` with `outcome: "error"` | `turn_error` | `limit` for a rate limit, else `idle` |
+| `ui_prompt_start` | `needs_input` | `needs_input` |
+| `ui_prompt_end` | `turn_start` during a run, else `turn_end` | `working` or `idle` |
+| `session_shutdown` (quit) | `session_end` | `ended` |
+
+`agent_end` is never used as completion: a retry, recovery, compaction or queued
+message can start another run after it, so only `agent_settled` means finished.
+The extension does nothing unless `NOGG_SESSION_NAME` is set, so standalone Pi is
+unaffected. It uses only Node built-ins, runs each `session emit` as a
+timeout-bounded child that cannot hold Pi open, and swallows its own errors.
+A missing file only warns at launch: observability never blocks a session, and
+`watch` then falls back to herdr's status or the pane (`unknown` when neither
+exists). On herdr, `agent_status` joins the evidence, so a Pi session is
+classified on tmux and herdr alike.
 
 ## The guard extension — `.pi/extensions/nogging-guard.ts`
 

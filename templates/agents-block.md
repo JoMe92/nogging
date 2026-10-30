@@ -140,7 +140,9 @@ write before either has pulled.
 - **Pi.** No per-tool hook and no execpolicy file — `openspec/` writes are
   blocked by the project-local guard extension
   (`.pi/extensions/nogging-guard.ts`), which also enforces the command
-  floor; `restricted` is floor-only (no network or filesystem sandbox at
+  floor; a second extension (`.pi/extensions/nogging-lifecycle.ts`) reports
+  the session's turns to `session watch` and is inert outside a supervised
+  session; `restricted` is floor-only (no network or filesystem sandbox at
   either authority level, unlike Claude Code or Codex). Pi has no in-process
   subagent mechanism: a specialist run is a separate supervised session,
   `scripts/nogg session launch --agent pi --role specialist:<type>
