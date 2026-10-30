@@ -21,6 +21,7 @@ mkdir -p "$work/root/scripts"
 # Stub nogg: one line per call, "<event>\t<stdin>"; `stuck` hangs for a minute.
 cat > "$work/root/scripts/nogg" <<'STUB'
 #!/usr/bin/env bash
+if [ "$2" = completion-check ]; then echo '{"gaps":[],"message":null}'; exit 0; fi
 payload=$(cat)
 if [ -n "${STUB_SLEEP:-}" ]; then sleep "$STUB_SLEEP"; fi
 printf '%s\t%s\t%s\n' "$3" "${NOGG_SESSION_NAME:-}" "$payload" >> "$STUB_LOG"

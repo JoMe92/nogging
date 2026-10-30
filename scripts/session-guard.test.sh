@@ -216,6 +216,109 @@ PY
 expect "a raising or timed-out check allows the stop" "" "$out"
 expect "a raising check still records turn_end" turn_end,turn_end "$(events s-raises)"
 
+# --- Pi: agent_before_settle in the lifecycle extension ---------------------------
+ext="$repo_root/.pi/extensions/nogging-lifecycle.ts"
+if ! command -v node >/dev/null 2>&1; then
+  ok "pi: skipped (node not installed)"
+else
+  cat > "$work/pi-runner.mjs" <<'NODE'
+import { pathToFileURL } from "node:url";
+import { readFileSync, existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+const [, , extPath, mode, events] = process.argv;
+let mod;
+try { mod = await import(pathToFileURL(extPath).href); }
+catch (e) { console.log("IMPORT_FAILED"); process.exit(2); }
+let failed = 0;
+const check = (desc, cond) => { console.log(`${cond ? "ok  " : "FAIL"} - ${desc}`); if (!cond) failed = 1; };
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+function fakePi() {
+  const handlers = new Map();
+  return { handlers,
+    on(event, fn) { handlers.set(event, [...(handlers.get(event) || []), fn]); return () => {}; },
+    async fire(event, payload = {}) {
+      let result;
+      for (const fn of handlers.get(event) || []) result = await fn({ type: event, ...payload }, {});
+      return result;
+    } };
+}
+const names = () => existsSync(events) ? readFileSync(events, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l).event) : [];
+async function waitFor(name) {
+  for (let i = 0; i < 200; i++) { if (names().includes(name)) return true; await sleep(50); }
+  return false;
+}
+const settle = (extra = {}) => ({ outcome: "completed", entries: [], continue: false, ...extra });
+const pi = fakePi();
+mod.default(pi);
+if (mode === "dirty") {
+  await pi.fire("input", { text: "go", source: "interactive" });
+  await pi.fire("agent_start");
+  const foreign = { type: "custom_message", customType: "other", content: "x", display: false };
+  const first = await pi.fire("agent_before_settle", settle({ entries: [foreign] }));
+  check("pi: a dirty tree continues the run", first?.continue === true);
+  const entry = first?.entries?.at(-1);
+  check("pi: the continuation carries the fixed message",
+    entry?.type === "custom_message" && String(entry?.content).startsWith("You are ending your turn with: uncommitted changes"));
+  check("pi: another extension's proposed entry is kept", first?.entries?.[0] === foreign);
+  check("pi: a continued stop records guard_continue", await waitFor("guard_continue"));
+  await pi.fire("agent_start");
+  check("pi: a second settle for the same input is allowed",
+    (await pi.fire("agent_before_settle", settle())) === undefined);
+  await pi.fire("input", { text: "again", source: "interactive" });
+  await pi.fire("agent_start");
+  check("pi: the next user input gets a new continuation",
+    (await pi.fire("agent_before_settle", settle()))?.continue === true);
+  await pi.fire("input", { text: "again", source: "interactive" });
+  check("pi: an aborted run is never continued",
+    (await pi.fire("agent_before_settle", settle({ outcome: "aborted" }))) === undefined);
+  check("pi: a run another extension continues needs no guard",
+    (await pi.fire("agent_before_settle", settle({ continue: true }))) === undefined);
+  await pi.fire("agent_before_settle", settle({ outcome: "error" }));
+  check("pi: an API error is never continued", await waitFor("turn_error"));
+} else if (mode === "allowed") {
+  await pi.fire("input", { text: "go", source: "interactive" });
+  await pi.fire("agent_start");
+  if (process.env.SIGNAL_NOGG) {
+    await waitFor("turn_start");
+    execFileSync(process.env.SIGNAL_NOGG, ["session", "signal", "blocked", "no operator"]);
+  }
+  check(`pi: ${process.env.CASE} allows the settle`, (await pi.fire("agent_before_settle", settle())) === undefined);
+}
+await pi.fire("session_shutdown", { reason: "reload" });
+process.exit(failed);
+NODE
+  pi_run() { # pi_run <session> <mode> [case], with $PI_ROOT as the nogg root
+    NOGG_SESSION_NAME="$1" NOGG_SESSION_AGENT=pi NOGG_SESSION_ROOT="${PI_ROOT:-$repo_root}" CASE="${3:-}" \
+      node "$work/pi-runner.mjs" "$ext" "$2" "$sessions/$1.events.jsonl"
+  }
+  write_record s-pi pi
+  echo dirty > "$root/dirty.txt"
+  set +e; out=$(pi_run s-pi dirty); rc=$?; set -e
+  if [[ $rc -eq 2 ]]; then
+    ok "pi: skipped (node cannot strip types)"
+  else
+    while IFS= read -r line; do
+      case "$line" in "ok  "*) ok "${line#ok   - }" ;; *) bad "${line#FAIL - }" ;; esac
+    done <<<"$out"
+    pi_allowed() { # pi_allowed <session> <case>
+      local out=""
+      out=$(pi_run "$1" allowed "$2") || true
+      if [[ "$out" == "ok  "* ]]; then ok "${out#ok   - }"; else bad "pi: $2: ${out:-no output}"; fi
+    }
+    write_record s-pi-blocked pi
+    SIGNAL_NOGG="$nogg" pi_allowed s-pi-blocked "a blocked signal"
+    write_record s-pi-prekick pi '"kickoff_sent_at": None'
+    pi_allowed s-pi-prekick "a session with no kickoff"
+    mkdir -p "$work/broken/scripts"
+    printf '#!/usr/bin/env bash\necho not-json; exit 3\n' > "$work/broken/scripts/nogg"
+    chmod +x "$work/broken/scripts/nogg"
+    write_record s-pi-broken pi
+    PI_ROOT="$work/broken" pi_allowed s-pi-broken "a broken check"
+    PI_ROOT="$work/missing" pi_allowed s-pi-broken "a missing nogg"
+  fi
+  rm -f "$root/dirty.txt"
+fi
+
 # --- wiring ---------------------------------------------------------------------
 python3 - "$nogg" <<'PY' && ok "Claude's Stop hook carries --guard, and only Stop" || bad "Stop hook wiring"
 import sys
