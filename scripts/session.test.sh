@@ -951,19 +951,34 @@ unset NOGGING_ROOT
 # ===========================================================================
 export PI_ARGV_LOG="$work/pi-argv.log"; : >"$PI_ARGV_LOG"
 mkdir -p "$work/pi-full/.pi/extensions"
-cp "$here/../.pi/extensions/nogging-guard.ts" "$work/pi-full/.pi/extensions/"
+cp "$here/../.pi/extensions/nogging-guard.ts" "$here/../.pi/extensions/nogging-lifecycle.ts" "$work/pi-full/.pi/extensions/"
 "$here/session-launch" --agent pi --provider anthropic --model claude-x \
   --prompt "$work/pi-full/.nogging/launch-prompts/autonomous.md" \
   --cwd "$work/pi-full" --bead SPEC-pia >"$out" 2>&1 \
   || { echo "FAIL - pi-wrap: wrapper errored"; cat "$out"; fail=1; }
 cp "$PI_ARGV_LOG" "$out"
 check "pi-wrap: explicitly loads the guard" "<--extension> <$work/pi-full/.pi/extensions/nogging-guard.ts>"
+check "pi-wrap: explicitly loads the lifecycle extension" "<--extension> <$work/pi-full/.pi/extensions/nogging-lifecycle.ts>"
 check "pi-wrap: always passes --approve"                       "<--approve>"
 check "pi-wrap: forwards --provider"                           "<--provider> <anthropic>"
 check "pi-wrap: forwards --model"                              "<--model> <claude-x>"
 check "pi-wrap: appends the prompt via --append-system-prompt" "<--append-system-prompt>"
 refute "pi-wrap: never passes --no-approve"     "no-approve"
 refute "pi-wrap: never passes --no-extensions"  "no-extensions"
+
+# A missing lifecycle extension is a warning: observability never blocks a launch.
+: >"$PI_ARGV_LOG"
+mkdir -p "$work/pi-nolife/.pi/extensions"
+cp "$here/../.pi/extensions/nogging-guard.ts" "$work/pi-nolife/.pi/extensions/"
+"$here/session-launch" --agent pi --cwd "$work/pi-nolife" --bead SPEC-pib >"$out" 2>&1 \
+  && echo "ok   - pi-nolife: launch succeeds without the lifecycle extension" \
+  || { echo "FAIL - pi-nolife: a missing lifecycle extension blocked the launch"; cat "$out"; fail=1; }
+grep -qF "Pi lifecycle extension is missing" "$out" \
+  && echo "ok   - pi-nolife: warns about the missing lifecycle extension" \
+  || { echo "FAIL - pi-nolife: no warning"; cat "$out"; fail=1; }
+cp "$PI_ARGV_LOG" "$out"
+check "pi-nolife: still loads the guard" "<--extension> <$work/pi-nolife/.pi/extensions/nogging-guard.ts>"
+refute "pi-nolife: passes no lifecycle path" "nogging-lifecycle"
 
 # ===========================================================================
 # Scenario: a Claude settings file with --agent pi fails before any session
