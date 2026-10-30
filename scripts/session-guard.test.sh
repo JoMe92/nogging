@@ -557,6 +557,59 @@ assert "do not adopt it" not in text, "an ended Lead owns nothing"
 with patch.object(m, "session_records", side_effect=RuntimeError("boom")):
     assert m.bead_owners() == {}, "an unreadable store owns nothing"
 
+# A Lead a kickoff authorized for its change also holds the Bead it moved on to.
+mapped = [{"id": bead, "status": status, "labels": [f"openspec:change:{change}", "openspec:task:TASK-X-001"]}
+          for bead, status, change in (("SPEC-next", "in_progress", "c1"), ("SPEC-done", "closed", "c1"),
+                                       ("SPEC-else", "in_progress", "c2"), ("SPEC-mine", "in_progress", "c1"))]
+WIDE = dict(LEAD, authorized_change="c1")
+def owned(records=(("p", WIDE),), alive=("sf-other",), unknown=(), own=None, signal=None, issues=None):
+    env = {"NOGG_SESSION_NAME": own or "sf-outsider"}
+    listing = {"return_value": mapped} if issues is None else {"side_effect": issues}
+    with patch.object(m, "beads", **listing), \
+         patch.object(m, "session_liveness", return_value=(set(alive), set(unknown))), \
+         patch.object(m.signals_module(), "current_signal", return_value=signal), \
+         patch.object(m, "session_records", return_value=list(records)), patch.dict(os.environ, env):
+        return m.bead_owners()
+holder = owned()
+assert set(holder) == {"SPEC-live", "SPEC-next", "SPEC-mine"}, holder
+assert "sf-other" in holder["SPEC-next"][0], holder
+assert owned(alive=()) == {}, "a dead Lead holds nothing of its change"
+assert set(owned(records=(("p", LEAD),))) == {"SPEC-live"}, "no kickoff scope, only the launch Bead"
+assert set(owned(signal={"event": "done"})) == {"SPEC-live"}, "a finished Lead keeps only its launch Bead"
+assert owned(alive=(), unknown=("sf-other",))["SPEC-next"][1] is False, "unknown liveness stays loud"
+assert owned(signal={"event": "blocked"})["SPEC-next"][1] is False, "a blocked Lead stays loud"
+direct = ("r", {"name": "sf-direct", "bead_id": "SPEC-next", "state": "running", "role": "lead"})
+direct_owner = owned(records=(("p", WIDE), direct), alive=("sf-other", "sf-direct"))["SPEC-next"]
+assert "sf-direct" in direct_owner[0], "the Lead launched for a Bead outranks the change's holder"
+sibling = ("q", {"name": "sf-me", "bead_id": "SPEC-mine", "state": "running", "role": "lead"})
+assert "SPEC-mine" not in owned(records=(("p", WIDE), sibling), alive=("sf-other", "sf-me"), own="sf-me"), \
+    "a caller's own Bead stays its own"
+assert set(owned(own="sf-other")) == set(), "a change's holder is free to move on to its next Bead"
+failed = owned(issues=RuntimeError("bd down"))
+assert set(failed) == {"SPEC-live"}, "a failed Beads read keeps the launch Beads"
+
+# A live owner's Bead cannot get a second worktree; its owner can, and an
+# unreadable store refuses rather than reads as free.
+def allocate(bead, own="sf-outsider", records=(("p", WIDE),), listing=None):
+    env = {"NOGG_SESSION_NAME": own}
+    with patch.object(m, "claimed_bead"), patch.object(m, "beads", **(listing or {"return_value": mapped})), \
+         patch.object(m, "session_liveness", return_value=({"sf-other"}, set())), \
+         patch.object(m.signals_module(), "current_signal", return_value=None), \
+         patch.object(m, "session_records", return_value=list(records)), \
+         patch.object(m, "branch_exists", return_value=True), patch.object(m, "worktree_record_path", create=True), \
+         patch.object(m, "write_worktree_record") as wrote, patch.dict(os.environ, env):
+        try:
+            m.implementation_worktree(bead, "fix/adopted", "/nonexistent/spec-eeuv-probe")
+        except RuntimeError as exc:
+            assert not wrote.called, "a refusal writes nothing"
+            return str(exc)
+    raise AssertionError("allocation went on past its guards")
+assert "refused: SPEC-live owned by session sf-other" in allocate("SPEC-live"), allocate("SPEC-live")
+assert "refused: SPEC-next owned by session sf-other" in allocate("SPEC-next"), allocate("SPEC-next")
+assert "branch already exists" in allocate("SPEC-next", own="sf-other"), "the holder passes the guard"
+assert "branch already exists" in allocate("SPEC-else"), "another change is not held"
+assert "bd down" in allocate("SPEC-else", listing={"side_effect": RuntimeError("bd down")}), "the gate fails closed"
+
 # A failed tmux query proves nothing, for the caller that asks to know.
 broken = MagicMock()
 broken.live.side_effect = RuntimeError("no server")
@@ -564,6 +617,36 @@ record = {"name": "sf-other", "backend": "tmux"}
 with patch.object(m, "session_backend", return_value=broken):
     assert m.session_liveness([record]) == (set(), set()), "the established rule stands"
     assert m.session_liveness([record], strict=True) == (set(), {"sf-other"})
+PY
+
+python3 - "$nogg" <<'PY' && ok "recover keeps a launched Lead on its Bead" || bad "recover scope"
+import contextlib, io, json, os, sys, tempfile
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+from unittest.mock import patch
+m = SourceFileLoader("sf_eeuv_scope", sys.argv[1]).load_module()
+store = Path(tempfile.mkdtemp())
+(store / "sf-me.json").write_text(json.dumps({"name": "sf-me", "bead_id": "SPEC-abc", "role": "lead"}))
+(store / "sf-wide.json").write_text(json.dumps({"name": "sf-wide", "bead_id": "SPEC-abc", "role": "lead",
+                                                "authorized_change": "c1"}))
+(store / "sf-spec.json").write_text(json.dumps({"name": "sf-spec", "bead_id": "SPEC-abc",
+                                                "role": "specialist:code-reviewer"}))
+def report(name, attention=()):
+    out = io.StringIO()
+    with patch.object(m, "canonical_sessions_dir", return_value=store), \
+         patch.object(m, "recover_scan", return_value=([], list(attention))), \
+         patch.dict(os.environ, {"NOGG_SESSION_NAME": name}), contextlib.redirect_stdout(out):
+        try:
+            m.recover()
+        except SystemExit:
+            pass
+    return out.getvalue()
+assert "works only Bead SPEC-abc" in report("sf-me") and "bd ready" not in report("sf-me"), report("sf-me")
+assert "works only change c1" in report("sf-wide"), report("sf-wide")
+attention = report("sf-me", ["LIMBO SPEC-x"])
+assert "works only Bead SPEC-abc" in attention and "instead of resolving it" in attention, attention
+for caller in ("sf-unknown", "sf-spec"):
+    assert "clear to select work with bd ready" in report(caller), report(caller)
 PY
 
 python3 - "$nogg" <<'PY' && ok "the recorded kickoff is what turns the guard on" || bad "kickoff record"

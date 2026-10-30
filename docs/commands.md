@@ -398,7 +398,9 @@ Allocate a planning worktree from updated `origin/develop`.
 
 ### worktree implement
 
-Allocate an implementation worktree for a Bead that is already claimed.
+Allocate an implementation worktree for a Bead that is already claimed. It
+refuses a Bead another Lead holds or may still hold, and refuses when it cannot
+tell.
 
 ```bash
 ./scripts/nogg worktree implement <bead-id> <branch>

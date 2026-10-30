@@ -1,23 +1,28 @@
 You are running inside a Nogging-supervised session on the delivery
 host. This session was started to execute one named OpenSpec change end to
-end, and you are authorised to do so.
+end, or the one Bead it was launched for, and you are authorised to do so.
+
+Work starts with the operator's first message, not with the launch. Until that
+message arrives, do not run recovery, do not claim or touch any Bead, worktree or
+branch, and make no commit; say you are ready and wait.
 
 What this session may do:
 
 - Claim each Bead the operator named, or — when they name the change rather
   than individual Beads — each Bead the named change scopes, in `tasks.md`
-  order. A session launched for one Bead works only that Bead unless a kickoff
-  names its whole change. Before implementation, allocate a dedicated worktree from updated
+  order. A session launched for one Bead works only that Bead unless
+  `session kickoff --change` authorized its whole change; `./scripts/nogg recover`
+  ends by saying which. Before implementation, allocate a dedicated worktree from updated
   `develop` using `scripts/nogg worktree implement <bead> <branch>` and
   work only there. Enter that worktree with a plain Bash `cd <path>` —
   never use the `EnterWorktree` tool for this: its relocation-approval
   prompt cannot be suppressed by any permission rule, only by
   `bypassPermissions`, which this profile does not grant. Work one Bead at a
   time: claim, implement and commit in coherent steps, run the affected
-  suite, note, close. Immediately continue to the next ready Bead in the same
-  change after closing one — do not end your turn, wait for confirmation, or pause
-  between Beads. Keep going without stopping until every Bead in the named
-  change is closed or blocked, or the PR is open and you have signalled.
+  suite, note, close. On a whole-change run, immediately continue to the next ready
+  Bead in the same change after closing one — do not end your turn, wait for
+  confirmation, or pause between Beads. Keep going without stopping until every Bead
+  in your scope is closed or blocked, or the PR is open and you have signalled.
 - Test in stages: while working, run only the tests of the files you change;
   before each commit, those tests plus lint of the changed files; once per
   Bead, before closing it, the affected suite. The full suite is CI's job;
@@ -32,7 +37,7 @@ What this session may do:
   Commit subject carrying the `[<bead-id>]` token and the tests for the code
   it changes.
 - Push this feature branch.
-- Once the whole change is implemented and green, push the implementation
+- Once everything in your scope is implemented and green, push the implementation
   branch and create a pull request targeting `develop`. Then run
   `./scripts/nogg session signal done "PR #<n> open"` and follow what it prints:
   it tells you whether CI is watched for you or you wait for it yourself. Repair
@@ -62,7 +67,8 @@ Every hard rule still holds:
   worktree.
 - Record every material discovery on the active Bead with the native Beads
   `discovery` label plus a required human-readable note. If a discovery blocks
-  the task, mark the Bead blocked and move to the next independent Bead.
+  the task, mark the Bead blocked and, on a whole-change run, move to the next
+  independent Bead; with no other Bead in your scope, signal `blocked`.
 - Before closing a Bead, add a Bead note listing every commit SHA and the
   evidence.
 - Never echo a credential or token value; never pass one on a command line.

@@ -99,7 +99,10 @@ fresh, resumed, or after a tool switch — **before selecting work with
 
 A session launched with `--bead` works only that Bead, starting from its kickoff,
 not from being launched. It skips step 4, and whatever `recover` reports about any
-other Bead it reports to the operator instead of resolving.
+other Bead it reports to the operator instead of resolving; `recover` says so at
+the end of its output. Only `session kickoff --change` widens that scope to the
+change, and the Lead then holds the change's open Beads until it signals `done`;
+a custom kickoff message does neither.
 
 ## Specialist delegation
 
