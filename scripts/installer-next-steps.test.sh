@@ -78,10 +78,12 @@ check "init: the sync timer item names the rendered unit and is optional" \
   grep -Eq '^  4\. Enable the sync timer: `systemctl --user enable --now "\$PWD/systemd/nogg-sync-repo\.timer"` \(optional\)$' <<<"$out"
 check "init: the orchestrator item adds linger and is optional" \
   grep -Eq '^  5\. Enable the always-on Orchestration Agent: .*loginctl enable-linger .* \(optional\)$' <<<"$out"
+check "init: the loop timer item names the rendered unit and is optional" \
+  grep -Eq '^  6\. Enable the loop scheduler timer: `systemctl --user link "\$PWD/systemd/nogg-loops-repo\.service" && systemctl --user enable --now "\$PWD/systemd/nogg-loops-repo\.timer"` \(optional\)$' <<<"$out"
 check "init: required items come before optional ones" \
   test "$(lineno 'Start your first plan')" -lt "$(lineno 'Enable the sync timer')"
 check "init: only optional items carry the marker" \
-  test "$(grep -c '(optional)$' <<<"$out")" -eq 2
+  test "$(grep -c '(optional)$' <<<"$out")" -eq 3
 check "init: nothing suggests plan-begin" bash -c '! grep -Fq "plan-begin" <<<"$1"' _ "$out"
 
 # --- init --no-systemd drops the unit items ---------------------------------
@@ -90,6 +92,7 @@ run "$nosd" init --no-beads --no-hooks --no-systemd
 check "--no-systemd: still lists the required items" grep -Eq '^  3\. Start your first plan' <<<"$out"
 check "--no-systemd: no sync timer item" bash -c '! grep -Fq "sync timer" <<<"$1"' _ "$out"
 check "--no-systemd: no orchestrator item" bash -c '! grep -Fq "Orchestration Agent" <<<"$1"' _ "$out"
+check "--no-systemd: no loop timer item" bash -c '! grep -Fq "loop scheduler" <<<"$1"' _ "$out"
 
 # --- init --dry-run prints no verdict and no steps --------------------------
 dry="$work/dry/repo"; new_repo "$dry"
@@ -107,6 +110,7 @@ run "$repo" update --no-beads --no-hooks
 check "update: exits 0" test "$status" -eq 0
 check "update: doctor is a step" grep -Eq '^  [0-9]\. Check the installation: `\./scripts/nogg doctor`' <<<"$out"
 check "update: no timer hint when the timer is enabled" bash -c '! grep -Fq "sync timer" <<<"$1"' _ "$out"
+check "update: no loop hint when its timer is enabled" bash -c '! grep -Fq "loop scheduler" <<<"$1"' _ "$out"
 check "update: the disabled orchestrator is offered, without the qualifier" \
   grep -Eq '^  [0-9]\. Enable the always-on Orchestration Agent: ' <<<"$out"
 check "update: the verdict is unchanged" grep -Fxq "$verdict" <<<"$out"
@@ -116,6 +120,8 @@ stub "$bin" systemctl 'exit 1'
 run "$repo" update --no-beads --no-hooks
 check "update, probe unavailable: the timer hint is qualified" \
   grep -Eq '^  [0-9]\. Enable the sync timer if not already enabled: ' <<<"$out"
+check "update, probe unavailable: the loop hint is qualified" \
+  grep -Eq '^  [0-9]\. Enable the loop scheduler timer if not already enabled: ' <<<"$out"
 
 # --- update: a preserved file is counted as the first step ------------------
 printf '# my edit\n' >>"$repo/.codex/rules/nogging.rules"
@@ -130,8 +136,10 @@ check "remove: the sync timer is disabled by name" \
   grep -Eq '^  1\. Disable nogg-sync-repo\.timer before the checkout is moved or deleted: `systemctl --user disable --now nogg-sync-repo\.timer`' <<<"$out"
 check "remove: the orchestrator service is disabled by name" \
   grep -Eq '^  2\. Disable nogg-orchestrator-repo\.service .*`systemctl --user disable --now nogg-orchestrator-repo\.service`' <<<"$out"
-check "remove: shared entries are left for review" grep -Eq '^  3\. Review the shared \.gitignore entries and the Git hooks' <<<"$out"
-check "remove: the last step commits the removal" grep -Eq '^  4\. Commit the removal\.' <<<"$out"
+check "remove: the loop timer is disabled by name" \
+  grep -Eq '^  3\. Disable nogg-loops-repo\.timer before the checkout is moved or deleted: `systemctl --user disable --now nogg-loops-repo\.timer nogg-loops-repo\.service`' <<<"$out"
+check "remove: shared entries are left for review" grep -Eq '^  4\. Review the shared \.gitignore entries and the Git hooks' <<<"$out"
+check "remove: the last step commits the removal" grep -Eq '^  5\. Commit the removal\.' <<<"$out"
 run "$work/nosd/repo" remove
 check "remove, no units rendered: no disable step" bash -c '! grep -Fq "disable --now" <<<"$1"' _ "$out"
 

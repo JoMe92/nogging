@@ -303,11 +303,35 @@ check "unit filename carries the slug" bash -c "[[ '$(basename "$unit")' == nogg
 tunit=$(find "$repo/systemd" -name 'nogg-sync-*.timer')
 check "timer binds the slugged service" grep -qx "Unit=nogg-sync-fresh.service" "$tunit"
 
+lsvc="$repo/systemd/nogg-loops-fresh.service"
+ltim="$repo/systemd/nogg-loops-fresh.timer"
+check "loop service rendered" test -f "$lsvc"
+check "loop service is a oneshot" grep -qx "Type=oneshot" "$lsvc"
+check "loop service targets the repo" grep -qx "WorkingDirectory=$repo" "$lsvc"
+check "loop service runs one tick" grep -qx "ExecStart=$repo/scripts/nogg loop tick" "$lsvc"
+check "loop service leaves its sessions running" grep -qx "KillMode=process" "$lsvc"
+check "loop service bounds a wedged tick" grep -qx "TimeoutStartSec=15min" "$lsvc"
+check "loop timer rendered" test -f "$ltim"
+check "loop timer fires every minute" grep -qx "OnCalendar=minutely" "$ltim"
+check "loop timer has no catch-up" grep -qx "Persistent=false" "$ltim"
+check "loop timer binds the slugged service" grep -qx "Unit=nogg-loops-fresh.service" "$ltim"
+check "loop timer is enable-able" grep -qx "WantedBy=timers.target" "$ltim"
+
+# A repository named after a unit keeps its units' next steps apart.
+named="$work/orchestrator"
+mkdir -p "$named"; git -C "$named" init -q
+named_out=$( cd "$named" && node "$cli" init --no-beads 2>&1 ) || true
+check "a repo named orchestrator gets one orchestrator step" \
+  test "$(grep -c 'Enable the always-on Orchestration Agent' <<<"$named_out")" -eq 1
+
 # --- --no-systemd -----------------------------------------------------
 nos="$work/nosystemd"
 mkdir -p "$nos"; git -C "$nos" init -q
 ( cd "$nos" && node "$cli" init --no-beads --no-systemd >/dev/null )
 check "--no-systemd skips the unit" [ ! -d "$nos/systemd" ]
+check "--no-systemd still installs the loop prompt" test -f "$nos/.nogging/launch-prompts/loop.md"
+check "--no-systemd still installs the loop modules" test -f "$nos/scripts/lib/loop_runner.py"
+check "--no-systemd still installs the loop guide" test -f "$nos/docs/nogging/scheduled-loops.md"
 
 # --- core.hooksPath warning ------------------------------------------
 hp="$work/hookspath"
@@ -343,9 +367,16 @@ node -e "
 "
 changes_before=$(cd "$upd" && git -C "$upd" hash-object openspec/changes/my-change/tasks.md 2>/dev/null || md5sum "$upd/openspec/changes/my-change/tasks.md")
 
+mkdir -p "$upd/.nogging/loops"
+printf '{"schema_version":1,"timezone":"UTC","loops":{}}\n' > "$upd/.nogging/loops.json"
+printf 'Keep this prompt.\n' > "$upd/.nogging/loops/night-work.md"
+loops_before=$(cat "$upd/.nogging/loops.json" "$upd/.nogging/loops/night-work.md" | sha256sum)
+
 rc=0
 ( cd "$upd" && node "$cli" update --no-systemd >/dev/null ) || rc=$?
 check "update exits 0" [ "$rc" -eq 0 ]
+loops_after=$(cat "$upd/.nogging/loops.json" "$upd/.nogging/loops/night-work.md" | sha256sum)
+check "update leaves the loop definitions and prompts unchanged" [ "$loops_before" = "$loops_after" ]
 
 changes_after=$(cd "$upd" && git -C "$upd" hash-object openspec/changes/my-change/tasks.md 2>/dev/null || md5sum "$upd/openspec/changes/my-change/tasks.md")
 check "update leaves openspec/changes untouched" [ "$changes_before" = "$changes_after" ]

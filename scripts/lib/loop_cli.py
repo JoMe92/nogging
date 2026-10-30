@@ -232,13 +232,15 @@ def command(args, *, main_checkout, definitions_path, session_record, multi_mach
         recorded = loop_state.approve(main_checkout, definitions_path, config, name)
         print(f"Approved {name} (SHA-256 {recorded}).")
     elif action in {"pause", "resume"}:
-        state = loop_state.read_state(main_checkout)
-        item = _loop_state(state, name)
-        item["paused"] = action == "pause"
-        if action == "resume":
-            item.pop("suspended", None)
-            item.pop("suspend_reason", None)
-        loop_state.write_state(main_checkout, state)
+        with loop_state.state_lock(main_checkout):
+            state = loop_state.read_state(main_checkout)
+            item = _loop_state(state, name)
+            item["paused"] = action == "pause"
+            if action == "resume":
+                item.pop("suspended", None)
+                item.pop("suspend_reason", None)
+                item.pop("consecutive_failures", None)
+            loop_state.write_state(main_checkout, state)
         print(f"Loop {name} {action}d.")
     elif action == "remove":
         prompt = loop_state.prompt_path(main_checkout, definitions_path, name)
@@ -250,9 +252,16 @@ def command(args, *, main_checkout, definitions_path, session_record, multi_mach
         except FileNotFoundError:
             pass
         loop_state.remove_approval(main_checkout, name)
-        state = loop_state.read_state(main_checkout)
-        state.get("loops", {}).pop(name, None)
-        loop_state.write_state(main_checkout, state)
+        with loop_state.state_lock(main_checkout):
+            state = loop_state.read_state(main_checkout)
+            loops = state.get("loops", {})
+            active = loops.get(name, {}).get("active_run")
+            if active and active.get("mode") == "launch":
+                # The next tick stops and retires this run's session.
+                loops[name] = {"active_run": active, "removed": True}
+            else:
+                loops.pop(name, None)
+            loop_state.write_state(main_checkout, state)
         print(f"Removed loop {name}; run history is retained.")
     elif action == "show":
         approved, record = loop_state.approval_status(main_checkout, definitions_path, config, name)

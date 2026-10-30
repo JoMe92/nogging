@@ -1,0 +1,14 @@
+[Unit]
+Description=Nogging scheduled-loop tick ({{NAME}})
+After=default.target
+
+[Service]
+Type=oneshot
+WorkingDirectory={{WORKDIR}}
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+# A tick may start the tmux server that hosts its loop sessions; they must
+# outlive this oneshot, whose default control-group kill would end them.
+KillMode=process
+# Each launch is bounded, but a wedged tmux call is not.
+TimeoutStartSec=15min
+ExecStart={{WORKDIR}}/scripts/nogg loop tick

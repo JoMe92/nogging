@@ -172,5 +172,13 @@ module.exports = {
       from: 'templates/systemd/nogg-orchestrator.service.tmpl',
       to: 'systemd/nogg-orchestrator-{slug}.service',
     },
+    {
+      from: 'templates/systemd/nogg-loops.service.tmpl',
+      to: 'systemd/nogg-loops-{slug}.service',
+    },
+    {
+      from: 'templates/systemd/nogg-loops.timer.tmpl',
+      to: 'systemd/nogg-loops-{slug}.timer',
+    },
   ],
 };

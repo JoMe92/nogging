@@ -164,6 +164,14 @@ planning session to run `/plan`'s archive step for that change — starting one
 if none is running, or naming the change to one already running — and never
 runs `openspec archive` itself.
 
+**Recurring work is a loop.** Durable recurring work lives in an approved
+`nogg loop` definition, never in a session-only schedule. One minutely tick in
+the main checkout runs each approved loop: a `send` loop delivers its prompt to
+the idle Orchestration Agent, and a `launch` loop starts a bounded `loop` session
+that inspects and reports, then is stopped and retired. Its launch prompt
+forbids changing code, and a usage denial skips the slot. See
+[Scheduled loops](scheduled-loops.md).
+
 **A tier on every launch.** Before every `session launch` of any role
 (planning, lead, specialist) the Orchestration Agent classifies the task into a
 model-selection tier — `routine`, `standard` or `complex` — and writes a

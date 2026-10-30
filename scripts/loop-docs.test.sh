@@ -57,6 +57,18 @@ class LoopDocsTests(unittest.TestCase):
                       "`trigger`", "`event`", "`reason`", "`usage`", "`log_path`"):
             self.assertIn(field, GUIDE)
 
+    def test_guide_covers_launch_mode_timer_and_external_schedulers(self):
+        for text in ("## Launch mode and authority", "## The scheduler timer",
+                     "inspect-and-report", "first Bash prompt", "--no-systemd",
+                     "external scheduler", "nogg-loops-<slug>.timer", "multi_machine",
+                     "`stopped-stale`", "active-run-limit", "max_active_launch_runs"):
+            self.assertIn(text, GUIDE)
+        self.assertNotIn("when that capability is installed", GUIDE)
+
+    def test_guide_troubleshooting_covers_what_doctor_reports(self):
+        for text in ("will not run", "last tick", "suspended", "needs_input"):
+            self.assertIn(text, GUIDE)
+
     def test_scheduler_sections_are_in_reading_order(self):
         positions = [GUIDE.index(section) for section in
                      ("### Tick and run-now", "### Usage admission", "### Run log")]

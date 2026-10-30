@@ -29,10 +29,10 @@ function renderSystemd(ctx) {
     written.push(dest);
   }
   // The next-steps block (nextsteps.js) names the units that can be enabled.
-  const timer = written.find((p) => p.endsWith('.timer'));
-  if (timer) ctx.units.push({ kind: 'timer', rel: timer });
-  const orchestrator = written.find((p) => p.includes('orchestrator'));
-  if (orchestrator) ctx.units.push({ kind: 'orchestrator', rel: orchestrator });
+  for (const rel of written) {
+    if (rel.endsWith('.timer')) ctx.units.push({ kind: 'timer', rel });
+    else if (path.basename(rel).startsWith('nogg-orchestrator-')) ctx.units.push({ kind: 'orchestrator', rel });
+  }
 }
 
 module.exports = { render, renderSystemd };

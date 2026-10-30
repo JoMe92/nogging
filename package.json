@@ -31,6 +31,8 @@
     "templates/nogging-config.json",
     "templates/model-selection.json",
     "templates/openspec-project.md",
+    "templates/systemd/nogg-loops.service.tmpl",
+    "templates/systemd/nogg-loops.timer.tmpl",
     "templates/systemd/nogg-orchestrator.service.tmpl",
     "templates/systemd/nogg-sync.service.tmpl",
     "templates/systemd/nogg-sync.timer.tmpl",

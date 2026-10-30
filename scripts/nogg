@@ -2388,11 +2388,11 @@ def parse_iso(iso):
     on every supported Python version — `datetime.fromisoformat` only started
     accepting 'Z' directly in Python 3.11."""
     return dt.datetime.fromisoformat(iso.replace("Z", "+00:00"))
-def humanize_age(iso):
+def humanize_age(iso, at=None):
     """A compact age string (`45s`, `12m`, `3h`, `2d`) for an ISO timestamp, or
     `age unknown` when it will not parse."""
     try:
-        secs = int((dt.datetime.now(dt.timezone.utc)
+        secs = int(((at or dt.datetime.now(dt.timezone.utc))
                     - parse_iso(iso)).total_seconds())
     except (ValueError, TypeError, AttributeError):
         return "age unknown"
@@ -4922,12 +4922,107 @@ def loop_usage_admission(agent, model, options):
     return True, None, gate
 
 
+LOOP_TRANSIENT_REFUSALS = ("agent binary", "tmux")
+
+def loop_run_records(run_id):
+    """Every session this scheduled run started, oldest first. Identity is the
+    `loop` role plus the exact run ID, so no other session can match."""
+    return sorted((rec for _, rec in session_records()
+                   if rec.get("role") == "loop" and rec.get("loop_run_id") == run_id),
+                  key=lambda rec: rec.get("started_at", ""))
+
+def retire_loop_run(run_id, reason, session=None):
+    """Stop and retire a run's sessions; return the last archived log path.
+    `session` is one the run started: alive with no record, it cannot be proved
+    the run's own, so it is neither stopped nor reported as retired. A session
+    tmux cannot confirm or prove gone stays too, because stopping skips the kill
+    for one it does not see and the agent would run on unsupervised."""
+    log_path = None
+    records = loop_run_records(run_id)
+    if session and not any(rec["name"] == session for rec in records) and (
+            CFG.get("session_backend", "tmux") != "tmux" or session in tmux_server_sessions()):
+        raise RuntimeError(f"{session} may be live but is not recorded as loop run {run_id}; not stopping it")
+    for rec in records:
+        name = rec["name"]
+        if rec.get("state") != "retired":
+            if not tmux_has_session(name) and not loop_session_gone(rec):
+                raise RuntimeError(f"{name}: cannot confirm the session or prove it gone; not retiring it")
+            session_stop(name, reason)
+            session_cleanup(name)
+            rec = load_session(name)[1]
+            if rec.get("state") != "retired":
+                raise RuntimeError(f"{name} was not retired (state {rec.get('state')})")
+        log_path = rec.get("archived_log_path") or log_path
+    return log_path
+
+def adopt_loop_run(run_id):
+    """The live session of an interrupted start, or None. A session that never
+    took its kickoff would only idle to a false completion, so it is retired."""
+    live = tmux_sessions()
+    adopted = None
+    for rec in reversed(loop_run_records(run_id)):
+        kicked_off = (rec.get("kickoff_delivery") or {}).get("status") == "submitted"
+        if (not adopted and kicked_off and rec.get("name") in live
+                and rec.get("state") in SESSION_ACTIVE_STATES):
+            adopted = rec["name"]
+    if not adopted:
+        retire_loop_run(run_id, "loop start interrupted")
+    return adopted
+
+def loop_session_gone(rec):
+    """Whether the backend proves a session gone. tmux's listing is empty on any
+    error, so an empty one is not proof; other backends report unknown liveness
+    themselves."""
+    return record_backend_name(rec) != "tmux" or session_backend("tmux").proves_gone(rec["name"])
+
+def loop_session_state(name):
+    """A run session's classified state, `ended` once it is proved gone. A
+    failed observation proves nothing about the session, so it is `unknown`."""
+    try:
+        rec = load_session(name)[1]
+        if rec.get("state") in SESSION_TERMINAL_STATES:
+            return "ended"
+        state = classify_session(rec)[0]
+        return state if state != "ended" or loop_session_gone(rec) else "unknown"
+    except Exception as exc:
+        print(f"loop tick: cannot observe {name}: {redact(str(exc))}", file=sys.stderr)
+        return "unknown"
+
+def start_loop_run(name, run, run_id, message):
+    """Launch one run with exactly the loop's agent, tier, model, effort and
+    authority. A denial exits like any launch (exit 75 semantics). Any other
+    failure retires what it started and says whether a retry can help; what
+    could not be retired is named in `unretired`, for the tick to finish."""
+    agent = run["agent"]
+    try:
+        return session_launch("loop", None, None, False, None, agent=agent, tier=run["tier"],
+                              model=run.get("model"), effort=run.get("effort"), kickoff=True,
+                              loop={"name": name, "run_id": run_id, "kickoff_message": message,
+                                    "authority": run["authority"]})
+    except UsageGateDenied as exc:
+        exc.usage_denial = str(exc).replace(f"usage gate denied {agent} launch: ", "usage-gate: ", 1)
+        raise
+    except Exception as exc:
+        # A session from this attempt means the refusal was the runtime's, not the loop's.
+        started = any(rec.get("state") != "retired" for rec in loop_run_records(run_id))
+        exc.transient = started or any(token in str(exc) for token in LOOP_TRANSIENT_REFUSALS)
+        try:
+            retire_loop_run(run_id, "loop kickoff failed")
+        except Exception as retire_exc:
+            exc.unretired = redact(str(retire_exc)) or type(retire_exc).__name__
+        raise
+
+def loop_launch_model(run):
+    """The model a run will use, so usage is observed for the real windows."""
+    return run.get("model") or resolve_launch_tier(run["tier"], resolve_agent(run["agent"]))["model"]
+
 def loop_runner_for_main():
     """Build the scheduler adapter over the canonical orchestrator and sender."""
     lib = str(Path(__file__).resolve().parent / "lib")
     if lib not in sys.path:
         sys.path.insert(0, lib)
     import loop_runner
+    from types import SimpleNamespace
     definitions = ORCHESTRATOR_HOME / scfg("loops_file", ".nogging/loops.json")
 
     def target():
@@ -4950,9 +5045,11 @@ def loop_runner_for_main():
                                 ("timeout", "deadline", "refused", "not live", "not running"))
             raise
 
+    sessions = SimpleNamespace(model=loop_launch_model, start=start_loop_run, state=loop_session_state,
+                               retire=retire_loop_run, adopt=adopt_loop_run)
     return loop_runner.LoopRunner(ORCHESTRATOR_HOME, definitions, target=target,
-                                  usage=loop_usage_admission, send=send,
-                                  multi_machine=CFG.get("multi_machine", False))
+                                  usage=loop_usage_admission, send=send, sessions=sessions,
+                                  multi_machine=CFG.get("multi_machine", False), redact=redact)
 def session_state_grants(bead, explicit=(), records=None):
     if os.environ.get("NOGG_CODEX_EXTRA_WRITABLE_ROOTS"):
         raise RuntimeError("use agent_state_roots and the agent-state:<agent> label; NOGG_CODEX_EXTRA_WRITABLE_ROOTS is retired")
@@ -8964,6 +9061,73 @@ def loop_config_diagnostics():
     return [(f"loop definitions: {path} ({len(config['loops'])} loop(s), "
              f"timezone {config['timezone']})", True)]
 
+LOOP_TICK_WARN_SECONDS = 300
+
+def loop_timer_state():
+    """The loop scheduler timer of the main checkout and its unit-file state,
+    `unavailable` without a usable systemctl."""
+    timer = f"nogg-loops-{slugify(ORCHESTRATOR_HOME.name)}.timer"
+    if not tool_on_path("systemctl"):
+        return timer, "unavailable"
+    try:
+        res = run("systemctl", "--user", "is-enabled", timer, check=False, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return timer, "unavailable"
+    state = res.stdout.strip() or "unavailable"
+    return timer, "enabled" if state in ("enabled", "enabled-runtime") else state
+
+def loop_health_diagnostics(now=None):
+    """Advisory loop health as `(warnings, notes)`: never a FAIL. An invalid file
+    is the FAIL of `loop_config_diagnostics`, so it adds nothing here."""
+    lib = str(Path(__file__).resolve().parent / "lib")
+    if lib not in sys.path:
+        sys.path.insert(0, lib)
+    import loop_config, loop_state
+    now = now or dt.datetime.now(dt.timezone.utc)
+    definitions = ORCHESTRATOR_HOME / scfg("loops_file", ".nogging/loops.json")
+    try:
+        state = loop_state.read_state(ORCHESTRATOR_HOME)
+    except ValueError as exc:
+        return [f"loop health unavailable: {exc}"], []
+    warnings, notes = [], []
+    # From state, because a run outlives its definition: a broken or removed
+    # file is exactly when a run is left past its limit.
+    for name, item in sorted(state.get("loops", {}).items()):
+        active = item.get("active_run")
+        if active:
+            limit = (active.get("run") or {}).get("max_runtime", "1h")
+            if now - parse_iso(active["started_at"]) > dt.timedelta(
+                    minutes=loop_config._runtime_minutes(limit, "max_runtime")):
+                warnings.append(f"loop {name} run {active['run_id']} is past its max_runtime of "
+                                f"{limit}; a tick should have ended it")
+    for name, reason in sorted((state.get("tick_errors") or {}).items()):
+        warnings.append(f"loop {name} failed in the last tick: {reason}")
+    try:
+        config = loop_config.load(definitions)
+    except ValueError:
+        return warnings, notes
+    loops = {name: loop for name, loop in (config or {"loops": {}})["loops"].items()
+             if loop["enabled"] and loop.get("host") in (None, os.uname().nodename)}
+    for name, loop in loops.items():
+        item = state.get("loops", {}).get(name, {})
+        if not loop_state.approval_status(ORCHESTRATOR_HOME, definitions, config, name)[0]:
+            warnings.append(f"loop {name} is unapproved and will not run; review it, then `nogg loop approve {name}`")
+        if item.get("suspended"):
+            warnings.append(f"loop {name} is suspended after repeated failures; "
+                            f"check `nogg loop log {name}`, then `nogg loop resume {name}`")
+    timer, timer_state = loop_timer_state()
+    if timer_state == "enabled":
+        last_tick = state.get("last_tick")
+        if not last_tick:
+            warnings.append(f"loop scheduler: {timer} is enabled but no tick is recorded")
+        elif (now - parse_iso(last_tick)).total_seconds() > LOOP_TICK_WARN_SECONDS:
+            warnings.append(f"loop scheduler: {timer} is enabled but the last tick was "
+                            f"{humanize_age(last_tick, now)} ago")
+    elif loops:
+        notes.append(f"loop scheduler: {len(loops)} enabled loop(s) will not run: {timer} is {timer_state}; "
+                     "enable the timer or run `nogg loop tick` (docs/nogging/scheduled-loops.md)")
+    return warnings, notes
+
 def doctor(audit=False, with_recover=False, with_sandbox=False):
     # A fresh install starts with the OpenSpec write boundary closed. Bootstrap
     # the sentinel once, only when nothing has toggled the boundary yet (no
@@ -8987,6 +9151,11 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
     except Exception as exc: problems = [str(exc)]
     checks.extend((p, False) for p in problems)
     checks.extend(loop_config_diagnostics())
+    try:
+        loop_warnings, loop_notes = loop_health_diagnostics()
+    except Exception as exc:
+        loop_warnings, loop_notes = [], [f"loop health check unavailable: {exc}"]
+    warnings.extend(loop_warnings)
     if FAILURE_RECORD.exists():
         try: rec = json.loads(FAILURE_RECORD.read_text())
         except (ValueError, OSError): rec = {}
@@ -9021,6 +9190,7 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
              "Git 2.30+, Bash 4.4+, OpenSpec 1.11.x, Beads 1.2.x, Dolt 2.3.x "
              "(docs/nogging/compatibility.md)"]
     notes.extend(routing_notes)
+    notes.extend(loop_notes)
     notes.extend(mapping_health_lines())
     try:
         integrity_lines, _integrity_attention = worktree_integrity_diagnostics()

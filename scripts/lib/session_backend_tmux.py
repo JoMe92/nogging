@@ -190,6 +190,16 @@ class TmuxBackend:
     def exists(self, ref):
         return self._invoke("has-session", "-t", self._name(ref), check=False).returncode == 0
 
+    def proves_gone(self, ref):
+        """Whether tmux itself says the session is gone. `exists` and `live` read
+        any failed query as absence; a connect failure proves it only for a
+        missing socket, because tmux words every other cause the same way."""
+        result = self._invoke("has-session", "-t", self._name(ref), check=False)
+        detail = (getattr(result, "stderr", "") or "").lower()
+        return result.returncode != 0 and any(
+            text in detail for text in ("can't find session", "no server running",
+                                        "no such file or directory"))
+
     def kill(self, ref):
         self._invoke("kill-session", "-t", self._name(ref), check=False)
 
