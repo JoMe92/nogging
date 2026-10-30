@@ -14,6 +14,7 @@ set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$here/.." && pwd)"
+unset NOGG_OPENSPEC_FENCED  # hermetic: never test the fenced tmux -N transport here
 # shellcheck source=scripts/lib/test-env.sh
 source "$here/lib/test-env.sh"
 # shellcheck source=scripts/lib/test-fixture-config.sh
@@ -102,6 +103,7 @@ import json, sys
 path = sys.argv[1]
 cfg = json.load(open(path))
 cfg["session_backend"] = "herdr"
+cfg.pop("tier_overrides", None)  # isolate from this repository's tier_overrides
 json.dump(cfg, open(path, "w"), indent=2)
 PY
 git -C "$scratch" init -q -b develop
