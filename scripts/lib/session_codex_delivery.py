@@ -15,12 +15,20 @@ OPERATION_LIMIT = 4 * 1024 * 1024
 TURN_STATE_LIMIT = 1 * 1024 * 1024
 
 
-def turn_state(path: str | os.PathLike[str]) -> str:
-    """Read bounded Codex rollout events and return running, idle or none.
+TERMINAL_EVENTS = {"task_complete", "turn_aborted", "turn_interrupted", "task_aborted", "task_interrupted"}
+EXCERPT_SOURCE_LIMIT = 4000
 
+
+def last_turn(path: str | os.PathLike[str]) -> dict[str, Any]:
+    """Read bounded Codex rollout events and describe the last turn.
+
+    Returns {"state": running|idle|none, "end": task_complete|aborted|None,
+    "message": raw last_agent_message or None, "reason": abort reason or None}.
     Only a task_started followed by a terminal task event proves an idle turn.
-    Unknown event names are ignored so newer Codex versions remain readable.
+    Unknown event names and unreadable records are ignored so newer Codex
+    versions stay readable and nothing is read as finished by guesswork.
     """
+    result: dict[str, Any] = {"state": "none", "end": None, "message": None, "reason": None}
     try:
         source = Path(path)
         with source.open("rb") as stream:
@@ -29,9 +37,6 @@ def turn_state(path: str | os.PathLike[str]) -> str:
         if len(data) == TURN_STATE_LIMIT and not data.startswith(b"{"):
             # The first record may be partial; discard it below.
             data = data.split(b"\n", 1)[-1]
-        state = "none"
-        terminal = {"task_complete", "turn_aborted", "turn_interrupted",
-                    "task_aborted", "task_interrupted"}
         for line in data.splitlines():
             try:
                 record = json.loads(line)
@@ -42,12 +47,23 @@ def turn_state(path: str | os.PathLike[str]) -> str:
             payload = record.get("payload")
             event = payload.get("type") if isinstance(payload, dict) else None
             if event == "task_started":
-                state = "running"
-            elif event in terminal and state == "running":
-                state = "idle"
-        return state
+                result.update(state="running", end=None, message=None, reason=None)
+            elif event in TERMINAL_EVENTS and result["state"] == "running":
+                message = payload.get("last_agent_message")
+                reason = payload.get("reason")
+                result.update(
+                    state="idle",
+                    end="task_complete" if event == "task_complete" else "aborted",
+                    message=message[:EXCERPT_SOURCE_LIMIT] if isinstance(message, str) else None,
+                    reason=reason[:200] if isinstance(reason, str) else None)
+        return result
     except (OSError, ValueError, TypeError):
-        return "none"
+        return {"state": "none", "end": None, "message": None, "reason": None}
+
+
+def turn_state(path: str | os.PathLike[str]) -> str:
+    """Return running, idle or none for the rollout's last turn."""
+    return last_turn(path)["state"]
 
 
 def snapshot_source(path: str | os.PathLike[str], thread_id: str) -> dict[str, Any]:
