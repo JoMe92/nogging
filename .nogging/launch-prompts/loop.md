@@ -24,7 +24,8 @@ Rules for this session:
   this session; if `bd` cannot reach it, stop and report the exact error.
 - Your permission profile is the one the loop configured, `restricted` unless
   the operator set `trusted` for it. Restricted suits read-only analysis: if an
-  approval prompt appears, stop and report it instead of working around it.
+  approval prompt appears, stop and report it instead of working around it. A
+  restricted Codex run has no command tools: report what you could not inspect.
   Never raise your own authority, change a permission mode, or install a
   service.
 - Never echo a credential or token value; never pass one on a command line.

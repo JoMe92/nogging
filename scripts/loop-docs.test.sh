@@ -59,7 +59,7 @@ class LoopDocsTests(unittest.TestCase):
 
     def test_guide_covers_launch_mode_timer_and_external_schedulers(self):
         for text in ("## Launch mode and authority", "## The scheduler timer",
-                     "inspect-and-report", "first Bash prompt", "--no-systemd",
+                     "inspect-and-report", "first Bash prompt", "no command tools", "--no-systemd",
                      "external scheduler", "nogg-loops-<slug>.timer", "multi_machine",
                      "`stopped-stale`", "active-run-limit", "max_active_launch_runs"):
             self.assertIn(text, GUIDE)
