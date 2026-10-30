@@ -3442,6 +3442,93 @@ def prepare_antigravity_trust(workdir, approval):
             Path(temporary).unlink(missing_ok=True)
 
 
+def session_hooks_module():
+    """Load the Codex hook helpers from scripts/lib beside this script."""
+    lib = str(Path(__file__).resolve().parent / "lib")
+    if lib not in sys.path:
+        sys.path.insert(0, lib)
+    sys.dont_write_bytecode = True
+    import session_hooks
+    return session_hooks
+def _codex_app_server():
+    """One bounded app-server conversation. The test runner may only shorten the
+    timeout, like NOGG_LAUNCH_SETTLE_SECONDS."""
+    hooks = session_hooks_module()
+    timeout = hooks.REQUEST_TIMEOUT_SECONDS
+    try:
+        timeout = max(0.1, min(timeout, float(os.environ["NOGG_CODEX_APP_SERVER_TIMEOUT"])))
+    except (KeyError, ValueError):
+        pass
+    return hooks.AppServer(["codex", "app-server"], dict(os.environ, CODEX_HOME=str(codex_home())),
+                           str(codex_home()), timeout)
+def codex_hook_state():
+    """`(state, hook)` of the Nogging Stop hook, from Codex's own `hooks/list`.
+    Never raises: anything that cannot be established is `unknown`, and a file
+    with no Nogging entry needs no app-server."""
+    hooks = session_hooks_module()
+    path = codex_home() / "hooks.json"
+    try:
+        if not hooks.has_hook(hooks.read_document(path)):
+            return "missing", None
+        with _codex_app_server() as server:
+            hook = hooks.find_hook(hooks.list_hooks(server, str(path.parent)), path)
+        return hooks.hook_state(hook), hook
+    except Exception:
+        return "unknown", None
+CODEX_HOOK_FIX = "./scripts/nogg session-hooks install --agent codex"
+CODEX_HOOK_DETAIL = {
+    "trusted": "",
+    "untrusted": f": Codex skips it, so the stop guard is off on Codex (run: {CODEX_HOOK_FIX})",
+    "modified": f": it no longer matches what was trusted, so Codex skips it (run: {CODEX_HOOK_FIX})",
+    "missing": f": the stop guard is off on Codex; turns are still seen from the rollout (run: {CODEX_HOOK_FIX})",
+    "unknown": ": Codex could not be asked (is its app-server available, and hooks.json valid?)",
+}
+def codex_hook_line():
+    state, _ = codex_hook_state()
+    return f"codex stop hook: {state}{CODEX_HOOK_DETAIL[state]}"
+def session_hooks_install():
+    """Merge the constant Stop entry and record its trust through Codex's API. The
+    app-server must answer before the file is touched, and only the exact constant
+    command is ever trusted, as Codex lists it from this user-level file."""
+    hooks = session_hooks_module()
+    path = codex_home() / "hooks.json"
+    hooks.read_document(path)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with _codex_app_server() as server:
+        hooks.update_file(path, hooks.merge_stop)
+        hook = hooks.find_hook(hooks.list_hooks(server, str(path.parent)), path)
+        if hook is None or not hooks.is_exact(hook):
+            raise RuntimeError(f"Codex does not list the constant Stop hook from {path}; nothing was trusted")
+        if hook.get("trustStatus") != "trusted":
+            hooks.trust(server, hook)
+            hook = hooks.find_hook(hooks.list_hooks(server, str(path.parent)), path)
+        state = hooks.hook_state(hook)
+    if state != "trusted":
+        raise RuntimeError(f"Codex reports the Stop hook as {state} after the install")
+    print(f"codex stop hook: trusted\n  key: {hook['key']}\n  hash: {hook['currentHash']}\n  command: {hook['command']}")
+def session_hooks_remove():
+    hooks = session_hooks_module()
+    path = codex_home() / "hooks.json"
+    if not hooks.has_hook(hooks.read_document(path)):
+        print("codex stop hook: nothing to remove")
+        return
+    with _codex_app_server() as server:
+        hook = hooks.find_hook(hooks.list_hooks(server, str(path.parent)), path)
+        hooks.update_file(path, hooks.remove_stop)
+        if hook is not None:
+            hooks.untrust(server, hook)
+    print(f"codex stop hook: removed from {path}" + (f" and untrusted ({hook['key']})" if hook else ""))
+def session_hooks(action):
+    """Status, install or remove of the user-level Codex Stop hook. Status never
+    fails. Install and remove are operator acts on personal configuration; `init`
+    and `update` never do either (session-wake design Decision 3)."""
+    if action == "status":
+        print(codex_hook_line())
+        return
+    try:
+        (session_hooks_install if action == "install" else session_hooks_remove)()
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"session-hooks {action} refused: {exc}") from exc
 def resolved_launch_pair(profile, prompt, full_access, agent="claude"):
     """Resolve the launch selection to concrete files.
 
@@ -9143,6 +9230,7 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
             notes.append(f"codex prompts present in .codex/prompts/ but not linked into "
                          f"{codex_home() / 'prompts'}/ "
                          f"(run: ./scripts/nogg codex-prompts-link)")
+        notes.append(codex_hook_line())
     # Sandbox diagnosis (NOTE-only, never raises): offline write-probes always,
     # SSH fetch and scripts/test only with --sandbox; a skip NOTE without codex.
     notes.extend(codex_sandbox_diagnosis(ROOT, with_sandbox=with_sandbox))
@@ -9613,6 +9701,9 @@ def main():
     rq.add_argument("--tail", metavar="N", type=run_quiet_tail_count, default=40,
         help="log lines printed on failure (default 40)")
     rq.add_argument("stray", nargs="*", help=argparse.SUPPRESS)   # a command given without --
+    shk = sub.add_parser("session-hooks", help="manage the user-level Codex Stop hook behind the stop guard")
+    shk.add_argument("action", choices=("status", "install", "remove"))
+    shk.add_argument("--agent", choices=("codex",), required=True)
     cpl = sub.add_parser("codex-prompts-link",
         help="symlink .codex/prompts/*.md into <CODEX_HOME>/prompts/ as nogging-<name>.md")
     cpl.add_argument("--unlink", action="store_true",
@@ -9865,6 +9956,7 @@ def main():
                      "rules or the command floor deny; a wrapper never lifts them")
         sys.exit(run_quiet(run_quiet_command, args.log, args.tail))
     elif args.command == "codex-prompts-link": codex_prompts_link(args.unlink)
+    elif args.command == "session-hooks": session_hooks(args.action)
     elif args.command == "models": models_cmd(args.action, args.agent, args.tier, args.json)
     elif args.command == "route": route_cmd(args.action)
     elif args.command == "worktree":
