@@ -314,6 +314,7 @@ SKIP_REASONS = ("operator-skip", "tier", "binary-missing", "authority",
                 "usage-unknown")
 EXIT_USAGE_WAIT = 75
 EXIT_REFUSED = 1
+EFFORT_AGENTS = ("claude", "codex")
 
 
 class RoutingFatal(RuntimeError):
@@ -339,7 +340,7 @@ def _probe(probes, name, *args):
     return None if probe is None else probe(*args)
 
 
-def _first_refusal(entry, index, *, tier, skip, backend, probes):
+def _first_refusal(entry, *, tier, skip, backend, probes):
     """The first failing pre-selection check as `(reason, detail)`, else None."""
     agent = entry["agent"]
     if agent in skip:
@@ -360,33 +361,156 @@ def _first_refusal(entry, index, *, tier, skip, backend, probes):
     return None
 
 
+def resolve_selection(entry, tier, explicit, baseline):
+    """Model and effort for one candidate (design Decision 6).
+
+    `baseline` is the host's table / profile / runtime-default resolution for
+    the candidate (keys `model`, `model_source`, `effort`, `effort_source`,
+    `tier_effort`, `tier_effort_source`, all optional). The entry's `models`
+    for the tier replace it with source `route`; an explicit launch value then
+    wins for model and effort while the tier effort stays the entry's or the
+    baseline's. An agent without efforts, such as Pi, records the tier with a
+    null tier effort.
+    """
+    baseline = baseline or {}
+    effort_agent = entry["agent"] in EFFORT_AGENTS
+    chosen = (entry.get("models") or {}).get(tier, {}) if tier is not None else {}
+    explicit = explicit or {}
+    sel = {"model": baseline.get("model"),
+           "model_source": baseline.get("model_source"),
+           "effort": baseline.get("effort") if effort_agent else None,
+           "effort_source": baseline.get("effort_source") if effort_agent else None,
+           "tier": tier,
+           "tier_effort": None, "tier_effort_source": None}
+    if tier is not None and effort_agent:
+        sel["tier_effort"] = baseline.get("tier_effort")
+        sel["tier_effort_source"] = baseline.get("tier_effort_source")
+    if chosen.get("model") is not None:
+        sel["model"], sel["model_source"] = chosen["model"], "route"
+    if chosen.get("effort") is not None and effort_agent:
+        sel["effort"] = sel["tier_effort"] = chosen["effort"]
+        sel["effort_source"] = sel["tier_effort_source"] = "route"
+    if explicit.get("model") is not None:
+        sel["model"], sel["model_source"] = explicit["model"], "launch"
+    if explicit.get("effort") is not None and effort_agent:
+        sel["effort"], sel["effort_source"] = explicit["effort"], "launch"
+    if sel["model"] is None:
+        sel["model_source"] = "runtime-default"
+    if effort_agent and sel["effort"] is None:
+        sel["effort_source"] = "runtime-default"
+    return sel
+
+
+def _allow_refusal(entry, sel):
+    """Why `sel` falls outside the entry's `allow` list, else None."""
+    allow = entry.get("allow")
+    if allow is None:
+        return None
+    model = sel["model"]
+    if model is None:
+        return ("model is the runtime default, which allow cannot verify "
+                "(rule: an entry with allow needs a named model)")
+    record = next((r for r in allow if r["model"] == model), None)
+    if record is None:
+        return f"model {model} is outside the entry's allow list"
+    efforts = record.get("efforts")
+    if efforts is None:
+        return None
+    if sel["effort"] is None:
+        return (f"effort is the runtime default, but allow restricts {model} "
+                f"to {', '.join(efforts)}")
+    if sel["effort"] not in efforts:
+        return (f"effort {sel['effort']} is outside the allowed efforts for "
+                f"{model} ({', '.join(efforts)})")
+    return None
+
+
+def _usage_check(entry, sel, probes):
+    """`(admitted, usage, skip)`: the gate verdict under the entry's on_unknown.
+
+    `skip` is `(reason, detail, retry_at)` when the entry is refused.
+    """
+    usage = _probe(probes, "usage", entry, sel) or {"state": "ok"}
+    state = usage.get("state", "ok")
+    if state == "denied":
+        return usage, ("usage-denied", usage.get("detail") or "usage gate denied",
+                       usage.get("retry_at"))
+    if state == "unknown":
+        policy = entry.get("on_unknown") or usage.get("on_unknown") or "warn"
+        if policy == "deny":
+            return usage, ("usage-unknown", usage.get("detail") or "usage unknown",
+                           None)
+    return usage, None
+
+
 def evaluate_route(entries, *, tier=None, skip=(), probes=None, backend=None,
-                   redact=None):
+                   explicit=None, redact=None):
     """Evaluate a role's entries in file order and return the decision.
 
     No I/O: every fact comes from `probes`, a mapping of callables, and an
     absent probe never skips. `binary(agent) -> bool`, `authority(entry)` and
-    `backend(entry, effective_backend)` return a refusal detail or None.
-    `skip` is the `--skip-agent` set, `backend` the explicit `--backend`.
-    `redact`, when given, scrubs every skip detail.
+    `backend(entry, effective_backend)` return a refusal detail or None;
+    `selection(entry, tier)` returns the baseline for `resolve_selection`;
+    `usage(entry, selection)` returns `{"state": "ok"|"denied"|"unknown",
+    "retry_at", "detail", "on_unknown"}`. `skip` is the `--skip-agent` set,
+    `backend` the explicit `--backend`, `explicit` the pinned launch's
+    `--model` and `--effort`. `redact`, when given, scrubs every skip detail.
 
-    Returns `{"chosen", "skipped", "exit_code", "retry_at"}`: `chosen` is
-    None when every entry was skipped; each skip carries the 1-based `index`,
-    `agent`, `backend`, `reason` and `detail`. Probe errors propagate.
+    Returns `{"chosen", "skipped", "exit_code", "retry_at"}`. `chosen` is None
+    when every entry was skipped, else carries `index` (1-based), `agent`,
+    `backend`, `entry`, `selection`, `usage` and `warnings`; each skip carries
+    `index`, `agent`, `backend`, `reason`, `detail` and, for `usage-denied`,
+    `retry_at`. The exit code is 0 when chosen, 75 when an entry was skipped
+    for `usage-denied` alone, and 1 otherwise. Probe errors propagate: a
+    `RoutingFatal` is a defect, not a skip.
     """
     skip = {normalize_agent(agent) for agent in skip}
     skipped = []
     for index, entry in enumerate(entries, 1):
         effective = backend or entry.get("backend")
-        refusal = _first_refusal(entry, index, tier=tier, skip=skip,
-                                 backend=backend, probes=probes)
+        refusal = _first_refusal(entry, tier=tier, skip=skip, backend=backend,
+                                 probes=probes)
+        sel = None
         if refusal is None:
+            sel = resolve_selection(entry, tier, explicit,
+                                    _probe(probes, "selection", entry, tier))
+            detail = _allow_refusal(entry, sel)
+            if detail:
+                refusal = ("model-not-allowed", detail, None)
+        if refusal is None:
+            usage, refusal = _usage_check(entry, sel, probes)
+        if refusal is None:
+            warnings = []
+            if usage.get("state") == "unknown":
+                warnings.append(f"usage unknown: {usage.get('detail') or 'no data'}")
             return {"chosen": {"index": index, "agent": entry["agent"],
-                               "backend": effective, "entry": entry},
+                               "backend": effective, "entry": entry,
+                               "selection": sel, "usage": usage,
+                               "warnings": warnings},
                     "skipped": skipped, "exit_code": 0, "retry_at": None}
-        reason, detail = refusal
-        skipped.append({"index": index, "agent": entry["agent"],
-                        "backend": effective, "reason": reason,
-                        "detail": _detail(detail, redact)})
-    return {"chosen": None, "skipped": skipped, "exit_code": EXIT_REFUSED,
-            "retry_at": None}
+        reason, detail, retry_at = (refusal + (None,))[:3]
+        record = {"index": index, "agent": entry["agent"], "backend": effective,
+                  "reason": reason, "detail": _detail(detail, redact)}
+        if reason == "usage-denied":
+            record["retry_at"] = retry_at
+        skipped.append(record)
+    waits = [s for s in skipped if s["reason"] == "usage-denied"]
+    retries = [s["retry_at"] for s in waits if s["retry_at"] is not None]
+    return {"chosen": None, "skipped": skipped,
+            "exit_code": EXIT_USAGE_WAIT if waits else EXIT_REFUSED,
+            "retry_at": min(retries) if retries else None}
+
+
+def pin_entry(entries, agent, backend=None):
+    """The `(index, entry)` an explicit `--agent` pins, else None (off-list).
+
+    The first entry for the agent applies, or the first with the written
+    `backend` when one is given; an entry without a written backend never
+    matches an explicit one.
+    """
+    agent = normalize_agent(agent)
+    for index, entry in enumerate(entries, 1):
+        if entry["agent"] == agent and (backend is None
+                                        or entry.get("backend") == backend):
+            return index, entry
+    return None
