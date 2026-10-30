@@ -80,6 +80,26 @@ if (mode === "inert") {
   process.exit(fail);
 }
 
+if (mode === "e2e") {
+  // Real `session emit` behind the extension: poll the events file for the line.
+  const events = process.env.E2E_EVENTS;
+  const waitFor = async (n) => {
+    for (let i = 0; i < 200; i++) {
+      if (existsSync(events) && readFileSync(events, "utf8").split("\n").filter(Boolean).length >= n) return true;
+      await sleep(50);
+    }
+    return false;
+  };
+  const pi = fakePi();
+  load(pi);
+  await pi.fire("agent_start");
+  check("e2e: turn_start reached the events file", await waitFor(1));
+  console.log("E2E_MARK");
+  await pi.fire("agent_settled", { aborted: false }, ctxWith("PR #9 is open and CI is running."));
+  check("e2e: turn_end reached the events file", await waitFor(2));
+  process.exit(fail);
+}
+
 if (mode === "stuck") {
   const pi = fakePi();
   load(pi);
@@ -180,6 +200,36 @@ if [[ $rc -eq 2 ]]; then
 fi
 echo "$out"
 [[ $rc -eq 0 ]] || { cat "$work/stderr" >&2; echo "pi-lifecycle checks failed" >&2; exit 1; }
+
+# end to end: the real extension, the real `session emit`, then `session watch`
+if command -v python3 >/dev/null 2>&1 && [[ -x "$root/scripts/nogg" ]]; then
+  source "$root/scripts/lib/test-fixture-config.sh"
+  e2e="$work/e2e"; mkdir -p "$e2e/.nogging/state/sessions"; git init -q "$e2e"
+  copy_host_config "$root/.nogging/config.json" "$e2e/.nogging/config.json"
+  events="$e2e/.nogging/state/sessions/sf-pi-e2e.events.jsonl"
+  out=$(env NOGG_SESSION_NAME=sf-pi-e2e NOGG_SESSION_AGENT=pi NOGG_SESSION_ROOT="$root" NOGGING_ROOT="$e2e" \
+    E2E_EVENTS="$events" node "$runner" "$ext" e2e "$work/e2e.log") \
+    || { echo "$out"; echo "pi-lifecycle checks failed" >&2; exit 1; }
+  echo "$out" | grep -v E2E_MARK
+  watched=$(NOGGING_ROOT="$e2e" python3 - "$root/scripts/nogg" <<'PY'
+import json, sys
+from importlib.machinery import SourceFileLoader
+m = SourceFileLoader("sf_swk002", sys.argv[1]).load_module()
+m.tmux_sessions = lambda: {"sf-pi-e2e"}
+m.session_pane_text = lambda name, escapes=False: ""
+m.load_session = lambda name: (None, {"name": "sf-pi-e2e", "agent": "pi", "state": "running"})
+m.refresh_session_usage = lambda running: None
+m.watch_poll_once({"sf-pi-e2e": {"state": None, "stalled": False}}, 900, "jsonl")
+PY
+  )
+  python3 - "$watched" <<'PY' || { echo "FAIL - watch did not classify the Pi session idle"; echo "$watched"; exit 1; }
+import json, sys
+rows = [json.loads(l) for l in sys.argv[1].splitlines() if l.startswith("{")]
+assert [r["event"] for r in rows] == ["idle"], rows
+assert rows[0]["excerpt"].startswith("PR #9 is open"), rows
+PY
+  echo "ok   - watch reports the Pi session idle, with its excerpt, not unknown"
+fi
 
 # inert: the variable is unset
 out=$(env -u NOGG_SESSION_NAME NOGG_SESSION_ROOT="$work/root" STUB_LOG="$work/inert.log" node "$runner" "$ext" inert "$work/inert.log") \
