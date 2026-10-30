@@ -9,7 +9,8 @@ injected, so no scripts/nogg import is needed.
 import unittest
 
 from agent_routing import (AGENTS, DEFAULT_ROUTING_PATH, ROLES, SCHEMA_VERSION,
-                           load_routing, normalize_agent, routing_errors)
+                           SKIP_REASONS, RoutingFatal, evaluate_route, load_routing,
+                           normalize_agent, pin_entry, routing_errors)
 
 EFFORTS = {"claude": ("low", "medium", "high"), "codex": ("none", "low", "medium", "high")}
 TIERS = ("routine", "standard", "complex")
@@ -262,6 +263,422 @@ class DuplicateKeyTests(unittest.TestCase):
                                    efforts_by_agent=EFFORTS, tiers=TIERS)
         self.assertTrue(any("schema_version" in e and "duplicate" in e for e in errs),
                         "\n".join(errs))
+
+
+class Probes:
+    """Recording probes: each call is logged so the check order is assertable.
+
+    An override is either a plain value (returned as is) or a callable.
+    """
+    DEFAULTS = {"binary": True, "authority": None, "backend": None,
+                "selection": {}, "usage": {"state": "ok"}}
+
+    def __init__(self, **overrides):
+        self.calls = []
+        self.table = dict(self.DEFAULTS, **overrides)
+
+    def _make(self, name):
+        def probe(*args):
+            self.calls.append((name,) + tuple(
+                a["agent"] if isinstance(a, dict) and "agent" in a else a
+                for a in args))
+            value = self.table[name]
+            return value(*args) if callable(value) else value
+        return probe
+
+    def as_dict(self):
+        return {name: self._make(name) for name in self.DEFAULTS}
+
+    def names(self):
+        return [c[0] for c in self.calls]
+
+
+def route(entries, **kwargs):
+    probes = kwargs.pop("probes", None) or Probes()
+    if isinstance(probes, Probes):
+        probes = probes.as_dict()
+    return evaluate_route(entries, probes=probes, **kwargs)
+
+
+def reasons(decision):
+    return [(s["index"], s["reason"]) for s in decision["skipped"]]
+
+
+class OrderTests(unittest.TestCase):
+    def test_first_entry_passing_every_check_is_chosen(self):
+        decision = route([entry("pi"), entry("codex")])
+        self.assertEqual(decision["chosen"]["index"], 1)
+        self.assertEqual(decision["chosen"]["agent"], "pi")
+        self.assertEqual(decision["skipped"], [])
+        self.assertEqual(decision["exit_code"], 0)
+
+    def test_reason_codes_are_the_documented_vocabulary(self):
+        self.assertEqual(SKIP_REASONS, (
+            "operator-skip", "tier", "binary-missing", "authority",
+            "backend-unavailable", "model-not-allowed", "usage-denied",
+            "usage-unknown"))
+
+    def test_operator_skip_matches_agent_and_alias(self):
+        decision = route([entry("antigravity"), entry("codex")], skip={"agy"})
+        self.assertEqual(reasons(decision), [(1, "operator-skip")])
+        self.assertEqual(decision["chosen"]["index"], 2)
+
+    def test_operator_skip_runs_before_every_probe(self):
+        probes = Probes()
+        route([entry("pi")], skip={"pi"}, probes=probes)
+        self.assertEqual(probes.calls, [])
+
+    def test_tier_excludes_entry(self):
+        decision = route([entry("pi", tiers=["routine"]), entry("codex")], tier="complex")
+        self.assertEqual(reasons(decision), [(1, "tier")])
+        self.assertIn("complex", decision["skipped"][0]["detail"])
+
+    def test_entry_with_tiers_is_skipped_when_launch_has_no_tier(self):
+        decision = route([entry("pi", tiers=["routine"]), entry("codex")])
+        self.assertEqual(reasons(decision), [(1, "tier")])
+        self.assertEqual(decision["skipped"][0]["detail"], "no tier given")
+
+    def test_entry_without_tiers_accepts_any_tier(self):
+        self.assertEqual(route([entry("pi")], tier="complex")["chosen"]["index"], 1)
+
+    def test_binary_missing(self):
+        probes = Probes(binary=lambda agent: agent != "pi")
+        decision = route([entry("pi"), entry("codex")], probes=probes)
+        self.assertEqual(reasons(decision), [(1, "binary-missing")])
+        self.assertEqual(decision["chosen"]["agent"], "codex")
+
+    def test_authority_refusal_carries_detail(self):
+        probes = Probes(authority=lambda e: "planning needs --profile"
+                        if e["agent"] == "codex" else None)
+        decision = route([entry("codex"), entry("claude")], probes=probes)
+        self.assertEqual(reasons(decision), [(1, "authority")])
+        self.assertEqual(decision["skipped"][0]["detail"], "planning needs --profile")
+
+    def test_backend_unavailable_uses_entry_backend(self):
+        seen = []
+
+        def backend(e, effective):
+            seen.append(effective)
+            return "herdr missing" if effective == "herdr" else None
+        decision = route([entry("pi", backend="herdr"), entry("claude", backend="tmux")],
+                         probes=Probes(backend=backend))
+        self.assertEqual(seen, ["herdr", "tmux"])
+        self.assertEqual(reasons(decision), [(1, "backend-unavailable")])
+        self.assertEqual(decision["chosen"]["backend"], "tmux")
+
+    def test_explicit_backend_replaces_the_entry_backend(self):
+        seen = []
+        probes = Probes(backend=lambda e, effective: seen.append(effective))
+        decision = route([entry("pi", backend="herdr")], backend="tmux", probes=probes)
+        self.assertEqual(seen, ["tmux"])
+        self.assertEqual(decision["chosen"]["backend"], "tmux")
+
+    def test_entry_without_backend_leaves_it_to_the_host(self):
+        self.assertIsNone(route([entry("pi")])["chosen"]["backend"])
+
+    def test_check_order_stops_at_the_first_failure(self):
+        for overrides, expected in (
+                (dict(binary=False, authority="no", backend="no"), ["binary"]),
+                (dict(authority="no", backend="no"), ["binary", "authority"]),
+                (dict(backend="no"), ["binary", "authority", "backend"])):
+            probes = Probes(**overrides)
+            route([entry("codex")], probes=probes)
+            self.assertEqual(probes.names(), expected)
+
+    def test_a_later_entry_is_not_probed_once_one_is_chosen(self):
+        probes = Probes()
+        route([entry("pi"), entry("codex")], probes=probes)
+        self.assertTrue(all(c[1] == "pi" for c in probes.calls))
+
+    def test_absent_probes_never_skip(self):
+        self.assertEqual(evaluate_route([entry("pi")])["chosen"]["index"], 1)
+
+    def test_detail_is_one_line_and_redacted(self):
+        probes = Probes(authority=lambda e: "token=abc123\nsecond line")
+        decision = route([entry("codex")], probes=probes,
+                         redact=lambda text: text.replace("abc123", "<redacted>"))
+        self.assertEqual(decision["skipped"][0]["detail"], "token=<redacted> second line")
+
+
+class FatalTests(unittest.TestCase):
+    def test_fatal_probe_error_propagates_instead_of_skipping(self):
+        def broken(e):
+            raise RoutingFatal("launch profile unreadable: /p")
+        probes = Probes(authority=broken)
+        with self.assertRaises(RoutingFatal):
+            route([entry("codex"), entry("claude")], probes=probes)
+        self.assertEqual(probes.names(), ["binary", "authority"])
+
+    def test_other_probe_errors_also_propagate(self):
+        def broken(*args):
+            raise OSError("disk")
+        with self.assertRaises(OSError):
+            route([entry("codex")], probes=Probes(binary=broken))
+
+    def test_routing_fatal_is_a_runtime_error(self):
+        self.assertTrue(issubclass(RoutingFatal, RuntimeError))
+
+
+class ExitClassificationTests(unittest.TestCase):
+    def test_all_skipped_for_non_usage_reasons_exits_1(self):
+        decision = route([entry("pi"), entry("codex")], probes=Probes(binary=False))
+        self.assertIsNone(decision["chosen"])
+        self.assertEqual(decision["exit_code"], 1)
+        self.assertIsNone(decision["retry_at"])
+        self.assertEqual([s["index"] for s in decision["skipped"]], [1, 2])
+
+
+def table_selection(model="gpt-6.1-sol", effort="high", effort_source="table"):
+    """A baseline selection probe standing in for the host's table lookup."""
+    def selection(e, tier):
+        return {"model": model, "model_source": "table", "effort": effort,
+                "effort_source": effort_source, "tier_effort": effort,
+                "tier_effort_source": effort_source}
+    return selection
+
+
+class SelectionTests(unittest.TestCase):
+    def chosen(self, entries, **kwargs):
+        return route(entries, **kwargs)["chosen"]
+
+    def test_entry_models_replace_the_table_with_route_provenance(self):
+        e = entry("codex", models={"complex": {"model": "gpt-6-luna", "effort": "medium"}})
+        sel = self.chosen([e], tier="complex",
+                          probes=Probes(selection=table_selection()))["selection"]
+        self.assertEqual((sel["model"], sel["model_source"]), ("gpt-6-luna", "route"))
+        self.assertEqual((sel["effort"], sel["effort_source"]), ("medium", "route"))
+        self.assertEqual((sel["tier"], sel["tier_effort"], sel["tier_effort_source"]),
+                         ("complex", "medium", "route"))
+
+    def test_entry_effort_beats_a_project_override(self):
+        e = entry("codex", models={"complex": {"effort": "medium"}})
+        sel = self.chosen([e], tier="complex", probes=Probes(
+            selection=table_selection("gpt-6.1-sol", "low", "project")))["selection"]
+        self.assertEqual((sel["effort"], sel["effort_source"]), ("medium", "route"))
+        self.assertEqual(sel["model"], "gpt-6.1-sol")
+        self.assertEqual(sel["model_source"], "table")
+
+    def test_entry_without_models_for_the_tier_keeps_the_baseline(self):
+        e = entry("codex", models={"routine": {"model": "gpt-6-luna"}})
+        sel = self.chosen([e], tier="complex",
+                          probes=Probes(selection=table_selection("m", "low", "project")))[
+            "selection"]
+        self.assertEqual((sel["model"], sel["effort"], sel["effort_source"]),
+                         ("m", "low", "project"))
+        self.assertEqual(sel["tier_effort_source"], "project")
+
+    def test_models_are_ignored_without_a_tier(self):
+        e = entry("codex", models={"complex": {"model": "gpt-6-luna"}})
+        sel = self.chosen([e], probes=Probes(
+            selection=lambda e, t: {"model": "profile-m", "model_source": "profile"}))[
+            "selection"]
+        self.assertEqual((sel["model"], sel["model_source"]), ("profile-m", "profile"))
+        self.assertIsNone(sel["tier"])
+        self.assertIsNone(sel["tier_effort"])
+
+    def test_pi_records_the_tier_with_a_null_tier_effort(self):
+        sel = self.chosen([entry("pi")], tier="standard")["selection"]
+        self.assertEqual(sel["tier"], "standard")
+        self.assertIsNone(sel["tier_effort"])
+        self.assertIsNone(sel["effort"])
+        self.assertIsNone(sel["effort_source"])
+        self.assertIsNone(sel["model"])
+        self.assertEqual(sel["model_source"], "runtime-default")
+
+    def test_pi_takes_its_model_from_the_entry(self):
+        e = entry("pi", models={"standard": {"model": "glm-5"}})
+        sel = self.chosen([e], tier="standard")["selection"]
+        self.assertEqual((sel["model"], sel["model_source"]), ("glm-5", "route"))
+        self.assertIsNone(sel["tier_effort"])
+
+    def test_runtime_default_effort_is_named_for_claude_and_codex(self):
+        sel = self.chosen([entry("claude")])["selection"]
+        self.assertEqual((sel["effort"], sel["effort_source"]), (None, "runtime-default"))
+
+    def test_explicit_model_and_effort_win_but_keep_the_tier_effort(self):
+        e = entry("codex", models={"complex": {"model": "gpt-6-luna", "effort": "medium"}})
+        sel = self.chosen([e], tier="complex", explicit={"model": "x", "effort": "low"},
+                          probes=Probes(selection=table_selection()))["selection"]
+        self.assertEqual((sel["model"], sel["model_source"]), ("x", "launch"))
+        self.assertEqual((sel["effort"], sel["effort_source"]), ("low", "launch"))
+        self.assertEqual((sel["tier_effort"], sel["tier_effort_source"]), ("medium", "route"))
+
+    def test_selection_is_resolved_for_the_candidate_with_the_launch_tier(self):
+        probes = Probes(selection=table_selection())
+        route([entry("codex")], tier="complex", probes=probes)
+        self.assertEqual(probes.calls[-2:], [("selection", "codex", "complex"),
+                                             ("usage", "codex", probes.calls[-1][2])])
+
+    def test_fatal_selection_error_propagates(self):
+        def broken(e, t):
+            raise RoutingFatal("profile unreadable")
+        with self.assertRaises(RoutingFatal):
+            route([entry("codex"), entry("claude")], probes=Probes(selection=broken))
+
+
+class AllowTests(unittest.TestCase):
+    ALLOW = [{"model": "gpt-6-luna"}, {"model": "gpt-6.1-sol", "efforts": ["low"]}]
+
+    def decide(self, model, effort, **extra):
+        probes = Probes(selection=lambda e, t: {"model": model, "effort": effort})
+        return route([entry("codex", allow=self.ALLOW, **extra), entry("claude")],
+                     probes=probes)
+
+    def test_allowed_pair_is_chosen(self):
+        self.assertEqual(self.decide("gpt-6.1-sol", "low")["chosen"]["index"], 1)
+
+    def test_unrestricted_efforts_accept_any_effort(self):
+        self.assertEqual(self.decide("gpt-6-luna", "high")["chosen"]["index"], 1)
+
+    def test_model_outside_allow_is_skipped(self):
+        decision = self.decide("gpt-7", "low")
+        self.assertEqual(reasons(decision), [(1, "model-not-allowed")])
+        self.assertIn("gpt-7", decision["skipped"][0]["detail"])
+
+    def test_effort_outside_the_allowed_efforts_is_skipped(self):
+        decision = self.decide("gpt-6.1-sol", "high")
+        self.assertEqual(reasons(decision), [(1, "model-not-allowed")])
+        self.assertIn("high", decision["skipped"][0]["detail"])
+
+    def test_unknown_runtime_default_model_is_skipped_under_allow(self):
+        decision = self.decide(None, "low")
+        self.assertEqual(reasons(decision), [(1, "model-not-allowed")])
+        self.assertIn("runtime default", decision["skipped"][0]["detail"])
+
+    def test_unknown_effort_is_skipped_when_the_allowed_efforts_restrict_it(self):
+        self.assertEqual(reasons(self.decide("gpt-6.1-sol", None)),
+                         [(1, "model-not-allowed")])
+
+    def test_unknown_model_without_allow_is_accepted(self):
+        self.assertEqual(route([entry("codex")])["chosen"]["index"], 1)
+
+    def test_allow_check_uses_the_entry_resolved_selection(self):
+        e = entry("codex", allow=self.ALLOW,
+                  models={"complex": {"model": "gpt-6.1-sol", "effort": "low"}})
+        decision = route([e], tier="complex", probes=Probes(
+            selection=table_selection("gpt-7", "high")))
+        self.assertEqual(decision["chosen"]["selection"]["model"], "gpt-6.1-sol")
+
+    def test_explicit_selection_outside_allow_is_refused(self):
+        e = entry("codex", allow=self.ALLOW)
+        decision = route([e], explicit={"model": "gpt-6.1-sol", "effort": "high"})
+        self.assertEqual(reasons(decision), [(1, "model-not-allowed")])
+        decision = route([e], explicit={"model": "gpt-6.1-sol", "effort": "low"})
+        self.assertEqual(decision["chosen"]["selection"]["model"], "gpt-6.1-sol")
+
+    def test_allow_runs_before_the_usage_gate(self):
+        probes = Probes(selection=lambda e, t: {"model": "gpt-7"})
+        route([entry("codex", allow=self.ALLOW)], probes=probes)
+        self.assertNotIn("usage", probes.names())
+
+
+class UsageTests(unittest.TestCase):
+    def test_denied_entry_is_skipped_and_the_next_is_admitted(self):
+        probes = Probes(usage=lambda e, sel: {"state": "denied", "retry_at": 100}
+                        if e["agent"] == "codex" else {"state": "ok"})
+        decision = route([entry("codex"), entry("claude")], probes=probes)
+        self.assertEqual(reasons(decision), [(1, "usage-denied")])
+        self.assertEqual(decision["chosen"]["agent"], "claude")
+
+    def test_only_the_chosen_entry_reaches_the_admission_probe_after_it(self):
+        probes = Probes()
+        route([entry("codex"), entry("claude")], probes=probes)
+        self.assertEqual(sum(1 for c in probes.calls if c[0] == "usage"), 1)
+
+    def test_unknown_is_admitted_with_a_warning_by_default(self):
+        probes = Probes(usage=lambda e, sel: {"state": "unknown", "detail": "no data"})
+        chosen = route([entry("codex")], probes=probes)["chosen"]
+        self.assertEqual(chosen["index"], 1)
+        self.assertEqual(chosen["warnings"], ["usage unknown: no data"])
+
+    def test_entry_on_unknown_deny_skips_with_usage_unknown(self):
+        probes = Probes(usage=lambda e, sel: {"state": "unknown"})
+        decision = route([entry("codex", on_unknown="deny"), entry("claude")],
+                         probes=Probes(usage=lambda e, sel: {"state": "unknown"}
+                                       if e["agent"] == "codex" else {"state": "ok"}))
+        self.assertEqual(reasons(decision), [(1, "usage-unknown")])
+        self.assertEqual(decision["chosen"]["agent"], "claude")
+
+    def test_entry_on_unknown_warn_overrides_a_denying_gate(self):
+        probes = Probes(usage=lambda e, sel: {"state": "unknown", "on_unknown": "deny"})
+        decision = route([entry("codex", on_unknown="warn")], probes=probes)
+        self.assertEqual(decision["chosen"]["index"], 1)
+
+    def test_gate_on_unknown_applies_when_the_entry_sets_none(self):
+        probes = Probes(usage=lambda e, sel: {"state": "unknown", "on_unknown": "deny"})
+        decision = route([entry("codex")], probes=probes)
+        self.assertEqual(reasons(decision), [(1, "usage-unknown")])
+
+    def test_usage_probe_receives_the_resolved_selection(self):
+        seen = []
+        probes = Probes(selection=table_selection(),
+                        usage=lambda e, sel: seen.append(sel["model"]) or {"state": "ok"})
+        route([entry("codex")], tier="complex", probes=probes)
+        self.assertEqual(seen, ["gpt-6.1-sol"])
+
+    def test_chosen_carries_the_admitted_usage_result(self):
+        probes = Probes(usage=lambda e, sel: {"state": "ok", "ticket": "t1"})
+        self.assertEqual(route([entry("codex")], probes=probes)["chosen"]["usage"]["ticket"], "t1")
+
+
+class AllSkippedTests(unittest.TestCase):
+    def test_usage_denied_entry_makes_the_exit_75_with_the_earliest_retry(self):
+        retries = {"codex": 300, "claude": 200}
+        probes = Probes(usage=lambda e, sel: {"state": "denied",
+                                              "retry_at": retries[e["agent"]]})
+        decision = route([entry("codex"), entry("claude")], probes=probes)
+        self.assertIsNone(decision["chosen"])
+        self.assertEqual(decision["exit_code"], 75)
+        self.assertEqual(decision["retry_at"], 200)
+        self.assertEqual([s["retry_at"] for s in decision["skipped"]], [300, 200])
+
+    def test_retry_ignores_denied_entries_without_a_retry_time(self):
+        probes = Probes(usage=lambda e, sel: {"state": "denied",
+                                              "retry_at": 50 if e["agent"] == "codex" else None})
+        decision = route([entry("codex"), entry("claude")], probes=probes)
+        self.assertEqual((decision["exit_code"], decision["retry_at"]), (75, 50))
+
+    def test_denied_without_any_retry_time_still_exits_75(self):
+        decision = route([entry("codex")], probes=Probes(usage=lambda e, s: {"state": "denied"}))
+        self.assertEqual((decision["exit_code"], decision["retry_at"]), (75, None))
+
+    def test_one_usage_denied_entry_among_others_exits_75(self):
+        probes = Probes(binary=lambda a: a != "pi",
+                        usage=lambda e, sel: {"state": "denied", "retry_at": 9})
+        decision = route([entry("pi"), entry("codex")], probes=probes)
+        self.assertEqual(reasons(decision), [(1, "binary-missing"), (2, "usage-denied")])
+        self.assertEqual(decision["exit_code"], 75)
+
+    def test_usage_unknown_alone_exits_1(self):
+        probes = Probes(usage=lambda e, sel: {"state": "unknown"})
+        decision = route([entry("codex", on_unknown="deny")], probes=probes)
+        self.assertEqual((decision["exit_code"], decision["retry_at"]), (1, None))
+
+    def test_model_not_allowed_alone_exits_1(self):
+        probes = Probes(selection=lambda e, t: {"model": "x"})
+        decision = route([entry("codex", allow=[{"model": "y"}])], probes=probes)
+        self.assertEqual(decision["exit_code"], 1)
+
+
+class PinEntryTests(unittest.TestCase):
+    ENTRIES = [entry("pi"), entry("codex", backend="tmux"), entry("codex", backend="herdr")]
+
+    def test_first_entry_for_the_agent_is_pinned(self):
+        self.assertEqual(pin_entry(self.ENTRIES, "codex"), (2, self.ENTRIES[1]))
+
+    def test_explicit_backend_picks_the_first_matching_entry(self):
+        self.assertEqual(pin_entry(self.ENTRIES, "codex", "herdr"), (3, self.ENTRIES[2]))
+
+    def test_alias_is_normalized(self):
+        entries = [entry("antigravity")]
+        self.assertEqual(pin_entry(entries, "agy"), (1, entries[0]))
+
+    def test_unlisted_agent_is_off_list(self):
+        self.assertIsNone(pin_entry(self.ENTRIES, "claude"))
+        self.assertIsNone(pin_entry(self.ENTRIES, "codex", "unknown"))
+
+    def test_entry_without_a_written_backend_does_not_match_an_explicit_one(self):
+        self.assertIsNone(pin_entry([entry("pi")], "pi", "herdr"))
 
 
 _LAST_PATH = None
