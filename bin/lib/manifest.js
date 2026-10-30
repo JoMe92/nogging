@@ -32,6 +32,7 @@ module.exports = {
     'scripts/lib/session_dispatch.py',
     'scripts/lib/session_pause.py',
     'scripts/lib/session_wake.py',
+    'scripts/lib/session_warm.py',
     'scripts/lib/token_usage_adapters.py',
     'scripts/lib/token_usage_antigravity.py',
     'scripts/lib/token_usage_collect.py',
