@@ -99,6 +99,12 @@ refused by name.
 | --- | --- | --- | --- |
 | `multi_machine` | boolean | `false` | When `true`, a trusted or orchestrator session runs `bd dolt pull` before it reads Beads state and `bd dolt push` after it writes any Bead. Use it only when several machines share one Dolt remote. See [Failure recovery](failure-recovery.md) for the recovery path if two machines write before either pulls. |
 
+## Loops
+
+| Key | Type | Default | Effect |
+| --- | --- | --- | --- |
+| `loops_file` | path | `.nogging/loops.json` | Repository-relative path of the scheduled loop definitions file. Each loop's prompt lives at `loops/<name>.md` in that file's directory. Set it to `.nogging/state/loops.json` to keep loops and prompts host-local and untracked; the prompts then share `.nogging/state/loops/` with the loop runtime files. A missing file means no loops. `nogg validate` and `doctor` fail on an invalid file or prompt. See [Commands](commands.md) for the `nogg loop` commands. |
+
 ## Agent state
 
 | Key | Type | Default | Effect |
