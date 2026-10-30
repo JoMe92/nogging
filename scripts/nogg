@@ -2809,6 +2809,7 @@ def merge_supervised_launch_permissions(settings, role):
 
 SIGNAL_RULE = "Bash(./scripts/nogg session signal:*)"
 INBOX_RULE = "Bash(./scripts/nogg session inbox:*)"
+PAUSE_STATUS_RULE = "Bash(./scripts/nogg pause --status:*)"
 def _merge_allow_rule(settings, rule):
     result = json.loads(json.dumps(settings))
     permissions = result.setdefault("permissions", {})
@@ -2824,6 +2825,9 @@ def merge_signal_permission(settings):
 def merge_inbox_permission(settings):
     """`session inbox` only reads, and the spec allows it in every session."""
     return _merge_allow_rule(settings, INBOX_RULE)
+def merge_pause_status_permission(settings):
+    """`pause --status` only reads, and the spec allows it in every session."""
+    return _merge_allow_rule(settings, PAUSE_STATUS_RULE)
 
 def supervised_launch_permission_notes():
     notes = []
@@ -5179,7 +5183,8 @@ def loop_runner_for_main():
                                retire=retire_loop_run, adopt=adopt_loop_run)
     return loop_runner.LoopRunner(ORCHESTRATOR_HOME, definitions, target=orchestrator_target,
                                   usage=loop_usage_admission, send=orchestrator_send, sessions=sessions,
-                                  multi_machine=CFG.get("multi_machine", False), redact=redact)
+                                  multi_machine=CFG.get("multi_machine", False), redact=redact,
+                                  pause=current_pause)
 def session_state_grants(bead, explicit=(), records=None):
     if os.environ.get("NOGG_CODEX_EXTRA_WRITABLE_ROOTS"):
         raise RuntimeError("use agent_state_roots and the agent-state:<agent> label; NOGG_CODEX_EXTRA_WRITABLE_ROOTS is retired")
@@ -5661,6 +5666,7 @@ def _session_launch(role, bead, cwd, read_only, owner,
         base_settings = {k: v for k, v in source_settings.items()
                          if k not in ("//", "nogging_floor", "nogging_openspec_readonly", "model", "effort")}
         base_settings = merge_inbox_permission(merge_supervised_launch_permissions(base_settings, role_meta))
+        base_settings = merge_pause_status_permission(base_settings)
         if role_meta == "lead":
             base_settings = merge_signal_permission(base_settings)
         settings_out = base_settings if floor_lifted else merge_floor(base_settings)
@@ -6112,6 +6118,9 @@ def session_list():
     warning = tmux_sandboxed_warning()
     if warning:
         print(f"NOTE: {warning}")
+    pause = current_pause()
+    if pause:
+        print(f"PAUSED until {pause_module().until_text(pause)}")
     if not recs:
         print("no managed sessions"); return
     alive, unknown = session_liveness()
@@ -6753,6 +6762,11 @@ def wake_module():
     dispatch_module()
     import session_wake
     return session_wake
+def pause_module():
+    """Load the pure pause logic from scripts/lib beside this script."""
+    dispatch_module()
+    import session_pause
+    return session_pause
 def _read_hook_stdin(limit, wait=1.0):
     """At most `limit` bytes of hook JSON from stdin, or b'' for a terminal, a
     closed stdin or a writer that stays silent for `wait` seconds."""
@@ -8606,9 +8620,25 @@ def resume_step(name, message=None):
 DISPATCH_AUDIT_BYTES = 1024 * 1024
 DISPATCH_AUDIT_GENERATIONS = 3
 DISPATCH_TAIL_BYTES = 64 * 1024
+PAUSE_LOCK_WAIT_SECONDS = 60
 # What the send path says when it stopped before anything was submitted.
 WAKE_NOT_SENT = ("nothing was", "cannot send", "refusing", "timed out waiting for session lock")
 def dispatch_dir(): return ORCHESTRATOR_HOME / ".nogging/state/dispatch"
+@contextmanager
+def _dispatch_lock(wait=0):
+    """Hold `dispatch.lock`, and yield whether it was won within `wait` seconds."""
+    with (data_dir(ORCHESTRATOR_LOCKS) / "dispatch.lock").open("a") as lock:
+        deadline = time.monotonic() + wait
+        while True:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    yield False
+                    return
+                time.sleep(0.2)
+        yield True
 def _read_dispatch_state(filename):
     try:
         value = json.loads((dispatch_dir() / filename).read_text())
@@ -8626,17 +8656,25 @@ def _append_dispatch_audit(row):
         os.replace(path, path.with_name(path.name + ".1"))
     with path.open("ab") as stream:
         stream.write(encoded)
+def pause_path(): return ORCHESTRATOR_HOME / ".nogging/state/pause.json"
+def current_pause(moment=None):
+    """The pause in force, or None. Past its end it no longer holds anything, even
+    before a pass has ended it."""
+    module, moment = pause_module(), moment or dt.datetime.now(dt.timezone.utc)
+    state = module.read(pause_path(), moment)[0]
+    return state if module.is_active(state, moment) else None
 def dispatch_policy():
-    """The one place a host-wide hold sets `hold_sends`: a pause (TASK-SWK-009) stops
-    nudges and resumes here, and items and retirement carry on."""
-    return dispatch_module().policy_from(CFG.get("session_dispatch"))
+    """The one place a host-wide hold sets `hold_sends`: a pause stops nudges and
+    resumes here, and items and retirement carry on."""
+    return dispatch_module().policy_from(CFG.get("session_dispatch"), hold_sends=current_pause() is not None)
 def wake_policy():
     return wake_module().policy_from((CFG.get("session_dispatch") or {}).get("wake"))
 def dispatch_wake_hold():
     """The one place a host-wide hold stops the digest, urgent items included: a pause
-    (TASK-SWK-009) and quiet hours (TASK-SWK-010) return their reason here. The queue
-    goes on being evaluated."""
-    return None
+    and quiet hours (TASK-SWK-010) return their reason here. The queue goes on being
+    evaluated."""
+    pause = current_pause()
+    return f"paused until {pause_module().until_text(pause)}" if pause else None
 def _dispatch_issues(dry_run):
     """The Bead list, cached 300 s across passes. A failed read is None, never the
     older copy: a stale Bead must not retire or report a session."""
@@ -8757,12 +8795,17 @@ def _dispatch_run(action, fact, memory, queue, moment):
         module.report_retired(queue, fact, moment)
     module.record(memory, action, moment)
     return "done"
+def _audit_item(row, outcome, moment):
+    """An item that appeared or cleared. A pause summarizes from these rows."""
+    _append_dispatch_audit({"time": dispatch_module().iso(moment), "session": row.get("session"), "action": "item",
+                            "kind": row.get("kind"), "key": row["key"], "reason": row.get("reason"),
+                            "outcome": outcome})
 def _dispatch_apply(action, fact, memory, queue, moment):
     """Run one action and persist it at once, so a crash repeats nothing recorded. A
     failed step is spent like one that ran: an unverified send may still have landed,
     so retrying it unbounded could message a session on every pass. A failed nudge
     climbs its ladder, and a failed resume or retirement goes up."""
-    module = dispatch_module()
+    module, failure = dispatch_module(), None
     try:
         with redirect_stdout(io.StringIO()):
             outcome = _dispatch_run(action, fact, memory, queue, moment)
@@ -8770,12 +8813,15 @@ def _dispatch_apply(action, fact, memory, queue, moment):
         detail = wake_module().text(str(exc), redact, 200) or "unknown error"
         outcome = f"failed: {detail}"
         if action["type"] in ("resume", "retire"):
-            module.enqueue(queue, module.failure_item(fact, action, detail)["item"], moment)
+            failure = module.failure_item(fact, action, detail)["item"]
+            module.enqueue(queue, failure, moment)
         module.record(memory, action, moment)
     atomic_json_state(data_dir(dispatch_dir()) / "state.json", memory)
     atomic_json_state(dispatch_dir() / "queue.json", queue)
     _append_dispatch_audit({"time": module.iso(moment), "session": action["session"], "action": action["type"],
                             "key": action["key"], "reason": action.get("reason"), "outcome": outcome})
+    if failure:
+        _audit_item(failure, "queued", moment)
     return outcome
 def _orchestrator_usage(record):
     """The orchestrator's usage windows, or None: what cannot be read holds nothing."""
@@ -8863,8 +8909,44 @@ def _quarantine_dispatch_state(filename):
     os.replace(path, path.with_name(filename + ".corrupt"))
     _append_dispatch_audit({"time": dispatch_module().iso(dt.datetime.now(dt.timezone.utc)), "action": "state",
                             "outcome": f"{filename} could not be read and was moved aside"})
+def _read_dispatch_queue(moment, dry_run=False):
+    """The queue with only its well-formed rows, for a holder of the dispatch lock."""
+    if not dry_run:
+        _quarantine_dispatch_state("queue.json")
+    queue = wake_module().normalized(_read_dispatch_state("queue.json"))
+    malformed = queue.pop("malformed", 0)
+    if malformed and not dry_run:
+        _append_dispatch_audit({"time": dispatch_module().iso(moment), "action": "state",
+                                "outcome": f"dropped {malformed} malformed row(s) from queue.json"})
+    return queue
+def _end_pause(state, moment):
+    """End a pause, under the dispatch lock. The summary is queued before the state goes,
+    so that a crash between the two repeats the end, and its key keeps it one item."""
+    module, lib = pause_module(), dispatch_module()
+    item = module.resumed_item(state, _dispatch_audit_rows(), moment)
+    if item:
+        queue = _read_dispatch_queue(moment)
+        lib.enqueue(queue, item, moment)
+        atomic_json_state(data_dir(dispatch_dir()) / "queue.json", queue)
+    module.clear(pause_path())
+    _append_dispatch_audit({"time": lib.iso(moment), "action": "pause",
+                            "outcome": f"ended: {item['reason'] if item else 'nothing happened'}"})
+def _end_pause_if_due(moment):
+    module = pause_module()
+    state = module.read(pause_path(), moment)[0]
+    if module.is_due(state, moment):
+        _end_pause(state, moment)
+def end_due_pause():
+    """The end of a pause in `loop tick`, which needs no dispatcher. With the lock busy a
+    pass is running, and it or the next tick ends the pause."""
+    moment = dt.datetime.now(dt.timezone.utc)
+    with _dispatch_lock() as held:
+        if held:
+            _end_pause_if_due(moment)
 def _dispatch_pass(dry_run, as_json):
     module, wake_lib = dispatch_module(), wake_module()
+    if not dry_run:
+        _end_pause_if_due(dt.datetime.now(dt.timezone.utc))
     records = [rec for _path, rec in session_records()]
     alive, unknown = session_liveness(records, strict=True)
     live = alive | unknown
@@ -8874,14 +8956,9 @@ def _dispatch_pass(dry_run, as_json):
     issues = _dispatch_issues(dry_run) if targets else None
     facts = [_dispatch_fact(rec, live, unknown, issues, live_beads, dry_run) for rec in targets]
     moment = dt.datetime.now(dt.timezone.utc)
+    queue = _read_dispatch_queue(moment, dry_run)
     if not dry_run:
-        _quarantine_dispatch_state("queue.json")
         _quarantine_dispatch_state("state.json")
-    queue = wake_lib.normalized(_read_dispatch_state("queue.json"))
-    malformed = queue.pop("malformed", 0)
-    if malformed and not dry_run:
-        _append_dispatch_audit({"time": module.iso(moment), "action": "state",
-                                "outcome": f"dropped {malformed} malformed row(s) from queue.json"})
     actions, memory = module.decide(facts, _read_dispatch_state("state.json"), dispatch_policy(), moment)
     memory["last_pass_at"] = module.iso(moment)
     by_session = {fact["session"]: fact for fact in facts}
@@ -8895,9 +8972,7 @@ def _dispatch_pass(dry_run, as_json):
                     "kind": item["kind"], "outcome": "dry-run" if dry_run else "queued"} for item in added)
     if not dry_run:
         for row, outcome in [*((item, "queued") for item in added), *((item, "cleared") for item in cleared)]:
-            _append_dispatch_audit({"time": module.iso(moment), "session": row.get("session"), "action": "item",
-                                    "kind": row.get("kind"), "key": row["key"], "reason": row.get("reason"),
-                                    "outcome": outcome})
+            _audit_item(row, outcome, moment)
         # Saved before the delivery, so a fault there cannot lose this pass.
         atomic_json_state(data_dir(dispatch_dir()) / "state.json", memory)
         atomic_json_state(dispatch_dir() / "queue.json", queue)
@@ -8940,22 +9015,12 @@ def session_dispatch(dry_run=False, as_json=False):
     if dry_run:
         _dispatch_pass(True, as_json)
         return
-    with (data_dir(ORCHESTRATOR_LOCKS) / "dispatch.lock").open("a") as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
+    with _dispatch_lock() as held:
+        if not held:
             print(json.dumps({"enabled": True, "busy": True}) if as_json else "session dispatch: another pass holds the lock")
             return
         _dispatch_pass(False, as_json)
-def _dispatch_audit_tail():
-    """The newest audit rows. It runs in any session, so a bad line is skipped."""
-    try:
-        with (dispatch_dir() / "dispatch.jsonl").open("rb") as stream:
-            stream.seek(0, os.SEEK_END)
-            stream.seek(max(0, stream.tell() - DISPATCH_TAIL_BYTES))
-            lines = stream.read().decode(errors="replace").splitlines()
-    except OSError:
-        return []
+def _audit_rows(lines):
     rows = []
     for line in lines:
         try:
@@ -8965,15 +9030,92 @@ def _dispatch_audit_tail():
         if isinstance(row, dict):
             rows.append(row)
     return rows
+def _dispatch_audit_tail():
+    """The newest audit rows. It runs in any session, so a bad line is skipped."""
+    try:
+        with (dispatch_dir() / "dispatch.jsonl").open("rb") as stream:
+            stream.seek(0, os.SEEK_END)
+            stream.seek(max(0, stream.tell() - DISPATCH_TAIL_BYTES))
+            return _audit_rows(stream.read().decode(errors="replace").splitlines())
+    except OSError:
+        return []
+def _dispatch_audit_rows():
+    """Every kept row, oldest first: a pause can outlast the tail and a rotation."""
+    path, rows = dispatch_dir() / "dispatch.jsonl", []
+    for source in [*(path.with_name(f"{path.name}.{index}") for index in range(DISPATCH_AUDIT_GENERATIONS, 0, -1)), path]:
+        try:
+            rows.extend(_audit_rows(source.read_text(errors="replace").splitlines()))
+        except OSError:
+            continue
+    return rows
 def session_inbox(as_json=False):
     """The queue, the last wakes and the audit tail. It only reads, works with the
     dispatcher off and in every session, and takes no lock."""
-    module = wake_module()
-    view = module.inbox(_read_dispatch_state("queue.json"), _dispatch_audit_tail(), redact)
+    module, pause = wake_module(), current_pause()
+    view = module.inbox(_read_dispatch_state("queue.json"), _dispatch_audit_tail(), redact,
+                        paused_until=pause_module().until_text(pause) if pause else None)
     if as_json:
         print(json.dumps(view))
     else:
         print("\n".join(module.inbox_lines(view, redact)))
+def _pause_authority(command):
+    """Who may hold the host: an operator shell and the Orchestration Agent, in the main
+    checkout, like `loop run-now`. The name is what `set_by` records."""
+    records = [rec for _path, rec in session_records(orchestrator_sessions_dir())]
+    record = calling_session_record(records, purpose=f"nogg {command}")
+    if record is not None and record.get("role") != "orchestrator":
+        raise RuntimeError(f"nogg {command} is refused inside supervised session {record.get('name')} "
+                           f"({record.get('role')}); only the Orchestration Agent may {command} automation")
+    if ROOT.resolve() != ORCHESTRATOR_HOME.resolve():
+        raise RuntimeError(f"nogg {command} runs only in the main checkout: {ORCHESTRATOR_HOME}")
+    return record.get("name") if record else "operator"
+def _known_loops():
+    dispatch_module()
+    import loop_config
+    config = loop_config.load(ORCHESTRATOR_HOME / scfg("loops_file", ".nogging/loops.json"))
+    return (config or {"loops": {}})["loops"]
+def pause_cmd(args):
+    """Hold automation (design Decision 16). `--status` only reads and runs anywhere. The
+    rest waits for a running pass, so that nothing more goes out after it returns."""
+    module, moment = pause_module(), dt.datetime.now(dt.timezone.utc)
+    if args.status:
+        if args.until or args.days or args.keep_loop:
+            raise RuntimeError("pause --status takes no other option but --json")
+        state, problem = module.read(pause_path(), moment)
+        view = module.status(state, moment, problem)
+        print(json.dumps(view) if args.json else "\n".join(module.status_lines(view)))
+        return
+    if args.json:
+        raise RuntimeError("pause --json needs --status")
+    set_by = _pause_authority("pause")
+    end = module.parse_end(args.until, args.days, moment)
+    keep = module.kept_loops(args.keep_loop or [], _known_loops() if args.keep_loop else ())
+    with _dispatch_lock(PAUSE_LOCK_WAIT_SECONDS) as held:
+        if not held:
+            raise RuntimeError("pause: a dispatch pass still holds the lock; nothing was changed, try again")
+        state = module.read(pause_path(), moment)[0]
+        if module.is_due(state, moment):
+            _end_pause(state, moment)
+            state = None
+        replaced = module.begin(state, end, keep, set_by, moment)
+        module.write(pause_path(), replaced)
+        _append_dispatch_audit({"time": dispatch_module().iso(moment), "session": set_by, "action": "pause",
+                                "outcome": f"until {replaced['until']}"})
+    print("\n".join(module.status_lines(module.status(replaced, moment))))
+def resume_cmd():
+    """End a pause now. Its summary and the held items go out on the next idle pass."""
+    module, moment = pause_module(), dt.datetime.now(dt.timezone.utc)
+    _pause_authority("resume")
+    with _dispatch_lock(PAUSE_LOCK_WAIT_SECONDS) as held:
+        if not held:
+            raise RuntimeError("resume: a dispatch pass still holds the lock; nothing was changed, try again")
+        state, problem = module.read(pause_path(), moment)
+        if state:
+            _end_pause(state, moment)
+            print(f"resumed: the pause until {module.until_text(state)} has ended")
+            return
+        module.clear(pause_path())
+    print(f"nothing was paused{f'; removed the unusable pause.json ({problem})' if problem else ''}")
 # --- orchestrator: the always-on supervisor ------------------------------
 # `orchestrator run` is the idempotent process the systemd user service starts.
 # The thing kept alive is a normal supervised Claude session (a durable record,
@@ -9857,6 +9999,14 @@ def session_dispatch_diagnostics():
     `nogg validate` shares this path through `doctor`. Fine blocks print nothing."""
     return [(f"session dispatch config: {error}", False) for error in dispatch_module().config_errors(CFG)]
 
+def pause_diagnostics():
+    """(warnings, notes): a pause is a NOTE and never a FAIL, and a file that cannot be
+    used is a WARN, because it silently does not pause anything."""
+    module, moment = pause_module(), dt.datetime.now(dt.timezone.utc)
+    state, problem = module.read(pause_path(), moment)
+    return ([f"{pause_path()} cannot be used ({problem}); this host counts as not paused"] if problem else [],
+            [f"paused until {module.until_text(state)}"] if module.is_active(state, moment) else [])
+
 LOOP_TICK_WARN_SECONDS = 300
 
 def loop_timer_state():
@@ -9953,6 +10103,8 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
     except Exception as exc:
         loop_warnings, loop_notes = [], [f"loop health check unavailable: {exc}"]
     warnings.extend(loop_warnings)
+    pause_warnings, pause_notes = pause_diagnostics()
+    warnings.extend(pause_warnings)
     if FAILURE_RECORD.exists():
         try: rec = json.loads(FAILURE_RECORD.read_text())
         except (ValueError, OSError): rec = {}
@@ -9988,6 +10140,7 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
              "(docs/nogging/compatibility.md)"]
     notes.extend(routing_notes)
     notes.extend(loop_notes)
+    notes.extend(pause_notes)
     notes.extend(mapping_health_lines())
     try:
         integrity_lines, _integrity_attention = worktree_integrity_diagnostics()
@@ -10681,6 +10834,13 @@ def main():
             item.add_argument("--json", action="store_true")
         if command_name == "log":
             item.add_argument("--limit", type=int, default=20)
+    pa = sub.add_parser("pause", help="hold automation for a few days: no digest, nudge or scheduled loop until it ends")
+    pa.add_argument("--until", help="the end: YYYY-MM-DD (the start of that local day) or YYYY-MM-DDTHH:MM")
+    pa.add_argument("--days", help="the end: this many times 24 hours from now, at most 60")
+    pa.add_argument("--keep-loop", action="append", metavar="NAME", help="a loop that keeps running; may repeat")
+    pa.add_argument("--status", action="store_true", help="show the pause and change nothing; allowed in every session")
+    pa.add_argument("--json", action="store_true", help="with --status, print JSON")
+    sub.add_parser("resume", help="end a pause now; what it held goes out as one digest")
     argv, run_quiet_command = sys.argv[1:], None
     if argv[:1] == ["run-quiet"] and "--" in argv:
         split = argv.index("--")
@@ -10727,6 +10887,10 @@ def main():
                     raise RuntimeError("nogg loop tick is refused inside every supervised session")
                 if ROOT.resolve() != ORCHESTRATOR_HOME.resolve():
                     raise RuntimeError(f"nogg loop tick runs only in the main checkout: {ORCHESTRATOR_HOME}")
+                try:
+                    end_due_pause()
+                except OSError as exc:   # A pause past its end holds nothing, so the tick goes on.
+                    print(f"loop tick: the pause could not be ended: {exc}", file=sys.stderr)
                 loop_runner_for_main().tick()
                 return
             if args.loop_command == "run-now":
@@ -10742,7 +10906,8 @@ def main():
             if not defs.resolve().is_relative_to(ORCHESTRATOR_HOME.resolve()):
                 raise RuntimeError("configured loops_file must remain inside the main checkout")
             loop_command(args, main_checkout=ORCHESTRATOR_HOME, definitions_path=defs,
-                         session_record=record, multi_machine=CFG.get("multi_machine", False))
+                         session_record=record, multi_machine=CFG.get("multi_machine", False),
+                         pause=current_pause())
         except (ValueError, OSError) as exc:
             raise RuntimeError(str(exc)) from exc
     elif args.command == "plan-begin":
@@ -10783,6 +10948,8 @@ def main():
     elif args.command == "discoveries": ack_discoveries(args.ack) if args.ack else discoveries()
     elif args.command == "session": session_cmd(args)
     elif args.command == "orchestrator": orchestrator_cmd(args)
+    elif args.command == "pause": pause_cmd(args)
+    elif args.command == "resume": resume_cmd()
     else: doctor(args.command == "audit", getattr(args, "recover", False), getattr(args, "sandbox", False))
 def session_cmd(args):
     if args.session_command == "herdr-server":
