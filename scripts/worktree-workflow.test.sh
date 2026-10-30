@@ -14,11 +14,7 @@ cp "$source_root/scripts/session-launch" "$source_root/scripts/session-log-write
 cp "$source_root/scripts/nogg" "$repo/nogg"
 # This fixture installs the CLI at the repo root, so its libraries are siblings.
 mkdir -p "$repo/lib"
-cp "$source_root/scripts/lib/session_backend.py" "$source_root/scripts/lib/agent_routing.py" \
-  "$source_root/scripts/lib/session_backend_tmux.py" "$source_root/scripts/lib/loop_config.py" \
-  "$source_root/scripts/lib/loop_schedule.py" "$source_root/scripts/lib/session_hooks.py" \
-  "$source_root/scripts/lib/session_dispatch.py" "$source_root/scripts/lib/session_pause.py" \
-  "$source_root/scripts/lib/session_warm.py" "$repo/lib/"
+cp "$source_root"/scripts/lib/*.py "$repo/lib/"
 chmod +x "$repo/nogg"
 printf '%s\n' '# Tasks' '' '- [ ] TASK-DEMO-001 Implement demo' >"$repo/openspec/changes/demo/tasks.md"
 printf '%s\n' '.nogging/locks/' '.nogging/state/' >"$repo/.gitignore"
