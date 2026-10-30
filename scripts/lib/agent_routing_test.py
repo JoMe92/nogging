@@ -9,7 +9,8 @@ injected, so no scripts/nogg import is needed.
 import unittest
 
 from agent_routing import (AGENTS, DEFAULT_ROUTING_PATH, ROLES, SCHEMA_VERSION,
-                           load_routing, normalize_agent, routing_errors)
+                           SKIP_REASONS, RoutingFatal, evaluate_route, load_routing,
+                           normalize_agent, routing_errors)
 
 EFFORTS = {"claude": ("low", "medium", "high"), "codex": ("none", "low", "medium", "high")}
 TIERS = ("routine", "standard", "complex")
@@ -262,6 +263,169 @@ class DuplicateKeyTests(unittest.TestCase):
                                    efforts_by_agent=EFFORTS, tiers=TIERS)
         self.assertTrue(any("schema_version" in e and "duplicate" in e for e in errs),
                         "\n".join(errs))
+
+
+class Probes:
+    """Recording probes: each call is logged so the check order is assertable.
+
+    An override is either a plain value (returned as is) or a callable.
+    """
+    DEFAULTS = {"binary": True, "authority": None, "backend": None,
+                "selection": {}, "usage": {"state": "ok"}}
+
+    def __init__(self, **overrides):
+        self.calls = []
+        self.table = dict(self.DEFAULTS, **overrides)
+
+    def _make(self, name):
+        def probe(*args):
+            self.calls.append((name,) + tuple(
+                a["agent"] if isinstance(a, dict) and "agent" in a else a
+                for a in args))
+            value = self.table[name]
+            return value(*args) if callable(value) else value
+        return probe
+
+    def as_dict(self):
+        return {name: self._make(name) for name in self.DEFAULTS}
+
+    def names(self):
+        return [c[0] for c in self.calls]
+
+
+def route(entries, **kwargs):
+    probes = kwargs.pop("probes", None) or Probes()
+    if isinstance(probes, Probes):
+        probes = probes.as_dict()
+    return evaluate_route(entries, probes=probes, **kwargs)
+
+
+def reasons(decision):
+    return [(s["index"], s["reason"]) for s in decision["skipped"]]
+
+
+class OrderTests(unittest.TestCase):
+    def test_first_entry_passing_every_check_is_chosen(self):
+        decision = route([entry("pi"), entry("codex")])
+        self.assertEqual(decision["chosen"]["index"], 1)
+        self.assertEqual(decision["chosen"]["agent"], "pi")
+        self.assertEqual(decision["skipped"], [])
+        self.assertEqual(decision["exit_code"], 0)
+
+    def test_reason_codes_are_the_documented_vocabulary(self):
+        self.assertEqual(SKIP_REASONS, (
+            "operator-skip", "tier", "binary-missing", "authority",
+            "backend-unavailable", "model-not-allowed", "usage-denied",
+            "usage-unknown"))
+
+    def test_operator_skip_matches_agent_and_alias(self):
+        decision = route([entry("antigravity"), entry("codex")], skip={"agy"})
+        self.assertEqual(reasons(decision), [(1, "operator-skip")])
+        self.assertEqual(decision["chosen"]["index"], 2)
+
+    def test_operator_skip_runs_before_every_probe(self):
+        probes = Probes()
+        route([entry("pi")], skip={"pi"}, probes=probes)
+        self.assertEqual(probes.calls, [])
+
+    def test_tier_excludes_entry(self):
+        decision = route([entry("pi", tiers=["routine"]), entry("codex")], tier="complex")
+        self.assertEqual(reasons(decision), [(1, "tier")])
+        self.assertIn("complex", decision["skipped"][0]["detail"])
+
+    def test_entry_with_tiers_is_skipped_when_launch_has_no_tier(self):
+        decision = route([entry("pi", tiers=["routine"]), entry("codex")])
+        self.assertEqual(reasons(decision), [(1, "tier")])
+        self.assertEqual(decision["skipped"][0]["detail"], "no tier given")
+
+    def test_entry_without_tiers_accepts_any_tier(self):
+        self.assertEqual(route([entry("pi")], tier="complex")["chosen"]["index"], 1)
+
+    def test_binary_missing(self):
+        probes = Probes(binary=lambda agent: agent != "pi")
+        decision = route([entry("pi"), entry("codex")], probes=probes)
+        self.assertEqual(reasons(decision), [(1, "binary-missing")])
+        self.assertEqual(decision["chosen"]["agent"], "codex")
+
+    def test_authority_refusal_carries_detail(self):
+        probes = Probes(authority=lambda e: "planning needs --profile"
+                        if e["agent"] == "codex" else None)
+        decision = route([entry("codex"), entry("claude")], probes=probes)
+        self.assertEqual(reasons(decision), [(1, "authority")])
+        self.assertEqual(decision["skipped"][0]["detail"], "planning needs --profile")
+
+    def test_backend_unavailable_uses_entry_backend(self):
+        seen = []
+
+        def backend(e, effective):
+            seen.append(effective)
+            return "herdr missing" if effective == "herdr" else None
+        decision = route([entry("pi", backend="herdr"), entry("claude", backend="tmux")],
+                         probes=Probes(backend=backend))
+        self.assertEqual(seen, ["herdr", "tmux"])
+        self.assertEqual(reasons(decision), [(1, "backend-unavailable")])
+        self.assertEqual(decision["chosen"]["backend"], "tmux")
+
+    def test_explicit_backend_replaces_the_entry_backend(self):
+        seen = []
+        probes = Probes(backend=lambda e, effective: seen.append(effective))
+        decision = route([entry("pi", backend="herdr")], backend="tmux", probes=probes)
+        self.assertEqual(seen, ["tmux"])
+        self.assertEqual(decision["chosen"]["backend"], "tmux")
+
+    def test_entry_without_backend_leaves_it_to_the_host(self):
+        self.assertIsNone(route([entry("pi")])["chosen"]["backend"])
+
+    def test_check_order_stops_at_the_first_failure(self):
+        for overrides, expected in (
+                (dict(binary=False, authority="no", backend="no"), ["binary"]),
+                (dict(authority="no", backend="no"), ["binary", "authority"]),
+                (dict(backend="no"), ["binary", "authority", "backend"])):
+            probes = Probes(**overrides)
+            route([entry("codex")], probes=probes)
+            self.assertEqual(probes.names(), expected)
+
+    def test_a_later_entry_is_not_probed_once_one_is_chosen(self):
+        probes = Probes()
+        route([entry("pi"), entry("codex")], probes=probes)
+        self.assertTrue(all(c[1] == "pi" for c in probes.calls))
+
+    def test_absent_probes_never_skip(self):
+        self.assertEqual(evaluate_route([entry("pi")])["chosen"]["index"], 1)
+
+    def test_detail_is_one_line_and_redacted(self):
+        probes = Probes(authority=lambda e: "token=abc123\nsecond line")
+        decision = route([entry("codex")], probes=probes,
+                         redact=lambda text: text.replace("abc123", "<redacted>"))
+        self.assertEqual(decision["skipped"][0]["detail"], "token=<redacted> second line")
+
+
+class FatalTests(unittest.TestCase):
+    def test_fatal_probe_error_propagates_instead_of_skipping(self):
+        def broken(e):
+            raise RoutingFatal("launch profile unreadable: /p")
+        probes = Probes(authority=broken)
+        with self.assertRaises(RoutingFatal):
+            route([entry("codex"), entry("claude")], probes=probes)
+        self.assertEqual(probes.names(), ["binary", "authority"])
+
+    def test_other_probe_errors_also_propagate(self):
+        def broken(*args):
+            raise OSError("disk")
+        with self.assertRaises(OSError):
+            route([entry("codex")], probes=Probes(binary=broken))
+
+    def test_routing_fatal_is_a_runtime_error(self):
+        self.assertTrue(issubclass(RoutingFatal, RuntimeError))
+
+
+class ExitClassificationTests(unittest.TestCase):
+    def test_all_skipped_for_non_usage_reasons_exits_1(self):
+        decision = route([entry("pi"), entry("codex")], probes=Probes(binary=False))
+        self.assertIsNone(decision["chosen"])
+        self.assertEqual(decision["exit_code"], 1)
+        self.assertIsNone(decision["retry_at"])
+        self.assertEqual([s["index"] for s in decision["skipped"]], [1, 2])
 
 
 _LAST_PATH = None

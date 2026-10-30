@@ -305,3 +305,88 @@ def load_routing(path, *, main_checkout, validate_model, efforts_by_agent, tiers
     return {role: [dict(entry, agent=normalize_agent(entry["agent"]))
                    for entry in data["roles"][role]]
             for role in data.get("roles", {})}, []
+
+
+# --- Decision engine (design Decisions 4 and 6) -----------------------------
+
+SKIP_REASONS = ("operator-skip", "tier", "binary-missing", "authority",
+                "backend-unavailable", "model-not-allowed", "usage-denied",
+                "usage-unknown")
+EXIT_USAGE_WAIT = 75
+EXIT_REFUSED = 1
+
+
+class RoutingFatal(RuntimeError):
+    """A defect that must refuse the launch rather than skip an entry.
+
+    A probe raises it for a malformed usage gate, tier-override block or
+    model-selection table, an unreadable profile or launch spec, a missing
+    Bead or an unmet dependency. The engine never catches it, nor any other
+    probe error: skipping past a broken install would hide it.
+    """
+
+
+def _detail(text, redact):
+    """One redacted line of at most MAX_NOTE characters."""
+    line = " ".join(str(text).split())
+    if redact is not None:
+        line = redact(line)
+    return line[:MAX_NOTE]
+
+
+def _probe(probes, name, *args):
+    probe = (probes or {}).get(name)
+    return None if probe is None else probe(*args)
+
+
+def _first_refusal(entry, index, *, tier, skip, backend, probes):
+    """The first failing pre-selection check as `(reason, detail)`, else None."""
+    agent = entry["agent"]
+    if agent in skip:
+        return "operator-skip", f"--skip-agent {agent}"
+    entry_tiers = entry.get("tiers")
+    if entry_tiers is not None and tier is None:
+        return "tier", "no tier given"
+    if entry_tiers is not None and tier not in entry_tiers:
+        return "tier", f"tier {tier} is outside {', '.join(entry_tiers)}"
+    if (probes or {}).get("binary") is not None and not probes["binary"](agent):
+        return "binary-missing", f"{agent} is not on PATH"
+    detail = _probe(probes, "authority", entry)
+    if detail:
+        return "authority", detail
+    detail = _probe(probes, "backend", entry, backend or entry.get("backend"))
+    if detail:
+        return "backend-unavailable", detail
+    return None
+
+
+def evaluate_route(entries, *, tier=None, skip=(), probes=None, backend=None,
+                   redact=None):
+    """Evaluate a role's entries in file order and return the decision.
+
+    No I/O: every fact comes from `probes`, a mapping of callables, and an
+    absent probe never skips. `binary(agent) -> bool`, `authority(entry)` and
+    `backend(entry, effective_backend)` return a refusal detail or None.
+    `skip` is the `--skip-agent` set, `backend` the explicit `--backend`.
+    `redact`, when given, scrubs every skip detail.
+
+    Returns `{"chosen", "skipped", "exit_code", "retry_at"}`: `chosen` is
+    None when every entry was skipped; each skip carries the 1-based `index`,
+    `agent`, `backend`, `reason` and `detail`. Probe errors propagate.
+    """
+    skip = {normalize_agent(agent) for agent in skip}
+    skipped = []
+    for index, entry in enumerate(entries, 1):
+        effective = backend or entry.get("backend")
+        refusal = _first_refusal(entry, index, tier=tier, skip=skip,
+                                 backend=backend, probes=probes)
+        if refusal is None:
+            return {"chosen": {"index": index, "agent": entry["agent"],
+                               "backend": effective, "entry": entry},
+                    "skipped": skipped, "exit_code": 0, "retry_at": None}
+        reason, detail = refusal
+        skipped.append({"index": index, "agent": entry["agent"],
+                        "backend": effective, "reason": reason,
+                        "detail": _detail(detail, redact)})
+    return {"chosen": None, "skipped": skipped, "exit_code": EXIT_REFUSED,
+            "retry_at": None}
