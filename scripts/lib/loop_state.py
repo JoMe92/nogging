@@ -1,6 +1,8 @@
 """Host-local, atomic state and approval helpers for scheduled loops."""
 from __future__ import annotations
 
+from contextlib import contextmanager
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -9,6 +11,9 @@ from datetime import datetime, timezone
 import pwd
 
 import loop_config
+
+# Written by pause, resume and remove, which do not wait for a running tick.
+OPERATOR_FIELDS = ("paused", "suspended", "suspend_reason", "consecutive_failures")
 
 
 def _atomic_json(path: Path, value) -> None:
@@ -77,6 +82,48 @@ def read_state(main_checkout):
 
 def write_state(main_checkout, value):
     _atomic_json(state_path(main_checkout), value)
+
+
+@contextmanager
+def state_lock(main_checkout):
+    """Serialize one read-modify-write of state.json. Held briefly, never across
+    a launch, so an operator command does not wait for a tick."""
+    path = state_path(main_checkout).with_suffix(".lock")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a") as stream:
+        fcntl.flock(stream, fcntl.LOCK_EX)
+        yield
+
+
+def operator_fields(state):
+    return {name: {field: item.get(field) for field in OPERATOR_FIELDS}
+            for name, item in state.get("loops", {}).items()}
+
+
+def save_tick_state(main_checkout, state, seen):
+    """Write a tick's state over what the operator changed since `seen`.
+
+    A tick holds its copy across launches, so writing it back whole would undo
+    a pause, resume or remove made meanwhile. Returns the new `seen`."""
+    with state_lock(main_checkout):
+        disk = read_state(main_checkout).get("loops", {})
+        loops = state.setdefault("loops", {})
+        for name in set(disk) | set(seen):
+            current = disk.get(name)
+            if current is None:
+                if name in seen and not loops.get(name, {}).get("active_run"):
+                    loops.pop(name, None)
+                continue
+            before = seen.get(name, {})
+            for field in OPERATOR_FIELDS:
+                if current.get(field) == before.get(field):
+                    continue
+                if field in current:
+                    loops.setdefault(name, {})[field] = current[field]
+                else:
+                    loops.setdefault(name, {}).pop(field, None)
+        write_state(main_checkout, state)
+    return operator_fields(state)
 
 
 def _prompt_bytes(main_checkout, definitions_path, name):

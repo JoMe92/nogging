@@ -120,11 +120,20 @@ function unitState(name, env = process.env) {
   return 'unknown';
 }
 
+const isLoopTimer = (unit) => path.basename(unit.rel).startsWith('nogg-loops-');
+const loopService = (unit) => unit.rel.replace(/\.timer$/, '.service');
+
 function enableHint(unit, state) {
   const suffix = state === 'unknown' ? ' if not already enabled' : '';
   if (unit.kind === 'timer') {
-    const label = path.basename(unit.rel).startsWith('nogg-loops-') ? 'loop scheduler timer' : 'sync timer';
-    return `Enable the ${label}${suffix}: \`systemctl --user enable --now "$PWD/${unit.rel}"\``;
+    if (isLoopTimer(unit)) {
+      // Enabling a timer by path links only the timer; it refuses to start
+      // until its service is on the unit search path too.
+      return `Enable the loop scheduler timer${suffix}: ` +
+        `\`systemctl --user link "$PWD/${loopService(unit)}" && ` +
+        `systemctl --user enable --now "$PWD/${unit.rel}"\``;
+    }
+    return `Enable the sync timer${suffix}: \`systemctl --user enable --now "$PWD/${unit.rel}"\``;
   }
   return `Enable the always-on Orchestration Agent${suffix}: ` +
     `\`systemctl --user enable --now "$PWD/${unit.rel}"\` and ` +
@@ -164,8 +173,9 @@ function nextStepItems(ctx, command, gaps = [], env = process.env) {
     }
   } else {
     for (const unit of ctx.units) {
+      const linked = isLoopTimer(unit) ? ` ${path.basename(loopService(unit))}` : '';
       required.push(`Disable ${path.basename(unit.rel)} before the checkout is moved or deleted: ` +
-        `\`systemctl --user disable --now ${path.basename(unit.rel)}\``);
+        `\`systemctl --user disable --now ${path.basename(unit.rel)}${linked}\``);
     }
     required.push('Review the shared .gitignore entries and the Git hooks left behind; ownership cannot be inferred safely.');
     required.push('Commit the removal.');

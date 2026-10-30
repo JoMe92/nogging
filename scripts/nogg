@@ -4916,10 +4916,15 @@ def loop_run_records(run_id):
                    if rec.get("role") == "loop" and rec.get("loop_run_id") == run_id),
                   key=lambda rec: rec.get("started_at", ""))
 
-def retire_loop_run(run_id, reason):
-    """Stop and retire a run's sessions; return the last archived log path."""
+def retire_loop_run(run_id, reason, session=None):
+    """Stop and retire a run's sessions; return the last archived log path.
+    `session` is one the run started: alive with no record, it cannot be proved
+    the run's own, so it is neither stopped nor reported as retired."""
     log_path = None
-    for rec in loop_run_records(run_id):
+    records = loop_run_records(run_id)
+    if session and not any(rec["name"] == session for rec in records) and session in tmux_server_sessions():
+        raise RuntimeError(f"{session} is live but is not recorded as loop run {run_id}; not stopping it")
+    for rec in records:
         name = rec["name"]
         if rec.get("state") != "retired":
             session_stop(name, reason)
@@ -4944,22 +4949,35 @@ def adopt_loop_run(run_id):
         retire_loop_run(run_id, "loop start interrupted")
     return adopted
 
+def loop_session_gone(rec):
+    """Whether the backend proves a session gone. tmux's listing is empty on any
+    error, so an empty one is not proof; other backends report unknown liveness
+    themselves."""
+    if record_backend_name(rec) != "tmux":
+        return True
+    result = session_backend("tmux").command("has-session", "-t", rec["name"], check=False)
+    detail = (result.stderr or "").lower()
+    return result.returncode != 0 and any(
+        text in detail for text in ("can't find session", "no server running", "error connecting"))
+
 def loop_session_state(name):
-    """A run session's classified state, `ended` once it is gone. A failed
-    observation proves nothing about the session, so it is `unknown`."""
+    """A run session's classified state, `ended` once it is proved gone. A
+    failed observation proves nothing about the session, so it is `unknown`."""
     try:
         rec = load_session(name)[1]
         if rec.get("state") in SESSION_TERMINAL_STATES:
             return "ended"
-        return classify_session(rec)[0]
+        state = classify_session(rec)[0]
+        return state if state != "ended" or loop_session_gone(rec) else "unknown"
     except Exception as exc:
         print(f"loop tick: cannot observe {name}: {redact(str(exc))}", file=sys.stderr)
         return "unknown"
 
 def start_loop_run(name, run, run_id, message):
     """Launch one run with exactly the loop's agent, tier, model, effort and
-    authority. A denial exits like any launch (exit 75 semantics); any other
-    failure leaves no session behind and says whether a retry can help."""
+    authority. A denial exits like any launch (exit 75 semantics). Any other
+    failure retires what it started and says whether a retry can help; what
+    could not be retired is named in `unretired`, for the tick to finish."""
     agent = run["agent"]
     try:
         return session_launch("loop", None, None, False, None, agent=agent, tier=run["tier"],
@@ -4970,10 +4988,13 @@ def start_loop_run(name, run, run_id, message):
         exc.usage_denial = str(exc).replace(f"usage gate denied {agent} launch: ", "usage-gate: ", 1)
         raise
     except Exception as exc:
-        # A session record means the refusal was the runtime's, not the loop's.
-        started = bool(loop_run_records(run_id))
-        retire_loop_run(run_id, "loop kickoff failed")
+        # A session from this attempt means the refusal was the runtime's, not the loop's.
+        started = any(rec.get("state") != "retired" for rec in loop_run_records(run_id))
         exc.transient = started or any(token in str(exc) for token in LOOP_TRANSIENT_REFUSALS)
+        try:
+            retire_loop_run(run_id, "loop kickoff failed")
+        except Exception as retire_exc:
+            exc.unretired = redact(str(retire_exc))
         raise
 
 def loop_launch_model(run):
@@ -5012,7 +5033,7 @@ def loop_runner_for_main():
                                      retire=retire_loop_run, adopt=adopt_loop_run)
     return loop_runner.LoopRunner(ORCHESTRATOR_HOME, definitions, target=target,
                                   usage=loop_usage_admission, send=send, sessions=sessions,
-                                  multi_machine=CFG.get("multi_machine", False))
+                                  multi_machine=CFG.get("multi_machine", False), redact=redact)
 def session_state_grants(bead, explicit=(), records=None):
     if os.environ.get("NOGG_CODEX_EXTRA_WRITABLE_ROOTS"):
         raise RuntimeError("use agent_state_roots and the agent-state:<agent> label; NOGG_CODEX_EXTRA_WRITABLE_ROOTS is retired")
@@ -8961,14 +8982,26 @@ def loop_health_diagnostics(now=None):
     now = now or dt.datetime.now(dt.timezone.utc)
     definitions = ORCHESTRATOR_HOME / scfg("loops_file", ".nogging/loops.json")
     try:
-        config = loop_config.load(definitions)
-    except ValueError:
-        return [], []
-    try:
         state = loop_state.read_state(ORCHESTRATOR_HOME)
     except ValueError as exc:
         return [f"loop health unavailable: {exc}"], []
     warnings, notes = [], []
+    # From state, because a run outlives its definition: a broken or removed
+    # file is exactly when a run is left past its limit.
+    for name, item in sorted(state.get("loops", {}).items()):
+        active = item.get("active_run")
+        if active:
+            limit = (active.get("run") or {}).get("max_runtime", "1h")
+            if now - parse_iso(active["started_at"]) > dt.timedelta(
+                    minutes=loop_config._runtime_minutes(limit, "max_runtime")):
+                warnings.append(f"loop {name} run {active['run_id']} is past its max_runtime of "
+                                f"{limit}; a tick should have ended it")
+    for name, reason in sorted((state.get("tick_errors") or {}).items()):
+        warnings.append(f"loop {name} failed in the last tick: {reason}")
+    try:
+        config = loop_config.load(definitions)
+    except ValueError:
+        return warnings, notes
     loops = {name: loop for name, loop in (config or {"loops": {}})["loops"].items()
              if loop["enabled"] and loop.get("host") in (None, os.uname().nodename)}
     for name, loop in loops.items():
@@ -8978,12 +9011,6 @@ def loop_health_diagnostics(now=None):
         if item.get("suspended"):
             warnings.append(f"loop {name} is suspended after repeated failures; "
                             f"check `nogg loop log {name}`, then `nogg loop resume {name}`")
-        active = item.get("active_run")
-        if active:
-            limit = loop_config._runtime_minutes(loop["run"].get("max_runtime", "1h"), "max_runtime")
-            if now - parse_iso(active["started_at"]) > dt.timedelta(minutes=limit):
-                warnings.append(f"loop {name} run {active['run_id']} is past its max_runtime of "
-                                f"{loop['run'].get('max_runtime', '1h')}; a tick should have ended it")
     timer, timer_state = loop_timer_state()
     if timer_state == "enabled":
         last_tick = state.get("last_tick")

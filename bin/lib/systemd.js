@@ -31,7 +31,7 @@ function renderSystemd(ctx) {
   // The next-steps block (nextsteps.js) names the units that can be enabled.
   for (const rel of written) {
     if (rel.endsWith('.timer')) ctx.units.push({ kind: 'timer', rel });
-    else if (rel.includes('orchestrator')) ctx.units.push({ kind: 'orchestrator', rel });
+    else if (path.basename(rel).startsWith('nogg-orchestrator-')) ctx.units.push({ kind: 'orchestrator', rel });
   }
 }
 

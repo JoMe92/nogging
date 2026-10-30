@@ -79,7 +79,7 @@ check "init: the sync timer item names the rendered unit and is optional" \
 check "init: the orchestrator item adds linger and is optional" \
   grep -Eq '^  5\. Enable the always-on Orchestration Agent: .*loginctl enable-linger .* \(optional\)$' <<<"$out"
 check "init: the loop timer item names the rendered unit and is optional" \
-  grep -Eq '^  6\. Enable the loop scheduler timer: `systemctl --user enable --now "\$PWD/systemd/nogg-loops-repo\.timer"` \(optional\)$' <<<"$out"
+  grep -Eq '^  6\. Enable the loop scheduler timer: `systemctl --user link "\$PWD/systemd/nogg-loops-repo\.service" && systemctl --user enable --now "\$PWD/systemd/nogg-loops-repo\.timer"` \(optional\)$' <<<"$out"
 check "init: required items come before optional ones" \
   test "$(lineno 'Start your first plan')" -lt "$(lineno 'Enable the sync timer')"
 check "init: only optional items carry the marker" \
@@ -137,7 +137,7 @@ check "remove: the sync timer is disabled by name" \
 check "remove: the orchestrator service is disabled by name" \
   grep -Eq '^  2\. Disable nogg-orchestrator-repo\.service .*`systemctl --user disable --now nogg-orchestrator-repo\.service`' <<<"$out"
 check "remove: the loop timer is disabled by name" \
-  grep -Eq '^  3\. Disable nogg-loops-repo\.timer before the checkout is moved or deleted: `systemctl --user disable --now nogg-loops-repo\.timer`' <<<"$out"
+  grep -Eq '^  3\. Disable nogg-loops-repo\.timer before the checkout is moved or deleted: `systemctl --user disable --now nogg-loops-repo\.timer nogg-loops-repo\.service`' <<<"$out"
 check "remove: shared entries are left for review" grep -Eq '^  4\. Review the shared \.gitignore entries and the Git hooks' <<<"$out"
 check "remove: the last step commits the removal" grep -Eq '^  5\. Commit the removal\.' <<<"$out"
 run "$work/nosd/repo" remove

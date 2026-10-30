@@ -110,7 +110,7 @@ function removeInstallation(ctx) {
     // Enable-able units, named by the next steps so they can be disabled first.
     if (fs.existsSync(path.join(ctx.targetRoot, rel))) {
       if (rel.endsWith('.timer')) ctx.units.push({ kind: 'timer', rel });
-      else if (rel.includes('orchestrator')) ctx.units.push({ kind: 'orchestrator', rel });
+      else if (path.basename(rel).startsWith('nogg-orchestrator-')) ctx.units.push({ kind: 'orchestrator', rel });
     }
     removeFile(ctx, rel);
   }

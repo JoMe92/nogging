@@ -2,16 +2,279 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHONPATH="$ROOT/scripts/lib${PYTHONPATH:+:$PYTHONPATH}" python3 - <<'PY'
+import contextlib
+import io
 import json
 import tempfile
+from types import SimpleNamespace
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import loop_cli
+import loop_config
 import loop_runner
 import loop_state
 
 UTC = timezone.utc
+
+
+class FakeSessions:
+    """The launch-mode operations, recording calls instead of starting sessions."""
+
+    def __init__(self):
+        self.starts, self.retired = [], []
+        self.failure, self.retire_failure, self.adopted, self.on_start = None, None, None, None
+        self.states = {}
+
+    def model(self, run):
+        return run.get("model", "stub-model")
+
+    def start(self, name, run, run_id, message):
+        self.starts.append(run_id)
+        if self.on_start:
+            self.on_start()
+        if self.failure:
+            raise self.failure
+        return f"sf-loop-{name}"
+
+    def state(self, session):
+        return self.states.get(session, "working")
+
+    def retire(self, run_id, reason, session=None):
+        if self.retire_failure:
+            raise self.retire_failure
+        self.retired.append(run_id)
+        return "/archive/run.log"
+
+    def adopt(self, run_id):
+        return self.adopted
+
+
+def transient_error(text="kickoff refused"):
+    exc = RuntimeError(text)
+    exc.transient = True
+    return exc
+
+
+class LaunchPolicyTests(unittest.TestCase):
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        self.defs = self.root / ".nogging/loops.json"
+        self.clock = [datetime(2026, 1, 1, 0, 6, tzinfo=UTC)]
+        self.sessions = FakeSessions()
+        self.runner = loop_runner.LoopRunner(
+            self.root, self.defs, target=lambda: (None, "ended"), sessions=self.sessions,
+            usage=lambda *args: (True, None, {"decision": "admitted", "windows": []}),
+            send=lambda rec, msg: None, now=lambda: self.clock[0], host="test-host")
+
+    def define(self, loops, scheduler=None):
+        self.defs.parent.mkdir(parents=True, exist_ok=True)
+        (self.root / ".nogging/loops").mkdir(exist_ok=True)
+        raw = {"schema_version": 1, "timezone": "UTC", "loops": loops}
+        if scheduler:
+            raw["scheduler"] = scheduler
+        self.defs.write_text(json.dumps(raw))
+        config = loop_config.load(self.defs)
+        for name in loops:
+            (self.root / f".nogging/loops/{name}.md").write_text("Report the queue.\n")
+            loop_state.approve(self.root, self.defs, config, name, at="2026-01-01T00:00:00Z", user="operator")
+
+    def loop(self, schedule=None, **run):
+        return {"schedule": schedule or {"at": ["00:05"], "grace": 3600},
+                "run": {"mode": "launch", "agent": "codex", "tier": "routine", **run}}
+
+    def at(self, minute):
+        self.clock[0] = datetime(2026, 1, 1, tzinfo=UTC) + timedelta(minutes=minute)
+
+    def events(self, name):
+        path = loop_runner.event_path(self.root)
+        rows = [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+        return [row for row in rows if row["loop"] == name]
+
+    def kinds(self, name):
+        return [row["event"] for row in self.events(name)]
+
+    def item(self, name):
+        return loop_state.read_state(self.root)["loops"].get(name, {})
+
+    def command(self, action, name):
+        loop_cli.command(SimpleNamespace(loop_command=action, name=name), main_checkout=self.root,
+                         definitions_path=self.defs, session_record=None)
+
+    def test_a_deferred_slot_keeps_the_retry_bound_and_backoff(self):
+        self.define({"alpha": self.loop(), "beta": self.loop()}, {"max_active_launch_runs": 1})
+        self.runner.tick()
+        self.assertEqual(self.kinds("beta"), ["deferred"])
+        self.sessions.states["sf-loop-alpha"] = "idle"
+        self.sessions.failure = transient_error()
+        self.sessions.starts.clear()
+        for minute in range(7, 25):
+            self.at(minute)
+            self.runner.tick()
+        self.assertEqual(len(self.sessions.starts), 3, self.sessions.starts)
+        self.assertEqual(self.kinds("beta").count("retry-scheduled"), 2)
+        self.assertEqual(self.kinds("beta")[-1], "failed")
+        self.assertEqual(self.item("beta")["consecutive_failures"], 1)
+
+    def test_a_permanent_failure_on_a_deferred_slot_is_not_repeated(self):
+        self.define({"alpha": self.loop(), "beta": self.loop()}, {"max_active_launch_runs": 1})
+        self.runner.tick()
+        self.sessions.states["sf-loop-alpha"] = "idle"
+        self.sessions.failure = RuntimeError("refused: authority")
+        self.sessions.starts.clear()
+        for minute in range(7, 20):
+            self.at(minute)
+            self.runner.tick()
+        self.assertEqual(len(self.sessions.starts), 1)
+
+    def test_a_retirement_interrupted_by_a_crash_keeps_its_outcome(self):
+        self.define({"scan": self.loop()})
+        self.runner.tick()
+        self.sessions.states["sf-loop-scan"] = "idle"
+        self.at(7); self.runner.tick()
+
+        class Crash(BaseException):
+            pass
+
+        self.sessions.retire_failure = Crash()
+        self.at(8)
+        with self.assertRaises(Crash):
+            self.runner.tick()
+        self.assertEqual(self.item("scan")["active_run"]["finishing"]["event"], "completed")
+        self.sessions.retire_failure = None
+        self.sessions.states["sf-loop-scan"] = "ended"
+        self.at(9); self.runner.tick()
+        self.assertEqual(self.kinds("scan")[-1], "completed")
+
+    def test_one_loops_error_leaves_the_others_and_the_state_intact(self):
+        self.define({"alpha": self.loop(), "zeta": self.loop()})
+        self.runner.tick()
+        self.sessions.states["sf-loop-alpha"] = "idle"
+        self.sessions.states["sf-loop-zeta"] = "idle"
+        self.at(7); self.runner.tick()
+        real = self.sessions.state
+
+        def broken(session):
+            if "alpha" in session:
+                raise ValueError("boom")
+            return real(session)
+
+        self.sessions.state = broken
+        self.at(8)
+        with self.assertRaises(RuntimeError):
+            self.runner.tick()
+        self.assertEqual(self.kinds("zeta")[-1], "completed", "a later loop was not evaluated")
+        self.assertIsNone(self.item("zeta")["active_run"])
+        self.assertEqual(loop_state.read_state(self.root)["tick_errors"], {"alpha": "boom"})
+        self.sessions.state = real
+        self.at(9); self.runner.tick()
+        self.assertEqual(loop_state.read_state(self.root)["tick_errors"], {})
+
+    def test_usage_that_cannot_be_observed_admits_nothing(self):
+        self.define({"scan": self.loop()})
+
+        def broken(*args):
+            raise ValueError("invalid usage_gate")
+
+        self.runner.usage = broken
+        self.runner.tick()
+        self.assertEqual(self.kinds("scan"), ["skipped"])
+        self.assertEqual(self.events("scan")[-1]["reason"], "usage-gate: invalid usage_gate")
+        self.assertEqual(self.sessions.starts, [])
+
+    def test_a_definitions_file_that_vanishes_retires_the_run(self):
+        self.define({"scan": self.loop()})
+        self.runner.tick()
+        self.defs.unlink()
+        self.at(7); self.runner.tick()
+        self.assertEqual(self.kinds("scan")[-1], "failed")
+        self.assertEqual(self.events("scan")[-1]["reason"], "loop removed")
+        self.assertEqual(self.sessions.retired, ["scan-20260101T000500Z"])
+
+    def test_an_invalid_definitions_file_still_stops_a_hung_run(self):
+        self.define({"scan": self.loop(max_runtime="5m")})
+        self.runner.tick()
+        self.defs.write_text("{broken")
+        self.at(13)
+        with self.assertRaises(ValueError):
+            self.runner.tick()
+        self.assertEqual(self.kinds("scan")[-2:], ["stale", "stopped-stale"])
+        self.assertIsNone(self.item("scan")["active_run"])
+
+    def test_a_loop_moved_to_another_host_ends_its_run_here(self):
+        self.define({"scan": self.loop()})
+        self.runner.tick()
+        self.define({"scan": {**self.loop(), "host": "another-host"}})
+        self.at(7); self.runner.tick()
+        self.assertEqual(self.events("scan")[-1]["reason"], "loop moved to another host")
+        self.assertEqual(self.sessions.retired, ["scan-20260101T000500Z"])
+
+    def test_an_operator_change_during_a_launch_is_not_undone(self):
+        self.define({"scan": self.loop()})
+        self.sessions.on_start = lambda: self.command("pause", "scan")
+        self.runner.tick()
+        state = self.item("scan")
+        self.assertTrue(state["paused"], "the tick wrote over the pause")
+        self.assertEqual(state["active_run"]["session"], "sf-loop-scan")
+
+    def test_a_resume_during_a_tick_clears_the_suspension(self):
+        self.define({"scan": self.loop(), "other": self.loop()})
+        state = loop_state.read_state(self.root)
+        state["loops"] = {"scan": {"suspended": True, "paused": True, "consecutive_failures": 3,
+                                   "last_evaluated": "2026-01-01T00:06:00Z"}}
+        loop_state.write_state(self.root, state)
+        self.sessions.on_start = lambda: self.command("resume", "scan")
+        self.runner.tick()
+        state = self.item("scan")
+        self.assertNotIn("suspended", state)
+        self.assertNotIn("consecutive_failures", state)
+        self.assertFalse(state["paused"])
+
+    def test_resume_starts_the_failure_count_again(self):
+        self.define({"scan": self.loop()})
+        state = loop_state.read_state(self.root)
+        state["loops"] = {"scan": {"suspended": True, "consecutive_failures": 3}}
+        loop_state.write_state(self.root, state)
+        self.command("resume", "scan")
+        self.assertNotIn("consecutive_failures", self.item("scan"))
+
+    def test_a_deferred_slot_is_skipped_at_its_deadline_while_a_run_is_active(self):
+        self.define({"scan": self.loop(schedule={"at": ["00:05", "02:00"], "grace": 300}, max_runtime="12h")})
+        self.runner.tick()
+        self.at(121); self.runner.tick()
+        self.assertEqual(self.kinds("scan")[-1], "deferred")
+        self.at(125); self.runner.tick()
+        self.assertEqual(self.kinds("scan")[-1], "skipped")
+        self.assertEqual(self.events("scan")[-1]["reason"], "previous-run-active")
+
+    def test_run_now_prints_why_it_did_not_start(self):
+        self.define({"scan": self.loop()})
+        self.runner.tick()
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.runner.run_now("scan")
+        self.assertEqual(output.getvalue().strip(), "skipped: previous-run-active")
+
+    def test_reasons_are_redacted_and_bounded(self):
+        self.define({"scan": self.loop()})
+        self.runner.redact = lambda text: text.replace("hunter2", "<redacted>")
+        self.sessions.failure = RuntimeError("token hunter2 refused\nstartup log: " + "x" * 9000)
+        self.runner.tick()
+        self.assertEqual(self.events("scan")[-1]["reason"], "token <redacted> refused")
+
+    def test_a_kickoff_failure_with_an_unretired_session_stays_tracked(self):
+        self.define({"scan": self.loop()})
+        failure = transient_error()
+        failure.unretired = "cleanup refused"
+        self.sessions.failure = failure
+        self.runner.tick()
+        state = self.item("scan")
+        self.assertEqual(state["active_run"]["finishing"]["event"], "failed")
+        self.assertFalse(state.get("retry"))
+        self.at(7); self.runner.tick()
+        self.assertEqual(self.kinds("scan")[-1], "failed")
+        self.assertEqual(self.item("scan")["consecutive_failures"], 1)
 
 
 class LoopTickTests(unittest.TestCase):

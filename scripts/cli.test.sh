@@ -310,11 +310,19 @@ check "loop service is a oneshot" grep -qx "Type=oneshot" "$lsvc"
 check "loop service targets the repo" grep -qx "WorkingDirectory=$repo" "$lsvc"
 check "loop service runs one tick" grep -qx "ExecStart=$repo/scripts/nogg loop tick" "$lsvc"
 check "loop service leaves its sessions running" grep -qx "KillMode=process" "$lsvc"
+check "loop service bounds a wedged tick" grep -qx "TimeoutStartSec=15min" "$lsvc"
 check "loop timer rendered" test -f "$ltim"
 check "loop timer fires every minute" grep -qx "OnCalendar=minutely" "$ltim"
 check "loop timer has no catch-up" grep -qx "Persistent=false" "$ltim"
 check "loop timer binds the slugged service" grep -qx "Unit=nogg-loops-fresh.service" "$ltim"
 check "loop timer is enable-able" grep -qx "WantedBy=timers.target" "$ltim"
+
+# A repository named after a unit keeps its units' next steps apart.
+named="$work/orchestrator"
+mkdir -p "$named"; git -C "$named" init -q
+named_out=$( cd "$named" && node "$cli" init --no-beads 2>&1 ) || true
+check "a repo named orchestrator gets one orchestrator step" \
+  test "$(grep -c 'Enable the always-on Orchestration Agent' <<<"$named_out")" -eq 1
 
 # --- --no-systemd -----------------------------------------------------
 nos="$work/nosystemd"

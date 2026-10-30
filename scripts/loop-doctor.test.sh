@@ -133,6 +133,7 @@ echo "$state"
     define({'scan': launch})
     active = {'run_id': 'scan-1', 'mode': 'launch', 'event': 'started', 'session': 'sf-loop-scan-x',
               'slot': iso(now - timedelta(minutes=30)), 'trigger': 'scheduled'}
+    active['run'] = {'mode': 'launch', 'max_runtime': '10m'}
     state({'last_tick': iso(now), 'loops': {'scan': {'active_run': {
         **active, 'started_at': iso(now - timedelta(minutes=30))}}}})
     warnings, _ = health('enabled')
@@ -141,6 +142,18 @@ echo "$state"
     state({'last_tick': iso(now), 'loops': {'scan': {'active_run': {
         **active, 'started_at': iso(now - timedelta(minutes=5))}}}})
     assert health('enabled') == ([], [])
+
+    # A run outlives its definition, and a broken file does not hide it.
+    stale = {**active, 'started_at': iso(now - timedelta(minutes=30))}
+    defs.write_text('{broken')
+    state({'last_tick': iso(now), 'loops': {'scan': {'active_run': stale}}})
+    warnings, _ = health('enabled')
+    assert len(warnings) == 1 and 'scan-1' in warnings[0], warnings
+    defs.unlink()
+    assert any('scan-1' in w for w in health('enabled')[0])
+
+    state({'last_tick': iso(now), 'tick_errors': {'night-work': 'usage table unreadable'}})
+    assert any('night-work' in w and 'usage table unreadable' in w for w in health('enabled')[0])
 
     # A disabled loop's unapproved definition is not a problem to report.
     define({'night-work': {**send, 'enabled': False}}, approve=False)

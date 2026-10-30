@@ -401,6 +401,17 @@ while True:
         at(8); runner.tick()
         assert session in live(), 'a session that is not this run was stopped'
 
+        # --- an empty tmux listing does not prove a session gone ---------------
+        reset()
+        runner = define({'scan': launch_loop()})
+        at(6); runner.tick()
+        session = events('scan')[-1]['session']
+        with patch.object(m, 'tmux_sessions', return_value=set()):
+            assert m.loop_session_state(session) == 'unknown'
+            at(7); runner.tick()
+        assert kinds('scan')[-1] == 'started' and session in live(), 'a live run was failed'
+        assert m.loop_session_gone(m.load_session(session)[1]) is False
+
         # --- a failed retirement keeps the run until it succeeds --------------
         reset()
         runner = define({'scan': launch_loop()})
@@ -414,6 +425,19 @@ while True:
         at(9); runner.tick()
         assert kinds('scan')[-1] == 'completed', 'a stopped session must not turn a finished run into a failure'
         assert kinds('scan').count('completed') == 1 and m.load_session(session)[1]['state'] == 'retired'
+
+        # --- a kickoff failure that cannot retire stays tracked -----------------
+        reset()
+        runner = define({'scan': launch_loop()})
+        behaviour.write_text('blind')
+        with patch.object(m, 'session_cleanup', side_effect=RuntimeError('cleanup refused: store busy')):
+            at(6); runner.tick()
+        state = item('scan')
+        assert state['active_run']['finishing']['event'] == 'failed' and not state.get('retry'), state
+        assert 'failed' not in kinds('scan'), kinds('scan')
+        at(7); runner.tick()
+        assert kinds('scan')[-1] == 'failed' and item('scan')['active_run'] is None, events('scan')[-1]
+        assert not [rec for rec in records('scan-') if rec['state'] != 'retired']
 
         # --- a removed loop's session is not orphaned -------------------------
         reset()
