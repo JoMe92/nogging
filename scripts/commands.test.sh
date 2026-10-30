@@ -98,6 +98,12 @@ grep -q 'worktree implement <bead> <branch>' .nogging/launch-prompts/autonomous.
   && grep -q 'never merge that pull request yourself' .nogging/launch-prompts/autonomous.md \
   && ok "autonomous Lead guidance requires an implementation worktree and review handoff" \
   || bad "autonomous Lead guidance is missing worktree or no-self-merge rules"
+grep -q "Work starts with the operator's first message" .nogging/launch-prompts/autonomous.md \
+  && grep -q 'do not run recovery' .nogging/launch-prompts/autonomous.md \
+  && grep -q 'or the one Bead it was launched for' .nogging/launch-prompts/autonomous.md \
+  && grep -q 'session kickoff --change' .nogging/launch-prompts/autonomous.md \
+  && ok "autonomous Lead guidance waits for the kickoff and keeps to the launch Bead" \
+  || bad "autonomous Lead guidance may start work before its kickoff"
 grep -q 'create a Bead' .nogging/launch-prompts/autonomous.md \
   && grep -q 'new planning session' .nogging/launch-prompts/autonomous.md \
   && ok "review changes route small work to Beads and large work to planning" \

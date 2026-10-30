@@ -619,6 +619,36 @@ with patch.object(m, "session_backend", return_value=broken):
     assert m.session_liveness([record], strict=True) == (set(), {"sf-other"})
 PY
 
+python3 - "$nogg" <<'PY' && ok "recover keeps a launched Lead on its Bead" || bad "recover scope"
+import contextlib, io, json, os, sys, tempfile
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+from unittest.mock import patch
+m = SourceFileLoader("sf_eeuv_scope", sys.argv[1]).load_module()
+store = Path(tempfile.mkdtemp())
+(store / "sf-me.json").write_text(json.dumps({"name": "sf-me", "bead_id": "SPEC-abc", "role": "lead"}))
+(store / "sf-wide.json").write_text(json.dumps({"name": "sf-wide", "bead_id": "SPEC-abc", "role": "lead",
+                                                "authorized_change": "c1"}))
+(store / "sf-spec.json").write_text(json.dumps({"name": "sf-spec", "bead_id": "SPEC-abc",
+                                                "role": "specialist:code-reviewer"}))
+def report(name, attention=()):
+    out = io.StringIO()
+    with patch.object(m, "canonical_sessions_dir", return_value=store), \
+         patch.object(m, "recover_scan", return_value=([], list(attention))), \
+         patch.dict(os.environ, {"NOGG_SESSION_NAME": name}), contextlib.redirect_stdout(out):
+        try:
+            m.recover()
+        except SystemExit:
+            pass
+    return out.getvalue()
+assert "works only Bead SPEC-abc" in report("sf-me") and "bd ready" not in report("sf-me"), report("sf-me")
+assert "works only change c1" in report("sf-wide"), report("sf-wide")
+attention = report("sf-me", ["LIMBO SPEC-x"])
+assert "works only Bead SPEC-abc" in attention and "instead of resolving it" in attention, attention
+for caller in ("sf-unknown", "sf-spec"):
+    assert "clear to select work with bd ready" in report(caller), report(caller)
+PY
+
 python3 - "$nogg" <<'PY' && ok "the recorded kickoff is what turns the guard on" || bad "kickoff record"
 import json, os, sys, tempfile
 from importlib.machinery import SourceFileLoader

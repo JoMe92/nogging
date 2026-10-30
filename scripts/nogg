@@ -9379,11 +9379,28 @@ def recover_scan():
     section("Last sync", ls_lines)
 
     return sections, attention
+def launch_scope():
+    """What this supervised Lead may work, as prose, or None for any other caller:
+    its launch Bead, or the change a kickoff authorized."""
+    name = os.environ.get("NOGG_SESSION_NAME")
+    if not name:
+        return None
+    try:
+        rec = json.loads((session_store(name) / f"{name}.json").read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(rec, dict) or not rec.get("bead_id") or (rec.get("role") or "lead") != "lead":
+        return None
+    change = rec.get("authorized_change")
+    return f"change {change}" if change else f"Bead {rec['bead_id']}"
 def recover():
     """The interrupted-run diagnostic. Prints every non-empty section and exits
     non-zero when any committed-but-open Bead, stale lock, orphan Bead,
-    materialized-but-uncommitted change, or crashed session record is present."""
+    materialized-but-uncommitted change, or crashed session record is present.
+    A Lead launched for a Bead is told to stay on it: `bd ready` is not its next
+    step, and what it sees about other work is for the operator."""
     sections, attention = recover_scan()
+    scope = launch_scope()
     for title, lines in sections:
         print(f"== {title} ==")
         for ln in lines:
@@ -9391,8 +9408,12 @@ def recover():
         print()
     if attention:
         print(f"recover: {len(attention)} item(s) need attention: {', '.join(attention)}")
+        if scope:
+            print(f"recover: this session works only {scope}: report anything else above "
+                  "to the operator instead of resolving it")
         sys.exit(1)
-    print("recover: nothing in flight — clear to select work with bd ready")
+    print(f"recover: nothing in flight — this session works only {scope}" if scope
+          else "recover: nothing in flight — clear to select work with bd ready")
 def tool_on_path(name):
     return shutil.which(name) is not None
 def codex_sandbox_argv(policy, extra=()):
