@@ -91,6 +91,10 @@ module.exports = {
     // "files" list.
     { from: '.pi/prompts', to: '.pi/prompts' },
     { from: '.pi/extensions', to: '.pi/extensions' },
+    // The Nogging Pi extension home (.pi/nogging/): opt-in extensions such as
+    // glm-usage, enabled per repository through `pi_extensions`. Shipping the
+    // tree enables nothing; templates/nogging-config.json scaffolds [].
+    { from: '.pi/nogging', to: '.pi/nogging' },
     // launch-profiles ships both the Claude settings files (<level>.json) and
     // the Codex launch specs (<level>.codex.toml); the whole directory rides
     // along, and package.json "files" lists it.
