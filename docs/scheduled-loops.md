@@ -208,6 +208,10 @@ run the tick another way.
 
 - A loop that *will not run*: the timer is missing or disabled. Enable it, or run
   `nogg loop tick` yourself.
+- A timer whose state is *unknown from this session*: `systemctl` is denied
+  there (a fenced session), so `doctor` cannot tell. It stays quiet while the
+  last tick is under five minutes old; otherwise check from a shell outside
+  the session.
 - An enabled timer whose last tick is over five minutes old: check
   `systemctl --user status nogg-loops-<slug>.timer` and the service's journal.
 - An invalid definitions file is a `doctor` FAIL. Ticks keep running and keep

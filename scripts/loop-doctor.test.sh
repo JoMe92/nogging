@@ -40,6 +40,7 @@ with tempfile.TemporaryDirectory(prefix='nogg loop doctor ') as td:
     systemctl.write_text(f'''#!/bin/sh
 printf '%s\\n' "$*" >> "{calls}"
 state=$(cat "{answer}")
+[ "$state" = denied ] && exit 126
 echo "$state"
 [ "$state" = enabled ]
 ''')
@@ -108,6 +109,18 @@ echo "$state"
         assert warnings == [], warnings
         assert len(notes) == 1 and 'will not run' in notes[0] and 'nogg loop tick' in notes[0], notes
         assert 'nogg-loops-my-project.timer' in notes[0]
+
+    # A fenced session where systemctl is denied cannot tell: the timer state is
+    # unknown, and only a stale or missing last tick earns a note.
+    state({'last_tick': iso(now - timedelta(minutes=2))})
+    assert health('denied') == ([], [])
+    state({'last_tick': iso(now - timedelta(minutes=20))})
+    warnings, notes = health('denied')
+    assert warnings == [] and len(notes) == 1, (warnings, notes)
+    assert 'unknown from this session' in notes[0] and '20m' in notes[0] and 'will not run' not in notes[0], notes
+    state({})
+    warnings, notes = health('denied')
+    assert warnings == [] and 'unknown from this session' in notes[0] and 'no tick is recorded' in notes[0], notes
 
     # An install made with --no-systemd on a host without systemd at all.
     warnings, notes = health('unused', no_systemctl)
