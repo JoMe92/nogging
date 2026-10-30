@@ -47,6 +47,7 @@ behind them.
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
 | `session_agent` | string | `claude` | Agent a launch uses when you pass no `--agent`. |
+| `pi_extensions` | array of strings | `[]` | Names of the optional Nogging Pi extensions under `.pi/nogging/extensions/` that every `session launch --agent pi` loads, after the guard and in this order, for example `["glm-usage"]`. A name must be kebab-case, unique and have an `index.ts` in the launch working directory; otherwise the launch refuses before any side effect, naming the key and the value, and `validate` and `doctor` report a FAIL. The session record stores the loaded names and the launch output prints `pi-extensions=<names>`. An empty or absent list changes nothing, and other agents ignore the key. See [Using Nogging with Pi](using-with-pi.md). |
 | `session_backend` | string | `tmux` | Terminal backend for launches without `--backend`: `tmux` or `herdr` (experimental). The `--backend` flag wins over this key. See [Using Nogging with herdr](using-with-herdr.md). |
 | `agent_routing_file` | path | `.nogging/agent-routing.json` | Repository-relative location of the agent routing file, resolved against the main checkout so every linked worktree reads the same file. See [the block below](#agent_routing_file). |
 | `session_tmux_command` | string | `tmux` | Executable used for the tmux backend. |

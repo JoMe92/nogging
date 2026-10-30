@@ -4358,6 +4358,43 @@ def load_pi_spec(path):
     reject_reasoning_effort(spec, f"Pi launch spec {path}")
     reject_effort(spec, f"Pi launch spec {path}")
     return spec
+PI_EXTENSIONS_DIR = ".pi/nogging/extensions"
+def pi_extensions_errors(value, base):
+    """Every defect of the `pi_extensions` config key, each naming the key, the
+    offending value and the fix. `base` is the working directory the launched
+    `pi` loads `.pi/nogging/extensions/<name>/index.ts` from."""
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        return [f"pi_extensions must be an array of extension names, got {json.dumps(value)}; "
+                f"set it to [] or a list such as [\"glm-usage\"] in .nogging/config.json"]
+    errors, seen = [], set()
+    for name in value:
+        if not isinstance(name, str) or not KEBAB_RE.fullmatch(name):
+            errors.append(f"pi_extensions entry {json.dumps(name)} is not a kebab-case extension name; "
+                          f"correct it or remove it from pi_extensions in .nogging/config.json")
+        elif name in seen:
+            errors.append(f"pi_extensions names {json.dumps(name)} more than once (duplicate); "
+                          f"remove the extra entry from .nogging/config.json")
+        elif not (Path(base) / PI_EXTENSIONS_DIR / name / "index.ts").is_file():
+            errors.append(f"pi_extensions names {json.dumps(name)} but {Path(base) / PI_EXTENSIONS_DIR / name / 'index.ts'} "
+                          f"does not exist; run `nogg update` to restore it, or remove {json.dumps(name)} from pi_extensions")
+        if isinstance(name, str):
+            seen.add(name)
+    return errors
+
+def validate_pi_extensions(value, base):
+    """The enabled extension names, in config order; a defect refuses the launch."""
+    errors = pi_extensions_errors(value, base)
+    if errors:
+        raise RuntimeError("; ".join(errors) + "; launch refused")
+    return list(value or [])
+
+def pi_extensions_diagnostics():
+    """FAIL for every `pi_extensions` defect a Pi launch refuses; `nogg validate`
+    shares this path through `doctor`. A valid or absent key prints nothing."""
+    return [(error, False) for error in pi_extensions_errors(CFG.get("pi_extensions"), ROOT)]
+
 def resolve_agent(agent):
     """The agent binary a launch runs: the explicit `--agent` flag wins, then
     the `session_agent` config key, then the historical `claude` default. No
@@ -4395,6 +4432,8 @@ def validate_launch_contract(contract, argv, agent):
         raise RuntimeError("session-launch contract lacks Codex exact resume; run Nogging update")
     if "--effort" in argv[1:] and "claude-effort-forwarding" not in contract["features"]:
         raise RuntimeError("session-launch contract lacks Claude effort forwarding; run Nogging update")
+    if "--pi-extension" in argv[1:] and "pi-extensions" not in contract["features"]:
+        raise RuntimeError("session-launch contract lacks pi-extensions loading; run Nogging update")
     options = contract.get("options")
     if not isinstance(options, dict):
         raise RuntimeError("session-launch contract has no option schema; run Nogging update")
@@ -4472,7 +4511,8 @@ def session_helper_diagnostics():
     argv = [str(wrapper)]
     for flag in ("--agent", "--settings", "--prompt", "--cwd", "--bead",
                  "--sandbox", "--approval", "--network", "--readonly-root",
-                 "--provider", "--model", "--reasoning-effort", "--effort", "--mode", "--session-id", "--resume", "--remote-control"):
+                 "--provider", "--model", "--reasoning-effort", "--effort", "--mode", "--session-id", "--resume", "--remote-control",
+                 "--pi-extension"):
         argv += [flag, "probe"]
     argv += ["--read-only", "--instructions-only", "--no-commands", "--continue"]
     try:
@@ -5627,6 +5667,11 @@ def _session_launch(role, bead, cwd, read_only, owner,
     source_settings = load_profile_settings(profile_path) if agent == "claude" else None
     codex_spec = load_codex_spec(profile_path) if agent == "codex" else None
     pi_spec = load_pi_spec(profile_path) if agent == "pi" else None
+    # Enabled Pi extensions are validated here, before any worktree, trust,
+    # settings, record or backend side effect. A planning worktree that does not
+    # exist yet is checked against the main checkout it is created from.
+    pi_extensions = validate_pi_extensions(
+        CFG.get("pi_extensions"), ROOT if allocate_planning else Path(cwd or ROOT).resolve()) if agent == "pi" else []
     agy_spec = load_antigravity_spec(profile_path) if agent == "antigravity" else None
     # Model precedence (--model, --tier, profile model, runtime default) is resolved and
     # validated here, before any session exists on disk or in tmux.
@@ -5816,6 +5861,8 @@ def _session_launch(role, bead, cwd, read_only, owner,
         inner += ["--agent", "pi"]
         if "provider" in pi_spec:
             inner += ["--provider", pi_spec["provider"]]
+        for extension in pi_extensions:
+            inner += ["--pi-extension", extension]
         if selected_model is not None:
             inner += ["--model", selected_model]
     if read_only: inner.append("--read-only")
@@ -5919,6 +5966,8 @@ def _session_launch(role, bead, cwd, read_only, owner,
         "usage_segment_id": str(uuid.uuid4()), "usage_started_at": usage_now(),
         "usage_boot_id": boot_id(), "usage_monotonic_start_ms": monotonic_ms(),
     }
+    if pi_extensions:
+        record["pi_extensions"] = pi_extensions
     record["usage_attribution"] = [launch_attribution(record, records, complexity, complexity_source,
                                                       tier_selection, resume)]
     identity_receipt = sdir / f".{name}.pid-receipt"
@@ -5998,6 +6047,8 @@ def _session_launch(role, bead, cwd, read_only, owner,
         _USAGE_PENDING.pop(token).finish(token)
     print(f"launched {name}")
     print(f"  bead={bead or '-'} role={role_meta} cwd={workdir}")
+    if pi_extensions:
+        print(f"  pi-extensions={','.join(pi_extensions)}")
     print(f"  log={log_path}")
     if backend_name == "tmux" and role_meta != "planning" and record.get("session_pid") is not None and (
             not record.get("session_pid_start") or not record.get("session_pid_ns")):
@@ -10430,6 +10481,7 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
     checks.extend((p, False) for p in problems)
     checks.extend(loop_config_diagnostics())
     checks.extend(session_dispatch_diagnostics())
+    checks.extend(pi_extensions_diagnostics())
     try:
         loop_warnings, loop_notes = loop_health_diagnostics()
     except Exception as exc:

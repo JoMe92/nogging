@@ -10,6 +10,7 @@
   "sync_lock_ttl_seconds": 120,
   "change_states": ["open", "done", "archived"],
   "tier_overrides": {},
+  "pi_extensions": [],
   "task_sizing": {"bead_prod_lines": [400, 1000], "commit_lines": [100, 600]},
   "session_dispatch": {
     "enabled": false,
