@@ -412,6 +412,45 @@ while True:
         assert kinds('scan')[-1] == 'started' and session in live(), 'a live run was failed'
         assert m.loop_session_gone(m.load_session(session)[1]) is False
 
+        # --- only tmux's own words prove a session gone -------------------------
+        from types import SimpleNamespace
+        for text, gone in (("can't find session: x\n", True), ('no server running on /tmp/x\n', True),
+                           ('error connecting to /tmp/x (No such file or directory)\n', True),
+                           ('error connecting to /tmp/x (Too many open files)\n', False),
+                           ('error connecting to /tmp/x (Permission denied)\n', False)):
+            answer = SimpleNamespace(returncode=1, stderr=text)
+            with patch.object(m, 'session_backend',
+                              return_value=SimpleNamespace(command=lambda *a, **k: answer)):
+                assert m.loop_session_gone({'name': 'x', 'backend': 'tmux'}) is gone, text
+
+        # --- a session tmux cannot confirm is not retired blind -----------------
+        session = events('scan')[-1]['session']
+        run_id = events('scan')[-1]['run_id']
+        with patch.object(m, 'tmux_has_session', return_value=False):
+            try:
+                m.retire_loop_run(run_id, 'test')
+            except RuntimeError as exc:
+                assert 'cannot confirm' in str(exc), exc
+            else:
+                raise AssertionError('a session with unproved liveness was retired')
+        assert session in live() and m.load_session(session)[1]['state'] != 'retired'
+
+        # --- a live session with no record is never reported as retired ---------
+        try:
+            m.retire_loop_run('no-such-run', 'test', session)
+        except RuntimeError as exc:
+            assert 'not recorded' in str(exc), exc
+        else:
+            raise AssertionError('a live unrecorded session counted as retired')
+        with patch.dict(m.CFG, {'session_backend': 'herdr'}):
+            try:
+                m.retire_loop_run('no-such-run', 'test', 'sf-loop-gone')
+            except RuntimeError as exc:
+                assert 'not recorded' in str(exc), exc
+            else:
+                raise AssertionError('herdr liveness was assumed from the tmux server')
+        assert m.retire_loop_run('no-such-run', 'test', 'sf-loop-gone') is None
+
         # --- a failed retirement keeps the run until it succeeds --------------
         reset()
         runner = define({'scan': launch_loop()})
@@ -445,7 +484,6 @@ while True:
         at(6); runner.tick()
         session = events('scan')[-1]['session']
         import loop_cli
-        from types import SimpleNamespace
         loop_cli.command(SimpleNamespace(loop_command='remove', name='scan'), main_checkout=root,
                          definitions_path=defs, session_record=None)
         assert item('scan')['active_run']['session'] == session

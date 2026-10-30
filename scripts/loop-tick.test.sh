@@ -183,14 +183,85 @@ class LaunchPolicyTests(unittest.TestCase):
         self.assertEqual(self.events("scan")[-1]["reason"], "usage-gate: invalid usage_gate")
         self.assertEqual(self.sessions.starts, [])
 
-    def test_a_definitions_file_that_vanishes_retires_the_run(self):
-        self.define({"scan": self.loop()})
+    def test_a_definitions_file_that_vanishes_leaves_the_run_to_finish(self):
+        self.define({"scan": self.loop(max_runtime="5m")})
         self.runner.tick()
         self.defs.unlink()
         self.at(7); self.runner.tick()
-        self.assertEqual(self.kinds("scan")[-1], "failed")
+        self.assertEqual(self.kinds("scan")[-1], "started", "a brief gap must not kill a healthy run")
+        self.assertEqual(self.sessions.retired, [])
+        self.at(13); self.runner.tick()
+        self.assertEqual(self.kinds("scan")[-2:], ["stale", "stopped-stale"])
+
+    def test_operator_remove_stops_the_run_and_clears_the_state(self):
+        self.define({"scan": self.loop(), "other": self.loop()})
+        self.runner.tick()
+        self.command("remove", "scan")
+        self.at(7); self.runner.tick()
         self.assertEqual(self.events("scan")[-1]["reason"], "loop removed")
         self.assertEqual(self.sessions.retired, ["scan-20260101T000500Z"])
+        self.assertNotIn("scan", loop_state.read_state(self.root)["loops"])
+
+    def test_a_remove_during_a_launch_still_stops_the_run(self):
+        self.define({"scan": self.loop()})
+        self.sessions.on_start = lambda: self.command("remove", "scan")
+        self.runner.tick()
+        self.assertTrue(self.item("scan")["removed"])
+        self.at(7); self.runner.tick()
+        self.assertEqual(self.events("scan")[-1]["reason"], "loop removed")
+        self.assertNotIn("scan", loop_state.read_state(self.root)["loops"])
+
+    def test_a_loop_missing_for_one_tick_keeps_its_safety_state(self):
+        self.define({"scan": self.loop(), "other": self.loop()})
+        state = loop_state.read_state(self.root)
+        state["loops"] = {"scan": {"paused": True, "suspended": True, "consecutive_failures": 3}}
+        loop_state.write_state(self.root, state)
+        definitions = self.defs.read_text()
+        self.define({"other": self.loop()})
+        self.runner.tick()
+        self.defs.write_text(definitions)
+        self.at(7); self.runner.tick()
+        self.assertEqual(self.kinds("scan")[-1:], ["skipped"])
+        self.assertTrue(self.item("scan")["paused"])
+        self.assertEqual(self.item("scan")["consecutive_failures"], 3)
+
+    def test_a_send_run_of_a_missing_loop_still_ends(self):
+        self.define({"note": {"schedule": {"at": ["00:05"], "grace": 3600},
+                              "run": {"mode": "send", "target": "orchestrator"}}})
+        record = {"name": "orchestrator", "agent": "claude"}
+        self.runner.target = lambda: (record, "idle")
+        self.runner.tick()
+        self.runner.target = lambda: (record, "working")
+        self.define({})
+        self.at(7); self.runner.tick()
+        self.assertIsNotNone(self.item("note").get("active_run"))
+        self.at(120); self.runner.tick()
+        self.assertEqual(self.kinds("note")[-2:], ["stale", "unconfirmed"])
+        self.assertIsNone(self.item("note")["active_run"])
+
+    def test_an_invalid_file_keeps_the_configured_suspend_threshold(self):
+        self.define({"scan": self.loop(max_runtime="5m")}, {"suspend_after_failures": 5})
+        state = loop_state.read_state(self.root)
+        state["loops"] = {"scan": {"consecutive_failures": 2}}
+        loop_state.write_state(self.root, state)
+        self.runner.tick()
+        self.defs.write_text("{broken")
+        self.at(13)
+        with self.assertRaises(ValueError):
+            self.runner.tick()
+        state = self.item("scan")
+        self.assertEqual(state["consecutive_failures"], 3)
+        self.assertNotIn("suspended", state)
+
+    def test_an_invalid_file_clears_the_last_ticks_loop_errors(self):
+        self.define({"scan": self.loop()})
+        state = loop_state.read_state(self.root)
+        state["tick_errors"] = {"scan": "old"}
+        loop_state.write_state(self.root, state)
+        self.defs.write_text("{broken")
+        with self.assertRaises(ValueError):
+            self.runner.tick()
+        self.assertEqual(loop_state.read_state(self.root)["tick_errors"], {})
 
     def test_an_invalid_definitions_file_still_stops_a_hung_run(self):
         self.define({"scan": self.loop(max_runtime="5m")})
@@ -262,6 +333,14 @@ class LaunchPolicyTests(unittest.TestCase):
         self.sessions.failure = RuntimeError("token hunter2 refused\nstartup log: " + "x" * 9000)
         self.runner.tick()
         self.assertEqual(self.events("scan")[-1]["reason"], "token <redacted> refused")
+
+    def test_a_retire_error_with_no_text_still_keeps_the_run(self):
+        self.define({"scan": self.loop()})
+        failure = transient_error()
+        failure.unretired = ""
+        self.sessions.failure = failure
+        self.runner.tick()
+        self.assertEqual(self.item("scan")["active_run"]["finishing"]["event"], "failed")
 
     def test_a_kickoff_failure_with_an_unretired_session_stays_tracked(self):
         self.define({"scan": self.loop()})

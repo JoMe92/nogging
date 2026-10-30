@@ -258,7 +258,7 @@ def command(args, *, main_checkout, definitions_path, session_record, multi_mach
             active = loops.get(name, {}).get("active_run")
             if active and active.get("mode") == "launch":
                 # The next tick stops and retires this run's session.
-                loops[name] = {"active_run": active}
+                loops[name] = {"active_run": active, "removed": True}
             else:
                 loops.pop(name, None)
             loop_state.write_state(main_checkout, state)

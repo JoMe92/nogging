@@ -13,7 +13,7 @@ import pwd
 import loop_config
 
 # Written by pause, resume and remove, which do not wait for a running tick.
-OPERATOR_FIELDS = ("paused", "suspended", "suspend_reason", "consecutive_failures")
+OPERATOR_FIELDS = ("paused", "suspended", "suspend_reason", "consecutive_failures", "removed")
 
 
 def _atomic_json(path: Path, value) -> None:
@@ -111,7 +111,9 @@ def save_tick_state(main_checkout, state, seen):
         for name in set(disk) | set(seen):
             current = disk.get(name)
             if current is None:
-                if name in seen and not loops.get(name, {}).get("active_run"):
+                if name in seen and loops.get(name, {}).get("active_run"):
+                    loops[name]["removed"] = True
+                elif name in seen:
                     loops.pop(name, None)
                 continue
             before = seen.get(name, {})

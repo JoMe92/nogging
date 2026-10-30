@@ -4919,14 +4919,19 @@ def loop_run_records(run_id):
 def retire_loop_run(run_id, reason, session=None):
     """Stop and retire a run's sessions; return the last archived log path.
     `session` is one the run started: alive with no record, it cannot be proved
-    the run's own, so it is neither stopped nor reported as retired."""
+    the run's own, so it is neither stopped nor reported as retired. A session
+    tmux cannot confirm or prove gone stays too, because stopping skips the kill
+    for one it does not see and the agent would run on unsupervised."""
     log_path = None
     records = loop_run_records(run_id)
-    if session and not any(rec["name"] == session for rec in records) and session in tmux_server_sessions():
-        raise RuntimeError(f"{session} is live but is not recorded as loop run {run_id}; not stopping it")
+    if session and not any(rec["name"] == session for rec in records) and (
+            CFG.get("session_backend", "tmux") != "tmux" or session in tmux_server_sessions()):
+        raise RuntimeError(f"{session} may be live but is not recorded as loop run {run_id}; not stopping it")
     for rec in records:
         name = rec["name"]
         if rec.get("state") != "retired":
+            if not tmux_has_session(name) and not loop_session_gone(rec):
+                raise RuntimeError(f"{name}: cannot confirm the session or prove it gone; not retiring it")
             session_stop(name, reason)
             session_cleanup(name)
             rec = load_session(name)[1]
@@ -4952,13 +4957,14 @@ def adopt_loop_run(run_id):
 def loop_session_gone(rec):
     """Whether the backend proves a session gone. tmux's listing is empty on any
     error, so an empty one is not proof; other backends report unknown liveness
-    themselves."""
+    themselves. A connect failure proves it only for a missing socket: tmux
+    words every other cause, such as no free descriptors, the same way."""
     if record_backend_name(rec) != "tmux":
         return True
     result = session_backend("tmux").command("has-session", "-t", rec["name"], check=False)
     detail = (result.stderr or "").lower()
     return result.returncode != 0 and any(
-        text in detail for text in ("can't find session", "no server running", "error connecting"))
+        text in detail for text in ("can't find session", "no server running", "no such file or directory"))
 
 def loop_session_state(name):
     """A run session's classified state, `ended` once it is proved gone. A
@@ -4994,7 +5000,7 @@ def start_loop_run(name, run, run_id, message):
         try:
             retire_loop_run(run_id, "loop kickoff failed")
         except Exception as retire_exc:
-            exc.unretired = redact(str(retire_exc))
+            exc.unretired = redact(str(retire_exc)) or type(retire_exc).__name__
         raise
 
 def loop_launch_model(run):

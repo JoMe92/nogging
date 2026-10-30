@@ -143,8 +143,10 @@ class LoopRunner:
                 loop_config.validate_hosts(config, self.multi_machine)
         except ValueError:
             # A broken file stops new runs, not the supervision of started ones.
+            # `doctor` fails on the file itself, so no loop error stays recorded.
             if not manual:
                 self._supervise_launch_runs(instant)
+                state["tick_errors"] = {}
                 self._save()
             raise
         if only and (config is None or only not in config["loops"]):
@@ -152,7 +154,7 @@ class LoopRunner:
         errors = {}
         try:
             if not manual:
-                self._retire_unassigned(instant, config)
+                self._supervise_unassigned(instant, config, errors)
             for name in [only] if only else sorted((config or {"loops": {}})["loops"]):
                 try:
                     self._tick_loop(instant, config, name, manual)
@@ -255,22 +257,31 @@ class LoopRunner:
             if (item.get("active_run") or {}).get("mode") == "launch":
                 self._advance_active(instant, name, None, item)
 
-    def _retire_unassigned(self, instant, config):
-        """Stop a launched run whose loop is gone or now belongs to another host;
-        nothing else would ever end it."""
+    def _supervise_unassigned(self, instant, config, errors):
+        """Keep ending the runs of loops this host no longer evaluates. `remove`
+        and a move to another host stop a launched run now. A loop that only
+        disappeared from the file may return with its pause and failure count,
+        so its state stays and its run goes on to completion or max_runtime."""
         loops = (config or {"loops": {}})["loops"]
         for name in sorted(self._state["loops"]):
             loop = loops.get(name)
-            if loop is not None and loop.get("host") in (None, self.host):
+            item = self._state["loops"].get(name)
+            if item is None or (loop is not None and loop.get("host") in (None, self.host)):
                 continue
-            item = self._state["loops"][name]
             active = item.get("active_run")
-            if active and active.get("mode") == "launch":
-                base = self._active_base(name, active, loop)
-                reason = "loop removed" if loop is None else "loop moved to another host"
-                self._finish_launch(instant, name, item, base, active, "failed", reason)
-            if config is not None and loop is None and not item.get("active_run"):
-                del self._state["loops"][name]
+            try:
+                if active and active.get("mode") == "launch" and (item.get("removed") or loop is not None):
+                    reason = "loop removed" if loop is None else "loop moved to another host"
+                    outcome = active.get("finishing") or {"event": "failed", "reason": reason}
+                    self._finish_launch(instant, name, item, self._active_base(name, active, loop),
+                                        active, **outcome)
+                elif active:
+                    self._advance_active(instant, name, None, item)
+            except Exception as exc:
+                errors[name] = self._reason(exc)
+                print(f"loop tick: {name}: {errors[name]}", file=sys.stderr)
+            if item.get("removed") and not item.get("active_run"):
+                self._state["loops"].pop(name, None)
 
     def _active_base(self, name, active, loop):
         run = active.get("run") or (loop or {"run": {"mode": active.get("mode")}})["run"]
@@ -292,7 +303,7 @@ class LoopRunner:
             self._finish_launch(instant, name, item, base, active, **active["finishing"])
             return
         import loop_config
-        run = active.get("run") or loop["run"]
+        run = active.get("run") or (loop or {"run": {}})["run"]
         max_runtime = loop_config._runtime_minutes(run.get("max_runtime", "1h"), "max_runtime")
         if instant - started > timedelta(minutes=max_runtime):
             _emit(self.root, instant, base, name, "stale", reason="max-runtime",
@@ -368,7 +379,8 @@ class LoopRunner:
             item["last_outcome"] = event
             item["consecutive_failures"] = 0
         else:
-            self._failure(item, name, base, instant, reason, outcome=event)
+            self._failure(item, name, base, instant, reason, outcome=event,
+                          threshold=(active.get("run") or {}).get("suspend_after_failures"))
 
     def _evaluate(self, instant, config, state, name, loop, item, slot, base, *, manual):
         approved, approval = loop_state.approval_status(self.root, self.definitions, config, name)
@@ -429,8 +441,9 @@ class LoopRunner:
                  "started_at": iso(instant), "mode": run["mode"], "event": "starting",
                  "attempt": attempt, "idle_ticks": 0,
                  "session": record.get("name") if record else None,
-                 "run": {key: run[key] for key in ("mode", "target", "agent", "tier", "max_runtime")
-                         if key in run}}
+                 "run": {**{key: run[key] for key in ("mode", "target", "agent", "tier", "max_runtime")
+                            if key in run},
+                         "suspend_after_failures": config.get("scheduler", {}).get("suspend_after_failures", 3)}}
         item["active_run"] = start
         _emit(self.root, instant, base, name, "starting", attempt=attempt,
               session=start["session"], usage=usage_note)
@@ -447,7 +460,7 @@ class LoopRunner:
                 item["active_run"] = None
                 self._skip(instant, name, loop, item, base, denial)
                 return
-            if getattr(exc, "unretired", None):
+            if getattr(exc, "unretired", None) is not None:
                 # The failed start left a session: the run stays until it is retired.
                 print(f"loop tick: cannot retire run {run_id}: {exc.unretired}", file=sys.stderr)
                 start.update(event="started", finishing={"event": "failed", "reason": self._reason(exc)})
@@ -514,17 +527,18 @@ class LoopRunner:
         item.get("retry", {}).pop(base["run_id"], None)
         self._failure(item, name, base, instant, reason)
 
-    def _failure(self, item, name, base, instant, reason, outcome="failed"):
+    def _failure(self, item, name, base, instant, reason, outcome="failed", threshold=None):
         item["active_run"] = None
         count = item.get("consecutive_failures", 0) + 1
         item["consecutive_failures"] = count
         item["last_outcome"] = outcome
-        try:
-            import loop_config
-            config = loop_config.load(self.definitions)
-            threshold = (config or {}).get("scheduler", {}).get("suspend_after_failures", 3)
-        except ValueError:
-            threshold = 3
+        if threshold is None:
+            try:
+                import loop_config
+                config = loop_config.load(self.definitions)
+                threshold = (config or {}).get("scheduler", {}).get("suspend_after_failures", 3)
+            except ValueError:
+                threshold = 3
         if count >= threshold:
             item["suspended"] = True
             item["suspend_reason"] = "consecutive-failures"
