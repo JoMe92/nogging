@@ -116,24 +116,79 @@
   in an excerpt; orchestrator and commands suites and docs-site. Branch feat/ (after
   TASK-SWK-004 and TASK-SCL-005).
 
-- [ ] TASK-SWK-006 [standard] [~560 loc] Scheduler wiring, doctor health, the orchestrator context budget and the guide.
-  Per design Decisions 9, 12 and 13 and the requirements on the scheduler, diagnostics,
-  the context budget and the installer. Call the dispatch pass first in `nogg loop tick`
-  under its own lock and exception boundary. Add doctor reporting: disabled or stale
-  dispatcher, queue depth, oldest item, exhausted budgets, Codex hook state, and whether
-  the orchestrator's watchers are still needed. Write the orchestrator_context values
-  into its effective settings `env`, and add the precompact fallback with a bounded
-  transcript-tail read, once per idle period, never after the cache lifetime and only
-  for a Claude orchestrator. Add the new consumer-copied docs/session-wake.md under
-  Guides in docs/_config.yml and to manifest docs and package files: concepts, the
-  evidence per runtime, the follow-up table, the digest format, tuning, disabling it,
-  the token model and troubleshooting. Add sections to operating-model, architecture
-  and failure-recovery. Check: new scripts/session-wake-integration.test.sh, red first,
-  with a stub orchestrator and stub agents through a full Lead life cycle from kickoff
-  to merged, using an injected clock and a stub gh; scripts/cli.test.sh and the packed
-  suites prove the payload ships inactive, `update` keeps an enabled value and personal
-  configuration stays untouched; loop-tick, orchestrator, installed-docs,
-  package-manifest and docs-site suites. Branch feat/ (after TASK-SWK-005 and
+- [ ] TASK-SWK-009 [complex] [security] [~520 loc] A user pause: `nogg pause`, `resume`, a held queue, skipped loops and one digest on resume.
+  Per design Decisions 8 and 16 and the session-wake requirements on pause, resume and
+  its visibility. Add pure scripts/lib/session_pause.py (parse of `--until` and `--days`
+  with the 60-day bound, kept-loop validation, atomic read and write of
+  .nogging/state/pause.json, a malformed file meaning not paused, status rendering) with
+  an injected clock, shipped in bin/lib/manifest.js and the package files. Add `nogg
+  pause [--until|--days] [--keep-loop <name> ...]`, `pause --status [--json]` and `nogg
+  resume`, refused in every supervised session except the Orchestration Agent like
+  `loop run-now`, with `--status` read-only everywhere. Gate the dispatcher and the
+  delivery from TASK-SWK-005 on the pause: no digest, nudge, `limit` resume or compaction,
+  the queue and retirement continue, and each item that appeared or cleared is appended to
+  the audit log. Make `nogg loop tick` skip loops outside `keep_loops` as `paused-global`
+  without writing any loop file or state, and end the pause at its time in both `loop
+  tick` and `session dispatch --once`, queueing one `resumed` item only when something
+  happened, delivered with the held items as one digest. Show the pause in `doctor` as a
+  NOTE, in `session list`, `loop list` and `session inbox`. Add the commands to
+  docs/commands.md in `nogg --help` order, a short pause entry to docs/configuration.md
+  and CHANGELOG.md [Unreleased]. The review follows the execution contract's [security]
+  rule. Check: new scripts/session-pause.test.sh, red first, with an injected clock:
+  every `--until` and `--days` form, an invalid end, an unknown kept loop, replacement,
+  a corrupt file, a Lead refused and `--status` allowed, a paused tick skipping loops,
+  a kept loop running, an individually paused loop staying paused, a pause ending at its
+  time with and without events, and one digest on resume; loop-tick, session-wake-digest,
+  commands and docs-site suites. Branch feat/ (after TASK-SWK-005).
+
+- [ ] TASK-SWK-010 [complex] [security] [~480 loc] Quiet hours, the keep-warm rule and the one compaction before the cache lapses.
+  Per design Decisions 8, 9 and 15 and the session-wake requirements on quiet hours and
+  the warm cache, and the orchestration-agent requirement on a keep-warm. Add pure
+  scripts/lib/session_warm.py (quiet-hours parsing and the wall-clock test, including a
+  window across midnight, and warm_plan(facts, policy, now) returning keep-warm,
+  compact or nothing from the orchestrator's idle age, activity, pause, quiet hours, cache
+  lifetime and context size), shipped in the manifest and package files. Gate the digest
+  delivery of TASK-SWK-005 on quiet hours for every item, urgent included, and keep the
+  queue level-triggered. Send the fixed keep-warm line and the fixed `/compact`
+  instruction through the verified idle-only helper of TASK-SWK-005 only to a Claude
+  orchestrator, never counting a keep-warm against `min_gap` or the rate ceiling, holding
+  it under the usage hold, and reading the context size from a bounded tail of the
+  transcript the `Stop` input names. Add `wake.keep_warm`, `wake.keep_warm_after` and
+  `wake.quiet_hours` to the config block with unknown-key and malformed-window refusal in
+  validate and doctor, to templates/nogging-config.json and docs/configuration.md. Add the
+  keep-warm answer rule and the pause-on-instruction rule to
+  .nogging/launch-prompts/orchestrator.md and .claude/commands/orchestrate.md, generic and
+  rebased onto what landed there. Add a doctor line for keep-warm, quiet hours and the next
+  compaction. The review follows the execution contract's [security] rule. Check: new
+  scripts/session-warm.test.sh, red first, with an injected clock and a stub orchestrator
+  that is idle, working or holding input: every row of the Decision 15 table as a pure
+  warm_plan() case, the interval reset by a real wake, a lapsed cache, an unreadable size,
+  keep_warm false, a pause forcing the compaction branch, a window delivering one digest
+  after it ends, an urgent item held inside it and a malformed window refused;
+  session-wake-digest, orchestrator, commands and docs-site suites. Branch feat/ (after
+  TASK-SWK-009).
+
+- [ ] TASK-SWK-006 [standard] [~540 loc] Scheduler wiring, doctor health, the orchestrator context budget and the guide, including how to pause.
+  Per design Decisions 9, 12, 13, 15 and 16 and the requirements on the scheduler,
+  diagnostics, the context budget and the installer. Call the dispatch pass first in `nogg
+  loop tick` under its own lock and exception boundary, after the pause end check of
+  TASK-SWK-009. Add doctor reporting: disabled or stale dispatcher, queue depth, oldest
+  item, exhausted budgets, Codex hook state, and whether the orchestrator's watchers are
+  still needed. Write the orchestrator_context values into its effective settings `env`.
+  Add the new consumer-copied docs/session-wake.md under Guides in docs/_config.yml and to
+  manifest docs and package files: concepts, the evidence per runtime, the follow-up table,
+  the digest format, tuning, disabling it, the token model and troubleshooting, and a
+  section for the user on pausing: what the orchestrator costs while waiting, when
+  keep-warm pays and when pausing does, the break of about a day that pays, the commands
+  `pause`, `resume` and `pause --status` with an example each, quiet hours, and the config
+  keys. Add sections to operating-model, architecture and failure-recovery, and a pointer
+  from README.md to the guide. Check: new scripts/session-wake-integration.test.sh, red
+  first, with a stub orchestrator and stub agents through a full Lead life cycle from
+  kickoff to merged, using an injected clock and a stub gh, then the same life cycle
+  across a pause and a quiet-hours window; scripts/cli.test.sh and the packed suites prove
+  the payload ships inactive, `update` keeps an enabled value, quiet hours and a pause, and
+  personal configuration stays untouched; loop-tick, orchestrator, installed-docs,
+  package-manifest and docs-site suites. Branch feat/ (after TASK-SWK-010 and
   TASK-SCL-006).
 
 ## 3. This repository and host (chore/)
@@ -162,7 +217,10 @@
   runtime; a `session signal blocked` from the Codex sandbox reaching a digest; a fixed
   nudge landing only when idle; a red check nudging the Lead; a green check producing
   `ready_for_review`; two items coalesced into one wake; a merged session retired when
-  enabled. Verify the host facts planning could not observe without a model turn: the
+  enabled; a keep-warm answered in one line with no tool call; a pause of a few minutes
+  that suppresses it and ends in one resume digest; a quiet-hours window holding an item.
+  Measure one warm and one cold wake to report how the quota weights a cache read against
+  a write. Verify the host facts planning could not observe without a model turn: the
   Codex hook runs from a Lead worktree with NOGG_SESSION_ROOT set, and whether native
   idle compaction fires at the new threshold or the precompact fallback is what acts.
   Then measure a comparable period against the baseline in design.md: wakes, messages
@@ -174,7 +232,8 @@
 ## Dependency contract
 
 Explicit Beads edges, not task order, govern execution (`A <- B` means A depends on
-B): 002<-001; 003<-002; 004<-003; 005<-004; 006<-005; 007<-006; 008<-007. Two edges
+B): 002<-001; 003<-002; 004<-003; 005<-004; 009<-005; 010<-009; 006<-010 (006<-005 stays
+and is implied); 007<-006; 008<-007. Two edges
 reach into `scheduled-loops`: 005<-TASK-SCL-005 for the idle-only send helper, and
 006<-TASK-SCL-006 for the timer. TASK-SWK-001 to 004 need neither, and
 `session dispatch --once` works by hand, so that work can start while `scheduled-loops`
@@ -182,8 +241,8 @@ finishes. There is no edge into `pi-extensions-glm-usage`, `dual-runtime-orchest
 or `configurable-agent-routing`; file overlaps are resolved by rebasing onto develop
 and keeping both sides, as design Decision 12 states.
 
-Branches are `<type>/session-wake` with these lanes: feat/ 001, 002, 003, 004, 005, 006
-in sequence; chore/ 007; test/ 008. A lane's next task reuses its prefix only after the
+Branches are `<type>/session-wake` with these lanes: feat/ 001, 002, 003, 004, 005, 009, 010,
+006 in sequence; chore/ 007; test/ 008. A lane's next task reuses its prefix only after the
 previous branch is integrated and deleted. Before allocating a dependent worktree,
 verify that every prerequisite execution commit is integrated into develop; Bead closure
 alone is not enough.

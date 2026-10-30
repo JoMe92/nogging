@@ -18,6 +18,17 @@ orchestrator or the orchestrator checks through the watcher, keep it
 token-efficient, recognize finished sessions immediately, focus on Claude Code,
 Codex and Pi.
 
+Later the same day, after the cost of keeping the orchestrator's cache warm was
+explained to him, the Product Owner added, verbatim in German:
+
+> "Ok das muß für den Nutzer komuniezrt wegen er muß das einfach an und aus
+> schalten können zb wen er wies das er in den nächsten Tagen nicht dran arbeiten
+> wird für ein pat Tage abschalten wienkan man das?"
+
+In English: the user must be able to switch the waking and keep-warm behaviour off
+and on simply, for example to pause it for a few days when they know they will not
+work, and this must be explained to them. Decisions 15 and 16 answer this.
+
 Versions verified on the delivery host on 2026-10-30: Claude Code 2.1.314
 (the running orchestrator is 2.1.310), codex-cli 0.164.0, Pi 1.4.0, herdr 0.9.5.
 
@@ -561,13 +572,11 @@ summary is low, but a long Product Owner conversation does lose detail. See
 Product Owner decision 1.
 
 Native idle compaction did not fire on this host, so the dispatcher adds a
-fallback, `precompact_after` (default 50 min). When the orchestrator has been idle
-that long, its cache is still warm and the last recorded context is above
-`precompact_min_tokens` (default 100000), it sends `/compact` through the same
-verified path. The size comes from a bounded read of the tail of the transcript
-that the `Stop` input names. Compacting at 120k before expiry costs about 21k E
-and saves about 150k E on the next cold wake. The pass skips this for a Codex
-orchestrator, which is not in scope here.
+fallback: the compaction half of the rule in Decision 15, which owns when it
+runs, why only before the cache lapses, and its configuration
+(`precompact_after`, `precompact_min_tokens`). It is built in TASK-SWK-010, not
+with the budget variables, because it shares its facts and its cost model with
+keep-warm and pause.
 
 The orchestrator needs an `orchestrator restart` from an external shell to pick up
 the new environment. That is a cold start of the current context, once.
@@ -607,6 +616,7 @@ place of `[Errno 30] Read-only file system`. This does not widen any authority.
 | The idle-only, verified send helper for the orchestrator | `scheduled-loops` (TASK-SCL-005), reused here |
 | The call to `session dispatch --once` inside `loop tick`, and its isolation | `session-wake` (TASK-SWK-006) |
 | Dispatcher, queue, digest, inbox, `dispatch.lock` | `session-wake` |
+| Global pause, quiet hours, keep-warm, idle compaction | `session-wake` (TASK-SWK-009, 010). A pause only makes `loop tick` skip loops: no loop file, loop state or `loop pause` flag is written |
 | Optional Pi extensions, `.pi/nogging/`, `pi_extensions`, GLM usage | `pi-extensions-glm-usage` |
 | Mandatory Pi lifecycle extension in `.pi/extensions/` | `session-wake` |
 | Codex orchestrator, supervisor generalization | `dual-runtime-orchestrator`. The digest goes through the canonical singleton, so it stays compatible |
@@ -646,7 +656,8 @@ completion the scheduler already tracks.
     "wake": {
       "urgent_quiet": "90s", "normal_quiet": "300s", "max_hold": "900s",
       "min_gap": "300s", "max_wakes_per_hour": 4, "remind_after": "4h",
-      "hold_above_percent": 85
+      "hold_above_percent": 85,
+      "keep_warm": true, "keep_warm_after": "50m", "quiet_hours": []
     },
     "precompact_after": "50m",
     "precompact_min_tokens": 100000
@@ -655,8 +666,11 @@ completion the scheduler already tracks.
 }
 ```
 
-Unknown keys are refused by `validate` and `doctor`, as `usage_gate` does. The
-template carries the block with `enabled: false` and `retire_merged: false`. This
+`quiet_hours` is a list of local-time windows such as `["22:00-07:00"]`
+(Decision 15). Unknown keys are refused by `validate` and `doctor`, as `usage_gate`
+does, and so is a malformed window. A pause is not configuration: it is host-local
+state written by a command (Decision 16). The template carries the block with
+`enabled: false`, `keep_warm: true` and `retire_merged: false`. This
 repository sets both to `true` in TASK-SWK-007.
 
 ### Decision 14: Acceptance on the delivery host
@@ -667,11 +681,151 @@ denies to Leads. One short real session each on Claude, Codex and Pi, on throwaw
 Beads, shows `turn_end` in `session watch`, a real stop guard firing on Claude,
 Codex and Pi, a `session signal blocked`, a fixed nudge, a CI wait ending in a
 `ready_for_review` digest, and two items coalesced into one wake. It also verifies
-the two host facts that planning could not observe without a model turn: that the
-Codex hook runs from a worktree, and whether native idle compaction fires with the
-new threshold. It reports measured wakes, messages per wake and tokens for a
+the host facts that planning could not observe without a model turn: that the
+Codex hook runs from a worktree, whether native idle compaction fires with the
+new threshold, and how a subscription quota weights a cache read against a cache
+write (Decision 15), from one warm and one cold wake. It also shows a real keep-warm
+answered in one short line with no tool call, a pause that suppresses it, and the
+resume digest after a pause of a few minutes. It reports measured wakes, messages per wake and tokens for a
 comparable period against the baseline in this document, raw and in E. The report
 stays unsigned.
+
+### Decision 15: The cost of waiting, the keep-warm rule and quiet hours
+
+The cost of an orchestrator that is waiting is its cache. On a subscription its main
+conversation uses a one-hour cache, and a message inside the hour refreshes it
+([prompt-caching]). With the orchestrator's measured 320k context and list-price
+multipliers relative to input, a warm wake reads the context for 16k to 32k
+input-equivalents (E, at 0.05 to 0.1), and a cold wake after the lifetime writes it
+for 640k E (at 2.0). One cold start therefore costs as much as **20 to 40 warm,
+empty wakes**, and the ratio does not depend on the context size. The multipliers
+are list prices. How a subscription quota weights cached reads and writes is not
+documented, so these numbers rank the options and do not predict a quota.
+TASK-SWK-008 measures one warm and one cold wake and reports the result.
+
+Keeping warm therefore pays only while a real wake is likely within a few hours, and
+letting the cache lapse pays when the next one is a day or more away. The rule, for a
+Claude orchestrator only (another runtime has other cache behaviour):
+
+| State of the host | Keep-warm | Compaction | Digests |
+| --- | --- | --- | --- |
+| **Active**: a live Lead or planner with a Bead, or an open pull request, and not paused, not in quiet hours | One minimal message when the orchestrator has been idle for `keep_warm_after` (default 50 min) and its cache has not lapsed | None by this rule; the context budget of Decision 9 still bounds the size | Normal rules (Decision 8) |
+| **Nothing active** | None | Once per idle period, at `precompact_after`, then the cache lapses | Normal rules, which will rarely have items |
+| **Quiet hours** | None | As for nothing active | Held in the queue |
+| **Paused** (Decision 16) | None | As for nothing active | Held in the queue |
+
+*Keep-warm.* The dispatcher sends the fixed line `[nogg keepwarm] No action. Answer
+"ok" in one short line and use no tools.` through the verified idle-only send path,
+only when no turn has ended for `keep_warm_after`. That interval counts any turn, so
+a real wake or a Product Owner message resets it, and a keep-warm is never sent
+"in addition". The 10-minute margin below the lifetime absorbs the one-minute tick
+and a refused send. It is not a wake: it does not count against `min_gap` or
+`max_wakes_per_hour`, and it holds while the usage hold of Decision 8 holds. The
+orchestrator prompt tells it to answer such a message in one line, with no tool.
+Each one costs a warm read of the context plus a few output tokens, and adds about 100
+tokens of context that the next compaction removes.
+
+*Compaction.* When nothing is active, quiet hours or a pause apply, and the orchestrator
+has been idle for `precompact_after` (default 50 min) with its cache still warm and a
+last recorded context above `precompact_min_tokens` (default 100000), the pass sends
+`/compact` once through the same path with a fixed instruction asking for a short
+summary of open work only. It happens once per idle period, never with an expired
+cache (reprocessing uncached costs more than it saves), never for a session that is
+not `idle`, and never when the size is unreadable. The context size comes from a
+bounded read of the transcript tail that the `Stop` input names. The aim is a context
+near 60k: measured compaction leaves 7k to 18k above a 27k prefix and a summary, so the
+cold start that follows writes about 120k E instead of 640k E, for about 30k E of
+compaction. `/compact` takes only focus instructions, so the target is an expected
+result that TASK-SWK-008 measures, not a parameter. The orchestrator's durable state is
+in Beads, OpenSpec and Git, so little is lost.
+
+*Quiet hours.* `session_dispatch.wake.quiet_hours` lists local-time windows,
+`"HH:MM-HH:MM"`, in the host's local time zone, evaluated against the wall clock on
+every pass, so daylight saving needs no special case. A window may cross midnight, so
+`"22:00-07:00"` is the night. Inside a window the orchestrator is **never woken**: no
+digest, not even an urgent one, and no keep-warm. Items stay in the queue and are
+re-evaluated as usual, and the first pass after the window delivers what still holds
+as one digest, within `min_gap` and the rate ceiling. Nothing sent inside a window can
+be undone, so urgent items wait too; a user who wants a call at night does not set a
+window. Quiet hours do not stop the dispatcher's own work: nudges to Leads, retirement
+and CI tracking go on, because they use no orchestrator turn. A window of nine hours
+means the first morning wake is cold: keep-warm would cost 9 warm reads, but the user
+asked not to be woken, and the compaction before the window keeps the cold write small.
+
+### Decision 16: Pause mode
+
+The user's switch for "I will not work on this for a few days". It is a command, not a
+config edit, because it is temporary, it ends by itself and a forgotten config key
+would not.
+
+```bash
+./scripts/nogg pause --until 2026-11-03            # until 00:00 local on that date
+./scripts/nogg pause --until 2026-11-03T08:30      # until that local time
+./scripts/nogg pause --days 3 --keep-loop morning-report
+./scripts/nogg pause --status [--json]
+./scripts/nogg resume
+```
+
+`--until` takes a local `YYYY-MM-DD` (the start of that day) or `YYYY-MM-DDTHH:MM`;
+`--days n` is `n` times 24 hours from now. The end must be in the future and at most 60
+days away: there is no open-ended pause, so a forgotten one ends. `--keep-loop` may
+repeat, and each name must exist in `.nogging/loops.json`, or the command fails before
+writing. `pause` while paused replaces the end and the kept loops and keeps the
+original start. `resume` while not paused says so and exits 0.
+
+*State.* One file, `.nogging/state/pause.json` in the main checkout, written atomically
+with `schema`, `started_at`, `until`, `keep_loops`, `set_by` (the calling session name
+or `operator`) and `compacted_at`. It is host-local, never committed and survives a
+restart. A malformed or unreadable file counts as *not paused* and `doctor` warns
+about it, because a broken pause must not silently stop work. The pause logic is the
+pure `scripts/lib/session_pause.py`, driven by an injected clock like the other
+modules.
+
+*Effects while paused.*
+
+| Part | Behaviour |
+| --- | --- |
+| Orchestrator | No digest and no keep-warm. A kept send loop still delivers, because the user named it. One compaction before its cache lapses (Decision 15) |
+| Dispatcher | Still observes and keeps queueing, so nothing is lost. Sends no nudge, no `limit` resume and no `/compact` other than the one above, because each starts a model turn. `retire_merged` goes on, because it sends nothing and spends no tokens |
+| Running Leads | May finish. A pause never stops a session and never kills a process |
+| Loops | `loop tick` skips every loop not in `keep_loops` and logs the skip as `paused-global` in the run log. A kept loop runs by its own schedule. No loop definition, loop state or per-loop `paused` flag is written, so a loop paused individually stays paused after `resume` |
+| The timer | Keeps firing. A tick during a pause makes no model call |
+| Launches | A pause does not block a launch that a human or the orchestrator makes on purpose. It stops automation, not people |
+
+*Events are kept, not dropped.* The queue is level-triggered, so an item whose condition
+cleared during a pause is gone. To make the pause honest, the dispatcher also appends
+each item that appeared or cleared during it to the audit log, and `resume` summarizes
+from it.
+
+*Resume.* `nogg resume`, or the first pass at or after `until`, removes the file and
+queues one `resumed` item that carries, within the 1.5 KiB budget: the pause length,
+how many items were seen and how many cleared on their own, and the sessions that
+finished. The items that still hold come with it. They all go out as **one digest**
+under the normal rules, including quiet hours and the idle-only send. A pause in which
+nothing happened queues nothing, so an uneventful pause costs no wake and no cold
+start. `loop tick` performs the automatic resume first, so it works without the
+dispatcher enabled, and `session dispatch --once` performs it too.
+
+*Visibility.* `pause --status` prints the start, the end, the time left, the kept loops
+and who set it, as text or JSON. `doctor` prints a NOTE `paused until <time>` and never
+a FAIL. `session list` prints one `PAUSED until <time>` line above its table. `loop
+list` shows each loop's state as `paused (global, until <time>)` or `kept`. `session
+inbox` shows the pause and the number of held items.
+
+*Authority.* `pause` and `resume` mutate shared host behaviour. They run from an
+operator shell and from the Orchestration Agent, on the Product Owner's instruction, and
+are refused in every other supervised session with the message the `nogg loop`
+mutations give, like them: a Lead, planner, specialist or loop session cannot silence
+the orchestrator. `pause --status` is read-only and allowed everywhere. The
+orchestrator prompt and `/orchestrate` say when to use it: only when the Product Owner
+says they will be away, and to read it back with `--status`.
+
+*User explanation.* The guide (`docs/session-wake.md`, TASK-SWK-006) opens its pause
+section with what the orchestrator costs while waiting, then when keep-warm pays and
+when pausing does. Pausing pays for a break of about a day or more, the break-even of
+Decision 15; for shorter breaks nothing needs to be done, and quiet hours cover a
+regular night. It lists the commands above with an example of each and the config keys,
+which `docs/configuration.md` also documents.
 
 ## Risks / Trade-offs
 
@@ -694,6 +848,15 @@ stays unsigned.
   stay near today's.
 - **User-level Codex config is personal state.** It is an explicit command, shown
   in `doctor`, reversible, and a missing install only loses the guard.
+- **A pause forgotten or mistyped.** It always has an end, at most 60 days away, and
+  `doctor`, `session list` and the inbox say it is on. A broken state file means not
+  paused, so a fault cannot hold work back.
+- **Quiet hours delay an urgent item.** By the Product Owner's rule the orchestrator is
+  never woken inside a window, so a blocked Lead waits until it ends. Windows are
+  opt-in and the default is none.
+- **Keep-warm may not pay under the real quota weighting.** The multipliers are list
+  prices. The rule keeps the message to one per interval with no tools, `keep_warm:
+  false` turns it off, and TASK-SWK-008 measures the weighting.
 - **One-minute granularity** adds up to a minute of latency, which is two orders of
   magnitude below what it replaces.
 - **`gh` and `bd` load on a Raspberry Pi.** Bounded by throttles and caches, and a
@@ -701,8 +864,8 @@ stays unsigned.
 
 ## Dependencies and parallel lanes
 
-Branches are `<type>/session-wake`. Lanes: `feat/` 001, then 002, 003, 004, 005,
-006 in sequence; `chore/` 007; `test/` 008. The edges and the two edges into
+Branches are `<type>/session-wake`. Lanes: `feat/` 001, then 002, 003, 004, 005, 009,
+010, 006 in sequence; `chore/` 007; `test/` 008. The edges and the two edges into
 `scheduled-loops` are in `tasks.md`.
 
 ## Product Owner decisions (2026-10-30)
@@ -720,3 +883,10 @@ Branches are `<type>/session-wake`. Lanes: `feat/` 001, then 002, 003, 004, 005,
 4. **Reviewer gate: orchestrator review on the PR is the accepted form** for
    `[security]` tasks on Codex or Pi Leads, as already happened for TASK-SCL-003
    (Decision 11). A kickoff never tells such a Lead to launch a reviewer session.
+5. **Pause mode and keep-warm (2026-10-30).** The Product Owner approved ("Ok klingt
+   gut") a keep-warm rule, `quiet_hours`, and a user-facing pause with `nogg pause`
+   and `nogg resume`, after the cost explanation in Decision 15, and required that the
+   user can switch this off and on simply and that it is explained to them
+   (Decisions 15 and 16). Where the proposed command names needed adjusting, the
+   existing `nogg loop pause|resume` convention was kept for the per-loop commands and
+   the new global commands are top-level.

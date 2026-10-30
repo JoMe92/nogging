@@ -54,6 +54,16 @@ fewer wakes, fewer turns per wake and a smaller orchestrator context together.
   digest in a few turns and runs no background watcher of its own. Its launch
   sets a compaction budget, and the dispatcher compacts it before the cache
   expires when the native idle compaction does not.
+- **A user pause and quiet hours.** `nogg pause --until|--days` and `nogg resume` let
+  the user switch automation off for a few days and on again: no digest or keep-warm to
+  the orchestrator, loops skipped except named ones, events kept and delivered as one
+  digest when the pause ends by itself or by `resume`. `wake.quiet_hours` holds wakes
+  inside daily windows. Both are shown in `doctor`, `session list` and `loop list`.
+- **A keep-warm rule.** While work is active the dispatcher sends one minimal message
+  shortly before the one-hour cache lapses, because one cold start costs 20 to 40 warm
+  empty wakes. With nothing active, in quiet hours or paused, it compacts the
+  orchestrator once and lets the cache expire. The user guide explains the cost, when
+  keep-warm pays, when pausing does, and the commands.
 - **Runtime capabilities are explicit.** `nogg session capabilities` states what
   an agent and profile can do, so a kickoff never demands the impossible, and a
   sandboxed child-session launch fails with a clear message instead of a raw
@@ -64,7 +74,8 @@ fewer wakes, fewer turns per wake and a smaller orchestrator context together.
 ### New Capabilities
 
 - `session-wake`: the dispatcher, its deterministic follow-ups, nudge bounds,
-  the wake queue and digest, delivery, the inbox and its diagnostics.
+  the wake queue and digest, delivery, the inbox and its diagnostics, quiet hours,
+  the keep-warm rule, and the user pause.
 
 ### Modified Capabilities
 
@@ -72,16 +83,17 @@ fewer wakes, fewer turns per wake and a smaller orchestrator context together.
   `session signal`, the completion check and stop guards, the Codex user-level
   hook, runtime capabilities.
 - `orchestration-agent`: the wake protocol, no self-made watchers, the context
-  budget.
+  budget, the keep-warm answer and pausing on instruction.
 - `installer`: ships the new modules and the Pi extension, inactive by default.
 
 ## Impact
 
 New: `scripts/lib/session_signals.py`, `scripts/lib/session_dispatch.py`,
+`scripts/lib/session_pause.py`, `scripts/lib/session_warm.py`,
 `.pi/extensions/nogging-lifecycle.ts`, `docs/session-wake.md`, new offline
 suites. Changed: `scripts/nogg` (`session emit`, `signal`, `dispatch`, `inbox`,
 `completion-check`, `capabilities`, `session-hooks`, `classify_session`,
-`doctor`, hook wiring), `.nogging/launch-prompts/{autonomous,orchestrator}.md`,
+`doctor`, `pause`, `resume`, `session list`, `loop list`, hook wiring), `.nogging/launch-prompts/{autonomous,orchestrator}.md`,
 `.claude/commands/orchestrate.md`, `AGENTS.md`, `templates/nogging-config.json`,
 `bin/lib/manifest.js`, and the operating-model, architecture, commands,
 configuration, failure-recovery and per-runtime pages.
@@ -96,6 +108,6 @@ nudges, retires or wakes; only the richer `session watch` and event file are
 visible. Antigravity keeps its current events and pane classification and gets
 no guard, no nudge and no new hook.
 
-Not in scope: push notifications to a human, a resident daemon, Claude Code
+Not in scope: an open-ended pause, a pause that stops running sessions, push notifications to a human, a resident daemon, Claude Code
 Channels or `asyncRewake` as the delivery path, automatic merging, a dispatcher
 that launches sessions, and signing human acceptance.

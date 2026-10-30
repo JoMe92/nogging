@@ -47,25 +47,31 @@ of a reviewer launched by a sandboxed Lead.
 
 `orchestrator run` SHALL set `CLAUDE_CODE_AUTO_COMPACT_WINDOW` and
 `CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS` in the session's effective settings from the
-`orchestrator_context` config block, defaults `200000` and `100000`. With dispatch
-enabled, when a Claude orchestrator has been idle for `precompact_after` (default 50
-minutes), its cache is still within its lifetime, and its last recorded context exceeds
-`precompact_min_tokens` (default 100000), a pass SHALL send `/compact` through the
-verified send path. It SHALL NOT do so when the session is not `idle`, and SHALL do it
-at most once per idle period. The context size SHALL come from a bounded read of the
-transcript tail, and an unreadable size SHALL skip the compaction.
+`orchestrator_context` config block, defaults `200000` and `100000`. The dispatcher's
+fallback compaction before the cache lapses is specified with the keep-warm rule in the
+`session-wake` capability.
 
 #### Scenario: The budget reaches the session
 
 - **WHEN** `orchestrator run` starts a Claude session with default configuration
 - **THEN** its effective settings carry both variables
 
-#### Scenario: An idle large context is compacted before the cache expires
+### Requirement: The orchestrator answers a keep-warm and pauses only on instruction
 
-- **WHEN** the orchestrator has been idle for 50 minutes at 180k tokens
-- **THEN** one pass sends `/compact` and later passes in that idle period send nothing
+The orchestrator launch prompt and `/orchestrate` SHALL direct the Orchestration Agent
+to answer a message that starts with `[nogg keepwarm` with one short line and no tool
+call, and to run `nogg pause` or `nogg resume` only when the Product Owner says they will
+be away or are back, confirming the result with `nogg pause --status`. They SHALL state
+that a pause stops automation and does not stop its own conversation with the Product
+Owner.
 
-#### Scenario: An expired cache is not compacted
+#### Scenario: A keep-warm is answered cheaply
 
-- **WHEN** the orchestrator has been idle for 70 minutes
-- **THEN** no `/compact` is sent, because reprocessing the history uncached costs more than it saves
+- **WHEN** the orchestrator receives a keep-warm message
+- **THEN** it replies in one line and runs no tool
+
+#### Scenario: The orchestrator pauses on instruction
+
+- **WHEN** the Product Owner says they will not work on this for three days
+- **THEN** the orchestrator runs `nogg pause --days 3` and confirms with `nogg pause --status`
+- **AND** it does not pause on its own initiative
