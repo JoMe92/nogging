@@ -251,7 +251,13 @@ def command(args, *, main_checkout, definitions_path, session_record, multi_mach
             pass
         loop_state.remove_approval(main_checkout, name)
         state = loop_state.read_state(main_checkout)
-        state.get("loops", {}).pop(name, None)
+        loops = state.get("loops", {})
+        active = loops.get(name, {}).get("active_run")
+        if active and active.get("mode") == "launch":
+            # The next tick stops and retires this run's session.
+            loops[name] = {"active_run": active}
+        else:
+            loops.pop(name, None)
         loop_state.write_state(main_checkout, state)
         print(f"Removed loop {name}; run history is retained.")
     elif action == "show":

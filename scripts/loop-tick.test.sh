@@ -150,6 +150,20 @@ class LoopTickTests(unittest.TestCase):
         self.assertFalse(state.get("retry"))
         self.assertEqual(state["consecutive_failures"], 1)
 
+    def test_stale_send_run_is_unconfirmed_and_the_orchestrator_keeps_running(self):
+        self.runner.tick()
+        self.target_state[0] = "working"
+        self.clock[0] = datetime(2026, 1, 1, 1, 7, tzinfo=UTC)
+        self.runner.tick()
+        events = [row["event"] for row in self.events()]
+        self.assertEqual(events[events.index("stale") + 1], "unconfirmed")
+        self.assertNotIn("stopped-stale", events)
+        self.assertFalse(loop_state.read_state(self.root)["loops"]["night-work"].get("consecutive_failures"))
+
+    def test_run_now_does_not_record_a_scheduler_tick(self):
+        self.runner.run_now("night-work")
+        self.assertNotIn("last_tick", loop_state.read_state(self.root))
+
     def test_failed_slots_suspend_at_the_configured_threshold(self):
         raw = json.loads(self.defs.read_text())
         raw["scheduler"] = {"suspend_after_failures": 2}

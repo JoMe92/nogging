@@ -5,7 +5,7 @@ It intentionally contains no LLM call and makes no semantic product decision.
 """
 from __future__ import annotations
 
-import argparse, base64, datetime as dt, fcntl, fnmatch, getpass, hashlib, importlib.util, json, math, os, re, shlex, shutil, signal, socket, subprocess, sys, tempfile, time, uuid
+import argparse, base64, datetime as dt, fcntl, fnmatch, getpass, hashlib, importlib.util, json, math, os, re, shlex, shutil, signal, socket, subprocess, sys, tempfile, time, types, uuid
 import urllib.parse, urllib.request
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -4907,6 +4907,79 @@ def loop_usage_admission(agent, model, options):
     return True, None, gate
 
 
+LOOP_TRANSIENT_REFUSALS = ("agent binary", "tmux")
+
+def loop_run_records(run_id):
+    """Every session this scheduled run started, oldest first. Identity is the
+    `loop` role plus the exact run ID, so no other session can match."""
+    return sorted((rec for _, rec in session_records()
+                   if rec.get("role") == "loop" and rec.get("loop_run_id") == run_id),
+                  key=lambda rec: rec.get("started_at", ""))
+
+def retire_loop_run(run_id, reason):
+    """Stop and retire a run's sessions; return the last archived log path."""
+    log_path = None
+    for rec in loop_run_records(run_id):
+        name = rec["name"]
+        if rec.get("state") != "retired":
+            session_stop(name, reason)
+            session_cleanup(name)
+            rec = load_session(name)[1]
+            if rec.get("state") != "retired":
+                raise RuntimeError(f"{name} was not retired (state {rec.get('state')})")
+        log_path = rec.get("archived_log_path") or log_path
+    return log_path
+
+def adopt_loop_run(run_id):
+    """The live session of an interrupted start, or None. A session that never
+    took its kickoff would only idle to a false completion, so it is retired."""
+    live = tmux_sessions()
+    adopted = None
+    for rec in reversed(loop_run_records(run_id)):
+        kicked_off = (rec.get("kickoff_delivery") or {}).get("status") == "submitted"
+        if (not adopted and kicked_off and rec.get("name") in live
+                and rec.get("state") in SESSION_ACTIVE_STATES):
+            adopted = rec["name"]
+    if not adopted:
+        retire_loop_run(run_id, "loop start interrupted")
+    return adopted
+
+def loop_session_state(name):
+    """A run session's classified state, `ended` once it is gone. A failed
+    observation proves nothing about the session, so it is `unknown`."""
+    try:
+        rec = load_session(name)[1]
+        if rec.get("state") in SESSION_TERMINAL_STATES:
+            return "ended"
+        return classify_session(rec)[0]
+    except Exception as exc:
+        print(f"loop tick: cannot observe {name}: {redact(str(exc))}", file=sys.stderr)
+        return "unknown"
+
+def start_loop_run(name, run, run_id, message):
+    """Launch one run with exactly the loop's agent, tier, model, effort and
+    authority. A denial exits like any launch (exit 75 semantics); any other
+    failure leaves no session behind and says whether a retry can help."""
+    agent = run["agent"]
+    try:
+        return session_launch("loop", None, None, False, None, agent=agent, tier=run["tier"],
+                              model=run.get("model"), effort=run.get("effort"), kickoff=True,
+                              loop={"name": name, "run_id": run_id, "kickoff_message": message,
+                                    "authority": run["authority"]})
+    except UsageGateDenied as exc:
+        exc.usage_denial = str(exc).replace(f"usage gate denied {agent} launch: ", "usage-gate: ", 1)
+        raise
+    except Exception as exc:
+        # A session record means the refusal was the runtime's, not the loop's.
+        started = bool(loop_run_records(run_id))
+        retire_loop_run(run_id, "loop kickoff failed")
+        exc.transient = started or any(token in str(exc) for token in LOOP_TRANSIENT_REFUSALS)
+        raise
+
+def loop_launch_model(run):
+    """The model a run will use, so usage is observed for the real windows."""
+    return run.get("model") or resolve_launch_tier(run["tier"], resolve_agent(run["agent"]))["model"]
+
 def loop_runner_for_main():
     """Build the scheduler adapter over the canonical orchestrator and sender."""
     lib = str(Path(__file__).resolve().parent / "lib")
@@ -4935,8 +5008,10 @@ def loop_runner_for_main():
                                 ("timeout", "deadline", "refused", "not live", "not running"))
             raise
 
+    sessions = types.SimpleNamespace(model=loop_launch_model, start=start_loop_run, state=loop_session_state,
+                                     retire=retire_loop_run, adopt=adopt_loop_run)
     return loop_runner.LoopRunner(ORCHESTRATOR_HOME, definitions, target=target,
-                                  usage=loop_usage_admission, send=send,
+                                  usage=loop_usage_admission, send=send, sessions=sessions,
                                   multi_machine=CFG.get("multi_machine", False))
 def session_state_grants(bead, explicit=(), records=None):
     if os.environ.get("NOGG_CODEX_EXTRA_WRITABLE_ROOTS"):
