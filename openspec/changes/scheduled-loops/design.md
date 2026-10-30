@@ -8,6 +8,17 @@ person. Several intervals and several prompts: loop 1 does X every hour, loop 2
 does Y every 5 days, for example a dependency check. This is the first roadmap
 epic to build (GitHub #286, epic Bead SPEC-ij1w), ahead of the dashboard (#283).
 
+Status at the re-cut of 2026-10-30 (on `develop` after Nogging 3.4.0): the
+schedule engine (TASK-SCL-001), the internal `loop` session role (TASK-SCL-004)
+and the loop definitions, prompt checks and validation (TASK-SCL-002) are
+merged and their Beads closed. The seven remaining tasks were re-cut into three
+right-sized implementation tasks and the live acceptance, because Nogging 3.3.0
+and 3.4.0 changed how work is sized and tested: a task is a vertical slice of
+one testable capability within the configured range with its docs folded in, a
+Bead is committed in several steps, only the tests of the changed files run
+before a commit, and the full suite is CI's job. No requirement and no decision
+changed.
+
 Facts gathered while planning, on `develop` at `3936829`:
 
 - **Today's only loop is session-only.** The Orchestration Agent's transcript
@@ -50,9 +61,10 @@ Facts gathered while planning, on `develop` at `3936829`:
   TASK-BDS-013 (`docs/configuration.md`) checks key coverage against the config
   template and `scfg()` literals. Twelve pages are copied into consumers under
   `docs/nogging/`. They may link relatively only to each other.
-- **Discoveries.** `nogg discoveries` lists 148 pending discoveries. None is
+- **Discoveries.** `nogg discoveries` lists many pending discoveries. None is
   about schedules, cron or loops, so none is carried into this change, and none
-  is acknowledged here.
+  is acknowledged here. The one loop-related note, a docs conflict between two
+  pull requests while the `loop` role landed, is resolved on `develop`.
 
 ## Goals / Non-Goals
 
@@ -77,7 +89,9 @@ or `bd` (stub it as `scripts/nogg.test.sh` does), no shared `-L nogging` tmux
 server (private sockets under 108 bytes, `scripts/lib/test-env.sh`), and the
 stub agents from `scripts/lib/test-agents.sh`. Clocks are injected, with no real
 sleep. Timezone cases use `zoneinfo` with `Europe/Berlin` (2026-10-25 and
-2027-03-28 transitions) and `UTC`. No new runtime dependency: Python standard
+2027-03-28 transitions) and `UTC`. Execution tests in stages: the tests of the
+changed files while working, those tests plus lint before each commit, and the
+suites a task names once per Bead. The full `scripts/test` is CI's job. No new runtime dependency: Python standard
 library and Node standard library only. Pure logic lives in new modules
 `scripts/lib/loop_schedule.py` (schedule) and `scripts/lib/loop_config.py`
 (definitions, validation, hashing). They load beside `scripts/nogg` like
@@ -385,17 +399,24 @@ multi-machine and troubleshooting. It is added to `manifest.docs` and the
 package files and placed under Guides in `docs/_config.yml`. It links
 relatively only to other consumer-copied pages. There are short sections in
 `operating-model.md`, `architecture.md`, `security-model.md` and
-`failure-recovery.md`, and a CHANGELOG entry. Since the planning commit was
-rebased onto `develop` at `6093d61`, `docs/commands.md` and
-`docs/configuration.md` exist there, and `scripts/docs-site.test.sh` requires
-their `##`/`###` headings to match `nogg --help` and every template key to be
-documented. So the task that adds a config key or a subcommand updates the page
-in the same commit: TASK-SCL-002 `loops_file`, TASK-SCL-003 `## loop` and its
-commands, TASK-SCL-005 `tick` and `run-now`. No blocking edge goes to the
-remaining `branded-docs-site` tasks. `dual-runtime-orchestrator` also edits the
-orchestrator prompt: TASK-SCL-008 rebases onto whatever has landed, with no
-blocking edge, because the send target resolves the canonical singleton for
-either runtime.
+`failure-recovery.md`, and a CHANGELOG entry. `docs/commands.md` and
+`docs/configuration.md` exist on `develop`, and `scripts/docs-site.test.sh`
+requires their `##`/`###` headings to match `nogg --help` and every template key
+to be documented. Docs are folded into the feature tasks, with no separate docs
+task: each task writes the guide sections for its own capability and the
+reference entries for the config keys and subcommands it adds, in the same
+commits. TASK-SCL-002 documented `loops_file`. TASK-SCL-003 adds `## loop` and
+its eight commands, creates the guide with the concepts, file format, examples,
+approval, CLI and read contract, and adds the security-model section.
+TASK-SCL-005 adds `tick` and `run-now` and the guide's run policy, usage and run
+log sections. TASK-SCL-006 adds launch mode, authority, `--no-systemd`,
+multi-machine and troubleshooting to the guide, and the operating-model,
+architecture and failure-recovery sections. The CHANGELOG entry starts in
+TASK-SCL-003 and grows with the others. No blocking edge goes to the remaining
+`branded-docs-site` tasks. `dual-runtime-orchestrator` also edits the
+orchestrator prompt: TASK-SCL-003 rebases its guidance edit onto whatever has
+landed, with no blocking edge, because the send target resolves the canonical
+singleton for either runtime.
 
 ### Decision 12: Acceptance on the delivery host
 
@@ -436,10 +457,11 @@ never stopped.
 ## Dependencies and parallel lanes
 
 Branches are `<type>/scheduled-loops`. Lanes: `feat/` 001 → 002 → 003 → 005 →
-006; `fix/` 004; `chore/` 007; `refactor/` 008; `docs/` 009; `test/` 010. A
-lane reuses its prefix only after the previous branch is integrated and
-deleted. TASK-SCL-001 and TASK-SCL-004 start in parallel. The edges are in
-`tasks.md`.
+006; `fix/` 004; `test/` 010. A lane reuses its prefix only after the previous
+branch is integrated and deleted. TASK-SCL-001, 002 and 004 are done; the
+remaining implementation tasks run as one serial chain, 003 → 005 → 006 → 010,
+because each builds on the previous one's state, run log and scheduler. The
+edges are in `tasks.md`.
 
 ## Product Owner decisions (2026-10-27)
 
@@ -452,7 +474,7 @@ The Product Owner approved the plan and answered its open questions:
    other repository (Decisions 2 and 10, TASK-SCL-002 and TASK-SCL-010).
 2. **The Orchestration Agent may `add` and `approve` loops** on the Product
    Owner's explicit instruction, for example from the phone. Approval is not
-   limited to an operator shell (Decision 8, TASK-SCL-003 and TASK-SCL-008).
+   limited to an operator shell (Decision 8, TASK-SCL-003).
 3. **`max_active_launch_runs` is 2** by default (Decision 6, TASK-SCL-002 and
    TASK-SCL-006).
 4. **Launch mode is inspect-and-report only in v1**: no own worktree and no
