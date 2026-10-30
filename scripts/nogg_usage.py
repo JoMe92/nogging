@@ -565,9 +565,102 @@ def antigravity_resume(model=None, **kwargs):
             'reasons': {w['bucket']: w['reason'] for w in unknown}}
 
 
-def inspect_usage(agent, *, source=None, now=None, stale_after=600, model=None):
+_ZAI = None
+
+
+def _zai():
+    """The Z.ai quota module beside this file, loaded by path like this module itself."""
+    global _ZAI
+    if _ZAI is None:
+        import importlib.util
+        path = Path(__file__).resolve().parent / 'nogg_usage_zai.py'
+        spec = importlib.util.spec_from_file_location('nogg_usage_zai', path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _ZAI = module
+    return _ZAI
+
+
+def _pi_unknown(reason, observed, hint=None, group=None):
+    windows = []
+    for bucket in ('short', 'weekly'):
+        item = {'bucket': bucket, 'status': 'unknown', 'reason': reason, 'used_percent': None,
+                'resets_at': None, 'observed_at': iso(observed) if observed else None}
+        if hint:
+            item['hint'] = hint
+        windows.append(item)
+    return {'schema_version': 1, 'provider': 'pi', 'account': None, 'model_group': group,
+            'status': 'unknown', 'windows': windows}
+
+
+def pi_usage(model=None, provider=None, *, source=None, now=None, stale_after=600,
+             probe=None, run=None, opener=None, which=None):
+    """Pi quota: the Z.ai coding-plan windows when the effective provider is zai.
+
+    A fresh shared snapshot is used as is. A stale, missing or malformed one
+    triggers one bounded, key-safe probe unless `PI_NOGG_USAGE_PROBE=0` (or an
+    explicit `source`, which like the Claude cache is read without probing).
+    A failed probe never falls back to the stale data: both windows are unknown."""
+    try:
+        zai = _zai()
+    except Exception:
+        # A partial install must degrade to unknown usage, never crash admission.
+        return _pi_unknown('Z.ai quota module is missing; run Nogging update', None)
+    now = now or dt.datetime.now(UTC)
+    effective = zai.resolve_provider(model, provider)
+    if effective is None:
+        return _pi_unknown('Pi provider unknown (use a provider/model, a profile provider or defaultProvider)', None)
+    if effective != 'zai':
+        return _pi_unknown(f'no usage source for Pi provider {zai.provider_label(effective)}', None)
+    path = Path(source) if source else zai.cache_path()
+    observed, quota, reason = zai.read_cache(path)
+    if reason is None:
+        age = (now - observed).total_seconds()
+        if age < 0:
+            reason = 'observation is in the future'
+        elif age > stale_after:
+            reason = 'stale observation'
+    hint = None
+    if reason is not None:
+        probing = (source is None and zai.probe_enabled()) if probe is None else probe
+        if not probing:
+            hint = zai.DISABLED_HINT if source is None else None
+        else:
+            fresh, why = zai.probe(run=run, opener=opener, which=which, now=now)
+            if fresh is None:
+                return _pi_unknown(why, None, zai.hint_for(why), zai.MODEL_GROUP)
+            try:
+                zai.write_cache(path, fresh, now)
+            except (OSError, ValueError):
+                pass   # only reuse is lost; this observation is still valid
+            observed, quota, reason = now, fresh, None
+    if reason is not None:
+        return _pi_unknown(reason, observed, hint, zai.MODEL_GROUP)
+    windows = []
+    for bucket in ('short', 'weekly'):
+        item = {'bucket': bucket, 'status': 'unknown', 'reason': None, 'used_percent': None,
+                'resets_at': None, 'observed_at': iso(observed)}
+        if bucket not in quota:
+            item['reason'] = 'missing or malformed window'
+        else:
+            used, reset = quota[bucket]
+            if reset <= now:
+                item['reason'] = 'reset elapsed; fresh observation required'
+            elif reset <= observed:
+                item['reason'] = 'reset precedes observation'
+            else:
+                item.update(status='known', used_percent=used, resets_at=iso(reset))
+        windows.append(item)
+    return {'schema_version': 1, 'provider': 'pi', 'account': None, 'model_group': zai.MODEL_GROUP,
+            'status': 'known' if all(w['status'] == 'known' for w in windows) else 'unknown',
+            'windows': windows}
+
+
+def inspect_usage(agent, *, source=None, now=None, stale_after=600, model=None, provider=None, probe=None):
     if agent == 'antigravity':
         return antigravity_usage(model, source=source, now=now, stale_after=stale_after)
+    if agent == 'pi':
+        return pi_usage(model, provider, source=source, now=now, stale_after=stale_after, probe=probe)
     if agent not in ('codex', 'claude'):
         raise ValueError('unsupported usage provider')
     if agent == 'codex':
@@ -1018,9 +1111,13 @@ def orchestrator_retry_guidance(gate):
     }
 
 
-def observe(agent, config, *, now=None, model=None):
+def observe(agent, config, *, now=None, model=None, provider=None, probe=None):
+    """`probe=False` makes a Pi observation cache-only; only launch admission probes."""
     try:
-        return inspect_usage(agent, now=now, stale_after=config['stale_seconds'], model=model)
+        extra = {'provider': provider} if provider else {}
+        if agent == 'pi' and probe is not None:
+            extra['probe'] = probe
+        return inspect_usage(agent, now=now, stale_after=config['stale_seconds'], model=model, **extra)
     except ValueError:
         reason = 'unsupported usage provider'
         return {'schema_version': 1, 'provider': agent, 'account': None, 'model_group': None,
@@ -1623,6 +1720,24 @@ def quota_freshness_notes(config=None, now=None):
                 notes.append("quota observation (antigravity): fresh /usage observation cache")
         except Exception as exc:
             notes.append(f"quota observation (antigravity): unreadable cache ({exc})")
+
+    # Pi observation check: the shared Z.ai snapshot only; doctor never probes.
+    if shutil.which('pi'):
+        try:
+            zai = _zai()
+            observed, quota, reason = zai.read_cache(zai.cache_path())
+            now_dt = now or dt.datetime.now(UTC)
+            if reason == 'missing usage source':
+                notes.append("quota observation (pi): no Z.ai snapshot — "
+                             f"{zai.DISABLED_HINT} (or open Pi with the glm-usage extension) to refresh it")
+            elif reason is not None:
+                notes.append(f"quota observation (pi): snapshot unavailable ({reason}) — {zai.DISABLED_HINT}")
+            elif not 0 <= (now_dt - observed).total_seconds() <= stale_sec:
+                notes.append(f"quota observation (pi): snapshot is stale (> {stale_sec}s old) — {zai.DISABLED_HINT}")
+            else:
+                notes.append("quota observation (pi): fresh Z.ai snapshot")
+        except Exception as exc:
+            notes.append(f"quota observation (pi): unreadable snapshot ({type(exc).__name__})")
 
     # Codex observation check
     codex_sessions = Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex'))) / 'sessions'
