@@ -56,11 +56,18 @@ with tempfile.TemporaryDirectory(prefix='nogg loop launch ') as td:
     agents, plain = scratch / 'agents', scratch / 'no-agents'
     agents.mkdir(); plain.mkdir()
     behaviour = scratch / 'behaviour'
+    launches, leaky = scratch / 'launches', scratch / 'leaky'
     runtime = agents / 'runtime.py'
     runtime.write_text(f'''#!/usr/bin/env python3
-import os, pathlib, select, sys, termios, tty
+import json, os, pathlib, select, sys, termios, tty
 if "--help" in sys.argv or "--version" in sys.argv:
     print("stub runtime"); sys.exit(0)
+if sys.argv[1:3] == ["debug", "prompt-input"]:
+    tools = [] if "shell_tool" in sys.argv and not pathlib.Path({str(leaky)!r}).exists() else ["exec_command"]
+    print(json.dumps([{{"type": "additional_tools", "tools": [{{"name": name}} for name in tools]}}]))
+    sys.exit(0)
+with open({str(launches)!r}, "a") as log:
+    log.write(json.dumps(sys.argv[1:]) + "\\n")
 tty.setraw(0)
 RULE = "─" * 60
 draft, shown = "", None
@@ -323,6 +330,28 @@ while True:
         assert (rec['agent'], rec['profile'], rec['requested_model'], rec['reasoning_effort']) == \
             ('codex', 'trusted', 'gpt-5.4', 'low'), rec
         assert usage_calls == [('codex', 'gpt-5.4')], usage_calls
+
+        # --- SPEC-h9k5: a Codex run has no startup turn, a restricted one no commands
+        reset()
+        launches.write_text('')
+        runner = define({'scan': launch_loop(agent='codex', authority='restricted', model='gpt-5.4')})
+        at(6); runner.tick()
+        rec = records('scan-')[0]
+        assert rec['read_only'] is True and rec['codex_startup_prompt'] is False, rec
+        argv = json.loads(launches.read_text().splitlines()[-1])
+        assert [argv[i + 1] for i, arg in enumerate(argv) if arg == '--disable'] == ['shell_tool', 'unified_exec'], argv
+        assert argv[argv.index('--sandbox') + 1] == 'read-only' and argv[-2] == '-c', argv
+        assert argv[-1].startswith('developer_instructions=') and 'scheduled, unattended' in argv[-1], argv
+
+        # --- ...and never starts when Codex still offers a command tool -------
+        reset()
+        launches.write_text('')
+        leaky.write_text('1')
+        runner = define({'scan': launch_loop(agent='codex', authority='restricted', model='gpt-5.4')})
+        at(6); runner.tick()
+        assert launches.read_text() == '', 'the agent started on an unproven tool removal'
+        assert 'started' not in kinds('scan') and not live(), (kinds('scan'), live())
+        leaky.unlink()
 
         # --- a permanent refusal is not retried -------------------------------
         reset()

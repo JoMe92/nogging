@@ -5291,6 +5291,9 @@ def session_launch_notes(role_or_agent, agent_or_profile=None, profile_label=Non
         notes.append(f"NOTE: restricted {norm_agent} planning stops at approval prompts; attach to approve each step")
     if norm_agent == "codex" and p == "restricted":
         notes.append("NOTE: restricted Codex has no network; a Dolt-server-backed bd is unreachable from its sandbox")
+    if r == "loop" and norm_agent == "codex" and p == "restricted":
+        notes.append("NOTE: a restricted Codex loop run has no command tools: it cannot read the checkout, "
+                     "so it reports only from its prompt; use authority trusted or Claude to inspect files")
     return notes
 
 
@@ -5513,6 +5516,11 @@ def _session_launch(role, bead, cwd, read_only, owner,
     require_agent_binary(agent)
     if agent == "codex" and resume is not None:
         validate_codex_resume_id(resume)
+    # Codex cannot stop at a first command, so a restricted run gets none, and a
+    # read-only sandbox so `apply_patch`, the tool it keeps, must ask.
+    restricted_codex_loop = bool(loop) and agent == "codex" and loop["authority"] == "restricted"
+    if restricted_codex_loop:
+        read_only = True
     role_meta, role_slug = normalize_role(role)
     planning_launch_authority(role_meta, agent, profile, full_access)
     unwritable = read_only_launch_path(role_meta, ignore_usage_gate)
@@ -5736,6 +5744,10 @@ def _session_launch(role, bead, cwd, read_only, owner,
             inner += ["--reasoning-effort", reasoning_effort]
         if resume is not None:
             inner += ["--resume", resume]
+        if loop:
+            inner.append("--instructions-only")
+        if restricted_codex_loop:
+            inner.append("--no-commands")
     elif agent == "antigravity":
         effective_settings_path = None
         if not allocate_planning:
@@ -5834,9 +5846,10 @@ def _session_launch(role, bead, cwd, read_only, owner,
         "antigravity_conversation_id": resume if agent == "antigravity" else None,
         "codex_thread_id": resume if agent == "codex" else None,
         # Cold Codex launches pass this positional prompt and start a turn;
-        # exact resumes do not pass a startup prompt.
+        # exact resumes do not pass a startup prompt, and a loop run's prompt is
+        # developer instructions, so its kickoff is the first turn.
         "codex_startup_prompt": bool(
-            agent == "codex" and resume is None and prompt_path is not None
+            agent == "codex" and resume is None and not loop and prompt_path is not None
             and Path(prompt_path).is_file()),
         "antigravity_initial_turn": agent == "antigravity",
         "planning_id": planning_id, "description": description,
