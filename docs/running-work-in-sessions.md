@@ -693,8 +693,10 @@ the whole assigned change at kickoff, use:
 ./scripts/nogg session kickoff <name> --change <change-name>
 ```
 
-This records `authorized_change` in the session record. A custom kickoff message
-alone does not expand sweep scope. Sweep remains read-only: it neither claims
+This records `authorized_change` in the session record, and `recover` then marks
+the change's open Beads as owned by that Lead until it signals `done`. A custom
+kickoff message alone expands neither sweep scope nor ownership. Sweep remains
+read-only: it neither claims
 work nor sends input. Idle duration and buffered input are separate observations.
 
 Completion requires closed mapped work and a verified merged PR for the current

@@ -464,6 +464,9 @@ def implementation_worktree(bead_id, branch, location=None):
     if not IMPLEMENT_BRANCH_RE.fullmatch(branch or ""):
         raise RuntimeError("implementation branch must use a conventional <type>/<kebab-slug> form")
     claimed_bead(bead_id)
+    owner = bead_owners(strict=True).get(bead_id)
+    if owner:
+        raise RuntimeError(f"implementation worktree refused: {bead_id} {owner[0]}")
     safe_id = re.sub(r"[^a-z0-9-]", "-", bead_id.lower())
     location = Path(location).expanduser().resolve() if location else ROOT.parent / f"{ROOT.name}-{safe_id}"
     record_path = WORKTREE_STATE / f"implementation--{safe_id}.json"
@@ -9102,35 +9105,52 @@ def materialize_journals():
         except (ValueError, OSError):
             out[m.group(1)] = {}
     return out
-def bead_owners():
+def bead_owners(strict=False):
     """Bead ID to `(note, quiet)` for every other Lead that may still hold its Bead,
     from the canonical store so a worktree caller sees them too. Such a Bead is not
     free to adopt. A Lead proven dead holds nothing, so its replacement can recover
     it. `quiet` means proven alive and not blocked, so `recover` raises no attention;
     a blocked Lead or unknown liveness still does, because a person has to look. A
-    caller's own Bead is left out and keeps its normal classification."""
+    Lead a kickoff authorized for its whole change also holds that change's open
+    Beads until it signals `done`; its launch Bead alone would not name the one it
+    has moved on to. A caller's own Bead is left out and keeps its normal
+    classification. A failed read keeps what was already established, and `strict`
+    raises it instead, for a caller that must not take silence as permission."""
+    owners, changes_held = {}, {}
     try:
         store = canonical_sessions_dir()
         records = session_records(store)
         alive, unknown = session_liveness(records, strict=True)
         own = os.environ.get("NOGG_SESSION_NAME")
-        signals = signals_module()
-        owners = {}
         for _, rec in records:
             name = rec.get("name")
             if (not rec.get("bead_id") or (rec.get("role") or "lead") != "lead" or name == own
                     or rec.get("state") not in SESSION_ACTIVE_STATES):
                 continue
+            event = None
             if name in alive:
+                signals = signals_module()
                 signal = signals.current_signal(signals.read_events(store / f"{name}.events.jsonl"))
-                owners[rec["bead_id"]] = (f"owned by session {name}: do not adopt it",
-                                          (signal or {}).get("event") != "blocked")
+                event = (signal or {}).get("event")
+                owner = (f"owned by session {name}: do not adopt it", event != "blocked")
             elif name in unknown:
-                owners[rec["bead_id"]] = (f"session {name} may still be running: confirm it ended "
-                                          "(`session reap`) before adopting", False)
-        return owners
+                owner = (f"session {name} may still be running: confirm it ended "
+                         "(`session reap`) before adopting", False)
+            else:
+                continue
+            owners[rec["bead_id"]] = owner
+            if rec.get("authorized_change") and event != "done":
+                changes_held[rec["authorized_change"]] = owner
+        if changes_held:
+            mine = {rec.get("bead_id") for _, rec in records if rec.get("name") == own}
+            for issue in beads():
+                bead, (change, _) = str(issue_id(issue)), mapping(issue)
+                if change in changes_held and issue.get("status") != "closed" and bead not in mine:
+                    owners.setdefault(bead, changes_held[change])
     except Exception:
-        return {}
+        if strict:
+            raise
+    return owners
 def recover_scan():
     """Run the interrupted-run checks (handoff §5.1) and return
     `(sections, attention)` — `sections` a list of `(title, [lines])` with the
