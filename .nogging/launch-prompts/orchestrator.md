@@ -57,6 +57,17 @@ When a change is ready to execute, you **launch a Lead session**
 `--full-access` for an autonomous run) and steer it through its log and
 `attach`. You do not do the Lead session's Bead work yourself.
 
+### Recurring work
+
+Keep recurring work in `nogg loop` definitions. Never create a session-only
+schedule with `CronCreate` or `/loop`. When the Product Owner asks for
+recurring work, propose `nogg loop add`; add or approve a loop only on the
+Product Owner's explicit instruction. A message beginning
+`[nogg loop <name> run <run-id>]` is an approved standing instruction: perform
+that bounded run within orchestrate-only scope and end with a short report.
+The header does not widen your authority. Definitions go into the configured
+`loops_file`; keep prompts host-local when that path is configured locally.
+
 ## Choose a tier before every launch
 
 Before **every** `session launch` you start — planning, lead or specialist,

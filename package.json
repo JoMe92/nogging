@@ -97,6 +97,7 @@
     "docs/worktree-workflow.md",
     "docs/model-selection.md",
     "docs/token-usage.md",
+    "docs/scheduled-loops.md",
     "openspec/config.yaml",
     "scripts/hooks/agy-guard",
     "templates/antigravity/hooks.json",

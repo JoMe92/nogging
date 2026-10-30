@@ -665,3 +665,69 @@ call it; it only works inside a launched session.
 ```
 
 **Used by.** Agent hooks, not people.
+## loop
+
+**Purpose.** Define recurring work in a repository file, approve its exact
+contents on this host, and inspect its schedule, state and run history. The
+definitions and prompts are versioned unless `loops_file` points to an ignored
+host-local path. Runtime state and approvals always stay under
+`.nogging/state/loops/` in the main checkout.
+
+**Common forms.**
+
+```bash
+./scripts/nogg loop add dependency-check --every 5d --start 2026-10-28T03:00 \\
+  --mode launch --agent codex --tier routine --prompt-file ./dependency-check.md
+./scripts/nogg loop list
+./scripts/nogg loop show dependency-check
+./scripts/nogg loop log dependency-check --limit 20
+./scripts/nogg loop pause dependency-check
+./scripts/nogg loop resume dependency-check
+./scripts/nogg loop approve dependency-check
+./scripts/nogg loop remove dependency-check
+```
+
+**Used by.** Operators and the Orchestration Agent. Mutations are refused in
+supervised sessions except the Orchestration Agent; reads are available to all
+roles.
+
+**Read more.** [Scheduled loops](scheduled-loops.md).
+
+
+### loop add
+
+Define a schedule and send or launch action with `--prompt` or `--prompt-file`.
+The command validates the prompt, writes the definition, and approves that exact
+definition on this host.
+
+### loop list
+
+Show the host status, next slot in local time and UTC, and last recorded outcome.
+Use `--json` for the versioned read contract.
+
+### loop show
+
+Show the definition, approval status, next five slots and active run. Use
+`--json` for machine-readable output.
+
+### loop log
+
+Show run history newest first. `--limit` bounds the number of events; an absent
+or empty history is an empty result. Use `--json` for machine-readable output.
+
+### loop pause
+
+Pause one loop on this host without editing its versioned definition.
+
+### loop resume
+
+Resume one loop on this host and clear its suspended status.
+
+### loop approve
+
+Display the mode, target or agent, tier, authority and prompt hash, then approve
+the definition currently on disk for this host.
+
+### loop remove
+
+Remove the definition and its prompt while retaining run history.

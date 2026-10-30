@@ -215,6 +215,12 @@ defaults:
       nav_order: 8
       description: Give each Nogging agent persona its own GitHub App identity, with registration, private key storage, installation and persona configuration steps.
   - scope:
+      path: "scheduled-loops.md"
+    values:
+      parent: Guides
+      nav_order: 9
+      description: Define and approve host-local scheduled work with Nogging loops.
+  - scope:
       path: "operations.md"
     values:
       title: Operations

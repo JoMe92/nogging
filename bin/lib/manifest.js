@@ -100,6 +100,7 @@ module.exports = {
     { from: 'docs/worktree-workflow.md', to: 'docs/nogging/worktree-workflow.md' },
     { from: 'docs/model-selection.md', to: 'docs/nogging/model-selection.md' },
     { from: 'docs/token-usage.md', to: 'docs/nogging/token-usage.md' },
+    { from: 'docs/scheduled-loops.md', to: 'docs/nogging/scheduled-loops.md' },
   ],
 
   // Written only when the destination does not already exist.

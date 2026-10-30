@@ -35,6 +35,20 @@ Full access is not inherited permission to work outside the named change. An
 Orchestration Agent remains orchestrate-only unless the operator explicitly
 requests a single planning or code takeover.
 
+### Scheduled-loop approval
+
+Loop definitions can be committed with repository code or stored at a configured
+ignored path. Runtime state and the approval ledger are host-local. The ledger
+binds approval to a hash of the timezone, normalized loop definition and prompt
+bytes; an edit makes that loop unapproved until reviewed and approved again.
+The ledger records the OS user name, not an email address. Prompt validation
+rejects common secret and token forms without printing the matched value.
+Approval is an operational safeguard against accidental changes, not a security
+boundary against another process with host write access. Inspect loop prompts
+and the launch authority before approving them. The Orchestration Agent may
+manage loops only on explicit Product Owner instruction; other supervised
+sessions cannot mutate loop definitions or host state.
+
 ### Vendor-specific limits
 
 - **Claude Code:** repository hooks and generated permission settings reduce
