@@ -4164,6 +4164,24 @@ def model_selection_notes():
                 notes.append(f"model-selection: {agent} {tier} model {model} is not listed by "
                              f"{source}; it may be retired - revise the table in a planning session")
     return notes
+def require_launch_tier(tier):
+    if tier not in MODEL_SELECTION_TIERS:
+        raise RuntimeError(f"--tier {tier!r} is not a model-selection tier; choose one of "
+                           f"{', '.join(MODEL_SELECTION_TIERS)} (see `nogg models`); launch refused")
+def launch_tier_sources(tier):
+    """The `(table, tier_overrides)` a `--tier` launch reads; refuses either one
+    malformed."""
+    overrides = CFG.get("tier_overrides", {})
+    override_errors = tier_overrides_errors(overrides)
+    if override_errors:
+        raise RuntimeError("invalid .nogging/config.json tier_overrides:\n  "
+                           + "\n  ".join(override_errors)
+                           + f"\nrun scripts/nogg models check, fix or remove the block; "
+                           f"--tier {tier} launch refused")
+    try:
+        return load_model_selection(), overrides
+    except RuntimeError as exc:
+        raise RuntimeError(f"{exc}\n--tier {tier} launch refused")
 def resolve_launch_tier(tier, agent, resume=None):
     """Resolve `session launch --tier` for an already resolved agent, before any
     side effect. Returns `{tier, model, effort, effort_source, table_effort}`
@@ -4173,9 +4191,7 @@ def resolve_launch_tier(tier, agent, resume=None):
     (Pi). An exact Claude/Antigravity resume keeps the selection recorded for
     that conversation and never re-resolves against a possibly changed table
     or re-reads `tier_overrides`."""
-    if tier not in MODEL_SELECTION_TIERS:
-        raise RuntimeError(f"--tier {tier!r} is not a model-selection tier; choose one of "
-                           f"{', '.join(MODEL_SELECTION_TIERS)} (see `nogg models`); launch refused")
+    require_launch_tier(tier)
     if agent not in MODEL_SELECTION_AGENTS:
         raise RuntimeError(f"--tier is not supported for agent {agent!r}: the model-selection table "
                            f"has no {agent} entries (its model namespace is provider-dependent); "
@@ -4200,17 +4216,7 @@ def resolve_launch_tier(tier, agent, resume=None):
         source = (rec.get("selection_tier_effort_source") or "table") if effort is not None else None
         return {"tier": tier, "model": rec.get("requested_model"),
                 "effort": effort, "effort_source": source, "table_effort": None}
-    overrides = CFG.get("tier_overrides", {})
-    override_errors = tier_overrides_errors(overrides)
-    if override_errors:
-        raise RuntimeError("invalid .nogging/config.json tier_overrides:\n  "
-                           + "\n  ".join(override_errors)
-                           + f"\nrun scripts/nogg models check, fix or remove the block; "
-                           f"--tier {tier} launch refused")
-    try:
-        table = load_model_selection()
-    except RuntimeError as exc:
-        raise RuntimeError(f"{exc}\n--tier {tier} launch refused")
+    table, overrides = launch_tier_sources(tier)
     entry = model_selection_entry(table, agent, tier, overrides)
     return {"tier": tier, "model": entry["model"], "effort": entry["effort"],
             "effort_source": entry["effort_source"], "table_effort": entry["table_effort"]}
@@ -5066,6 +5072,12 @@ def refresh_session_usage(recs):
         except OSError:
             pass   # only rate limiting is lost; collection itself is idempotent
     return report
+def usage_gate_config():
+    """The validated `usage_gate` config, or a launch refusal."""
+    try:
+        return usage_module().gate_config(CFG.get("usage_gate"))
+    except ValueError as exc:
+        raise RuntimeError(f"invalid usage_gate in .nogging/config.json: {exc}; launch refused") from exc
 def usage_gate_admission(role_meta, agent, records, ignore, model=None, provider=None):
     """Admit or refuse a launch against the `usage_gate` config.
 
@@ -5077,12 +5089,9 @@ def usage_gate_admission(role_meta, agent, records, ignore, model=None, provider
     skips observation and is recorded. Same-host reservations of running
     launches are serialized through the same-host reservation ledger."""
     usage = usage_module()
-    describe_denial, gate_config, launch_estimate, observe = (
-        usage.describe_denial, usage.gate_config, usage.launch_estimate, usage.observe)
-    try:
-        config = gate_config(CFG.get("usage_gate"))
-    except ValueError as exc:
-        raise RuntimeError(f"invalid usage_gate in .nogging/config.json: {exc}; launch refused") from exc
+    describe_denial, launch_estimate, observe = (
+        usage.describe_denial, usage.launch_estimate, usage.observe)
+    config = usage_gate_config()
     group = "specialist" if role_meta.startswith("specialist:") else role_meta
     if not config["enabled"]:
         return {"decision": "disabled"}
@@ -5564,6 +5573,86 @@ def loop_launch_request(role, loop, *, bead, cwd, profile, prompt, full_access, 
                            f"{', '.join(LOOP_AUTHORITIES)}, got {authority!r}")
     return {"name": name, "run_id": run_id, "kickoff_message": message, "authority": authority}
 
+def validate_launch_effort(agent, effort):
+    if effort is None:
+        return
+    if agent == "claude":
+        validate_claude_effort(effort, "--effort")
+    elif agent == "codex":
+        validate_codex_effort(effort, "--effort")
+    else:
+        raise RuntimeError("--effort is Claude- and Codex-only; launch refused")
+def validate_launch_resume(agent, resume):
+    if resume is not None and agent not in ("claude", "antigravity", "codex"):
+        raise RuntimeError("exact resume is supported only for Claude, Codex and Antigravity")
+    if agent == "antigravity" and resume is not None:
+        validate_antigravity_conversation_id(resume)
+def load_launch_spec(agent, path):
+    """The launch spec of `agent`: a `permissions` JSON for Claude, a `.codex.toml`
+    sandbox/approval spec for Codex, an optional `.pi.toml` provider/model spec
+    for Pi, a `.agy.toml` spec for Antigravity."""
+    loader = {"claude": load_profile_settings, "codex": load_codex_spec,
+              "pi": load_pi_spec, "antigravity": load_antigravity_spec}[agent]
+    return loader(path)
+def launch_selection(agent, spec, model, effort, tier_selection):
+    """`(model, model_source, effort, effort_source)` for one agent, all resolved
+    and validated before any session exists on disk or in tmux. Model precedence:
+    --model, --tier, profile model, runtime default.
+
+    Codex effort: explicit `--effort` over tier over profile
+    `model_reasoning_effort` over runtime default; it travels through the
+    wrapper's existing --reasoning-effort (a `-c` override, which the exact
+    resume path already requires, so a resume carries it too).
+    Claude effort: explicit `--effort` over tier (a project `tier_overrides`
+    entry, else the table) over profile `effort` over runtime default; it travels
+    as the wrapper's `--effort` under the `claude-effort-forwarding` contract
+    check. Antigravity's effort is part of its model name."""
+    selected_model, model_source = select_session_model(
+        model, spec, tier_selection and tier_selection["model"])
+    selected_effort, effort_source = select_session_effort(
+        effort if agent == "claude" else None, spec, agent)
+    reasoning_effort = (spec or {}).get("model_reasoning_effort") if agent == "codex" else None
+    reasoning_effort_source = "profile" if reasoning_effort is not None else "runtime-default"
+    tier_effort = tier_selection and tier_selection["effort"]
+    # Provenance of a tier-supplied effort: `project` for a tier_overrides entry,
+    # otherwise `launch` (the table's, recorded as before).
+    tier_effort_source = tier_selection and tier_selection["effort_source"]
+    tier_reasoning_source = "project" if tier_effort_source == "project" else "launch"
+    if agent == "codex" and effort is not None:
+        reasoning_effort = effort
+        reasoning_effort_source = "launch"
+    elif agent == "codex" and tier_effort is not None:
+        reasoning_effort = tier_effort
+        reasoning_effort_source = tier_reasoning_source
+    elif agent == "claude":
+        reasoning_effort = selected_effort
+        reasoning_effort_source = effort_source
+        if effort is None and tier_effort is not None:
+            reasoning_effort = tier_effort
+            reasoning_effort_source = tier_reasoning_source
+    return selected_model, model_source, reasoning_effort, reasoning_effort_source
+def admit_launch_usage(role_meta, agent, records, ignore, model, provider=None):
+    """Usage admission; a ledger this caller cannot write is a launch refusal."""
+    try:
+        return usage_gate_admission(role_meta, agent, records, ignore, model=model, provider=provider)
+    except OSError as exc:
+        if exc.errno not in (errno.EROFS, errno.EACCES, errno.EPERM):
+            raise
+        raise RuntimeError(LAUNCH_REFUSAL.format(reason=f"{exc.filename or 'the usage ledger'} is read-only here")) from exc
+def launch_bead_state(bead, agent_state, is_planning):
+    """`(records, grants)` of the launch Bead; refuses a missing Bead or an unmet
+    dependency. A planning Bead is only an association, so its dependencies never
+    block."""
+    records = bead_records(bead) if bead else []
+    grants = session_state_grants(bead, agent_state, records)
+    if bead and not records:
+        raise RuntimeError(f"Bead {bead} does not exist or cannot be read; launch refused without agent-state grants")
+    if bead and not is_planning:
+        blocking = unmet_dependencies(bead)
+        if blocking:
+            raise RuntimeError(
+                f"Bead {bead} has an unmet dependency on {', '.join(blocking)}; launch refused")
+    return records, grants
 def _session_launch(role, bead, cwd, read_only, owner,
                    profile=None, prompt=None, full_access=False, agent=None,
                    resume=None, kickoff=False, planning_id=None, description=None,
@@ -5608,13 +5697,7 @@ def _session_launch(role, bead, cwd, read_only, owner,
     is_planning = role_meta == "planning"
     if os.environ.get("NOGG_CODEX_EXTRA_WRITABLE_ROOTS"):
         session_state_grants(None)
-    if effort is not None:
-        if agent == "claude":
-            validate_claude_effort(effort, "--effort")
-        elif agent == "codex":
-            validate_codex_effort(effort, "--effort")
-        else:
-            raise RuntimeError("--effort is Claude- and Codex-only; launch refused")
+    validate_launch_effort(agent, effort)
     # `--tier` resolves the model-selection table right after the agent and
     # before anything else, so every refusal precedes all side effects.
     tier_selection = resolve_launch_tier(tier, agent, resume) if tier is not None else None
@@ -5658,55 +5741,23 @@ def _session_launch(role, bead, cwd, read_only, owner,
     # session exists on disk or in tmux.
     profile_path, profile_label, prompt_path = resolved_launch_pair(
         profile, prompt, full_access, agent)
-    # A Claude launch reads a `permissions` JSON; a Codex launch reads a
-    # `.codex.toml` sandbox/approval spec; a Pi launch reads an optional
-    # `.pi.toml` provider/model spec. All are validated here, before a
-    # session exists.
+    # Every launch spec is validated here, before a session exists.
     if is_orchestrator and agent != "claude":
         raise RuntimeError("--role orchestrator is Claude Code only in this version")
-    source_settings = load_profile_settings(profile_path) if agent == "claude" else None
-    codex_spec = load_codex_spec(profile_path) if agent == "codex" else None
-    pi_spec = load_pi_spec(profile_path) if agent == "pi" else None
+    launch_spec = load_launch_spec(agent, profile_path)
+    source_settings = launch_spec if agent == "claude" else None
+    codex_spec = launch_spec if agent == "codex" else None
+    pi_spec = launch_spec if agent == "pi" else None
+    agy_spec = launch_spec if agent == "antigravity" else None
     # Enabled Pi extensions are validated here, before any worktree, trust,
     # settings, record or backend side effect. A planning worktree that does not
     # exist yet is checked against the main checkout it is created from.
     pi_extensions = validate_pi_extensions(
         CFG.get("pi_extensions"), ROOT if allocate_planning else Path(cwd or ROOT).resolve()) if agent == "pi" else []
-    agy_spec = load_antigravity_spec(profile_path) if agent == "antigravity" else None
-    # Model precedence (--model, --tier, profile model, runtime default) is resolved and
-    # validated here, before any session exists on disk or in tmux.
-    selected_model, model_source = select_session_model(
-        model, source_settings or codex_spec or pi_spec or agy_spec,
-        tier_selection and tier_selection["model"])
-    selected_effort, effort_source = select_session_effort(
-        effort if agent == "claude" else None, source_settings, agent)
-    reasoning_effort = (codex_spec or {}).get("model_reasoning_effort")
-    reasoning_effort_source = "profile" if reasoning_effort is not None else "runtime-default"
-    # Codex effort: explicit `--effort` over tier over profile
-    # `model_reasoning_effort` over runtime default; it travels through the
-    # wrapper's existing --reasoning-effort (a `-c` override, which the exact
-    # resume path already requires, so a resume carries it too).
-    # Claude effort: explicit `--effort` over tier (a project `tier_overrides`
-    # entry, else the table) over profile `effort` over runtime default; it travels as the wrapper's `--effort` under the
-    # `claude-effort-forwarding` contract check. Antigravity's effort is part
-    # of its model name.
+    selected_model, model_source, reasoning_effort, reasoning_effort_source = launch_selection(
+        agent, launch_spec, model, effort, tier_selection)
     tier_effort = tier_selection and tier_selection["effort"]
     tier_effort_source = tier_selection and tier_selection["effort_source"]
-    # Provenance of a tier-supplied effort: `project` for a tier_overrides
-    # entry, otherwise `launch` (the table's, recorded as before).
-    tier_reasoning_source = "project" if tier_effort_source == "project" else "launch"
-    if agent == "codex" and effort is not None:
-        reasoning_effort = effort
-        reasoning_effort_source = "launch"
-    elif agent == "codex" and tier_effort is not None:
-        reasoning_effort = tier_effort
-        reasoning_effort_source = tier_reasoning_source
-    elif agent == "claude":
-        reasoning_effort = selected_effort
-        reasoning_effort_source = effort_source
-        if effort is None and tier_effort is not None:
-            reasoning_effort = tier_effort
-            reasoning_effort_source = tier_reasoning_source
     if agent == "codex" and resume is not None:
         codex_sandbox = "read-only" if read_only else codex_spec["sandbox"]
         validate_codex_resume_options(
@@ -5714,10 +5765,7 @@ def _session_launch(role, bead, cwd, read_only, owner,
             add_dir=codex_sandbox != "read-only", model=selected_model is not None)
     if agy_spec and Path(profile_path).name == "restricted.agy.toml" and agy_spec["approval"] != "ask":
         raise RuntimeError("Antigravity restricted profile requires ask approval")
-    if resume is not None and agent not in ("claude", "antigravity", "codex"):
-        raise RuntimeError("exact resume is supported only for Claude, Codex and Antigravity")
-    if agy_spec and resume is not None:
-        validate_antigravity_conversation_id(resume)
+    validate_launch_resume(agent, resume)
     # The command-floor / openspec-boundary lift is the orchestrator's alone: the
     # `nogging_floor` / `nogging_openspec_readonly` profile keys are honoured
     # ONLY for --role orchestrator. For every other role they are ignored — the
@@ -5729,24 +5777,11 @@ def _session_launch(role, bead, cwd, read_only, owner,
         floor_lifted = source_settings.get("nogging_floor") is False
         if source_settings.get("nogging_openspec_readonly") is False:
             openspec_readonly = False
-    records = bead_records(bead) if bead else []
-    grants = session_state_grants(bead, agent_state, records)
-    if not is_orchestrator and not loop and bead and not records:
-        raise RuntimeError(f"Bead {bead} does not exist or cannot be read; launch refused without agent-state grants")
-    if not is_orchestrator and not is_planning and not loop:
-        blocking = unmet_dependencies(bead)
-        if blocking:
-            raise RuntimeError(
-                f"Bead {bead} has an unmet dependency on {', '.join(blocking)}; launch refused")
+    records, grants = launch_bead_state(bead, agent_state, is_planning)
     # Usage admission is the last refusal before helper negotiation, worktree,
     # trust, tmux or record side effects.
-    try:
-        usage_gate = usage_gate_admission(role_meta, agent, records, ignore_usage_gate, model=selected_model,
-                                          provider=(pi_spec or {}).get("provider"))
-    except OSError as exc:
-        if exc.errno not in (errno.EROFS, errno.EACCES, errno.EPERM):
-            raise
-        raise RuntimeError(LAUNCH_REFUSAL.format(reason=f"{exc.filename or 'the usage ledger'} is read-only here")) from exc
+    usage_gate = admit_launch_usage(role_meta, agent, records, ignore_usage_gate, selected_model,
+                                    provider=(pi_spec or {}).get("provider"))
     # The orchestrator is a singleton: a fixed, nonce-free `nogg-orchestrator-<slug>`
     # name (a stale terminal record of the same name is reused in place). Every
     # other role gets the deterministic `sf-<role>-<bead>-<nonce>` shape.
