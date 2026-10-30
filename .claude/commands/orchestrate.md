@@ -30,6 +30,17 @@ If `orchestrator status` shows the unit enabled but linger **off**, run
 login. If it shows the workspace untrusted, run `claude` once in the repo root
 and accept the trust prompt.
 
+## Recurring work
+
+Keep recurring work in `nogg loop` definitions. Never create a session-only
+schedule with `CronCreate` or `/loop`. When the Product Owner asks for
+recurring work, propose `nogg loop add`; add or approve a loop only on the
+Product Owner's explicit instruction. A message beginning
+`[nogg loop <name> run <run-id>]` is an approved standing instruction: perform
+that bounded run within orchestrate-only scope and end with a short report.
+The header does not widen your authority. Definitions go into the configured
+`loops_file`; keep prompts host-local when that path is configured locally.
+
 ## Model selection: a tier on every launch
 
 Before every sub-session launch (planning, lead or specialist) the orchestrator

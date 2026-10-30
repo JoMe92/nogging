@@ -289,7 +289,7 @@ else:
     top = help_choices()
     require(bool(top), "scripts/nogg --help lists no subcommands")
     require(headings[2] == top, f"commands.md ## headings {headings[2]} differ from nogg --help {top}")
-    expected_sub = [f"{command} {sub}" for command in ("worktree", "pr", "orchestrator", "session")
+    expected_sub = [f"{command} {sub}" for command in ("worktree", "pr", "orchestrator", "session", "loop")
                     for sub in help_choices(command)]
     actual_sub = headings[3]
     require(actual_sub == expected_sub,

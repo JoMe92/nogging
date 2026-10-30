@@ -9327,6 +9327,37 @@ def main():
     # `run-quiet` owns everything after its first `--` verbatim (the command's
     # own options and any later `--` included): split it off before argparse,
     # whose `--` handling differs across Python versions.
+    lp = sub.add_parser("loop", help="manage approved recurring work loops")
+    lps = lp.add_subparsers(dest="loop_command", required=True)
+    la = lps.add_parser("add", help="define and approve a recurring loop")
+    la.add_argument("name")
+    la.add_argument("--every"); la.add_argument("--at", nargs="+")
+    la.add_argument("--start"); la.add_argument("--days", nargs="+")
+    la.add_argument("--windows", nargs="+"); la.add_argument("--grace", type=int)
+    la.add_argument("--mode", choices=("send", "launch"), default="send")
+    la.add_argument("--target", default="orchestrator")
+    la.add_argument("--agent", choices=("claude", "codex", "pi", "antigravity"))
+    la.add_argument("--tier", choices=("routine", "standard", "complex"))
+    la.add_argument("--model"); la.add_argument("--effort")
+    la.add_argument("--authority", choices=("restricted", "trusted")); la.add_argument("--max-runtime")
+    la.add_argument("--host"); la.add_argument("--max-used-percent", type=float)
+    la.add_argument("--on-unknown", choices=("warn", "deny"))
+    prompt = la.add_mutually_exclusive_group(required=True)
+    prompt.add_argument("--prompt"); prompt.add_argument("--prompt-file")
+    ll = lps.add_parser("list", help="list loops and their host state")
+    ll.add_argument("--json", action="store_true")
+    for command_name, help_text in (("show", "show a loop and its next five slots"),
+                                    ("log", "show newest run events first"),
+                                    ("pause", "pause one loop on this host"),
+                                    ("resume", "resume one loop on this host"),
+                                    ("approve", "approve the current definition on this host"),
+                                    ("remove", "remove a definition and prompt, retaining history")):
+        item = lps.add_parser(command_name, help=help_text)
+        item.add_argument("name")
+        if command_name in ("show", "log"):
+            item.add_argument("--json", action="store_true")
+        if command_name == "log":
+            item.add_argument("--limit", type=int, default=20)
     argv, run_quiet_command = sys.argv[1:], None
     if argv[:1] == ["run-quiet"] and "--" in argv:
         split = argv.index("--")
@@ -9358,6 +9389,25 @@ def main():
                 raise RuntimeError(f"invalid usage_gate in .nogging/config.json: {exc}") from exc
     elif args.command == "repo-state":
         print(json.dumps(canonical_repository_state(args.cwd), sort_keys=True))
+    elif args.command == "loop":
+        lib = str(ROOT / "scripts/lib")
+        if lib not in sys.path:
+            sys.path.insert(0, lib)
+        from loop_cli import command as loop_command
+        try:
+            record = None
+            if args.loop_command in {"add", "approve", "remove", "pause", "resume"}:
+                canonical_sessions = [rec for _, rec in session_records(orchestrator_sessions_dir())]
+                record = calling_session_record(canonical_sessions, purpose="loop management")
+            defs = ORCHESTRATOR_HOME / scfg("loops_file", ".nogging/loops.json")
+            # The configured path is repository-relative and must stay inside the
+            # canonical checkout even if its parent contains symlinks.
+            if not defs.resolve().is_relative_to(ORCHESTRATOR_HOME.resolve()):
+                raise RuntimeError("configured loops_file must remain inside the main checkout")
+            loop_command(args, main_checkout=ORCHESTRATOR_HOME, definitions_path=defs,
+                         session_record=record, multi_machine=CFG.get("multi_machine", False))
+        except (ValueError, OSError) as exc:
+            raise RuntimeError(str(exc)) from exc
     elif args.command == "plan-begin":
         lock("planning", CFG["planning_lock_ttl_seconds"], args.force)
         print("planning session lock acquired")

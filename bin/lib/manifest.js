@@ -20,6 +20,8 @@ module.exports = {
     'scripts/lib/session_backend.py',
     'scripts/lib/loop_schedule.py',
     'scripts/lib/loop_config.py',
+    'scripts/lib/loop_state.py',
+    'scripts/lib/loop_cli.py',
     'scripts/lib/session_backend_tmux.py',
     'scripts/lib/session_backend_herdr.py',
     'scripts/lib/session_codex_delivery.py',
@@ -38,6 +40,7 @@ module.exports = {
     'scripts/install-hooks',
     'scripts/test',
     'scripts/nogg.test.sh',
+    'scripts/loop-cli.test.sh',
     'scripts/worktree-workflow.test.sh',
     'scripts/check-branch-name',
     'scripts/hooks/commit-msg',
@@ -97,6 +100,7 @@ module.exports = {
     { from: 'docs/worktree-workflow.md', to: 'docs/nogging/worktree-workflow.md' },
     { from: 'docs/model-selection.md', to: 'docs/nogging/model-selection.md' },
     { from: 'docs/token-usage.md', to: 'docs/nogging/token-usage.md' },
+    { from: 'docs/scheduled-loops.md', to: 'docs/nogging/scheduled-loops.md' },
   ],
 
   // Written only when the destination does not already exist.

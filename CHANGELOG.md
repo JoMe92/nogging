@@ -9,6 +9,12 @@ and GitHub Releases for that history.
 
 ## [Unreleased]
 
+### Added
+
+- `nogg loop add`, `list`, `show`, `log`, `pause`, `resume`, `approve` and
+  `remove` for managing host-approved recurring work, with atomic host state,
+  hash-bound approvals, orchestrator guidance and the scheduled-loops guide.
+
 ## [3.4.0] - 2026-10-30
 
 ### Fixed
