@@ -80,6 +80,7 @@ refused by name.
 | --- | --- | --- | --- |
 | `tier_overrides` | object | `{}` | Changes the reasoning effort of one tier and agent without touching the researched table. See [the block below](#tier_overrides). |
 | `doctor_agy_models_timeout_seconds` | integer | `15` | Time limit for the `agy models` probe that `doctor` runs when Antigravity is installed. |
+| `doctor_agy_models_cache_seconds` | number | `3600` | How long `doctor` reuses a successful `agy models` listing, per `agy` executable (cached under `$XDG_CACHE_HOME/nogging/`). A failed probe is never cached; `0` probes on every run. |
 
 ## Usage
 
@@ -90,6 +91,7 @@ refused by name.
 | `token_usage_drain_seconds` | number | `20` | Time budget, in seconds, for collecting session usage in one pass. |
 | `token_usage_refresh_seconds` | number | `300` | Minimum seconds between bounded usage refreshes of a live session during supervision. |
 | `token_usage_refresh_drain_seconds` | number | `5` | Time budget, in seconds, for one such refresh. |
+| `token_usage_query_timeout_seconds` | number | `30` | Time limit, in seconds, for each local Dolt query behind `token-usage report`, `session`, `export`, `import` and `status`. A busy or very large store then fails with a clear error instead of hanging. |
 
 ## Multi-machine
 
@@ -190,13 +192,32 @@ integers. An absent key takes its default:
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `bead_prod_lines` | `[min, max]` | `[400, 1000]` | Production lines (tests excluded) one task, and so one Bead, targets. The Planning Agent writes each task as a vertical slice in this range and tags it `[~N loc]`. A smaller task states its reason in the tag, e.g. `[~80 loc: security fix]`. |
+| `bead_prod_lines` | `[min, max]` | `[400, 1000]` | Production lines (tests excluded) one task, and so one Bead, targets. The Planning Agent writes each task as a vertical slice in this range, splits one above the maximum, and tags it `[~N loc]`. A task outside the range states its reason in the tag, e.g. `[~80 loc: security fix]`. |
 | `commit_lines` | `[min, max]` | `[100, 600]` | Changed lines one commit targets. A Lead commits a Bead in several coherent steps in this range, each carrying the `[<bead-id>]` token, with tests in the same commit as the code they cover. |
 
 `./scripts/nogg task-sizing` prints the ranges in effect and whether each one is
 configured or the default. `./scripts/nogg validate` adds a NOTE for an open
-task whose estimate is below the `bead_prod_lines` minimum without a reason,
-and for a live change most of whose open tasks carry no estimate. A malformed
-value is a WARN and keeps the default. Neither ever fails `validate`, so a
-change planned before estimates existed stays valid. See
+task whose estimate is below the `bead_prod_lines` minimum or above its maximum
+without a reason, and for a live change most of whose open tasks carry no
+estimate. A malformed value is a WARN and keeps the default. Neither ever fails
+`validate`, so a change planned before estimates existed stays valid. See
 [Operating model](operating-model.md#task-sizing).
+
+The default range sits on the measured sweet spot. Across 208 Beads of one
+consumer project (Codex, Claude and Pi transcripts, October 2026), the median
+tokens per production line by Bead size were:
+
+| Production lines per Bead | Median tokens per production line |
+| --- | --- |
+| 50–200 | 70 k |
+| 200–500 | 20 k |
+| 500–1000 | 9.5 k |
+| 1000–2000 | 16.6 k |
+| above 2000 | 18 k |
+
+Beads of 500–1000 production lines cost the fewest tokens per line. Smaller
+Beads pay the fixed cost of reading the task, the code and the rules again for
+little output; far larger ones grow the context and the cached re-reads of
+every turn. Raising the maximum well above 1000 therefore costs more tokens per
+line, not fewer. `./scripts/nogg token-usage report --group-by bead` shows the
+figure for your own Beads (see [Token usage](token-usage.md)).

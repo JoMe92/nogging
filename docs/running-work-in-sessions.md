@@ -386,10 +386,11 @@ branch, merge to `develop` when green — launch it with broader authority:
   `scripts/*`. It denies only the command floor (see below); it does not deny
   `systemctl`, `curl`, `wget` or `WebFetch`.
 - **`autonomous`** is the system prompt that authorises the session to execute
-  one named change end to end and fast-forward-merge it to `develop` (no PR),
-  while keeping every hard rule: never edit `openspec/`, work only that
-  change's Beads, record discoveries, and before closing a Bead run the full
-  suite once and note every commit SHA.
+  one named change end to end and open one pull request to `develop` (it never
+  merges it), while keeping every hard rule: never edit `openspec/`, work only
+  that change's Beads, record discoveries, and before closing a Bead run the
+  affected suite once (the full suite is CI's job) and note every commit SHA.
+  It runs every long command as one blocking call and never polls it.
 
 You can also pass the two flags separately, or point either at a file of your
 own: `--profile ./my-profile.json`, `--prompt ./my-prompt.md`. A bare name

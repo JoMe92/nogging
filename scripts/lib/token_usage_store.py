@@ -42,6 +42,14 @@ class StoreUnavailable(StoreError):
     """Dolt could not run; retain pending facts and retry (unlike a conflict)."""
 
 
+class StoreTimeout(StoreUnavailable):
+    """A Dolt call exceeded its bound; `seconds` is the bound that expired."""
+
+    def __init__(self, message, seconds):
+        super().__init__(message)
+        self.seconds = seconds
+
+
 def canonical_json(value):
     return json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=True, allow_nan=False)
 
@@ -83,6 +91,28 @@ def fact(table, values):
     return identity, digest([IDENTITY_VERSION, table, data]), data
 
 
+def latest_revisions(rows):
+    """The rows a `current_<table>` view selects, computed in Python.
+
+    The views keep a row unless another row with the same (source_id, event_id)
+    has a greater source_ordinal; Dolt evaluates that correlated NOT EXISTS
+    quadratically, so readers scan the base table and select here instead.
+    SQL NULL semantics are preserved: a row with a NULL key part or ordinal is
+    always kept and never supersedes another. Input order is preserved.
+    """
+    def key(row):
+        return row.get('source_id'), row.get('event_id')
+    best = {}
+    for row in rows:
+        ordinal = row.get('source_ordinal')
+        if ordinal is None or None in key(row):
+            continue
+        if key(row) not in best or ordinal > best[key(row)]:
+            best[key(row)] = ordinal
+    return [row for row in rows if row.get('source_ordinal') is None or None in key(row)
+            or row['source_ordinal'] >= best[key(row)]]
+
+
 def literal(value):
     if value is None:
         return 'NULL'
@@ -93,6 +123,8 @@ def literal(value):
 
 
 class Store:
+    TIMEOUT = 120   # seconds per Dolt call unless a caller passes a tighter bound
+
     def __init__(self, checkout, resolve_repository):
         self.root = Path(resolve_repository(checkout)['state_dir']) / 'token-usage'
         self.database = self.root / 'database'
@@ -110,22 +142,45 @@ class Store:
             finally:
                 os.umask(old)
 
-    def _dolt(self, *args, sql=None):
+    def _dolt(self, *args, sql=None, timeout=None):
+        bound = self.TIMEOUT if timeout is None else timeout
         try:
             result = subprocess.run(['dolt', *args], cwd=self.database, input=sql,
-                                    text=True, capture_output=True, timeout=120)
-        except (OSError, subprocess.TimeoutExpired) as exc:
+                                    text=True, capture_output=True, timeout=bound)
+        except subprocess.TimeoutExpired as exc:
+            # Never echo SQL payloads; the bound alone tells the caller what to tune.
+            raise StoreTimeout(f'local Dolt timed out after {bound:g}s; usage evidence must remain pending',
+                               bound) from exc
+        except OSError as exc:
             raise StoreUnavailable('local Dolt could not run; usage evidence must remain pending') from exc
         if result.returncode:
             # Do not echo SQL payloads or possible credential-bearing diagnostics.
             raise StoreUnavailable('local Dolt operation failed; usage evidence must remain pending')
         return result.stdout
 
-    def query(self, sql):
-        return json.loads(self._dolt('sql', '-r', 'json', '-q', sql)).get('rows', [])
+    def query(self, sql, timeout=None):
+        return json.loads(self._dolt('sql', '-r', 'json', '-q', sql, timeout=timeout)).get('rows', [])
 
-    def check_schema(self):
-        rows = self.query('SELECT * FROM store_meta')
+    def current(self, table, timeout=None):
+        """Latest-revision rows of one fact table (the `current_<table>` view's
+        rows) from a single base-table scan; never queries the slow view."""
+        if table not in FIELDS:
+            raise StoreError('unsupported fact table')
+        return latest_revisions(self.query(f'SELECT * FROM {table}', timeout=timeout))
+
+    def current_counts(self, timeout=None):
+        """Latest-revision fact count per table from one Dolt call over the
+        identity columns only (cheap enough for `status`)."""
+        rows = self.query(' UNION ALL '.join(
+            f"SELECT '{table}' AS fact_table, source_id, event_id, source_ordinal FROM {table}"
+            for table in FIELDS), timeout=timeout)
+        by_table = {table: [] for table in FIELDS}
+        for row in rows:
+            by_table[row['fact_table']].append(row)
+        return {table: len(latest_revisions(items)) for table, items in by_table.items()}
+
+    def check_schema(self, timeout=None):
+        rows = self.query('SELECT * FROM store_meta', timeout=timeout)
         if len(rows) != 1 or rows[0]['schema_version'] != SCHEMA_VERSION or rows[0]['identity_version'] != IDENTITY_VERSION:
             raise StoreError('unsupported usage schema/identity version; owner-controlled migration required')
         try:
@@ -168,6 +223,8 @@ class Store:
                     if key in fields:
                         columns.append(f'INDEX dim_{key} (`{key}`)')
                 statements.append(f'CREATE TABLE {table} ({", ".join(columns)})')
+                # Kept for compatibility (existing stores have them); readers use
+                # Store.current(), because Dolt evaluates this view quadratically.
                 statements.append(f'CREATE VIEW current_{table} AS SELECT a.* FROM {table} a WHERE NOT EXISTS '
                     f'(SELECT 1 FROM {table} b WHERE b.source_id=a.source_id AND b.event_id=a.event_id '
                     'AND b.source_ordinal>a.source_ordinal)')

@@ -1,6 +1,6 @@
 {
   "name": "nogg",
-  "version": "3.3.0",
+  "version": "3.4.0",
   "private": true,
   "description": "Structure for a team of agents: role boundaries, planning and Git-evidenced execution for Claude Code, Codex, Pi and Antigravity, built on OpenSpec and Beads.",
   "main": "bin/cli.js",

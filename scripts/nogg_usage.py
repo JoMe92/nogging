@@ -5,6 +5,8 @@ Claude cache v1: {schema_version: 1, observed_at: RFC3339,
 Account identity is deliberately unknown: source directories are not accounts.
 """
 import datetime as dt
+import hashlib
+import io
 import json
 import math
 import os
@@ -42,40 +44,231 @@ def percent(value):
     return value
 
 
+CODEX_SCAN_SCHEMA = 1
+CODEX_SCAN_PRINT = 256       # bytes fingerprinted at each end of a committed prefix
+CODEX_SCAN_CHUNK = 1 << 20
+
+
+def _codex_fold(region, best, damaged):
+    """Fold the lines of one byte region into (best, damaged) as a full scan does.
+
+    The region is decoded and split exactly like a text-mode file (locale
+    encoding, errors='replace', universal newlines). It always starts at byte 0
+    or just past a b'\\n', so splitting a file there changes neither decoding nor
+    line boundaries."""
+    for line in io.TextIOWrapper(io.BytesIO(region), errors='replace'):
+        try:
+            row = json.loads(line)
+        except ValueError:
+            damaged = True
+            continue
+        if not isinstance(row, dict) or row.get('type') != 'event_msg':
+            continue
+        payload = row.get('payload')
+        if not isinstance(payload, dict) or payload.get('type') != 'token_count':
+            continue
+        if payload.get('rate_limits') is None:
+            continue
+        try:
+            observed = timestamp(row.get('timestamp'))
+        except (ValueError, TypeError, OverflowError, OSError):
+            damaged = True
+            continue
+        if best is None or observed >= best[0]:
+            best = (observed, codex_windows(payload['rate_limits']))
+    return best, damaged
+
+
+def codex_windows(limits):
+    """Only the quota windows inspect_usage reads (primary, secondary): the rest
+    of a runtime's rate_limits record (plan, credits, ...) is neither returned
+    nor written to the scan index. A non-object is kept, so it still reports
+    as an unsupported source."""
+    if not isinstance(limits, dict):
+        return limits
+    return {key: limits[key] for key in ('primary', 'secondary') if key in limits}
+
+
+def _codex_digest(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def codex_scan_index_path(root):
+    """(index path, resolved root) for a sessions root, or (None, None) when no
+    usable cache directory exists. One index per root, under the usage cache."""
+    cache = _cache_root()
+    if not cache.is_absolute():
+        return None, None
+    try:
+        resolved = str(Path(root).resolve())
+    except (OSError, RuntimeError, ValueError):
+        return None, None
+    digest = hashlib.sha256(os.fsencode(resolved)).hexdigest()[:16]
+    return cache / f'codex-scan-{digest}.json', resolved
+
+
+def _codex_load_index(path, resolved):
+    """(files, present). Any unreadable, corrupt or foreign index is empty."""
+    if path is None:
+        return {}, False
+    try:
+        raw = path.read_bytes()
+    except FileNotFoundError:
+        return {}, False
+    except OSError:
+        return {}, True
+    try:
+        doc = json.loads(raw)
+        if (isinstance(doc, dict) and type(doc.get('schema_version')) is int
+                and doc['schema_version'] == CODEX_SCAN_SCHEMA and doc.get('root') == resolved
+                and isinstance(doc.get('files'), dict)):
+            return doc['files'], True
+    except Exception:   # derived data: a damaged index only costs a full rescan
+        pass
+    return {}, True
+
+
+def _codex_write_index(path, resolved, files):
+    """Replace the index atomically (owner-only); failure only loses reuse."""
+    import tempfile
+    temporary = None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        with tempfile.NamedTemporaryFile('w', dir=path.parent, prefix='.codex-scan-',
+                                         suffix='.tmp', delete=False) as stream:
+            temporary = Path(stream.name)
+            json.dump({'schema_version': CODEX_SCAN_SCHEMA, 'root': resolved, 'files': files},
+                      stream, sort_keys=True, separators=(',', ':'))
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, path)
+        temporary = None
+    except Exception:   # derived data: never let the cache change the result
+        pass
+    finally:
+        if temporary is not None:
+            try:
+                temporary.unlink()
+            except OSError:
+                pass
+
+
+def _codex_resume(stream, info, entry):
+    """(offset, best, damaged, head, tail) of an indexed rollout whose committed
+    prefix is provably unchanged, else None to reparse from byte 0."""
+    try:
+        if not isinstance(entry, dict):
+            return None
+        offset, best, damaged = entry['offset'], entry['best'], entry['damaged']
+        if (type(offset) is not int or not 0 < offset <= info.st_size
+                or type(entry['inode']) is not int or entry['inode'] != info.st_ino
+                or type(entry['device']) is not int or entry['device'] != info.st_dev
+                or type(damaged) is not bool):
+            return None
+        if best is not None:
+            if not isinstance(best, list) or len(best) != 2 or not isinstance(best[0], str) or best[1] is None:
+                return None
+            best = (timestamp(best[0]), best[1])
+        size = min(CODEX_SCAN_PRINT, offset)
+        stream.seek(0)
+        head = stream.read(size)
+        stream.seek(offset - size)
+        tail = stream.read(size)
+        if _codex_digest(head) != entry['head'] or _codex_digest(tail) != entry['tail']:
+            return None
+        return offset, best, damaged, head, tail
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None
+
+
+def _codex_scan_file(path, entry):
+    """(best, damaged, entry) for one rollout. Only bytes past the indexed
+    committed offset are parsed; `entry` is the new committed state, or None
+    when nothing may be reused next time."""
+    best, damaged = None, False
+    try:
+        with path.open('rb') as stream:
+            info = os.fstat(stream.fileno())
+            offset, head, tail = 0, b'', b''
+            resumed = _codex_resume(stream, info, entry)
+            if resumed is not None:
+                offset, best, damaged, head, tail = resumed
+            stream.seek(offset)
+            pending = bytearray()   # bytes after the last b'\n': not committed
+            while True:
+                chunk = stream.read(CODEX_SCAN_CHUNK)
+                if not chunk:
+                    break
+                cut = chunk.rfind(b'\n')
+                if cut < 0:
+                    pending += chunk
+                    continue
+                region = bytes(pending) + chunk[:cut + 1]
+                pending = bytearray(chunk[cut + 1:])
+                best, damaged = _codex_fold(region, best, damaged)
+                offset += len(region)
+                if len(head) < CODEX_SCAN_PRINT:
+                    head += region[:CODEX_SCAN_PRINT - len(head)]
+                tail = (tail + region[-CODEX_SCAN_PRINT:])[-CODEX_SCAN_PRINT:]
+            committed = None
+            if offset:
+                committed = {'inode': info.st_ino, 'device': info.st_dev, 'offset': offset,
+                             'head': _codex_digest(head), 'tail': _codex_digest(tail),
+                             'damaged': damaged,
+                             'best': None if best is None else [best[0].isoformat(), best[1]]}
+            # A trailing partial line is reported on this call exactly like a
+            # full scan, but it is re-read next time, never folded into the index.
+            if pending:
+                best, damaged = _codex_fold(bytes(pending), best, damaged)
+            return best, damaged, committed
+    except OSError:
+        return best, True, None
+
+
 def codex_observation(root):
     """Choose newest observation by event time, never filesystem mtime.
 
     Parse only metadata events. Invalid UTF-8 in transcripts does not prevent
     reading quota metadata. A newer invalid observation cannot resurrect an
     older valid quota sample. No authentication files are consulted.
+
+    Rollouts are append-only, so the scan is incremental. A per-root index,
+    `<usage cache>/codex-scan-<sha256(resolved root)[:16]>.json` (schema 1:
+    {schema_version, root, files: {relative path: {inode, device, offset, head,
+    tail, damaged, best}}}), records for each rollout the committed offset just
+    past its last parsed b'\\n', that prefix's sticky damaged flag and newest
+    observation ([event time, rate_limits]), and sha256 fingerprints of its
+    first and last <=256 bytes. Only bytes past the offset are parsed when the
+    inode/device match, the file is at least that long and both fingerprints
+    match; a new, replaced, truncated or rewritten file is reparsed from byte 0
+    and a vanished one is dropped. A trailing partial line is parsed on every
+    call but never committed. Files are combined in glob order with the same
+    tie rule, so the result equals a full scan. The index is derived data: it is
+    replaced atomically (file 0600; a directory it creates 0700), last writer
+    wins, written only when it changed, and any failure to read or write it
+    falls back to a full scan without changing the result. It stores no
+    transcript text and, of each rate_limits record, only its primary and
+    secondary windows.
     """
+    root = Path(root)
+    index_path, resolved = codex_scan_index_path(root)
+    previous, present = _codex_load_index(index_path, resolved)
+    prefix = os.path.join(str(root), '')
+    files = {}
     best = None
     damaged = False
     for path in root.glob('*/*/*/rollout-*.jsonl'):
-        try:
-            with path.open(errors='replace') as stream:
-                for line in stream:
-                    try:
-                        row = json.loads(line)
-                    except ValueError:
-                        damaged = True
-                        continue
-                    if not isinstance(row, dict) or row.get('type') != 'event_msg':
-                        continue
-                    payload = row.get('payload')
-                    if not isinstance(payload, dict) or payload.get('type') != 'token_count':
-                        continue
-                    if payload.get('rate_limits') is None:
-                        continue
-                    try:
-                        observed = timestamp(row.get('timestamp'))
-                    except (ValueError, TypeError, OverflowError, OSError):
-                        damaged = True
-                        continue
-                    if best is None or observed >= best[0]:
-                        best = (observed, payload['rate_limits'])
-        except OSError:
-            damaged = True
+        key = str(path)
+        key = key[len(prefix):] if key.startswith(prefix) else key
+        found, broken, entry = _codex_scan_file(path, previous.get(key))
+        damaged = damaged or broken
+        if entry is not None:
+            files[key] = entry
+        if found is not None and (best is None or found[0] >= best[0]):
+            best = found
+    if index_path is not None and (files or present) and files != previous:
+        _codex_write_index(index_path, resolved, files)
     if best is None:
         return None, None, 'malformed or unreadable source' if damaged else 'missing usage source'
     return *best, None

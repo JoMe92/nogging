@@ -32,7 +32,7 @@ In addition to the usual target-repo prerequisites (`bd`/Beads, `python3`,
 
 ## What the installer places under `.claude/`
 
-`npx github:JoMe92/nogging#v3.3.0 init` (or `update`) installs:
+`npx github:JoMe92/nogging#v3.4.0 init` (or `update`) installs:
 
 | Path | Behaviour |
 | --- | --- |
@@ -111,9 +111,13 @@ Task-tool prompt. A specialist returns a structured result and nothing else: it
 never claims, closes or re-statuses a Bead, never commits, and never writes
 `openspec/`. When it returns, the **Lead**:
 
-1. validates the work in stages: the affected tests while working, the
-   affected suite plus lint of the changed files before each commit, and
-   `scripts/test` (the full suite) once per Bead before closing it;
+1. validates the work in stages: the tests of the changed files while
+   working, those tests plus lint of the changed files before each commit, and
+   the affected suite once per Bead before closing it, leaving the full suite
+   to CI (`scripts/test` once per Bead only where the project has no CI). A
+   long command is one blocking `Bash` call with a `timeout` that covers it,
+   or `run_in_background` with a wait for its completion notification, never
+   a polling loop;
 2. commits in coherent steps within the configured commit range
    (`./scripts/nogg task-sizing` prints it), each with a Conventional subject
    that carries the Bead ID token and the tests for the code it changes, adding

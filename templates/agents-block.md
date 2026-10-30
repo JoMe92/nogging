@@ -13,9 +13,14 @@ are confined to *Tool notes* at the end.
    in `.nogging/config.json`; `./scripts/nogg task-sizing` prints it), is a
    Conventional Commit containing the Bead ID (e.g. `[SPEC-abc]`), and holds
    the tests for the code it changes. Test in stages: while working, run only
-   the affected tests; before each commit, the affected suite plus lint of the
-   changed files; once per Bead, before closing it, the full project suite.
-   CI stays the final gate. Then close the Bead (`bd close <id>`) and
+   the tests of the files you change; before each commit, those tests plus
+   lint of the changed files; once per Bead, before closing it, the affected
+   suite. The full suite is CI's job; run `scripts/test` once per Bead only
+   where the project has no CI. Run a long command (a suite, a build) as one
+   blocking call with a timeout long enough for it to finish —
+   `./scripts/nogg run-quiet -- <command>` prints one line on success and
+   only the tail on failure — and never poll a running command (*Tool notes*
+   has the per-runtime detail). Then close the Bead (`bd close <id>`) and
    immediately run `./scripts/nogg task-done <id>` to tick its mapped
    `tasks.md` line (it refuses unless the Bead is already closed), bundling
    that tick into the Bead's last commit, and add a Bead note listing every
@@ -116,6 +121,9 @@ write before either has pulled.
   (`scripts/hooks/pre-tool-use-openspec-guard`). Specialists are the
   `.claude/agents/*.md` roster, invoked in process through the Task tool.
   Operator entry points: `.claude/commands/{plan,discovery-review,sync-now}.md`.
+  For a long command give `Bash` a `timeout` that covers the run (up to 10
+  minutes), or use `run_in_background` and wait for its completion
+  notification; never re-read its output or `sleep` in between.
 - **Claude Code cloud sessions.** The assigned `claude/*` branch is never a PR
   source: push the branch `nogg worktree implement` / `worktree plan`
   allocated, and open the pull request from that branch instead.
@@ -125,7 +133,10 @@ write before either has pulled.
   mechanism: a specialist run is a separate supervised session,
   `scripts/nogg session launch --agent codex --role specialist:<type>
   --bead <id>`, under every specialist boundary rule. Operator entry points:
-  `.codex/prompts/{plan,discovery-review,sync-now}.md`.
+  `.codex/prompts/{plan,discovery-review,sync-now}.md`. For a long command
+  give `exec_command` a `yield_time_ms` that covers the run; if it returns
+  early, wait with one empty `write_stdin` and a yield of several minutes,
+  never a loop of one-second polls (each poll re-sends the whole context).
 - **Pi.** No per-tool hook and no execpolicy file — `openspec/` writes are
   blocked by the project-local guard extension
   (`.pi/extensions/nogging-guard.ts`), which also enforces the command
@@ -134,7 +145,8 @@ write before either has pulled.
   subagent mechanism: a specialist run is a separate supervised session,
   `scripts/nogg session launch --agent pi --role specialist:<type>
   --bead <id>`, under every specialist boundary rule. Operator entry points:
-  `.pi/prompts/{plan,discovery-review,sync-now}.md`.
+  `.pi/prompts/{plan,discovery-review,sync-now}.md`. Run a long command in one
+  shell call that waits for it, with a timeout that covers the run.
 
 ### Antigravity
 
