@@ -48,6 +48,7 @@ behind them.
 | --- | --- | --- | --- |
 | `session_agent` | string | `claude` | Agent a launch uses when you pass no `--agent`. |
 | `session_backend` | string | `tmux` | Terminal backend for launches without `--backend`: `tmux` or `herdr` (experimental). The `--backend` flag wins over this key. See [Using Nogging with herdr](using-with-herdr.md). |
+| `agent_routing_file` | path | `.nogging/agent-routing.json` | Repository-relative location of the agent routing file, resolved against the main checkout so every linked worktree reads the same file. See [the block below](#agent_routing_file). |
 | `session_tmux_command` | string | `tmux` | Executable used for the tmux backend. |
 | `session_tmux_socket` | string | `nogging` | Name of the dedicated tmux socket; sessions never run on your default tmux server. |
 | `session_herdr_command` | string | `herdr` | Executable used for the herdr backend. |
@@ -227,3 +228,50 @@ little output; far larger ones grow the context and the cached re-reads of
 every turn. Raising the maximum well above 1000 therefore costs more tokens per
 line, not fewer. `./scripts/nogg token-usage report --group-by bead` shows the
 figure for your own Beads (see [Token usage](token-usage.md)).
+### `agent_routing_file`
+
+A repository-relative path, `.nogging/agent-routing.json` by default. It is
+the location of the **agent routing file**, the one versioned, user-owned file
+that defines which agent each role launches when you pass no `--agent`. The
+path is resolved against the repository's main checkout, so every linked
+worktree reads the same file; put it under `.nogging/state/` to keep a
+host-local order out of the repository.
+
+The file carries `schema_version: 1` and a `roles` object whose keys are
+`lead`, `specialist` and `planning`, each an ordered list of entries:
+
+```json
+{
+  "schema_version": 1,
+  "roles": {
+    "lead": [
+      {"agent": "pi", "backend": "herdr"},
+      {"agent": "codex", "backend": "herdr", "on_unknown": "deny",
+       "models": {"complex": {"model": "gpt-6-luna", "effort": "medium"}},
+       "allow": [{"model": "gpt-6-luna"},
+                 {"model": "gpt-6.1-sol", "efforts": ["low"],
+                  "note": "extremely hard tasks only"}]},
+      {"agent": "claude", "backend": "herdr"}
+    ],
+    "planning": [{"agent": "claude"}]
+  }
+}
+```
+
+An entry has a required `agent` (`claude`, `codex`, `pi` or `antigravity`;
+`agy` is an alias) and may have `backend` (`tmux` or `herdr`), `tiers` (a
+non-empty subset of `routine`, `standard`, `complex`), `models` (keyed by
+tier, each `{model, effort}`, with `effort` allowed only for `claude` and
+`codex`), `allow` (a non-empty list of `{model, efforts, note}`), `on_unknown`
+(`warn` or `deny`) and `note` (one line of at most 200 characters). Every
+`models` selection must satisfy the entry's own `allow` list. An
+`orchestrator` role, an empty list, two entries of one role with the same
+agent and written backend, an unknown key at any level and a duplicate JSON
+key are refused naming the file, the JSON path and the rule. A missing file
+means no routing: the installer never writes the file and `update` never
+changes it, and nothing Nogging ships contains a routing preference.
+
+Check the file with `./scripts/nogg route check`; `validate` and `doctor`
+report an invalid file as a FAIL, and `doctor` NOTEs entries that cannot run
+on this host. Launch-time behaviour is in
+[Running work in sessions](running-work-in-sessions.md).
