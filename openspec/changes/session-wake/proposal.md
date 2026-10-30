@@ -43,7 +43,11 @@ fewer wakes, fewer turns per wake and a smaller orchestrator context together.
   level-triggered pass that reconciles every Lead's real state each tick: it
   nudges a Lead with a fixed message, tracks CI through the existing
   observation, finishes a usage-limit resume, and retires a merged session.
-  It uses no model. It is opt-in with `session_dispatch.enabled`.
+  It uses no model. It is **on by default** (`session_dispatch.enabled`, a missing
+  key means on) and is switched off with `session_dispatch.enabled: false` or
+  held for a while with `nogg pause`. Without an orchestrator session or a loops
+  timer it degrades quietly: it still observes and nudges Leads, holds the digest
+  and says so once in `doctor`.
 - **One coalesced wake digest.** Only decisions reach the orchestrator:
   blocked, needs input, crashed, stuck after its nudges, ready for review.
   Items wait for a quiet period, drop out if their condition clears, and
@@ -84,7 +88,9 @@ fewer wakes, fewer turns per wake and a smaller orchestrator context together.
   hook, runtime capabilities.
 - `orchestration-agent`: the wake protocol, no self-made watchers, the context
   budget, the keep-warm answer and pausing on instruction.
-- `installer`: ships the new modules and the Pi extension, inactive by default.
+- `installer`: ships the new modules and the Pi extension with dispatch on by
+  default, keeps an explicit `enabled` value on `update` and says so in the
+  release notes and the guide.
 
 ## Impact
 
@@ -103,9 +109,11 @@ idle-only send helper of `TASK-SCL-005` is reused rather than duplicated.
 `pi-extensions-glm-usage` is unaffected: optional extensions stay under
 `.pi/nogging/`, and this mandatory one lives beside the guard.
 
-Existing installs need no migration. With `session_dispatch` absent, nothing
-nudges, retires or wakes; only the richer `session watch` and event file are
-visible. Antigravity keeps its current events and pane classification and gets
+Dispatch is on by default (Product Owner decision 6): a repository whose
+`session_dispatch` or `enabled` key is absent now gets the dispatcher, while an
+explicit `enabled` value, `false` included, is kept by `update`. `retire_merged`
+stays `false` by default. The CHANGELOG and `docs/session-wake.md` say plainly
+that dispatch is on, what it does and how to switch it off or pause it. Antigravity keeps its current events and pane classification and gets
 no guard, no nudge and no new hook.
 
 Not in scope: an open-ended pause, a pause that stops running sessions, push notifications to a human, a resident daemon, Claude Code
