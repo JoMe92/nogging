@@ -14,8 +14,10 @@ which nothing is sent:
     warmed_at, compacted_at     the last keep-warm and the last compaction
 
 These come from the events file, `warm.json` and `pause.json` in the shared checkout, so
-they are no trust boundary: a forged one can only delay or bring forward one of the two
-fixed messages below, and those still go only to an idle session with an empty composer.
+they are no trust boundary. Nothing read from them reaches a message: only the two fixed
+ones below are sent, to an idle session with an empty composer. They can repeat, though:
+`warm.json` is the only record of a send, so a writer who deletes it between passes costs
+the orchestrator a turn per pass until the cache lapses.
 """
 from __future__ import annotations
 
@@ -163,10 +165,8 @@ def context_tokens(data: bytes) -> int | None:
     return None
 
 
-def _next_compaction(facts: dict[str, Any] | None, policy: dict[str, Any], now: datetime) -> str:
+def _next_compaction(facts: dict[str, Any], policy: dict[str, Any], now: datetime) -> str:
     def reason() -> str | None:
-        if facts is None:
-            return "no orchestrator"
         if facts.get("agent") != "claude":
             return "not a Claude orchestrator"
         if facts.get("state") != "idle":
@@ -183,7 +183,7 @@ def _next_compaction(facts: dict[str, Any] | None, policy: dict[str, Any], now: 
             return f"context {facts['context_tokens']} is below {policy['precompact_min_tokens']}"
         return None
 
-    age = _idle_age(facts, now) if facts is not None else None
+    age = _idle_age(facts, now)
     why = reason()
     if why:
         return f"no compaction due ({why})"
@@ -191,7 +191,7 @@ def _next_compaction(facts: dict[str, Any] | None, policy: dict[str, Any], now: 
     return f"next compaction {local(at)} if nothing is active then"
 
 
-def status_line(facts: dict[str, Any] | None, policy: dict[str, Any], now: datetime) -> str:
+def status_line(facts: dict[str, Any], policy: dict[str, Any], now: datetime) -> str:
     """The `doctor` NOTE: what is set and what the next pass may do."""
     keep = f"keep-warm after {duration(policy['keep_warm_after'])}" if policy["keep_warm"] else "keep-warm off"
     windows = ", ".join(policy["quiet_hours"]) or "none"

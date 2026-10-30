@@ -184,7 +184,7 @@ def read_events(path: str | os.PathLike[str], limit: int = EVENTS_ROTATE_BYTES) 
     for line in data.splitlines():
         try:
             record = json.loads(line)
-        except (ValueError, UnicodeDecodeError):
+        except (ValueError, UnicodeDecodeError, RecursionError):
             continue
         if isinstance(record, dict) and isinstance(record.get("event"), str):
             records.append(record)

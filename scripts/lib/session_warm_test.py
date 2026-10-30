@@ -240,7 +240,7 @@ class ContextTokens(unittest.TestCase):
 
 
 class Doctor(unittest.TestCase):
-    def line(self, value=None, active_policy=POLICY, now=T0):
+    def line(self, value, active_policy=POLICY, now=T0):
         return warm.status_line(value, active_policy, now)
 
     def test_the_settings_are_stated(self):
@@ -259,7 +259,7 @@ class Doctor(unittest.TestCase):
         self.assertIn((T0 + timedelta(minutes=40)).astimezone().strftime("%H:%M"), line)
 
     def test_each_reason_for_no_compaction(self):
-        for value, reason in ((None, "no orchestrator"), (facts(agent="pi"), "not a Claude orchestrator"),
+        for value, reason in ((facts(agent="pi"), "not a Claude orchestrator"),
                               (facts(state="working"), "orchestrator working"),
                               (facts(minutes=70), "the cache has lapsed"),
                               (facts(context_tokens=None), "context size unknown"),

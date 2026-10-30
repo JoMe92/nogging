@@ -43,7 +43,7 @@ fi
 
 # --- the sends with an injected clock: the target and the send are stubbed --------
 python3 - "$nogg" "$work/sends" <<'PY' && ok "sends: every gate, a refused and an unverified send" || bad "sends: see above"
-import json, os, pathlib, sys
+import json, os, pathlib, signal, stat, sys
 from datetime import datetime, timedelta, timezone
 from importlib.machinery import SourceFileLoader
 from unittest.mock import patch
@@ -239,7 +239,7 @@ with patch.object(m, "dispatch_dir", return_value=state):
     with patch.object(m, "run", return_value=Done(0, '[{"number": 1}]')) as gh:
         assert m._open_pull_request(False) is True and m._open_pull_request(False) is True
         assert gh.call_count == 1, gh.call_count
-        assert "open" in gh.call_args[0] and "--limit" in gh.call_args[0]
+        assert "open" in gh.call_args[0] and "--limit" in gh.call_args[0] and gh.call_args[1]["timeout"] > 0
     (state / "pulls.json").unlink()
     with patch.object(m, "run", return_value=Done(1, "")):
         assert m._open_pull_request(False) is None and not (state / "pulls.json").exists()
@@ -266,6 +266,32 @@ for value in ({}, {"transcript_path": None}, {"transcript_path": 7}, {"transcrip
               {"transcript_path": "a\0b"}, {"transcript_path": str(link)}, {"transcript_path": str(fifo)},
               {"transcript_path": str(state)}):
     assert m._hook_context_tokens(value) is None, value
+with patch.object(m, "warm_module", side_effect=ImportError("a partial upgrade")):
+    assert m._hook_context_tokens({"transcript_path": str(tail)}) is None
+
+# A planted FIFO or link cannot hold a `Stop` open or redirect the append.
+signal.alarm(20)
+for planted, make in (("fifo", os.mkfifo), ("link", lambda path: os.symlink(tail, path))):
+    path = state / f"{planted}.events.jsonl"
+    make(path)
+    before = tail.read_text()
+    with patch.object(m, "session_events_path", return_value=path):
+        m._append_session_event("orch", {"event": "turn_end"})
+    assert stat.S_ISREG(os.lstat(path).st_mode) and json.loads(path.read_text())["event"] == "turn_end", planted
+    assert tail.read_text() == before and list(state.glob(f"{planted}.events.jsonl.corrupt.*")), planted
+signal.alarm(0)
+
+# A line nested past the parser's depth is skipped: every pass reads this file.
+deep = state / "deep.events.jsonl"
+deep.write_text("[" * 200000 + "\n" + json.dumps({"event": "turn_end"}) + "\n")
+assert m.signals_module().read_events(deep) == [{"event": "turn_end"}]
+
+# The doctor adds no line for a missing orchestrator, which has its own, or with dispatch off.
+with patch.object(m, "orchestrator_target", return_value=(None, "target-not-running")):
+    with patch.dict(m.CFG, {"session_dispatch": {"enabled": True}}):
+        assert m.warm_diagnostics() == []
+with patch.dict(m.CFG, {"session_dispatch": {"enabled": False}}):
+    assert m.warm_diagnostics() == []
 PY
 
 # --- the `Stop` hook records the size for the orchestrator alone ------------------
