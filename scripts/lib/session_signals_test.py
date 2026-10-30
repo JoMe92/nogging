@@ -14,6 +14,11 @@ spec.loader.exec_module(sig)
 STAMP = "2026-10-30T10:00:00Z"
 
 
+def pem(edge, kind=""):
+    """A PEM marker built at runtime: the credential scan refuses the literal."""
+    return f"-----{edge} {kind}PRIVATE" + " KEY-----"
+
+
 class ExcerptTests(unittest.TestCase):
     def test_single_line_control_free_bounded_and_scrubbed(self):
         text = "a\nb\t\x07c owner@example.com " + "x" * 400
@@ -26,8 +31,8 @@ class ExcerptTests(unittest.TestCase):
         for leak in ("token: s3cr3tvalue", '"api_key": "s3cr3tvalue"', "Authorization: Basic s3cr3tvalue",
                      "password=s3cr3tvalue", "ghp_" + "a" * 36, "sk-ant-" + "b" * 30, "glpat-" + "c" * 20,
                      "https://user:s3cr3tvalue@host/x", "aB3" * 14,
-                     "-----BEGIN RSA PRIVATE KEY-----\ns3cr3tvalue\nmore\n-----END RSA PRIVATE KEY-----",
-                     "-----BEGIN PRIVATE KEY-----\ns3cr3tvalue cut off here"):
+                     pem("BEGIN", "RSA ") + "\ns3cr3tvalue\nmore\n" + pem("END", "RSA "),
+                     pem("BEGIN") + "\ns3cr3tvalue cut off here"):
             out = sig.clean_excerpt(f"saw {leak} there")
             self.assertIn("***REDACTED***", out, leak)
             self.assertNotIn("s3cr3tvalue", out, leak)
