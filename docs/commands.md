@@ -303,6 +303,31 @@ leaves one line in the context, not its whole output.
 
 **Read more.** [Operating model](operating-model.md).
 
+## session-hooks
+
+**Purpose.** Install, inspect or remove the one user-level Codex `Stop` hook that
+gives Codex Leads the stop guard. It merges a constant entry into
+`~/.codex/hooks.json`, records trust through Codex's own app-server and reads the
+result back from `hooks/list`. `status` reports `trusted`, `untrusted`, `modified`
+or `missing`, says `unknown` when Codex cannot be asked, and never fails. `remove`
+reverses both and leaves every other hook, and its trust, alone.
+
+**Common forms.**
+
+```bash
+./scripts/nogg session-hooks status --agent codex
+./scripts/nogg session-hooks install --agent codex
+./scripts/nogg session-hooks remove --agent codex
+```
+
+**Used by.** The operator, once per machine. `init` and `update` never do this,
+because it writes personal configuration, and because installing it removes the
+Codex sandbox as a boundary on that host: see the known limit in the security
+model first.
+
+**Read more.** [Using Nogging with Codex](using-with-codex.md) and the
+[Security model](security-model.md#the-codex-stop-hook).
+
 ## codex-prompts-link
 
 **Purpose.** Link the repository's Codex prompts into your Codex home as
@@ -685,13 +710,46 @@ other than a question (for example `idle_prompt`) records nothing.
 
 ```bash
 ./scripts/nogg session emit <event>
+./scripts/nogg session emit turn_end --guard [--runtime <agent>]
 ```
 
 The events are `turn_start`, `turn_end`, `needs_input`, `turn_error` and
 `session_end`; Claude Code's launch settings wire them to `UserPromptSubmit`,
-`Stop`, `Notification`, `StopFailure` and `SessionEnd`.
+`Stop`, `Notification`, `StopFailure` and `SessionEnd`. `--guard` is the `Stop`
+hook of an autonomous Lead: a stop with gaps prints `decision: "block"` once and
+records `guard_continue` instead of `turn_end`. `--runtime` names the hook's own
+runtime, so a Codex child inside a Claude session cannot speak for it.
 
 **Used by.** Agent hooks, not people.
+
+### session capabilities
+
+Report what a Lead of an agent and authority can do: launch child sessions, reach
+Dolt, push, open a pull request, rebase without an operator, and run in-process
+specialists. Every answer is derived from what `session launch` resolves, and one
+that cannot be established reads `unknown`, which a caller treats as no.
+
+```bash
+./scripts/nogg session capabilities --agent codex --profile trusted
+./scripts/nogg session capabilities --agent claude --profile restricted --json
+```
+
+**Used by.** The Orchestration Agent, before it writes a requirement into a
+kickoff.
+
+### session completion-check
+
+Report this session's gaps: `dirty` (uncommitted or untracked changes), `unpushed`
+(no upstream, or commits ahead) and `no-signal`. It uses local git only and reads
+the Bead's implementation worktree when one is allocated. It exits 1 with gaps and
+0 without them, and it exits 0 on any internal error, because a guard fails open.
+
+```bash
+./scripts/nogg session completion-check
+./scripts/nogg session completion-check --json
+```
+
+**Used by.** The stop guard on every runtime, and a Lead checking itself.
 
 ### session signal
 

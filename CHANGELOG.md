@@ -26,6 +26,16 @@ and GitHub Releases for that history.
   `session emit`, so Pi reads `working`, `idle` or `needs_input` in `watch`
   instead of `unknown`. It does nothing outside a supervised session, never
   uses `agent_end` as completion, and a missing file only warns at launch.
+- `nogg session completion-check` and a bounded stop guard: an autonomous Lead on
+  Claude Code, Codex or Pi that stops with uncommitted or unpushed work, or with
+  no signal, is continued once with a fixed message. Any failure of the check
+  allows the stop.
+- `nogg session-hooks {status,install,remove} --agent codex` manages the one
+  user-level Stop hook the guard needs on Codex, with trust recorded through
+  Codex's own API. `doctor` reports its state, and `init` and `update` never
+  install it.
+- `nogg session capabilities` reports what a Lead of an agent and authority can
+  do, derived from what launch resolves.
 
 ### Changed
 
@@ -35,6 +45,13 @@ and GitHub Releases for that history.
   event, Codex rollout, pane adapter): an idle event yields to a pane that is
   working, a Claude session no longer reads `idle` during a later turn, and
   only question notifications (not `idle_prompt`) count as `needs_input`.
+- A `session launch` that cannot write its session or usage state refuses before
+  any side effect and says to signal blocked, instead of a raw `Errno 30`.
+- `AGENTS.md` gains hard rule 6 and the autonomous prompt replaces waiting for CI
+  with `session signal done`: a run ends with a signal, and a refused step means
+  signal blocked at once.
+- A Codex Lead launched for a Bead acknowledges its startup turn and waits for its
+  kickoff, and `recover` labels a Bead a live session owns, so no Lead adopts it.
 
 ## [3.4.0] - 2026-10-30
 

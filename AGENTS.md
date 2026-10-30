@@ -61,6 +61,12 @@ the rest applies to every runtime — Claude Code, Codex, or another.
    any tool — this note is the primary "where was I" signal, and it costs
    nothing.
 
+6. End every supervised run with a signal: a pushed pull request and
+   `./scripts/nogg session signal done "PR #<n> open"`, or
+   `./scripts/nogg session signal blocked "<why>"`. A Bead note alone is not a
+   signal, because nobody reads it. A refused step means signal blocked at
+   once: never route around a refusal by switching runtime or retrying.
+
 ## The write boundary
 
 OpenSpec owns approved product intent, Beads owns executable work, Git owns the
@@ -86,8 +92,14 @@ fresh, resumed, or after a tool switch — **before selecting work with
    compare its commits (`git log --oneline --grep '\[<id>\]'`) with the task
    slice and finish what is missing; once complete, verify it (the affected
    suite, as in hard rule 3), add the evidence note with every commit SHA, and `bd close` it. **Never
-   re-implement committed work** (that produces duplicate commits).
+   re-implement committed work** (that produces duplicate commits). A Bead
+   `recover` marks `owned by session <name>` is not yours to adopt, even when it
+   looks unfinished: leave its worktree, branch, commits and notes alone.
 4. Only then select work with `bd ready`.
+
+A session launched with `--bead` works only that Bead, starting from its kickoff,
+not from being launched. It skips step 4, and whatever `recover` reports about any
+other Bead it reports to the operator instead of resolving.
 
 ## Specialist delegation
 

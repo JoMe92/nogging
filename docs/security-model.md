@@ -224,6 +224,51 @@ Inspect generated units and environment sources; do not place secrets directly
 in unit files. Session logs under `.nogging/state/sessions/` may contain prompts
 and command output, so protect and review them before sharing or publishing.
 
+### The Codex stop hook
+
+Codex runs a local hook directly, outside its sandbox, so a hook is a way out of
+the sandbox for whoever can define one. That decides three things about the stop
+guard's hook:
+
+- **It is user-level.** A project hook cannot be trusted in a fresh worktree: its
+  trust key holds the absolute path of `.codex/hooks.json`, and every Lead gets a
+  new one. `-c` trust has no effect. A persisted user-level record works from any
+  working directory, because a user hook's key has no project path.
+- **`--dangerously-bypass-hook-trust` is refused.** With it, a Lead in
+  `workspace-write` could write `.codex/hooks.json` in its own worktree and get a
+  command run outside its sandbox on its next stop. `session-launch` never passes
+  it, and a test asserts that.
+- **Only one constant command is ever trusted.** `nogg session-hooks install` is
+  an explicit operator act on personal configuration, like `codex-prompts-link`.
+  It records the hash Codex reports for the exact constant command, and only as
+  Codex lists it from the user-level file. A sandboxed Lead cannot edit that file,
+  and any later edit reads `modified` and is skipped. The command does nothing
+  outside a supervised session, and the text the guard sends a Lead is fixed: it
+  carries gap names, never agent output.
+
+**Known limit: installing this hook removes the sandbox as a boundary for every
+supervised Codex session in `workspace-write`, in every repository on that host.**
+That covers Lead, specialist and planning sessions, because the hook fires for all
+of them, and it holds under `on-request` approval too, because editing a file
+inside a writable root needs no approval. The trusted hash pins the command's text,
+not the file it runs. That file is `scripts/nogg` in the checkout, which such a
+session can edit: the wrapper adds the checkout with `--add-dir`, and only
+`openspec/` is read-only inside it. The hook then runs the edited file outside the
+sandbox, with the network and the operator's full filesystem, at that session's
+next stop. The hook also runs `git` on a checkout the session controls, where
+repository configuration such as `core.fsmonitor` or a clean filter runs commands,
+and session state under `.nogging/state/` is the session's to rewrite. An operator's
+own runs of `scripts/nogg`, and the sync timer's, already run that same file
+unsandboxed, so the weakness is not new, but the hook makes it immediate and under
+the session's control. Refusing `--dangerously-bypass-hook-trust` does not close
+this. Until the hook runs nothing a sandboxed session can write, install it only
+where you accept that. `status` and `doctor` repeat this warning while it is
+installed. Without it, Codex Leads run normally and only the stop guard is off.
+
+Codex keys a hook by its position in the file, so `remove` leaves an empty group
+in place of an entry that another hook follows. Splicing it out would renumber
+that hook and silently untrust it.
+
 ### Runtime state grants
 
 Runtime state grants are configured with `agent_state_roots` in
