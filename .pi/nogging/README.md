@@ -40,5 +40,4 @@ offline (no Pi, network or build step).
 
 | Extension | Entry | Purpose |
 | --- | --- | --- |
-
-No extension is shipped yet.
+| `glm-usage` | `extensions/glm-usage/index.ts` | Z.ai GLM coding-plan quota: footer `nogging-glm-usage`, `/glm-usage`, shared snapshot `pi-zai.json`. The key comes only from `ctx.modelRegistry.getApiKeyForProvider("zai")`. |
