@@ -299,6 +299,23 @@ full-screen TUIs and interactive prompts update live in `session log --follow`
 without freezing or unbounded buffer accumulation. Each log file is strictly
 bounded by `session_log_max_bytes` and rotated up to `session_log_rotation_depth`.
 
+### What `session watch` believes
+
+`session watch` classifies each session from one evidence order, whatever the
+agent: a fresh structured event from the session's own events file, then a
+Codex rollout's last turn, then the pane adapter. A Claude session reports
+`turn_start`, `turn_end`, a question, an API error and its end through hooks;
+a finished Codex turn is read from its own rollout with no hook installed,
+and the reply's first line shows as an `excerpt`. An `idle` from an event
+yields to a pane that is plainly working, so a turn whose start hook was lost
+is still seen as `working`, and nothing is ever read as finished from missing
+evidence: a session with none reads `unknown`.
+
+A Lead ends its work with `./scripts/nogg session signal done "<reason>"` or
+`signal blocked "<reason>"`. `watch` prints the signal as its own `done` or
+`blocked` line with the reason, once, until the next turn starts. The session
+still classifies `idle`, so `send`, loop deferral and `sweep` behave as before.
+
 ## Attach and steer
 
 ```bash

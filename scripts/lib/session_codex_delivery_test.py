@@ -91,5 +91,36 @@ class ReceiptReaderTests(unittest.TestCase):
         self.assertEqual("source unavailable", reader.snapshot_source(self.path / "missing", "thread")["unknown"])
 
 
+class LastTurnTests(unittest.TestCase):
+    def read(self, *lines):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "rollout.jsonl"
+            path.write_text("\n".join(lines) + "\n")
+            return reader.last_turn(path)
+
+    @staticmethod
+    def event(kind, **payload):
+        return json.dumps({"type": "event_msg", "payload": {"type": kind, **payload}})
+
+    def test_complete_turn_carries_its_message(self):
+        turn = self.read(self.event("task_started"), self.event("task_complete", last_agent_message="PR open"))
+        self.assertEqual(("idle", "task_complete", "PR open"), (turn["state"], turn["end"], turn["message"]))
+
+    def test_abort_carries_its_reason_and_a_new_turn_resets_it(self):
+        turn = self.read(self.event("task_started"), self.event("turn_aborted", reason="interrupted"))
+        self.assertEqual(("idle", "aborted", "interrupted"), (turn["state"], turn["end"], turn["reason"]))
+        turn = self.read(self.event("task_started"), self.event("turn_aborted", reason="x"), self.event("task_started"))
+        self.assertEqual(("running", None, None), (turn["state"], turn["end"], turn["reason"]))
+
+    def test_unknown_records_and_a_terminal_without_a_start_prove_nothing(self):
+        turn = self.read(self.event("future_kind"), "garbage", self.event("task_complete", last_agent_message="x"))
+        self.assertEqual("none", turn["state"])
+        self.assertEqual("none", reader.last_turn("/nonexistent/rollout.jsonl")["state"])
+
+    def test_non_text_message_is_dropped(self):
+        turn = self.read(self.event("task_started"), self.event("task_complete", last_agent_message=7))
+        self.assertIsNone(turn["message"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -561,6 +561,25 @@ PY
 [[ "$hook_check" == "ok" ]] \
   && ok "launch: Stop/Notification hooks appended, pre-existing Stop/PreToolUse hooks kept and not reordered" \
   || { echo "FAIL - launch: hook merge did not append as expected: $hook_check"; fail=1; }
+lifecycle_check=$(python3 - "$settings" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+hooks = d.get("hooks", {})
+want = {"UserPromptSubmit": "turn_start", "StopFailure": "turn_error", "SessionEnd": "session_end"}
+for event, emitted in want.items():
+    commands = [h["command"] for e in hooks.get(event, []) for h in e["hooks"]]
+    if not (len(commands) == 1 and commands[0].endswith(f" session emit {emitted}")):
+        sys.exit(f"{event}: {commands}")
+if "SubagentStop" in hooks:
+    sys.exit("SubagentStop must not be wired")
+if "Bash(./scripts/nogg session signal:*)" not in d["permissions"]["allow"]:
+    sys.exit("the Lead may not run session signal")
+print("ok")
+PY
+) || true
+[[ "$lifecycle_check" == "ok" ]] \
+  && ok "launch: turn_start/turn_error/session_end hooks wired, SubagentStop not, and a Lead may run session signal" \
+  || { echo "FAIL - launch: lifecycle hooks or signal rule missing: $lifecycle_check"; fail=1; }
 unset NOGGING_ROOT
 
 root="$work/sob007-emit"; make_obs_root "$root"
@@ -596,9 +615,9 @@ m.tmux_sessions = lambda: {'s1'}
 m.session_pane_text = lambda name: 'esc to interrupt'
 print(m.classify_session({'name': 's1', 'agent': 'claude'})[0])
 ")
-[[ "$got" == "idle" ]] \
-  && ok "watch: a Claude session with a non-empty events file is classified via Layer 2 (idle), not the conflicting pane text" \
-  || bad "watch: Layer-2-preferred classification was $got, expected idle"
+[[ "$got" == "working" ]] \
+  && ok "watch: a Claude session's idle event yields to a live working pane (a lost turn_start hook does not pin idle)" \
+  || bad "watch: idle event with a working pane was $got, expected working"
 
 printf '{"timestamp":"2026-10-03T00:00:01Z","session":"s1","event":"needs_input"}\n' \
   >>"$root/.nogging/state/sessions/s1.events.jsonl"

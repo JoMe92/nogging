@@ -5,7 +5,7 @@ It intentionally contains no LLM call and makes no semantic product decision.
 """
 from __future__ import annotations
 
-import argparse, base64, datetime as dt, fcntl, fnmatch, getpass, hashlib, importlib.util, json, math, os, re, shlex, shutil, signal, socket, subprocess, sys, tempfile, time, uuid
+import argparse, base64, datetime as dt, fcntl, fnmatch, getpass, hashlib, importlib.util, json, math, os, re, select, shlex, shutil, signal, socket, subprocess, sys, tempfile, time, uuid
 import urllib.parse, urllib.request
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -2799,6 +2799,18 @@ def merge_supervised_launch_permissions(settings, role):
     permissions["allow"] = merged_allow
     return result
 
+SIGNAL_RULE = "Bash(./scripts/nogg session signal:*)"
+def merge_signal_permission(settings):
+    """`session signal` needs no network and no Dolt, so every restricted Lead
+    may state that it is blocked or done. Existing rules are kept."""
+    result = json.loads(json.dumps(settings))
+    permissions = result.setdefault("permissions", {})
+    allow = list(permissions.get("allow") or [])
+    if SIGNAL_RULE not in allow:
+        allow.append(SIGNAL_RULE)
+    permissions["allow"] = allow
+    return result
+
 def supervised_launch_permission_notes():
     notes = []
     project = ROOT / '.claude/settings.json'
@@ -2867,28 +2879,31 @@ def deny_openspec_writes(settings):
             deny.append(entry)
     perms["deny"] = deny
     return result
-# Claude Layer 2 (design.md Decision 4): one `Stop` and one `Notification`
-# hook entry, each invoking `session emit` so `watch` can prefer a structured
+# Claude Layer 2 (session-wake design Decision 2): one hook entry per lifecycle
+# event, each invoking `session emit` so `watch` can prefer a structured
 # events file over pane-scraping. Appended into `hooks.<event>` by
 # merge_observability_hooks() below — never replacing or reordering an
 # existing entry for that event, exactly like FLOOR_DENY / OPENSPEC_READONLY_DENY.
+def _emit_hook(event):
+    return {"hooks": [{"type": "command",
+                       "command": f"{shlex.quote(str(ROOT / 'scripts/nogg'))} session emit {event}"}]}
+# `SubagentStop` is deliberately not wired: a subagent finishing is not a turn end.
 OBSERVABILITY_HOOKS = {
-    "Stop": {"hooks": [{"type": "command", "command": f"{shlex.quote(str(ROOT / 'scripts/nogg'))} session emit turn_end"}]},
-    "Notification": {"hooks": [{"type": "command", "command": f"{shlex.quote(str(ROOT / 'scripts/nogg'))} session emit needs_input"}]},
+    "UserPromptSubmit": "turn_start",
+    "Stop": "turn_end",
+    "Notification": "needs_input",
+    "StopFailure": "turn_error",
+    "SessionEnd": "session_end",
 }
 def merge_observability_hooks(settings):
-    """Return a deep copy of `settings` with the Layer-2 Stop/Notification
-    hook entries appended to `hooks.<event>` — appended, never replacing or
+    """Return a deep copy of `settings` with the Layer-2 lifecycle hook
+    entries appended to `hooks.<event>` — appended, never replacing or
     reordering any existing entry for that event. Input never mutated."""
     result = json.loads(json.dumps(settings))
     hooks = result.setdefault("hooks", {})
-    obs_hooks = {
-        "Stop": {"hooks": [{"type": "command", "command": f"{shlex.quote(str(ROOT / 'scripts/nogg'))} session emit turn_end"}]},
-        "Notification": {"hooks": [{"type": "command", "command": f"{shlex.quote(str(ROOT / 'scripts/nogg'))} session emit needs_input"}]},
-    }
-    for event, entry in obs_hooks.items():
+    for event, emitted in OBSERVABILITY_HOOKS.items():
         existing = list(hooks.get(event) or [])
-        existing.append(entry)
+        existing.append(_emit_hook(emitted))
         hooks[event] = existing
     return result
 def resolve_launch_file(value, dir_key, default_dir, suffix):
@@ -5383,6 +5398,8 @@ def _session_launch(role, bead, cwd, read_only, owner,
         base_settings = {k: v for k, v in source_settings.items()
                          if k not in ("//", "nogging_floor", "nogging_openspec_readonly", "model", "effort")}
         base_settings = merge_supervised_launch_permissions(base_settings, role_meta)
+        if role_meta == "lead":
+            base_settings = merge_signal_permission(base_settings)
         settings_out = base_settings if floor_lifted else merge_floor(base_settings)
         if openspec_readonly:
             settings_out = deny_openspec_writes(settings_out)
@@ -6346,76 +6363,137 @@ def await_antigravity_first_turn(name, timeout=None):
     """Compatibility wrapper: a plain send waits out Antigravity's first turn."""
     return await_session_input_ready(name, for_kickoff=False, timeout=timeout)
 
-def session_emit(event):
-    """Append one structured JSON line to the calling session's own
-    `<name>.events.jsonl` (design.md Decision 4). The session name is read
-    from `NOGG_SESSION_NAME`, set as session environment by `session_launch`
-    for exactly this purpose — a bare `Stop`/`Notification` hook command
-    carries no arguments identifying which session it fired in."""
+def signals_module():
+    """Load the pure lifecycle-event mapping from scripts/lib beside this script."""
+    lib = str(Path(__file__).resolve().parent / "lib")
+    if lib not in sys.path:
+        sys.path.insert(0, lib)
+    sys.dont_write_bytecode = True
+    import session_signals
+    return session_signals
+def _read_hook_stdin(limit, wait=1.0):
+    """At most `limit` bytes of hook JSON from stdin, or b'' for a terminal, a
+    closed stdin or a writer that stays silent for `wait` seconds."""
+    try:
+        fd = sys.stdin.fileno()
+        if os.isatty(fd):
+            return b""
+        chunks, size, deadline = [], 0, time.monotonic() + wait
+        while size < limit:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not select.select([fd], [], [], remaining)[0]:
+                break
+            chunk = os.read(fd, limit - size)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            size += len(chunk)
+        return b"".join(chunks)
+    except (OSError, ValueError, AttributeError):
+        return b""
+def _append_session_event(name, record):
+    """Append one event line, first rotating a file that reached the cap into
+    `<name>.events.jsonl.1` so the live file stays small."""
+    path = session_events_path(name)
+    try:
+        if path.stat().st_size >= signals_module().EVENTS_ROTATE_BYTES:
+            os.replace(path, path.with_name(path.name + ".1"))
+    except OSError:
+        pass
+    with path.open("a") as fh:
+        fh.write(json.dumps(record) + "\n")
+def _supervised_session_name(command):
     name = os.environ.get("NOGG_SESSION_NAME")
     if not name:
         raise RuntimeError(
-            "session emit: NOGG_SESSION_NAME is not set (not running inside "
+            f"{command}: NOGG_SESSION_NAME is not set (not running inside "
             "a session `scripts/nogg session launch` started)")
-    if os.environ.get("NOGG_SESSION_AGENT") == "antigravity":
+    return name
+def session_emit(event):
+    """Append one normalized schema 2 line to the calling session's own
+    `<name>.events.jsonl` (session-wake design Decision 2). The session name is
+    read from `NOGG_SESSION_NAME`, set as session environment by
+    `session_launch` for exactly this purpose — a bare hook command carries no
+    arguments identifying which session it fired in. Hook JSON on stdin is read
+    up to 64 KiB, tolerated when invalid, and reduced to a field whitelist."""
+    name = _supervised_session_name("session emit")
+    agent = os.environ.get("NOGG_SESSION_AGENT")
+    if agent == "antigravity":
         if event != "turn_end":
             raise RuntimeError("unsupported Antigravity hook event")
         antigravity_stop_event(name, json.load(sys.stdin))
         return
-    with session_events_path(name).open("a") as fh:
-        fh.write(json.dumps({"timestamp": now(), "session": name, "event": event}) + "\n")
-# A Layer-2 hook event maps onto one of classify()'s Layer-1 states: `Stop`
-# fires once Claude finishes a turn (idle, awaiting the next input); the
-# `Notification` hook this change wires fires on a permission prompt
-# (needs_input). Any other event name (future hook) classifies as `unknown`
-# rather than silently reusing a stale state.
-EVENT_STATE_MAP = {"turn_end": "idle", "needs_input": "needs_input"}
-def _layer2_state(name):
-    """The most recent Layer-2 state for a Claude session's events file, or
-    None when that file does not exist or has no lines yet — the signal
-    `classify_session` uses to fall back to Layer-1 pane-scraping (Decision 4:
-    Layer 2 is additive, never required)."""
-    path = session_events_path(name)
-    if not path.exists() or path.stat().st_size == 0:
+    signals = signals_module()
+    payload = signals.read_payload(_read_hook_stdin(signals.STDIN_LIMIT))
+    if not signals.is_recorded(event, payload):
+        return
+    _append_session_event(name, signals.build_event(name, event, payload, now(), agent, redact))
+SIGNAL_NEXT_STEP = {
+    "blocked": "Record the detail in the Bead note (a discovery if it blocks), then end your turn.",
+    "done": "End your turn now.",
+}
+def session_signal(kind, reason):
+    """State that this supervised session is blocked or done. A signal is a fact
+    for the dispatcher and `watch`, never a classified state; it needs neither
+    the network nor Dolt, so a sandboxed Lead can send it."""
+    name = _supervised_session_name("session signal")
+    signals = signals_module()
+    try:
+        record = signals.build_signal(name, kind, reason, now(), redact)
+    except ValueError as exc:
+        raise RuntimeError(f"session signal: {exc}") from exc
+    _append_session_event(name, record)
+    enabled = (CFG.get("session_dispatch") or {}).get("enabled") is True
+    print(f"{name}: {kind} recorded ({record['excerpt']})")
+    if enabled:
+        print("dispatch is on: " + SIGNAL_NEXT_STEP[kind]
+              + (" CI is watched for you; do not wait for it." if kind == "done" else ""))
+    else:
+        print("dispatch is off: " + SIGNAL_NEXT_STEP[kind]
+              + (" Wait for CI yourself, as before." if kind == "done" else ""))
+def _rollout_evidence(rec):
+    """The Codex rollout's last turn for this session's exact thread, or None."""
+    try:
+        thread_id = resolve_codex_thread_id(rec)
+        rollout = _codex_rollout_path(thread_id, rec.get("working_dir")) if thread_id else None
+        turn = codex_delivery_module().last_turn(rollout) if rollout else None
+    except (OSError, ValueError, TypeError, RuntimeError):
         return None
-    last_event = None
-    with path.open() as fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                last_event = json.loads(line).get("event")
-            except ValueError:
-                continue
-    if last_event is None:
-        return None
-    return EVENT_STATE_MAP.get(last_event, "unknown")
-def classify_session(rec, live=None):
-    """One-shot state classification for a managed session record: Layer 2
-    (the session's own `<name>.events.jsonl`) when present and non-empty for
-    a Claude session, else Layer-1 pane-scraping. Returns `(state,
-    pane_text)` — `pane_text` is still the real pane capture even on a
-    Layer-2 hit. A saved permission notification is advisory: reliable live
-    evidence can resolve it even when no subsequent Stop hook fired."""
+    return turn if turn and turn["state"] != "none" else None
+def classify_session_detail(rec, live=None):
+    """One-shot state classification with one evidence order for every agent: a
+    fresh structured event, then a Codex rollout turn state, then the pane
+    adapter keyed off the recorded agent (herdr `agent_status` joins before the
+    pane in TASK-SWK-002). Returns `{"state", "source", "pane", "excerpt"}`. An
+    `idle` or stale `needs_input` yields to live evidence, and `unknown` stays
+    `unknown`: no source may infer completion."""
     name = rec.get("name")
     live = tmux_sessions() if live is None else live
     if name not in live:
-        return "ended", ""
+        return {"state": "ended", "source": "none", "pane": "", "excerpt": None}
     agent = rec.get("agent") or "claude"
+    signals = signals_module()
     pane = session_pane_text(name)
-    if agent == "claude":
-        layer2 = _layer2_state(name)
-        if layer2 is not None:
-            if layer2 == "needs_input":
-                live_state = classify(pane, CLAUDE_ADAPTER)
-                if live_state != "unknown":
-                    return live_state, pane
-            return layer2, pane
     adapter = ADAPTERS.get(agent)
-    if adapter is None:
-        return "unknown", ""
-    return classify(pane, adapter), pane
+    pane_state = classify(pane, adapter) if adapter is not None else None
+    event_state, event = signals.latest_state(signals.read_events(session_events_path(name)))
+    excerpt = (event or {}).get("excerpt") if event_state in ("idle", "waiting_background", "limit") else None
+    rollout_state, turn = None, None
+    if agent == "codex" and event_state in (None, "idle"):
+        turn = _rollout_evidence(rec)
+        if turn:
+            rollout_state = "working" if turn["state"] == "running" else "idle"
+    state, source = signals.resolve_state(event_state, rollout_state, pane_state)
+    if source == "rollout" and state == "idle":
+        excerpt = signals.clean_excerpt(turn["message"] or turn["reason"], redact)
+    elif source != "event":
+        excerpt = None
+    return {"state": state, "source": source, "pane": pane, "excerpt": excerpt}
+def classify_session(rec, live=None):
+    """`(state, pane_text)` of `classify_session_detail`; `pane_text` is the real
+    pane capture whichever source decided the state."""
+    detail = classify_session_detail(rec, live)
+    return detail["state"], detail["pane"]
 def _watch_targets(names):
     if names:
         return list(names)
@@ -6430,6 +6508,17 @@ def _emit_watch_event(fmt, name, event, **fields):
         line = f"{now()} {name} {event}"
         print(f"{line} {extra}" if extra else line)
     sys.stdout.flush()
+def _watch_signal(name, st, fmt):
+    """Report a `blocked`/`done` signal as its own event, once. It is a fact the
+    Lead stated, not a state, so the classified state above it is unchanged."""
+    signals = signals_module()
+    signal_event = signals.current_signal(signals.read_events(session_events_path(name)))
+    stamp = (signal_event or {}).get("timestamp")
+    if signal_event is None:
+        st["signal"] = None
+    elif stamp != st.get("signal"):
+        _emit_watch_event(fmt, name, signal_event["event"], reason=signal_event.get("excerpt"))
+        st["signal"] = stamp
 def watch_poll_once(tracked, stall_secs, fmt):
     """One polling pass over every session in `tracked`, a mutable
     `{name: {"state": str|None, "stalled": bool}}` map the caller carries
@@ -6450,6 +6539,10 @@ def watch_poll_once(tracked, stall_secs, fmt):
         prev = st.get("state")
         if state != prev:
             fields = {}
+            if state in ("idle", "waiting_background", "limit"):
+                excerpt = classify_session_detail(rec, live)["excerpt"]
+                if excerpt:
+                    fields["excerpt"] = excerpt
             if state == "limit":
                 until = (_antigravity_resume_status(rec, 60)[1] if rec.get("agent") == "antigravity"
                          else resolve_clock_time(pane))
@@ -6462,6 +6555,7 @@ def watch_poll_once(tracked, stall_secs, fmt):
             if log_path.exists() and (time.time() - log_path.stat().st_mtime) >= stall_secs:
                 _emit_watch_event(fmt, name, "stalled")
                 st["stalled"] = True
+        _watch_signal(name, st, fmt)
     refresh_session_usage(running)   # bounded host usage refresh; never fails the watch
 def session_watch(names, interval, stall_after, fmt, once=False):
     stall_secs = parse_duration(stall_after)
@@ -9554,6 +9648,9 @@ def main():
     srw.add_argument("name"); srw.add_argument("--message")
     semit = ssub.add_parser("emit")
     semit.add_argument("event")
+    ssig = ssub.add_parser("signal", help="state that this supervised session is blocked or done")
+    ssig.add_argument("kind", choices=("blocked", "done"))
+    ssig.add_argument("reason", help="why, in at most 300 characters")
     # `run-quiet` owns everything after its first `--` verbatim (the command's
     # own options and any later `--` included): split it off before argparse,
     # whose `--` handling differs across Python versions.
@@ -9739,6 +9836,8 @@ def session_cmd(args):
         session_resume_when_ready(args.name, args.message)
     elif args.session_command == "emit":
         session_emit(args.event)
+    elif args.session_command == "signal":
+        session_signal(args.kind, args.reason)
 if __name__ == "__main__":
     try: main()
     except PartialSyncError as exc: print(f"nogg: {exc}", file=sys.stderr); sys.exit(3)

@@ -14,6 +14,20 @@ and GitHub Releases for that history.
 - `nogg loop add`, `list`, `show`, `log`, `pause`, `resume`, `approve` and
   `remove` for managing host-approved recurring work, with atomic host state,
   hash-bound approvals, orchestrator guidance and the scheduled-loops guide.
+- `nogg session signal blocked|done "<reason>"` lets a supervised Lead state
+  the end of its work as a fact (allowed in the restricted profile, no network
+  or Dolt); `session watch` reports it as its own event.
+- Session events use one normalized schema with a field whitelist, redacted
+  one-line excerpts and rotation at 256 KiB. Claude's launch settings now also
+  wire `UserPromptSubmit`, `StopFailure` and `SessionEnd`, and Codex turns are
+  read from the rollout with no hook install.
+
+### Changed
+
+- `session watch` classifies every agent from one evidence order (structured
+  event, Codex rollout, pane adapter): an idle event yields to a pane that is
+  working, a Claude session no longer reads `idle` during a later turn, and
+  only question notifications (not `idle_prompt`) count as `needs_input`.
 
 ## [3.4.0] - 2026-10-30
 
