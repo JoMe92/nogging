@@ -16,7 +16,7 @@ cp "$source_root/scripts/nogg" "$repo/nogg"
 mkdir -p "$repo/lib"
 cp "$source_root/scripts/lib/session_backend.py" "$source_root/scripts/lib/agent_routing.py" \
   "$source_root/scripts/lib/session_backend_tmux.py" "$source_root/scripts/lib/loop_config.py" \
-  "$source_root/scripts/lib/loop_schedule.py" "$repo/lib/"
+  "$source_root/scripts/lib/loop_schedule.py" "$source_root/scripts/lib/session_hooks.py" "$repo/lib/"
 chmod +x "$repo/nogg"
 printf '%s\n' '# Tasks' '' '- [ ] TASK-DEMO-001 Implement demo' >"$repo/openspec/changes/demo/tasks.md"
 printf '%s\n' '.nogging/locks/' '.nogging/state/' >"$repo/.gitignore"
