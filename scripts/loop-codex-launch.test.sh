@@ -177,5 +177,31 @@ with tempfile.TemporaryDirectory(prefix='nogg loop codex ') as td:
             assert 'cannot read `codex mcp list`' in str(exc)
         else:
             raise AssertionError('a hung Codex call was accepted')
+
+    # --- a loop kickoff never lands in another same-cwd session's thread ----
+    home = scratch / 'codex-home'
+    day = home / 'sessions/2026/10/30'
+    day.mkdir(parents=True)
+    foreign, own = '01a18e08-0000-7000-8000-00000000000a', '01a18e08-0000-7000-8000-00000000000b'
+    def rollout(thread, at, *rows):
+        meta = {'type': 'session_meta', 'payload': {'id': thread, 'cwd': str(work), 'timestamp': at}}
+        lines = [json.dumps(meta)] + [json.dumps({'type': 'event_msg', 'payload': {'message': row}}) for row in rows]
+        (day / f'rollout-2026-10-30T12-00-00-{thread}.jsonl').write_text('\n'.join(lines) + '\n')
+    rollout(foreign, '2026-10-30T12:00:01Z', 'another session')
+    run = {'name': 'sf-loop-scan-1', 'role': 'loop', 'agent': 'codex', 'loop_name': 'scan', 'loop_run_id': 'scan-1',
+           'working_dir': str(work), 'started_at': '2026-10-30T12:00:00Z'}
+    header = '[nogg loop scan run scan-1]'
+    with patch.object(m, 'codex_home', return_value=home), patch.object(m, 'session_records', return_value=[]), \
+         patch.object(m, 'write_session'), patch.object(m, 'load_session', return_value=(None, run)), \
+         patch.object(m, '_codex_queue_invoke', side_effect=AssertionError('queued into a foreign thread')), \
+         patch.object(m, '_deliver_pane_locked') as pane:
+        assert m.resolve_codex_thread_id(dict(run)) is None
+        assert m._session_send_locked(run['name'], f'{header}\nlook', 'codex', False, {}) == 'pane'
+        pane.assert_called_once()
+        # A same-cwd rollout is still enough for every other session.
+        assert m.resolve_codex_thread_id({k: v for k, v in run.items() if not k.startswith('loop_')}) == foreign
+        # After its kickoff the run binds to its own thread, not the earlier one.
+        rollout(own, '2026-10-30T12:00:05Z', 'developer text', f'{header}\nlook')
+        assert m.resolve_codex_thread_id(dict(run)) == own
 print('loop-codex-launch: ok')
 PY

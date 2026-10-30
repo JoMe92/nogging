@@ -7770,6 +7770,13 @@ def _codex_rollout_session_meta(path):
     payload = line.get("payload") or {}
     thread_id, cwd, ts = payload.get("id"), payload.get("cwd"), payload.get("timestamp")
     return (thread_id, cwd, ts) if (thread_id and cwd and ts) else None
+def _codex_rollout_mentions(path, marker):
+    """Whether the head of a rollout holds `marker`; a first turn sits well inside it."""
+    try:
+        with path.open("rb") as fh:
+            return marker in fh.read(1024 * 1024)
+    except OSError:
+        return False
 def resolve_codex_thread_id(rec, merge=False):
     """Discover and cache the Codex-internal thread UUID for a codex session
     `scripts/nogg` launched, by matching the session's `working_dir` against
@@ -7783,9 +7790,13 @@ def resolve_codex_thread_id(rec, merge=False):
     one this launch itself produced. Caches the result on the session record
     once found. Returns None (never raises) when no match exists yet — the
     thread may simply not have started (e.g. still sitting at Codex's
-    hook-trust prompt)."""
+    hook-trust prompt). A loop run starts no turn before its kickoff, so it has no
+    rollout until then and another same-cwd session's would match: it binds only
+    to the rollout holding its own run header."""
     if rec.get("codex_thread_id"):
         return rec["codex_thread_id"]
+    marker = (f"[nogg loop {rec.get('loop_name')} run {rec['loop_run_id']}]".encode()
+              if rec.get("loop_run_id") else None)
     try:
         started = parse_iso(rec["started_at"]) - dt.timedelta(seconds=5)
     except (KeyError, ValueError):
@@ -7803,7 +7814,7 @@ def resolve_codex_thread_id(rec, merge=False):
             ts_dt = parse_iso(ts)
         except ValueError:
             continue
-        if ts_dt < started:
+        if ts_dt < started or (marker and not _codex_rollout_mentions(path, marker)):
             continue
         candidates.append((ts_dt, thread_id))
     if not candidates:
