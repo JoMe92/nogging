@@ -403,8 +403,8 @@ def _observe(fact: dict[str, Any], memory: dict[str, Any], now: datetime) -> Non
 def decide(facts: list[dict[str, Any]], memory: dict[str, Any], policy: dict[str, Any],
            now: datetime) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """The actions for one pass and the memory to carry forward. Spending an action
-    is `record`'s job, after it ran, so an action that failed is tried again. A
-    session with no fact any more is forgotten; `unknown` keeps what it had."""
+    is `record`'s job, so one held back at the send stays due. A session with no
+    fact any more is forgotten; `unknown` keeps what it had."""
     known = memory.get("sessions") or {}
     next_memory, actions = {**memory, "sessions": {}}, []
     for fact in facts:
@@ -420,7 +420,7 @@ def decide(facts: list[dict[str, Any]], memory: dict[str, Any], policy: dict[str
 
 
 def record(memory: dict[str, Any], action: dict[str, Any], now: datetime) -> None:
-    """Spend one action that ran: its key, its budget and any step it completes."""
+    """Spend one attempted action: its key, its budget and any step it completes."""
     session = memory["sessions"][action["session"]]
     session["done"] = [*session.get("done", []), action["key"]][-DONE_KEYS_KEPT:]
     if action.get("budget"):

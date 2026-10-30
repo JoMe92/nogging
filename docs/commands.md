@@ -767,6 +767,31 @@ command prints whether dispatch is on and what to do next.
 
 **Used by.** A Lead, at the end of its work. The Bead note still carries the
 prose.
+
+### session dispatch
+
+Run one deterministic follow-up pass, with no model. It reads every live Lead with a
+Bead and every planning session, decides from their real state, and acts: an idle
+Lead with gaps or red CI gets a fixed nudge, and what needs a decision is queued in
+`.nogging/state/dispatch/queue.json` and printed. Nothing depends on a hook having
+fired, and a pass that is repeated does nothing twice. A fact it cannot read, such as
+a failing `gh` or `bd`, is `unknown` and produces no action. It never merges, answers
+a prompt, launches a session or chooses a model.
+
+It needs `session_dispatch.enabled`, and otherwise prints that it is disabled. It runs
+only in the main checkout and is refused in every supervised session, except with
+`--dry-run`, which reports the actions and sends, stops and writes nothing. When
+another pass holds `.nogging/locks/dispatch.lock` it exits 0. Every run is one pass,
+and `--once` says so for a scheduler.
+
+```bash
+./scripts/nogg session dispatch --once
+./scripts/nogg session dispatch --dry-run --json
+```
+
+**Used by.** An operator or an external scheduler. State, the queue and the
+`dispatch.jsonl` audit log live under `.nogging/state/dispatch/`. See
+[`session_dispatch`](configuration.md#session_dispatch).
 ## loop
 
 **Purpose.** Define recurring work in a repository file, approve its exact

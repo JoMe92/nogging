@@ -11,6 +11,13 @@ and GitHub Releases for that history.
 
 ### Added
 
+- `nogg session dispatch [--once] [--dry-run] [--json]`: one deterministic
+  follow-up pass with no model, off until `session_dispatch.enabled`. It
+  derives each Lead's state from live evidence, sends fixed, budgeted nudges
+  to idle sessions, waits out usage limits, retires merged sessions when
+  `retire_merged` is on, and queues what needs a decision. New
+  `session_dispatch` and `orchestrator_context` config blocks refuse unknown
+  keys in `validate` and `doctor`.
 - Launch-mode loops: a fresh, bounded `loop` session per run with the loop's
   exact agent, tier and authority, stopped and retired when it finishes or
   passes `max_runtime`. `init` and `update` render

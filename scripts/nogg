@@ -8580,6 +8580,240 @@ def resume_step(name, message=None):
     if _SWITCH_MODEL_RE.search(session_pane_text(name)):
         session_action(name, "send_keys", "escape")
     session_send(name, message or DEFAULT_RESUME_MESSAGE, verify=True)
+# --- session dispatch: deterministic follow-ups, no model -------------------
+# One level-triggered pass (design Decisions 6 and 7): gather facts cheaply and
+# tolerantly, let the pure decide() choose, run what it chose. Events are hints and
+# the facts are the truth, so a lost hook only delays a decision. A failed read makes
+# a fact unknown, and no action depends on an unknown fact.
+DISPATCH_AUDIT_BYTES = 1024 * 1024
+DISPATCH_AUDIT_GENERATIONS = 3
+def dispatch_dir(): return STATE / "dispatch"
+def _read_dispatch_state(filename):
+    try:
+        value = json.loads((dispatch_dir() / filename).read_text())
+    except (OSError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+def _append_dispatch_audit(row):
+    path = data_dir(dispatch_dir()) / "dispatch.jsonl"
+    encoded = (json.dumps(row, sort_keys=True) + "\n").encode()
+    if path.exists() and path.stat().st_size + len(encoded) > DISPATCH_AUDIT_BYTES:
+        for index in range(DISPATCH_AUDIT_GENERATIONS - 1, 0, -1):
+            source = path.with_name(f"{path.name}.{index}")
+            if source.exists():
+                os.replace(source, path.with_name(f"{path.name}.{index + 1}"))
+        os.replace(path, path.with_name(path.name + ".1"))
+    with path.open("ab") as stream:
+        stream.write(encoded)
+def dispatch_policy():
+    """The one place a host-wide hold sets `hold_sends`: a pause (TASK-SWK-009) stops
+    nudges and resumes here, and items and retirement carry on."""
+    return dispatch_module().policy_from(CFG.get("session_dispatch"))
+def _dispatch_issues(dry_run):
+    """The Bead list, cached 300 s across passes. A failed read is None, never the
+    older copy: a stale Bead must not retire or report a session."""
+    cached = _read_dispatch_state("beads.json")
+    fetched, issues = cached.get("fetched_at"), cached.get("issues")
+    if (isinstance(fetched, (int, float)) and isinstance(issues, list)
+            and 0 <= time.time() - fetched < dispatch_module().BEADS_CACHE_SECONDS):
+        return issues
+    try:
+        issues = beads()
+    except Exception:
+        return None
+    if not dry_run:
+        atomic_json_state(data_dir(dispatch_dir()) / "beads.json", {"fetched_at": time.time(), "issues": issues})
+    return issues
+def _dispatch_checks(rec, head, waiting, dry_run):
+    """The cached observation, refreshed only while the session waits on a pull
+    request and at most every 120 s. A merged or closed one on this head is final, so
+    a retired-in-all-but-name session spends no `gh` call."""
+    name, module = rec["name"], dispatch_module()
+    cache = _load_checks_cache(name)
+    observation = cache.get("observation") if isinstance(cache.get("observation"), dict) else None
+    final = bool(observation and observation.get("pr_state") in ("MERGED", "CLOSED")
+                 and observation.get("head_sha") == head)
+    if final:
+        return observation
+    if not waiting:
+        return None
+    age = module.seconds_since(observation.get("observed_at"), dt.datetime.now(dt.timezone.utc)) if observation else None
+    if dry_run or (age is not None and 0 <= age < module.CHECKS_INTERVAL_SECONDS):
+        return observation
+    checkout = _session_checkout(rec)
+    branch = _session_worktree_branch({"working_dir": checkout}) if checkout else None
+    cache["observation"] = _observe_checks(branch)
+    _write_checks_cache(name, cache)
+    return cache["observation"]
+def _pane_tail(pane):
+    lines = [line for line in (pane or "").splitlines() if line.strip()]
+    return signals_module().clean_excerpt("\n".join(lines[-dispatch_module().EXCERPT_LINES:]), redact)
+def _dispatch_evidence(rec, live, issues, live_beads, dry_run):
+    signals = signals_module()
+    name, bead = rec["name"], rec.get("bead_id")
+    issue = next((item for item in issues or [] if str(issue_id(item)) == bead), None)
+    bead_status = issue.get("status") if issue else None
+    if name not in live:
+        return {"state": "gone", "bead_status": bead_status, "started_at": rec.get("started_at"),
+                "exit_reason": rec.get("exit_reason"), "superseded": bead in live_beads}
+    detail = classify_session_detail(rec, live)
+    state = "gone" if detail["state"] == "ended" else detail["state"]
+    events = signals.read_events(session_events_path(name))
+    _, last = signals.latest_state(events)
+    checkout = _session_checkout(rec)
+    git = session_git_facts(rec) if checkout else None
+    gaps = signals.completion_gaps(git, events) if git is not None else None
+    revision = run("git", "-C", checkout, "rev-parse", "HEAD", check=False,
+                   timeout=GUARD_GIT_TIMEOUT_SECONDS) if checkout else None
+    head = revision.stdout.strip() if revision and revision.returncode == 0 else None
+    waiting = state in ("idle", "waiting_background") and gaps is not None and not {"dirty", "unpushed"} & set(gaps)
+    checks = _dispatch_checks(rec, head, waiting, dry_run)
+    sweep = None
+    if bead and issues is not None:
+        status = (checks or {}).get("status")
+        pr_state = "ABSENT" if status == "no-pr" else (checks or {}).get("pr_state")
+        sweep = _sweep_state(rec, issues=issues, pr_lookup=lambda _rec: pr_state)
+    fact = {"state": state, "head": head, "gaps": gaps, "checks": checks, "sweep": sweep, "bead_status": bead_status,
+            "nudgeable": signals.guard_applies(rec, []), "kicked_off": bool(rec.get("kickoff_sent_at")),
+            "excerpt": detail["excerpt"], "turn": (last or {}).get("timestamp"),
+            "started_at": rec.get("started_at"), "exit_reason": rec.get("exit_reason"),
+            "worktree_record": _bead_worktree_record(bead) if bead else None}
+    signal_event = signals.current_signal(events)
+    if signal_event:
+        fact["signal"] = {"kind": signal_event["event"], "reason": signal_event.get("excerpt"),
+                          "at": signal_event.get("timestamp")}
+    if last and last.get("event") == "turn_error" and last.get("error") != "rate_limit":
+        fact["turn_error"] = {"at": last.get("timestamp"), "error": last.get("error")}
+    if state == "needs_input":
+        fact["pane_excerpt"] = _pane_tail(detail["pane"])
+        fact["switch_prompt"] = bool(_SWITCH_MODEL_RE.search(detail["pane"] or ""))
+    if state == "limit":
+        fact["limit_until"], fact["limit_source"] = resolve_clock_time(detail["pane"]), detail["source"]
+    if state == "working" and rec.get("log_path") and Path(rec["log_path"]).exists():
+        fact["silent_seconds"] = max(0.0, time.time() - Path(rec["log_path"]).stat().st_mtime)
+    return fact
+def _dispatch_fact(rec, live, unknown, issues, live_beads, dry_run):
+    """One session's evidence. Unreadable liveness or evidence stays `unknown`."""
+    fact = {"session": rec["name"], "role": rec.get("role") or "lead", "agent": rec.get("agent") or "claude",
+            "bead": rec.get("bead_id"), "state": "unknown"}
+    if rec["name"] in unknown:
+        return fact
+    try:
+        fact.update(_dispatch_evidence(rec, live, issues, live_beads, dry_run))
+    except Exception:
+        fact["state"] = "unknown"
+    return fact
+def _dispatch_targets(records):
+    """Leads with a Bead and planning sessions, live or failed. A session stopped on
+    purpose is nobody's follow-up, and the orchestrator, loops and specialists are
+    never touched."""
+    for rec in records:
+        role = rec.get("role") or "lead"
+        if (role == "planning" or (role == "lead" and rec.get("bead_id"))) and (
+                rec.get("state") in SESSION_ACTIVE_STATES or rec.get("state") == "failed"):
+            yield rec
+def _dispatch_run(action, fact, memory, queue, moment):
+    module, name, kind = dispatch_module(), action["session"], action["type"]
+    if kind == "queue":
+        module.enqueue(queue, action["item"], moment)
+    elif kind == "nudge":
+        # The gather may be seconds old; idle is proved at the send, never assumed.
+        if classify_session(load_session(name)[1])[0] != "idle":
+            if action.get("once"):
+                module.record(memory, action, moment)
+            return "held"
+        session_send(name, action["text"], verify=True)
+    elif kind == "resume":
+        resume_step(name)
+    elif kind == "retire":
+        session_stop(name, "retire-merged")
+        session_cleanup(name)
+        module.report_retired(queue, fact, moment)
+    module.record(memory, action, moment)
+    return "done"
+def _dispatch_apply(action, fact, memory, queue, moment):
+    """Run one action and persist it at once, so a crash repeats nothing recorded. A
+    failed step is spent like one that ran: an unverified send may still have landed,
+    so retrying it unbounded could message a session on every pass. A failed nudge
+    climbs its ladder, and a failed resume or retirement goes up."""
+    module = dispatch_module()
+    try:
+        with redirect_stdout(io.StringIO()):
+            outcome = _dispatch_run(action, fact, memory, queue, moment)
+    except (Exception, SystemExit) as exc:
+        detail = signals_module().clean_excerpt(str(exc), redact, 200) or "unknown error"
+        outcome = f"failed: {detail}"
+        if action["type"] in ("resume", "retire"):
+            module.enqueue(queue, module.failure_item(fact, action, detail)["item"], moment)
+        module.record(memory, action, moment)
+    atomic_json_state(data_dir(dispatch_dir()) / "state.json", memory)
+    atomic_json_state(dispatch_dir() / "queue.json", queue)
+    _append_dispatch_audit({"time": module.iso(moment), "session": action["session"], "action": action["type"],
+                            "kind": (action.get("item") or {}).get("kind"), "key": action["key"],
+                            "reason": action.get("reason"), "outcome": outcome})
+    return outcome
+def _dispatch_pass(dry_run, as_json):
+    module = dispatch_module()
+    records = [rec for _path, rec in session_records()]
+    alive, unknown = session_liveness(records, strict=True)
+    live = alive | unknown
+    live_beads = {rec.get("bead_id") for rec in records
+                  if rec.get("state") in SESSION_ACTIVE_STATES and rec.get("name") in live}
+    targets = list(_dispatch_targets(records))
+    issues = _dispatch_issues(dry_run) if targets else None
+    facts = [_dispatch_fact(rec, live, unknown, issues, live_beads, dry_run) for rec in targets]
+    moment = dt.datetime.now(dt.timezone.utc)
+    queue = _read_dispatch_state("queue.json")
+    actions, memory = module.decide(facts, _read_dispatch_state("state.json"), dispatch_policy(), moment)
+    memory["last_pass_at"] = module.iso(moment)
+    by_session = {fact["session"]: fact for fact in facts}
+    results = []
+    for action in actions:
+        outcome = "dry-run" if dry_run else _dispatch_apply(action, by_session[action["session"]], memory, queue, moment)
+        results.append({**action, "outcome": outcome})
+    if not dry_run:
+        atomic_json_state(data_dir(dispatch_dir()) / "state.json", memory)
+    items = queue.get("items") or []
+    if as_json:
+        print(json.dumps({"enabled": True, "dry_run": dry_run, "sessions": len(facts), "actions": results,
+                          "queue": items, "states": {fact["session"]: fact["state"] for fact in facts}}))
+        return
+    for result in results:
+        print(f"{result['type']} {result['session']} ({result.get('reason')}): {result['outcome']}")
+    for item in items:
+        print(f"queued {item.get('kind')} {item.get('session')}: {item.get('reason')}")
+    print(f"session dispatch: {len(facts)} session(s), {len(results)} action(s), {len(items)} queued")
+def session_dispatch(dry_run=False, as_json=False):
+    """One pass (design Decision 6), under the rules of `loop tick`: the main checkout
+    only, refused in every supervised session except for `--dry-run`, which sends,
+    stops and writes nothing, and a busy lock exits 0."""
+    try:
+        records = [rec for _path, rec in session_records(orchestrator_sessions_dir())]
+        supervised = (calling_session_record(records, purpose="session dispatch") is not None
+                      or bool(os.environ.get("NOGG_SESSION_NAME")))
+    except RuntimeError:
+        supervised = True
+    if supervised and not dry_run:
+        raise RuntimeError("session dispatch is refused inside every supervised session; --dry-run is read-only and allowed")
+    if ROOT.resolve() != ORCHESTRATOR_HOME.resolve():
+        raise RuntimeError(f"session dispatch runs only in the main checkout: {ORCHESTRATOR_HOME}")
+    errors = dispatch_module().config_errors(CFG)
+    if errors:
+        raise RuntimeError("session dispatch: " + "; ".join(errors))
+    if not dispatch_policy()["enabled"]:
+        print(json.dumps({"enabled": False, "dry_run": dry_run, "sessions": 0, "actions": [], "queue": []}) if as_json
+              else "session dispatch is disabled (session_dispatch.enabled is not true)")
+        return
+    if dry_run:
+        _dispatch_pass(True, as_json)
+        return
+    with (data_dir(ORCHESTRATOR_LOCKS) / "dispatch.lock").open("a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            print(json.dumps({"enabled": True, "busy": True}) if as_json else "session dispatch: another pass holds the lock")
+            return
+        _dispatch_pass(False, as_json)
 # --- orchestrator: the always-on supervisor ------------------------------
 # `orchestrator run` is the idempotent process the systemd user service starts.
 # The thing kept alive is a normal supervised Claude session (a durable record,
@@ -10244,6 +10478,10 @@ def main():
     ssig = ssub.add_parser("signal", help="state that this supervised session is blocked or done")
     ssig.add_argument("kind", choices=("blocked", "done"))
     ssig.add_argument("reason", help="why, in at most 300 characters")
+    sdsp = ssub.add_parser("dispatch", help="run one deterministic follow-up pass, with no model")
+    sdsp.add_argument("--once", action="store_true", help="run one pass and exit, which every run does")
+    sdsp.add_argument("--dry-run", action="store_true", help="report the decided actions and change nothing")
+    sdsp.add_argument("--json", action="store_true")
     # `run-quiet` owns everything after its first `--` verbatim (the command's
     # own options and any later `--` included): split it off before argparse,
     # whose `--` handling differs across Python versions.
@@ -10436,6 +10674,8 @@ def session_cmd(args):
         session_completion_check(args.json)
     elif args.session_command == "signal":
         session_signal(args.kind, args.reason)
+    elif args.session_command == "dispatch":
+        session_dispatch(args.dry_run, args.json)
 if __name__ == "__main__":
     try: main()
     except PartialSyncError as exc: print(f"nogg: {exc}", file=sys.stderr); sys.exit(3)

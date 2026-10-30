@@ -121,7 +121,7 @@ class GapNudges(unittest.TestCase):
         self.assertEqual(p.run(lead(gaps=["unpushed"])), [])
         self.assertEqual(p.run(lead(gaps=["unpushed"]), advance=30), [])
 
-    def test_a_failed_send_spends_no_budget_and_is_tried_again(self):
+    def test_an_action_is_spent_only_by_record(self):
         p = Pass()
         p.run(lead(gaps=["dirty"]))
         self.assertEqual(kinds(p.run(lead(gaps=["dirty"]), advance=61, apply=False)), ["nudge"])
