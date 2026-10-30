@@ -432,6 +432,28 @@ host-side broker predates checkout-aware requests:
   then re-run `task-done <bead-id>`. Alternatively, the tick will be mirrored
   automatically by the sync timer or an unsandboxed sync run once the Bead is closed.
 
+## A scheduled loop stopped running
+
+Start with `./scripts/nogg doctor` and `./scripts/nogg loop log <name>`.
+
+- **`will not run`**: the timer is missing or disabled. Link its service and enable
+  it as the [timer section](scheduled-loops.md#the-scheduler-timer) shows, or run
+  `nogg loop tick` from your own scheduler.
+- **The last tick is old**: read the service journal.
+- **`doctor` fails on the definitions file**: no new run starts until it is fixed.
+  Ticks keep running and keep supervising started runs.
+- **`suspended`**: consecutive slots failed. Read the reasons, fix the cause, then
+  run `nogg loop resume <name>`.
+- **A run stays active past `max_runtime`**: its session could not be retired, and
+  the tick retries every minute, even while the definitions file is invalid.
+  Never delete `state.json` to clear it, because the session would be orphaned.
+  Fix what the journal reports.
+- **A session listed as `loop:<name>` is left after a crash**: wait 10 minutes.
+  The tick adopts it by `loop_run_id` if its kickoff landed, or else stops and
+  retires it and logs `start interrupted`.
+
+See [Scheduled loops](scheduled-loops.md).
+
 ## A session hit its usage limit
 
 `scripts/nogg session watch` classifies a session that has hit an account-wide
