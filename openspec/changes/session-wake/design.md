@@ -557,8 +557,8 @@ from a new `orchestrator_context` config block:
 leaves 7k to 18k above a 27k prefix, so the context runs as a sawtooth from about
 45k to 200k, mean about 120k. Compaction costs a warm read plus one summary. The
 orchestrator's durable state is in Beads, OpenSpec and Git, so the cost of a
-summary is low, but a long Product Owner conversation does lose detail, which is
-why the value is a question for the Product Owner.
+summary is low, but a long Product Owner conversation does lose detail. See
+Product Owner decision 1.
 
 Native idle compaction did not fire on this host, so the dispatcher adds a
 fallback, `precompact_after` (default 50 min). When the orchestrator has been idle
@@ -618,9 +618,10 @@ send loop defers as `target-busy`, the behaviour `scheduled-loops` already
 specifies. `session dispatch --once` works alone by hand, or from an external
 scheduler for `--no-systemd` installs, so TASK-SWK-001 to 004 need neither change.
 
-`TASK-SCL-003` and `dual-runtime-orchestrator` also edit
-`.nogging/launch-prompts/orchestrator.md`. Rebase onto `develop` and keep both
-sides. There is no blocking edge except the two named in `tasks.md`.
+`TASK-SCL-003` landed its orchestrator guidance in #321, and
+`dual-runtime-orchestrator` also edits `.nogging/launch-prompts/orchestrator.md`.
+Rebase onto `develop` and keep both sides. There is no blocking edge except the two
+named in `tasks.md`.
 
 `TASK-SCL-005` gates its sends on `classify_session` reporting `idle`, which is
 unreliable for a busy Claude orchestrator until TASK-SWK-001 lands (see *Facts
@@ -655,8 +656,8 @@ completion the scheduler already tracks.
 ```
 
 Unknown keys are refused by `validate` and `doctor`, as `usage_gate` does. The
-template carries the block with `enabled: false`. This repository sets `true` in
-TASK-SWK-007.
+template carries the block with `enabled: false` and `retire_merged: false`. This
+repository sets both to `true` in TASK-SWK-007.
 
 ### Decision 14: Acceptance on the delivery host
 
@@ -686,8 +687,8 @@ stays unsigned.
 - **Agent text reaches a full-access session.** That is already true of logs the
   orchestrator reads. Excerpts are bounded, redacted, single-line and labelled.
 - **Smaller context loses conversational detail** on the Product Owner's phone
-  thread. Mitigated by keeping durable state in Beads and Git, and it is the first
-  open question.
+  thread. Mitigated by keeping durable state in Beads and Git. The Product Owner
+  deferred to the recommendation (decision 1).
 - **Sparse wakes make the first-turn cost dominate.** Decision 9 addresses it. If
   the budget is refused, expect the raw number to fall and the weighted one to
   stay near today's.
@@ -704,17 +705,18 @@ Branches are `<type>/session-wake`. Lanes: `feat/` 001, then 002, 003, 004, 005,
 006 in sequence; `chore/` 007; `test/` 008. The edges and the two edges into
 `scheduled-loops` are in `tasks.md`.
 
-## Open questions for the Product Owner
+## Product Owner decisions (2026-10-30)
 
-1. **Context budget:** is a 200k auto-compact window acceptable on the orchestrator,
-   given that long phone conversations get summarized sooner? Recommended: yes. It
-   is what makes the saving real.
-2. **`retire_merged`:** may the dispatcher stop and clean a session whose PR is
-   merged, its Bead closed and its tree clean? Recommended: yes for this
-   repository, off by default for others.
-3. **Codex hook install:** may TASK-SWK-007 add one user-level hook and its trust
-   record to your `~/.codex` on this host? Recommended: yes. Without it Codex gets
-   detection but no stop guard.
-4. **Reviewer gate:** when a Codex or Pi Lead has a `[security]` task, is review on
-   the PR by the orchestrator the accepted form? Recommended: yes, as already
-   happened for TASK-SCL-003.
+1. **Context budget: 200k.** The orchestrator's auto-compact window is 200k, the
+   recommended value. PO deferred to the recommendation: no preference was stated.
+   Long phone conversations get summarized sooner as a result (Decision 9).
+2. **`retire_merged`: yes for this repository, off by default elsewhere.** The
+   dispatcher may stop and clean a session once its PR is merged, its Bead closed and
+   its tree clean. The template default stays `false`, and TASK-SWK-007 sets `true` in
+   this repository's own configuration (Decisions 7 and 13).
+3. **Codex hook install: yes.** TASK-SWK-007 may add one `Stop` hook and its trust
+   record to the Product Owner's `~/.codex` on this host (Decision 3). `init` and
+   `update` still never do this.
+4. **Reviewer gate: orchestrator review on the PR is the accepted form** for
+   `[security]` tasks on Codex or Pi Leads, as already happened for TASK-SCL-003
+   (Decision 11). A kickoff never tells such a Lead to launch a reviewer session.

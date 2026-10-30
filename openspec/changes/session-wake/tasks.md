@@ -63,8 +63,8 @@
   subagent note only if the capability table proves it stale),
   .nogging/launch-prompts/autonomous.md (signal instead of waiting for CI, a refused
   step means signal blocked at once) and docs/security-model.md (why trust is
-  user-level and the bypass is refused). A code-reviewer pass is required before
-  commit; a non-Claude Lead has it done on the pull request. Check: new
+  user-level and the bypass is refused). The review follows the execution contract's
+  [security] rule. Check: new
   scripts/session-guard.test.sh and scripts/session-hooks.test.sh, red first, with
   scratch HOME and CODEX_HOME and a stub app-server: every stop-guard scenario on all
   three runtimes, a foreign hook preserved, modified and missing states, fail-open on
@@ -108,7 +108,7 @@
   log with rotation. Add the wake protocol, the no-watcher rule and the capability rule
   to .nogging/launch-prompts/orchestrator.md and .claude/commands/orchestrate.md, keeping
   it generic and rebasing onto what scheduled-loops and dual-runtime-orchestrator landed.
-  A code-reviewer pass is required before commit. Check: new
+  The review follows the execution contract's [security] rule. Check: new
   scripts/session-wake-digest.test.sh, red first, with an injected clock and a stub
   orchestrator that is idle, working, holding input or absent: a condition clearing
   before delivery, three items in one message, the max_hold bound, the rate ceiling,
@@ -139,11 +139,12 @@
 ## 3. This repository and host (chore/)
 
 - [ ] TASK-SWK-007 [routine] [~40 loc: host configuration only] Enable session wake for this repository and the delivery host.
-  Per design Decisions 9 and 13 and the Product Owner's answers in design.md. In this
-  repository's tracked .nogging/config.json set `session_dispatch.enabled` to true and
-  `retire_merged` as answered, and commit only that. On the delivery host, run `nogg
-  session-hooks install --agent codex` if the Product Owner approved it, and record
-  `session-hooks status`. The operator or the Orchestration Agent then restarts the
+  Per design Decisions 9 and 13 and Product Owner decisions 1 to 3 in design.md. In
+  this repository's tracked .nogging/config.json set `session_dispatch.enabled` and
+  `session_dispatch.retire_merged` to true, and commit only that; the template default
+  stays false. On the delivery host, run `nogg session-hooks install --agent codex`,
+  which the Product Owner approved, and record `session-hooks status`. The operator or
+  the Orchestration Agent then restarts the
   orchestrator from an external shell so the budget applies, once it is idle. Remove the
   orchestrator's remaining background waiters. Needs a --full-access Lead; if it cannot
   reach the personal Codex configuration, record a blocking discovery and hand the
@@ -195,8 +196,10 @@ requirements in specs/. The Main Worker claims each task and implements it only 
 own allocated worktree on its lane branch, in several commits within the configured
 commit range. Write the tier classification to the Bead note on every launch, including
 Pi launches. Tasks marked [security] change authority, hook trust or text that reaches a
-full-access session, and get a code-reviewer pass before commit, on the pull request for
-a runtime that cannot launch one. Every suite is offline (no real agent, Dolt, bd, shared
+full-access session. A Claude Lead gets a code-reviewer pass before commit. On a Codex or
+Pi Lead, the Orchestration Agent's review on the pull request is the accepted form
+(Product Owner decision 4), and no kickoff tells that Lead to launch a reviewer session.
+Every suite is offline (no real agent, Dolt, bd, shared
 tmux or herdr server, systemd or network; private sockets; injected clocks and openers).
 Test in stages: the tests of the changed files while working, those tests plus lint
 before each commit, and the suites a task names once per Bead. The full `scripts/test` is
