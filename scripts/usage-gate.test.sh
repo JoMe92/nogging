@@ -124,7 +124,7 @@ assert u.evaluate_gate(report(('short', None, None), ('weekly', 10, 'W')), deny,
 # A known over-cap window denies even when another window is unknown.
 assert u.evaluate_gate(report(('short', None, None), ('weekly', 99, 'W')), cfg, 5)['decision'] == 'denied'
 assert u.evaluate_gate(report(('short', 80, 'S'), ('weekly', 1, 'W')), cfg, 5, reserved_percent=10)['decision'] == 'denied'
-assert u.observe('pi', cfg)['windows'][0]['reason'] == 'unsupported usage provider'
+assert u.observe('gemini', cfg)['windows'][0]['reason'] == 'unsupported usage provider'
 PY
 
 codex_usage() {  # codex_usage <dir> <short used> <weekly used> [age seconds]

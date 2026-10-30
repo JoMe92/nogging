@@ -3214,7 +3214,7 @@ def record_session_usage(rec):
     try:
         usage = usage_module()
         config = usage.gate_config(CFG.get("usage_gate"))
-        end_obs = usage.observe(agent, config, model=model)
+        end_obs = usage.observe(agent, config, model=model, probe=False)
         history = usage.UsageHistory()
         history.record_interval(agent, model, start_obs, end_obs,
                                 overlapping=overlapping, complete=True)
@@ -5026,7 +5026,7 @@ def refresh_session_usage(recs):
         except OSError:
             pass   # only rate limiting is lost; collection itself is idempotent
     return report
-def usage_gate_admission(role_meta, agent, records, ignore, model=None):
+def usage_gate_admission(role_meta, agent, records, ignore, model=None, provider=None):
     """Admit or refuse a launch against the `usage_gate` config.
 
     Returns the decision recorded on the session. The config is validated for
@@ -5057,7 +5057,7 @@ def usage_gate_admission(role_meta, agent, records, ignore, model=None):
         print("warning: --ignore-usage-gate: launching without usage admission; "
               "this is recorded on the session", file=sys.stderr)
         return {"decision": "ignored", **estimate}
-    obs = observe(agent, config, model=model)
+    obs = observe(agent, config, model=model, provider=provider)
     ledger = usage.Reservations()
     gate = ledger.admit(obs, config, estimate["estimate_percent"])
     token = gate.get("reservation_id")
@@ -5083,7 +5083,7 @@ def loop_usage_admission(agent, model, options):
     """Apply both the repository usage gate and a loop's stricter budget."""
     usage = usage_module()
     config = usage.gate_config(CFG.get("usage_gate"))
-    observation = usage.observe(agent, config, model=model)
+    observation = usage.observe(agent, config, model=model, probe=False)
     windows = observation.get("windows", [])
     budget = options.get("max_used_percent")
     if budget is not None:
@@ -5696,7 +5696,8 @@ def _session_launch(role, bead, cwd, read_only, owner,
     # Usage admission is the last refusal before helper negotiation, worktree,
     # trust, tmux or record side effects.
     try:
-        usage_gate = usage_gate_admission(role_meta, agent, records, ignore_usage_gate, model=selected_model)
+        usage_gate = usage_gate_admission(role_meta, agent, records, ignore_usage_gate, model=selected_model,
+                                          provider=(pi_spec or {}).get("provider"))
     except OSError as exc:
         if exc.errno not in (errno.EROFS, errno.EACCES, errno.EPERM):
             raise
@@ -8954,7 +8955,7 @@ def _orchestrator_usage(record):
     try:
         usage = usage_module()
         return usage.observe(record.get("agent") or "claude", usage.gate_config(CFG.get("usage_gate")),
-                             model=record.get("requested_model"))
+                             model=record.get("requested_model"), probe=False)
     except Exception:
         return None
 def _wake_target(plan, policy):
@@ -10955,7 +10956,7 @@ def main():
                        help="opt-in usage helpers (install-statusline)")
     usage.add_argument("--settings", default=None, help="path to claude settings.json for statusline installation")
     usage.add_argument("--wrapper-path", default=None, help="path to write statusline capture wrapper")
-    usage.add_argument("--agent", choices=("codex", "claude", "antigravity", "agy"), default="codex")
+    usage.add_argument("--agent", choices=("codex", "claude", "antigravity", "agy", "pi"), default="codex")
     usage.add_argument("--model", default=None, help="inspect estimate and fit for a specific model")
     usage.add_argument("--json", action="store_true")
     sub.add_parser("validate")

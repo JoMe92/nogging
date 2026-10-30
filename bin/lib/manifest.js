@@ -17,6 +17,7 @@ module.exports = {
   verbatim: [
     'scripts/nogg',
     'scripts/nogg_usage.py',
+    'scripts/nogg_usage_zai.py',
     'scripts/lib/session_backend.py',
     'scripts/lib/agent_routing.py',
     'scripts/lib/loop_schedule.py',
