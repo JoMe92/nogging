@@ -7,7 +7,7 @@ A fact is the orchestrator's evidence, and a missing or None value means `unknow
 which nothing is sent:
 
     agent, state    the record's runtime and its classified state
-    idle_since      the end of its last turn or the last wake, the later one
+    idle_since      the end of its last turn
     active          a live Lead or planner, or an open pull request
     paused          a pause is in force
     context_tokens  the size its `Stop` hook recorded with that turn
