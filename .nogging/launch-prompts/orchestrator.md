@@ -87,6 +87,16 @@ While `session dispatch` runs, start no background waiter, `sleep`, Monitor or
 session-only loop for pull request, CI or session state: end the turn and the digest
 wakes you. `doctor` says whether it runs. If it does not, keep working as before.
 
+### Keep-warm and pause
+
+A message starting with `[nogg keepwarm` only keeps your cache warm while work is
+active. Answer it with one short line and no tool call, and do nothing else with it.
+
+Run `nogg pause` or `nogg resume` only when the Product Owner says they will be away or
+are back: three days away means `nogg pause --days 3`. Confirm the result with
+`nogg pause --status`, and never pause on your own initiative. A pause stops automation.
+It does not stop your own conversation with the Product Owner.
+
 ### Kickoffs match the runtime
 
 Before you write a requirement into a kickoff, check `nogg session capabilities` for

@@ -190,11 +190,10 @@ An optional object. Every key is optional, and the template carries:
 | `ci_timeout` | duration | `60m` | How long checks may stay pending before `ci_timeout` is queued. |
 | `retire_merged` | boolean | `false` | Stop and clean up a session whose pull request is merged, whose Bead is closed and whose tree is clean. |
 | `wake` | object | see the table below | Digest timing, keep-warm and quiet hours. |
-| `precompact_after` | duration | `50m` | Idle time before the one compaction ahead of a lapsing cache. |
+| `precompact_after` | duration | `50m` | Idle time before the one compaction ahead of a lapsing cache. It must stay under the one-hour cache lifetime, or nothing is ever sent. |
 | `precompact_min_tokens` | integer | `100000` | Smallest context worth that compaction. |
 
-The digest reads these `wake` keys. `keep_warm`, `keep_warm_after` and `quiet_hours`
-are accepted and have no effect yet.
+The digest and the orchestrator's keep-warm read these `wake` keys.
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
@@ -204,11 +203,22 @@ are accepted and have no effect yet.
 | `min_gap` | duration | `300s` | Least time between wakes. Urgent items ignore it. |
 | `max_wakes_per_hour` | integer | `4` | Ceiling on wakes per hour. Urgent items may exceed it. |
 | `remind_after` | duration | `4h` | When an item nobody acted on is repeated, once. A new head makes it a new item. It also ends the wait of an item that only unreadable evidence keeps. |
-| `hold_above_percent` | number | `85` | Non-urgent items wait while a known usage window of the orchestrator's agent is above this. Unknown usage holds nothing. |
+| `hold_above_percent` | number | `85` | Non-urgent items and the keep-warm wait while a known usage window of the orchestrator's agent is above this. Unknown usage holds nothing. |
+| `keep_warm` | boolean | `true` | While work is active, send a Claude orchestrator one fixed line before its cache lapses. It is no wake, so `min_gap` and `max_wakes_per_hour` do not count it. `false` sends none and leaves the compaction alone. |
+| `keep_warm_after` | duration | `50m` | How long the orchestrator has been idle before that line. Any turn restarts it. It must stay under the one-hour cache lifetime, or nothing is ever sent. |
+| `quiet_hours` | array of strings | `[]` | Local-time windows in which the orchestrator is never woken: no digest, urgent included, and no keep-warm. Items wait, and the first pass after the window delivers what still holds as one digest. Nudges to Leads, retirement and CI tracking go on. |
 
-A duration is a whole number with an optional `s`, `m` or `h`. `quiet_hours` is a list
-of `"HH:MM-HH:MM"` windows. An unknown key or a bad value fails `validate` and
-`doctor`, naming it, and `session dispatch` refuses to run.
+A duration is a whole number with an optional `s`, `m` or `h`. A `quiet_hours` window
+is `"HH:MM-HH:MM"` in the host's time zone, read from the wall clock on every pass. It
+may cross midnight, as `"22:00-07:00"` does, its end is outside it, and its two ends
+must differ. An unknown key or a bad value fails `validate` and `doctor`, naming it, and
+`session dispatch` refuses to run.
+
+With nothing active, in quiet hours or during a pause, no keep-warm goes out. Instead
+the orchestrator gets one `/compact` per idle period, once it has been idle for
+`precompact_after` with its cache still warm and its last recorded context above
+`precompact_min_tokens`. A context size that cannot be read skips it, and the cache then
+lapses. `doctor` prints a NOTE with these settings and the next compaction.
 
 A pause is a command and no key: [`nogg pause`](commands.md#pause) holds an enabled
 dispatcher for a few days and ends by itself, which a forgotten config edit would not.
