@@ -227,10 +227,16 @@ defaults:
       nav_order: 10
       description: What session dispatch does by default, what an orchestrator costs while it waits, how to pause it and how to switch it off.
   - scope:
-      path: "pi-extensions.md"
+      path: "test-control.md"
     values:
       parent: Guides
       nav_order: 11
+      description: Run tests through nogg test - one stage per testing moment, with budgets, the full-suite lock, host-wide heavy slots and a record of every run.
+  - scope:
+      path: "pi-extensions.md"
+    values:
+      parent: Guides
+      nav_order: 12
       description: Optional Pi extensions for Nogging - the .pi/nogging layout, writing and testing an extension, enabling it, and the glm-usage Z.ai quota footer.
   - scope:
       path: "testing-policy.md"

@@ -123,6 +123,7 @@ module.exports = {
     { from: 'docs/token-usage.md', to: 'docs/nogging/token-usage.md' },
     { from: 'docs/scheduled-loops.md', to: 'docs/nogging/scheduled-loops.md' },
     { from: 'docs/session-wake.md', to: 'docs/nogging/session-wake.md' },
+    { from: 'docs/test-control.md', to: 'docs/nogging/test-control.md' },
     { from: 'docs/testing-policy.md', to: 'docs/nogging/testing-policy.md' },
   ],
 

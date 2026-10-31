@@ -35,5 +35,13 @@
   },
   "multi_machine": false,
   "session_dispatch": {"retire_merged": true},
-  "tier_overrides": {"complex": {"claude": {"effort": "high"}}}
+  "tier_overrides": {"complex": {"claude": {"effort": "high"}}},
+  "testing": {
+    "stages": {
+      "changed": "scripts/test --only {test_files}",
+      "commit": "scripts/test --only {test_files}",
+      "bead": "scripts/test --only {test_files} --timings {timings}",
+      "full": "scripts/test --timings {timings}"
+    }
+  }
 }

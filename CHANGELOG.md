@@ -31,6 +31,16 @@ and GitHub Releases for that history.
   The Claude `unknown` hint now states the effect in one line and links the
   docs section. (#280)
 
+- `nogg test changed|commit|bead|full` is one entry point per testing moment. Each
+  stage runs through `run-quiet` under the session's deny rules, reports a budget
+  and never kills a run. `full` is refused wherever CI runs it, unless `--release`,
+  `--nightly` or `--allow-full "<reason>"` permits it. `bead` and `full` share two
+  host-wide `flock` slots, and every run appends one record to
+  `.nogging/state/testing/runs.jsonl` in the main checkout. Existing repositories
+  keep working with no `testing` block; `update` prints one line saying so, and a
+  malformed value is only a `doctor` WARN. `scripts/test` gains `--only <path>...`
+  and `--timings <file>`, and behaves as before without arguments.
+
 ### Fixed
 
 - The Pi lifecycle extension now waits 20 s (was 3 s) for each `scripts/nogg session emit`,
