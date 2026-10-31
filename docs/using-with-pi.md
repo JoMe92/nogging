@@ -128,7 +128,9 @@ failure of the check, including a stuck child, lets the run settle.
 message can start another run after it, so only `agent_settled` means finished.
 The extension does nothing unless `NOGG_SESSION_NAME` is set, so standalone Pi is
 unaffected. It uses only Node built-ins, runs each `session emit` as a
-timeout-bounded child that cannot hold Pi open, and swallows its own errors.
+serialized child that cannot hold Pi open and is given 20 seconds (a cold
+`scripts/nogg` start takes about 1.3 s idle and 3.5 s under load), never retries
+a killed call so no event is recorded twice, and swallows its own errors.
 A missing file only warns at launch: observability never blocks a session, and
 `watch` then falls back to herdr's status or the pane (`unknown` when neither
 exists). On herdr, `agent_status` joins the evidence, so a Pi session is

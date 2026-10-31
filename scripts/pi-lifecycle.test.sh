@@ -108,6 +108,24 @@ if (mode === "nested") {
   process.exit(fail);
 }
 
+if (mode === "slow") {
+  // A nogg that takes 4 s (startup under load) must still record its event,
+  // and Pi's handler must return long before the child finishes.
+  const pi = fakePi();
+  load(pi);
+  const started = Date.now();
+  await pi.fire("agent_start");
+  check("a slow child does not block Pi's handler", Date.now() - started < 1500);
+  check("the slow child has not appended yet", !existsSync(log));
+  let landed = false;
+  for (let i = 0; i < 240 && !landed; i++) {
+    landed = existsSync(log) && readFileSync(log, "utf8").includes("turn_start");
+    if (!landed) await sleep(50);
+  }
+  check("a 4 s child still appends its event (timeout above 3 s)", landed);
+  process.exit(fail);
+}
+
 if (mode === "stuck") {
   const pi = fakePi();
   load(pi);
@@ -246,6 +264,10 @@ out=$(env -u NOGG_SESSION_NAME NOGG_SESSION_ROOT="$work/root" STUB_LOG="$work/in
 echo "$out"
 if [[ -e "$work/inert.log" ]]; then echo "FAIL - inert run emitted"; exit 1; fi
 echo "ok   - inert run emitted nothing"
+
+# a slow (4 s) child is waited for, not killed at the old 3 s timeout
+out=$(run slow STUB_SLEEP=4) || { echo "$out"; echo "pi-lifecycle checks failed" >&2; exit 1; }
+echo "$out"
 
 # a stuck child cannot delay Pi's exit
 start=$(date +%s)
