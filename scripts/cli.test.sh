@@ -62,6 +62,10 @@ check "pi guard extension installed" test -f "$repo/.pi/extensions/nogging-guard
 check "pi prompt plan.md installed"    test -f "$repo/.pi/prompts/plan.md"
 check "pi prompt discovery-review.md installed" test -f "$repo/.pi/prompts/discovery-review.md"
 check "pi prompt sync-now.md installed" test -f "$repo/.pi/prompts/sync-now.md"
+check "pi glm-usage extension installed" test -f "$repo/.pi/nogging/extensions/glm-usage/index.ts"
+check "pi extension home README installed" test -f "$repo/.pi/nogging/README.md"
+check "init scaffolds pi_extensions empty and enables nothing" \
+  node -e "const c=require('$repo/.nogging/config.json'); process.exit(Array.isArray(c.pi_extensions) && c.pi_extensions.length===0 ? 0 : 1)"
 check "launch prompts shipped"     test -f "$repo/.nogging/launch-prompts/autonomous.md"
 check "planning prompt shipped" test -f "$repo/.nogging/launch-prompts/planning.md"
 check "reference docs under docs/nogging" test -f "$repo/docs/nogging/architecture.md"
@@ -346,13 +350,15 @@ mkdir -p "$upd"; git -C "$upd" init -q
 ( cd "$upd" && node "$cli" init --no-beads --no-systemd >/dev/null )
 printf 'stale agent\n' > "$upd/.claude/agents/architect.md"
 printf 'stale command\n' > "$upd/.claude/commands/plan.md"
+printf 'stale extension\n' > "$upd/.pi/nogging/extensions/glm-usage/index.ts"
 # Record the simulated old release baseline so update exercises clean refreshes.
 node - "$upd" "$root" <<'NODE'
 const path = require('path');
 const target = process.argv[2];
 const store = require(path.join(process.argv[3], 'bin/lib/manifest-store'));
 const installed = store.readManifest(target);
-for (const rel of ['.claude/agents/architect.md', '.claude/commands/plan.md']) {
+for (const rel of ['.claude/agents/architect.md', '.claude/commands/plan.md',
+                   '.pi/nogging/extensions/glm-usage/index.ts']) {
   installed.files[rel] = store.hashFile(path.join(target, rel));
 }
 store.writeManifest(target, installed);
@@ -362,7 +368,7 @@ printf '# Tasks\n\n- [ ] TASK-X-001 do a thing\n' > "$upd/openspec/changes/my-ch
 printf '# My project\n\nCustom purpose.\n' > "$upd/openspec/project.md"
 node -e "
   const f='$upd/.nogging/config.json'; const d=require(f);
-  d.nogging_version='0.0.1'; d.name='my-custom-name';
+  d.nogging_version='0.0.1'; d.name='my-custom-name'; d.pi_extensions=['glm-usage'];
   require('fs').writeFileSync(f, JSON.stringify(d,null,2)+'\n');
 "
 changes_before=$(cd "$upd" && git -C "$upd" hash-object openspec/changes/my-change/tasks.md 2>/dev/null || md5sum "$upd/openspec/changes/my-change/tasks.md")
@@ -383,6 +389,9 @@ check "update leaves openspec/changes untouched" [ "$changes_before" = "$changes
 check "update leaves openspec/project.md untouched" grep -q "Custom purpose." "$upd/openspec/project.md"
 check "update refreshes a stale Claude agent" cmp -s "$root/.claude/agents/architect.md" "$upd/.claude/agents/architect.md"
 check "update refreshes a stale Claude command" cmp -s "$root/.claude/commands/plan.md" "$upd/.claude/commands/plan.md"
+check "update refreshes a stale Pi extension" cmp -s "$root/.pi/nogging/extensions/glm-usage/index.ts" "$upd/.pi/nogging/extensions/glm-usage/index.ts"
+check "update keeps an enabled pi_extensions list" \
+  node -e "process.exit(JSON.stringify(require('$upd/.nogging/config.json').pi_extensions)==='[\"glm-usage\"]' ? 0 : 1)"
 consumer_runner_checks update "$upd"
 
 new_name=$(node -e "process.stdout.write(require('$upd/.nogging/config.json').name)")
@@ -435,6 +444,9 @@ if command -v npm >/dev/null 2>&1; then
     check "packed install ships pi prompt plan.md" test -f "$packrepo/.pi/prompts/plan.md"
     check "packed install ships pi prompt discovery-review.md" test -f "$packrepo/.pi/prompts/discovery-review.md"
     check "packed install ships pi prompt sync-now.md" test -f "$packrepo/.pi/prompts/sync-now.md"
+    check "packed install ships the Pi extension home" diff -qr "$root/.pi/nogging" "$packrepo/.pi/nogging"
+    check "packed install enables no Pi extension" \
+      node -e "const c=require('$packrepo/.nogging/config.json'); process.exit(Array.isArray(c.pi_extensions) && c.pi_extensions.length===0 ? 0 : 1)"
     check "packed install ships launch prompts"     test -f "$packrepo/.nogging/launch-prompts/no-autonomous-claim.md"
     check "packed install ships planning prompt" test -f "$packrepo/.nogging/launch-prompts/planning.md"
     check "packed install ships the Pi guide"       test -f "$packrepo/docs/nogging/using-with-pi.md"
@@ -554,11 +566,19 @@ NODE
       cmp -s "$pkg2/.codex/rules/nogging.rules" "$packrepo/.codex/rules/nogging.rules"
 
     # remove cleans up the manifest and the leftover artifacts.
+    mkdir -p "$packrepo/.pi/skills/mine"
+    printf 'keep me\n' > "$packrepo/.pi/skills/mine/SKILL.md"
+    printf 'keep me too\n' > "$packrepo/.pi/settings.json"
     printf 'x\n' > "$packrepo/.codex/rules/nogging.rules.nogging-new"
     rc=0
     ( cd "$packrepo" && node "$pkg2/bin/cli.js" remove >/dev/null 2>&1 ) || rc=$?
     check "packed remove exits 0" [ "$rc" -eq 0 ]
     check "remove deletes the installed manifest" test ! -e "$manifest"
+    # remove deletes files, as for every verbatim tree; empty directories may remain.
+    check "remove deletes the Pi extension home" \
+      [ -z "$(find "$packrepo/.pi/nogging" -type f 2>/dev/null | head -1)" ]
+    check "remove leaves other .pi content" \
+      test "$(cat "$packrepo/.pi/skills/mine/SKILL.md" "$packrepo/.pi/settings.json")" = "$(printf 'keep me\nkeep me too')"
     check "remove deletes .nogging-new and .orig leftovers" \
       [ -z "$(find "$packrepo" \( -name '*.nogging-new' -o -name '*.orig' \) -not -path '*/.git/*' | head -1)" ]
   else

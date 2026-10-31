@@ -97,6 +97,7 @@
     ".codex/prompts",
     ".pi/prompts",
     ".pi/extensions",
+    ".pi/nogging",
     "docs/architecture.md",
     "docs/compatibility.md",
     "docs/failure-recovery.md",
