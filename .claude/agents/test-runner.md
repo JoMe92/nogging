@@ -15,8 +15,10 @@ its task slice, and the relevant spec excerpt.
 
 For that one Bead:
 
-- run the relevant tests — the narrowest suite that covers the change, or the
-  one the task names; `scripts/test` only when the Lead asks for the full suite;
+- run the relevant tests — `./scripts/nogg test changed`, the narrowest stage that covers the
+  change, or the wider stage the Lead names;
+  `nogg test full` only when the Lead names a recorded reason, per
+  `docs/testing-policy.md`;
   each run is one blocking call with a long enough timeout, never polled;
 - add missing test coverage **for that Bead only**, matching the existing test style;
 - report pass/fail with the captured output.

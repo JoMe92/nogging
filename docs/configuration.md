@@ -371,6 +371,13 @@ the deny rules of `run-quiet`. Four placeholders expand: `{files}` and
 that key keeps its default; an unknown key is a WARN too. Neither ever fails a
 command. See [Test control](test-control.md).
 
+`doctor` reads `ci` to check that CI really runs tests: it looks, through `gh`, for
+a job on `ci.branch` or a pull request whose name matches `ci.job_pattern` within
+`ci.max_age_days`, caches the answer for `ci.cache_seconds`, and prints a WARN when CI
+is configured and no test job is found. It prints nothing when `gh` cannot be
+reached, and it never changes the exit code. See
+[Does CI really run tests?](test-control.md#does-ci-really-run-tests).
+
 ### `agent_routing_file`
 
 A repository-relative path, `.nogging/agent-routing.json` by default. It is

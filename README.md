@@ -294,8 +294,9 @@ Start with [Installation](docs/installation.md), the [operating model](docs/oper
 
 ## Developing Nogging
 
-Clone the repository, run `./scripts/install-hooks`, and run the suite with
-`scripts/test` (also `npm test`). The CI job reference is in
+Clone the repository, run `./scripts/install-hooks`, and work with the staged
+`./scripts/nogg test changed|commit|bead` ([test control](docs/test-control.md));
+CI runs the whole suite (`scripts/test`, also `npm test`). The CI job reference is in
 [CONTRIBUTING.md](CONTRIBUTING.md#tests-and-ci); maintainers cutting a release
 follow [docs/releasing.md](docs/releasing.md).
 

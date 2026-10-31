@@ -188,10 +188,11 @@ you have.
 - **`takeover code`** — claim the named Bead (`bd update <id> --claim`),
   implement it in coherent commits within the configured commit range
   (`scripts/nogg task-sizing`), each with a Conventional subject carrying the
-  `[<bead-id>]` token and the tests for the code it changes. Run only the
-  tests of the changed files while working and before each commit (plus lint
-  of those files), the affected suite once before closing, and leave the full
-  suite to CI (`scripts/test` once only where there is no CI); run each long
+  `[<bead-id>]` token and the tests for the code it changes. Test with the
+  stages of `docs/testing-policy.md`: `nogg test changed` while working,
+  `nogg test commit` before each commit, `nogg test bead` once before
+  closing, and leave the full suite to CI (`nogg test full` only for a
+  release, the nightly run or a recorded reason); run each long
   command as one blocking call and never poll it. Append the
   evidence note listing every commit SHA (`bd update <id> --append-notes
   "commits <sha>, <sha>; <evidence>"`), and `bd close <id>`. Record any plan-relevant finding as a

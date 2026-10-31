@@ -11075,6 +11075,9 @@ def doctor(audit=False, with_recover=False, with_sandbox=False, refuse_task_form
     warnings.extend(artifact_warnings)
     warnings.extend(task_sizing()[2])
     warnings.extend(testing_config_warnings())
+    ci_line = test_ci_diagnostics()
+    if ci_line and ci_line[0] == "WARN":
+        warnings.append(ci_line[1])
     for name, ok in checks: print(f"{'OK' if ok else 'FAIL'}  {name}")
     # Warnings are advisory (a committed-but-open Bead and the like): shown
     # distinctly from FAIL, and they never change doctor's exit code.
@@ -11097,6 +11100,8 @@ def doctor(audit=False, with_recover=False, with_sandbox=False, refuse_task_form
     except Exception as exc:
         notes.append(f"worktree integrity check unavailable: {exc}")
     notes.extend(artifact_notes)
+    if ci_line and ci_line[0] == "NOTE":
+        notes.append(ci_line[1])
     # Advisory only, like every other NOTE here: never a FAIL, never changes
     # doctor's exit code. `/plan`'s archive step (TASK-TCC-004) is what
     # actually archives a change; doctor only surfaces readiness.
@@ -11588,6 +11593,55 @@ def test_last_nightly():
         return dt.datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
     except (OSError, ValueError, AttributeError):
         return None
+TEST_CI_CACHE = "ci-check.json"
+def test_ci_run_gh(deadline):
+    """A `gh` caller for the CI check, bounded by one shared deadline (a monotonic time):
+    stdout, or None when gh is missing, fails or the deadline has passed."""
+    def run_gh(argv):
+        left = deadline - time.monotonic()
+        if left <= 0 or not tool_on_path("gh"):
+            return None
+        try:
+            result = subprocess.run(["gh", *argv], cwd=ROOT, capture_output=True, text=True, timeout=left,
+                                    env={**os.environ, "GH_PROMPT_DISABLED": "1", "NO_COLOR": "1"})
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        return result.stdout if result.returncode == 0 else None
+    return run_gh
+def test_ci_github_remote():
+    """True when a remote of this checkout points at GitHub. No such remote means no
+    `gh` call at all: the check stays offline."""
+    out = test_git("remote", "-v")
+    return bool(out) and "github.com" in out
+def test_ci_diagnostics():
+    """(level, text) for `doctor`'s CI reality check, or None. Never raises, never
+    changes the exit code; the decisions live in scripts/lib/testing_ci.py."""
+    try:
+        stages = testing_modules()[0]
+        import testing_ci
+        ci = stages.parse_testing(CFG.get("testing"))[0]["ci"]
+        configured = bool(stages.ci_files(ROOT))
+        now = time.time()
+        cache_path = TEST_STATE / TEST_CI_CACHE
+        try:
+            cache = json.loads(cache_path.read_text())
+        except (OSError, ValueError):
+            cache = None
+        gh = test_ci_run_gh(time.monotonic() + testing_ci.REFRESH_SECONDS) if test_ci_github_remote() \
+            else (lambda argv: None)
+        line, entry = testing_ci.check(ci, configured, gh, now, cache=cache,
+                                       nightly_recorded=test_last_nightly() is not None)
+        if entry is not None:
+            try:
+                cache_path.parent.mkdir(parents=True, exist_ok=True)
+                tmp = cache_path.with_name(cache_path.name + f".{os.getpid()}.tmp")
+                tmp.write_text(json.dumps(entry))
+                os.replace(tmp, cache_path)
+            except OSError:
+                pass
+        return line
+    except Exception as exc:
+        return ("NOTE", f"CI reality check unavailable: {exc.__class__.__name__}")
 def test_log_dir():
     """The main checkout's log directory, or None for run-quiet's default log
     when a fenced session cannot write there: no log place stops a test."""
