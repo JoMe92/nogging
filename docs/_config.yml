@@ -233,6 +233,12 @@ defaults:
       nav_order: 11
       description: Optional Pi extensions for Nogging - the .pi/nogging layout, writing and testing an extension, enabling it, and the glm-usage Z.ai quota footer.
   - scope:
+      path: "testing-policy.md"
+    values:
+      parent: Guides
+      nav_order: 12
+      description: A short, framework-neutral test policy - what to always test, what not to test, which level fits a change, where mocks belong, and why setup runs once.
+  - scope:
       path: "operations.md"
     values:
       title: Operations

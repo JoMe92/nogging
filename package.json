@@ -115,6 +115,7 @@
     "docs/token-usage.md",
     "docs/scheduled-loops.md",
     "docs/session-wake.md",
+    "docs/testing-policy.md",
     "openspec/config.yaml",
     "scripts/hooks/agy-guard",
     "templates/antigravity/hooks.json",
