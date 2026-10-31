@@ -307,6 +307,10 @@ def resolve_state(event: str | None, rollout: str | None, pane: str | None,
         return event, "event"
     if rollout == "working":
         return "working", "rollout"
+    if rollout == "limit":
+        # A turn that ended in a usage limit stays `limit` until a new turn starts,
+        # which is the rollout turning `working` above. No idle event or pane hides it.
+        return "limit", "rollout"
     if event is not None:
         if live is not None and (event == "needs_input" or (event == "idle" and live == "working")):
             return live, live_source

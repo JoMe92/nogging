@@ -29,6 +29,12 @@ and GitHub Releases for that history.
   run of each check, so a failure that a later re-run superseded no longer keeps the
   pull request red (PR #350 and PR #355 stayed red after they passed). Ties and runs
   without a readable time keep the worse outcome. See `docs/session-wake.md`.
+- A Codex session stopped by its usage limit is now `limit`, not `idle`. The state is
+  read from the rollout's last turn (`usage_limit_exceeded`), with the pane as a
+  fallback. The dispatcher no longer nudges it; it waits for the reset time (read
+  against the error's own timestamp), sends one resume per limit error, waits again
+  if the resume meets the limit again, and queues one `stuck` item when the message
+  has no readable reset time. `session watch` carries `until` on the `limit` event.
 
 ## [3.5.0] - 2026-10-31
 

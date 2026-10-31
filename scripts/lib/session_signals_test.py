@@ -210,6 +210,16 @@ class EvidenceOrderTests(unittest.TestCase):
         self.assertEqual(("unknown", "none"), sig.resolve_state(None, None, "unknown"))
         self.assertEqual(("unknown", "none"), sig.resolve_state(None, None, None))
 
+    def test_a_rollout_limit_is_not_hidden_by_an_idle_event_or_pane(self):
+        self.assertEqual(("limit", "rollout"), sig.resolve_state(None, "limit", "idle"))
+        self.assertEqual(("limit", "rollout"), sig.resolve_state("idle", "limit", "idle"))
+        self.assertEqual(("limit", "rollout"), sig.resolve_state("idle", "limit", "unknown", herdr="done"))
+        self.assertEqual(("limit", "rollout"), sig.resolve_state(None, "limit", None))
+
+    def test_a_new_turn_or_an_end_beats_a_rollout_limit(self):
+        self.assertEqual(("working", "rollout"), sig.resolve_state(None, "working", "limit"))
+        self.assertEqual(("ended", "event"), sig.resolve_state("ended", "limit", "idle"))
+
     def test_live_working_beats_a_stale_idle(self):
         self.assertEqual(("working", "pane"), sig.resolve_state("idle", None, "working"))
         self.assertEqual(("working", "rollout"), sig.resolve_state("idle", "working", "idle"))

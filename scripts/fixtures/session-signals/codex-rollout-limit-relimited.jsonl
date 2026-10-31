@@ -1,0 +1,5 @@
+{"type":"session_meta","payload":{"id":"thread-0001","cwd":"/scratch/work","timestamp":"2026-10-31T07:45:00Z"}}
+{"timestamp":"2026-10-31T07:46:18.201Z","type":"event_msg","payload":{"type":"task_started","turn_id":"t1"}}
+{"timestamp":"2026-10-31T07:46:19.094Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"t1","last_agent_message":null,"error":{"message":"You’ve hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 12:51 PM.","codex_error_info":"usage_limit_exceeded"}}}
+{"timestamp":"2026-10-31T12:52:03.500Z","type":"event_msg","payload":{"type":"task_started","turn_id":"t2"}}
+{"timestamp":"2026-10-31T12:52:04.100Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"t2","last_agent_message":null,"error":{"message":"You’ve hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 3:30 PM.","codex_error_info":"usage_limit_exceeded"}}}
