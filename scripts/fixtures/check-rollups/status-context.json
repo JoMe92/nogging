@@ -1,0 +1,14 @@
+[
+ {
+  "__typename": "StatusContext",
+  "context": "legacy",
+  "state": "ERROR",
+  "startedAt": "2026-10-31T08:00:00Z"
+ },
+ {
+  "__typename": "StatusContext",
+  "context": "legacy",
+  "state": "SUCCESS",
+  "startedAt": "2026-10-31T08:05:00Z"
+ }
+]

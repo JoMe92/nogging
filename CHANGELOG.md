@@ -14,6 +14,10 @@ and GitHub Releases for that history.
 - The Pi lifecycle extension now waits 20 s (was 3 s) for each `scripts/nogg session emit`,
   so a slow start under load no longer drops a Pi session's first `turn_start`/`turn_end`.
   Pi is still never blocked, events keep Pi's order and a killed call is not retried.
+- Session wake and `session sweep --checks` judge a pull request's CI by the newest
+  run of each check, so a failure that a later re-run superseded no longer keeps the
+  pull request red (PR #350 and PR #355 stayed red after they passed). Ties and runs
+  without a readable time keep the worse outcome. See `docs/session-wake.md`.
 
 ## [3.5.0] - 2026-10-31
 

@@ -1,0 +1,17 @@
+[
+ {
+  "name": "test",
+  "workflowName": "CI",
+  "status": "COMPLETED",
+  "conclusion": "SUCCESS",
+  "detailsUrl": "https://example.invalid/runs/1"
+ },
+ {
+  "name": "test",
+  "workflowName": "CI",
+  "status": "COMPLETED",
+  "conclusion": "FAILURE",
+  "startedAt": "not a time",
+  "detailsUrl": "https://example.invalid/runs/2"
+ }
+]
