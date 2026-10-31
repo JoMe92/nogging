@@ -1735,6 +1735,101 @@ def install_statusline(settings_path=None, wrapper_path=None, dry_run=False):
     return result
 
 
+_MISSING = object()
+
+
+def _legacy_previous_statusline(wrapper_file):
+    """Previous statusLine for installs made before the restore record existed.
+
+    Read from the wrapper's baked-in UPSTREAM_COMMAND literal; _MISSING when the
+    wrapper is absent or unreadable.
+    """
+    import ast
+    try:
+        text = wrapper_file.read_text(encoding='utf-8')
+    except OSError:
+        return _MISSING
+    match = re.search(r'^UPSTREAM_COMMAND = (.+)$', text, re.MULTILINE)
+    if not match:
+        return _MISSING
+    try:
+        upstream = ast.literal_eval(match.group(1))
+    except (ValueError, SyntaxError):
+        return _MISSING
+    if isinstance(upstream, str) and upstream.strip():
+        return {'type': 'command', 'command': upstream}
+    return None
+
+
+def _recorded_previous_statusline(record_file):
+    try:
+        record = json.loads(record_file.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return _MISSING
+    if not isinstance(record, dict) or 'previous_statusline' not in record:
+        return _MISSING
+    return record['previous_statusline']
+
+
+def uninstall_statusline(settings_path=None, wrapper_path=None, dry_run=False):
+    """Undo install_statusline: restore only the statusLine key, then remove the wrapper and record.
+
+    Every other setting is untouched. A no-op reporting ``not_installed`` when the
+    capture is not configured; refuses without changes when the previous value
+    cannot be determined. The usage cache is left alone.
+    """
+    settings_file, wrapper_file = _statusline_paths(settings_path, wrapper_path)
+    record_file = _restore_record_path(wrapper_file)
+    settings, old_text = _read_claude_settings(settings_file)
+    result = {'wrapper_path': str(wrapper_file), 'settings_path': str(settings_file), 'dry_run': bool(dry_run)}
+
+    if not _references_wrapper(settings.get('statusLine'), wrapper_file):
+        result.update(status='not_installed', restored=None, backup_path=None)
+        result['message'] = (
+            f"statusline capture is not installed in {settings_file}; nothing changed"
+            + (f" (wrapper still exists at {wrapper_file}; remove it by hand if unwanted)" if wrapper_file.exists() else ""))
+        if dry_run:
+            result['diff'] = ''
+        return result
+
+    previous = _recorded_previous_statusline(record_file)
+    if previous is _MISSING:
+        previous = _legacy_previous_statusline(wrapper_file)
+    if previous is _MISSING:
+        install_backup = settings_file.with_name(settings_file.name + '.nogging-install.bak')
+        raise RuntimeError(
+            f"cannot uninstall statusline capture: no restore record at {record_file} and the wrapper {wrapper_file} "
+            "does not name the previous command, so the previous statusLine cannot be determined. Nothing was changed.\n"
+            "Manual instructions:\n"
+            f"1. Edit {settings_file} and restore or remove the 'statusLine' key yourself."
+            + (f"\n2. The install backup is at {install_backup}." if install_backup.exists() else ""))
+
+    new_settings = dict(settings)
+    if previous is None:
+        new_settings.pop('statusLine', None)
+    else:
+        new_settings['statusLine'] = previous
+    new_text = _settings_text(new_settings)
+    backup = settings_file.with_name(settings_file.name + '.nogging-uninstall.bak')
+    result.update(status='uninstalled', restored=previous, backup_path=str(backup))
+    restored = 'removed the statusLine key' if previous is None else 'restored the previous statusLine'
+    if dry_run:
+        result['message'] = f"would uninstall statusline capture: {restored} in {settings_file}, remove {wrapper_file} and {record_file}"
+        result['diff'] = _settings_diff(settings_file, old_text, new_text)
+        return result
+
+    _backup_settings(settings_file, '.nogging-uninstall.bak')
+    _write_text_atomic(settings_file, new_text, 0o600, '.claude-settings-')
+    for leftover in (wrapper_file, record_file):
+        try:
+            leftover.unlink()
+        except FileNotFoundError:
+            pass
+    result['message'] = (f"uninstalled statusline capture: {restored} in {settings_file} (backup: {backup}); "
+                         "the usage cache was left in place and expires on its own")
+    return result
+
+
 def quota_freshness_notes(config=None, now=None):
     """Advisory doctor notes regarding local quota observation cache freshness.
 

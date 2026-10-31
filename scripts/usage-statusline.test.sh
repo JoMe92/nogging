@@ -373,6 +373,128 @@ rm -f "$CLAUDE_CONFIG_DIR/settings.json.nogging-install.bak" "$record"
 "$env6/repo/scripts/nogg" usage install-statusline --dry-run >"$out" 2>&1
 grep -qF "already installed; nothing would change" "$out" && ok "dry-run on an installed state reports no change" || bad "dry-run already installed"
 
+# --- Test 7: uninstall-statusline round trips ---
+# canon FILE JSON writes JSON in the installer's formatting (indent 2, sorted keys)
+canon() { python3 -c 'import json,sys; sys.stdout.write(json.dumps(json.loads(sys.argv[1]), indent=2, sort_keys=True)+"\n")' "$2" >"$1"; }
+# edit_settings FILE KEY VALUE sets an unrelated top-level key, keeping everything else
+edit_settings() { python3 - "$1" "$2" "$3" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); d[sys.argv[2]] = sys.argv[3]
+open(sys.argv[1], 'w').write(json.dumps(d, indent=2, sort_keys=True) + "\n")
+PY
+}
+roundtrip() {  # roundtrip NAME INITIAL_JSON_OR_EMPTY
+  local name="$1" initial="$2" e
+  e=$(setup_test_env "rt-$name")
+  export HOME="$e/home" XDG_CACHE_HOME="$e/cache" XDG_DATA_HOME="$e/data" CLAUDE_CONFIG_DIR="$e/claude_config"
+  mkdir -p "$HOME" "$XDG_CACHE_HOME" "$CLAUDE_CONFIG_DIR"
+  local settings="$CLAUDE_CONFIG_DIR/settings.json" nogg_bin="$e/repo/scripts/nogg"
+  canon "$settings" "$initial"
+  cp "$settings" "$work/rt-$name.orig"
+  "$nogg_bin" usage install-statusline >"$out" 2>&1 || { bad "$name: install"; return; }
+  edit_settings "$settings" theme "edited-after-install"
+  cp "$work/rt-$name.orig" "$work/rt-$name.expected"
+  edit_settings "$work/rt-$name.expected" theme "edited-after-install"
+  "$nogg_bin" usage uninstall-statusline >"$out" 2>&1 || { bad "$name: uninstall"; return; }
+  cmp -s "$work/rt-$name.expected" "$settings" \
+    && [[ -f "$settings.nogging-install.bak" && -f "$settings.nogging-uninstall.bak" ]] \
+    && [[ ! -e "$XDG_DATA_HOME/nogging/claude-statusline" && ! -e "$XDG_DATA_HOME/nogging/claude-statusline.restore.json" ]] \
+    && [[ "$(stat -c %a "$settings.nogging-uninstall.bak")" == "600" ]] \
+    && ok "$name: install then uninstall restores settings byte for byte, keeps unrelated edit, removes wrapper and record" \
+    || { diff "$work/rt-$name.expected" "$settings" >"$out" 2>&1; bad "$name: round trip"; }
+  "$nogg_bin" usage uninstall-statusline --json >"$out" 2>&1
+  python3 - "$out" <<'PY' && ok "$name: second uninstall is not_installed" || bad "$name: second uninstall"
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d['status'] == 'not_installed' and d['restored'] is None, d
+PY
+}
+roundtrip none '{"model": "opus", "theme": "dark"}'
+roundtrip string '{"model": "opus", "statusLine": "echo plain-string-line", "theme": "dark"}'
+roundtrip object '{"model": "opus", "statusLine": {"type": "command", "command": "echo obj-line", "padding": 3}, "theme": "dark"}'
+
+# uninstall --json / --dry-run shapes, untouched fixture, legacy installs, refusals
+e8=$(setup_test_env 8)
+export HOME="$e8/home" XDG_CACHE_HOME="$e8/cache" XDG_DATA_HOME="$e8/data" CLAUDE_CONFIG_DIR="$e8/claude_config"
+mkdir -p "$HOME" "$XDG_CACHE_HOME" "$CLAUDE_CONFIG_DIR"
+nogg8="$e8/repo/scripts/nogg"
+canon "$CLAUDE_CONFIG_DIR/settings.json" '{"statusLine": {"type": "command", "command": "echo mine", "padding": 1}, "theme": "dark"}'
+cp "$CLAUDE_CONFIG_DIR/settings.json" "$work/e8.untouched"
+"$nogg8" usage uninstall-statusline >"$out" 2>&1 && grep -qF "not installed" "$out" \
+  && cmp -s "$work/e8.untouched" "$CLAUDE_CONFIG_DIR/settings.json" && [[ ! -e "$CLAUDE_CONFIG_DIR/settings.json.nogging-uninstall.bak" ]] \
+  && ok "uninstall on an untouched fixture is a no-op (exit 0)" || bad "uninstall untouched"
+"$nogg8" usage uninstall-statusline --dry-run --json >"$out" 2>&1
+python3 - "$out" <<'PY' && ok "uninstall --dry-run --json on untouched fixture" || bad "uninstall dry-run json untouched"
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d['status'] == 'not_installed' and d['dry_run'] is True and d['diff'] == '', d
+PY
+rm -f "$CLAUDE_CONFIG_DIR/settings.json"
+"$nogg8" usage uninstall-statusline >"$out" 2>&1 && ! [[ -e "$CLAUDE_CONFIG_DIR/settings.json" ]] \
+  && ok "uninstall with no settings file is a no-op" || bad "uninstall no settings file"
+canon "$CLAUDE_CONFIG_DIR/settings.json" '{"statusLine": {"type": "command", "command": "echo mine", "padding": 1}, "theme": "dark"}'
+"$nogg8" usage install-statusline >"$out" 2>&1
+cp "$CLAUDE_CONFIG_DIR/settings.json" "$work/e8.installed"
+snap8() { (cd "$e8" && find claude_config data -type f -exec sha256sum {} + | sort); }
+before8=$(snap8)
+"$nogg8" usage uninstall-statusline --dry-run >"$out" 2>&1
+[[ "$before8" == "$(snap8)" ]] && grep -qF -- "-    \"command\": \"$XDG_DATA_HOME/nogging/claude-statusline\"" "$out" \
+  && grep -qF -- "+    \"command\": \"echo mine\"" "$out" && ok "uninstall --dry-run prints the diff and writes nothing" || bad "uninstall dry-run"
+"$nogg8" usage uninstall-statusline --json >"$out" 2>&1
+python3 - "$out" "$CLAUDE_CONFIG_DIR/settings.json.nogging-uninstall.bak" <<'PY' && ok "uninstall --json shape" || bad "uninstall --json shape"
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d['status'] == 'uninstalled' and d['dry_run'] is False
+assert d['restored'] == {"type": "command", "command": "echo mine", "padding": 1}
+assert d['backup_path'] == sys.argv[2]
+PY
+cmp -s "$work/e8.installed" "$CLAUDE_CONFIG_DIR/settings.json.nogging-uninstall.bak" && ok "uninstall backs up the settings it replaced" || bad "uninstall backup content"
+
+# legacy install: no restore record, wrapper names the composed command
+canon "$CLAUDE_CONFIG_DIR/settings.json" '{"statusLine": {"type": "command", "command": "echo legacy-cmd", "padding": 1}, "theme": "dark"}'
+"$nogg8" usage install-statusline >"$out" 2>&1
+rm -f "$XDG_DATA_HOME/nogging/claude-statusline.restore.json"
+"$nogg8" usage uninstall-statusline >"$out" 2>&1
+python3 - "$CLAUDE_CONFIG_DIR/settings.json" <<'PY' && ok "legacy install (no record) restores the composed command as a command statusline" || bad "legacy composed restore"
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d['statusLine'] == {"type": "command", "command": "echo legacy-cmd"}, d
+assert d['theme'] == 'dark'
+PY
+canon "$CLAUDE_CONFIG_DIR/settings.json" '{"theme": "dark"}'
+"$nogg8" usage install-statusline >"$out" 2>&1
+rm -f "$XDG_DATA_HOME/nogging/claude-statusline.restore.json"
+"$nogg8" usage uninstall-statusline >"$out" 2>&1
+python3 - "$CLAUDE_CONFIG_DIR/settings.json" <<'PY' && ok "legacy install without composition removes the statusLine key" || bad "legacy standalone restore"
+import json, sys
+assert json.load(open(sys.argv[1])) == {"theme": "dark"}
+PY
+
+# neither record nor wrapper: refuse with manual steps, change nothing
+"$nogg8" usage install-statusline >"$out" 2>&1
+rm -f "$XDG_DATA_HOME/nogging/claude-statusline.restore.json" "$XDG_DATA_HOME/nogging/claude-statusline"
+cp "$CLAUDE_CONFIG_DIR/settings.json" "$work/e8.refuse"
+rm -f "$CLAUDE_CONFIG_DIR/settings.json.nogging-uninstall.bak"
+if "$nogg8" usage uninstall-statusline >"$out" 2>&1; then bad "should refuse without a record or wrapper"
+else
+  grep -qF "Manual instructions" "$out" && grep -qF "settings.json.nogging-install.bak" "$out" \
+    && cmp -s "$work/e8.refuse" "$CLAUDE_CONFIG_DIR/settings.json" && [[ ! -e "$CLAUDE_CONFIG_DIR/settings.json.nogging-uninstall.bak" ]] \
+    && ok "uninstall refuses without a record or wrapper, names the install backup, changes nothing" || bad "refusal message/changes"
+fi
+
+# a hand-edited statusLine that no longer references the wrapper is left alone
+canon "$CLAUDE_CONFIG_DIR/settings.json" '{"statusLine": {"type": "command", "command": "echo hand-edited"}}'
+cp "$CLAUDE_CONFIG_DIR/settings.json" "$work/e8.hand"
+"$nogg8" usage uninstall-statusline >"$out" 2>&1 && cmp -s "$work/e8.hand" "$CLAUDE_CONFIG_DIR/settings.json" \
+  && ok "hand-edited statusLine is left alone (not_installed)" || bad "hand-edited statusLine"
+
+# malformed settings refuse
+echo "NOT_VALID_JSON{}" >"$CLAUDE_CONFIG_DIR/settings.json"
+if "$nogg8" usage uninstall-statusline >"$out" 2>&1; then bad "uninstall should refuse malformed settings"
+else grep -qF "malformed or unreadable" "$out" && grep -qF "Manual instructions" "$out" \
+  && [[ "$(cat "$CLAUDE_CONFIG_DIR/settings.json")" == "NOT_VALID_JSON{}" ]] \
+  && ok "uninstall refuses malformed settings with manual instructions" || bad "uninstall malformed message"; fi
+
 # --- Test 5: Doctor freshness hints ---
 env5=$(setup_test_env 5)
 export HOME="$env5/home"
