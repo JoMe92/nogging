@@ -9,6 +9,12 @@ and GitHub Releases for that history.
 
 ## [Unreleased]
 
+### Fixed
+
+- The Pi lifecycle extension now waits 20 s (was 3 s) for each `scripts/nogg session emit`,
+  so a slow start under load no longer drops a Pi session's first `turn_start`/`turn_end`.
+  Pi is still never blocked, events keep Pi's order and a killed call is not retried.
+
 ## [3.5.0] - 2026-10-31
 
 Session wake is the headline: finished or blocked sessions are noticed at once, and
