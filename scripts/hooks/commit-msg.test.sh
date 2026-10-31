@@ -74,6 +74,10 @@ run pass "legacy SPECFORGE_WRITER exemption still accepted" \
 historic='plan(launch-hook-fixes): fix blocking-edge check, agent-binary preflight, absolute Stop hook'
 run pass "historic 4f10ca8 subject exempt"                      - "$historic"
 run fail "one-character variant of historic subject rejected"   - "${historic%k}K"
+# Historic commit 4de5a99: exact-subject exemption only.
+historic2='plan(session-wake): add user pause mode, keep-warm rule and quiet hours'
+run pass "historic 4de5a99 subject exempt"                      - "$historic2"
+run fail "one-character variant of 4de5a99 subject rejected"    - "${historic2%s}S"
 run fail "ordinary non-Conventional subject still rejected"     - "plan(other): do a thing"
 
 if [[ $fail -ne 0 ]]; then
