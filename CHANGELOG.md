@@ -22,6 +22,14 @@ and GitHub Releases for that history.
   that already has a Bead. A missing or sizeless `Tests:` field is a NOTE.
   `task_sizing.bead_test_lines` (default `[1, 1500]`) adds a per-Bead test-line
   budget to `nogg task-sizing`. (SPEC-s8ev)
+- `scripts/check-test-integrity <base> [--enforce]` flags, over the whole range
+  `<base>...HEAD`, a deleted test or test file, a newly added skip or
+  expected-failure marker and a modified test file whose assertion count falls
+  (pytest, unittest, Jest/Vitest, Go, Rust, JUnit and shell). A move or rename
+  inside the range is not a finding; a `Test-Integrity: <reason>` trailer on a
+  commit in the range clears the rest. The analysis is the pure
+  `scripts/lib/testing_diff.py`; both ship in the package. See
+  `docs/operating-model.md` *Test integrity*.
 - `nogg usage install-statusline --dry-run` previews the wrapper, the composed
   command and a diff of the Claude `settings.json` and writes nothing. A real
   install now backs up `settings.json` (`.nogging-install.bak`) and records
