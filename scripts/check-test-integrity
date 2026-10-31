@@ -10,8 +10,9 @@
 # trailer on any commit in the range clears the findings, which then print as
 # justified. Without --enforce it prints and exits 0; with --enforce it exits 1
 # while an uncleared finding remains. A <base> that does not resolve exits 2.
-# The CI `invariants` job and `nogg test` both call this script; the analysis
-# itself is scripts/lib/testing_diff.py.
+# The `nogg test` bead stage calls this script; CI enforcement is an opt-in line a
+# maintainer adds to the workflow (docs/operating-model.md, *Test integrity*). The
+# analysis itself is scripts/lib/testing_diff.py.
 set -euo pipefail
 
 usage() {

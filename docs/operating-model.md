@@ -339,9 +339,16 @@ at a time, and flags in test files (the `TEST_PATH_RE` of `scripts/lib/token_usa
 Rust tests written inline in `src/` are outside `TEST_PATH_RE` and are not seen.
 
 Without `--enforce` the script prints its findings and exits 0. With it, the script
-exits 1 while a finding is uncleared. This repository's CI `invariants` job runs it
-with `--enforce` against `origin/$GITHUB_BASE_REF`. A base that does not resolve
-exits 2.
+exits 1 while a finding is uncleared. It runs in the `nogg test` bead stage. A base
+that does not resolve exits 2.
+
+CI enforcement is an opt-in a maintainer adds to the workflow: a step in a job that
+fetches the full history and the base ref (as the `invariants` job does), for example
+
+```yaml
+      - name: No test is deleted, skipped or weakened without a Test-Integrity trailer
+        run: scripts/check-test-integrity "origin/${GITHUB_BASE_REF}" --enforce
+```
 
 A removal that is intended is justified in history, as `Nogging-Writer:` is: put a
 `Test-Integrity: <reason>` trailer in the message of any commit in the range, and
