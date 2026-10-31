@@ -84,7 +84,7 @@ runs the whole suite: name the suites in the task, and leave the rest to CI.
 
 ## 2. Guidance and CI evidence
 
-- [ ] TASK-TPC-004 [standard] [~650 loc] Agents work on the stages, and `doctor` proves whether CI really runs tests.
+- [x] TASK-TPC-004 [standard] [~650 loc] Agents work on the stages, and `doctor` proves whether CI really runs tests.
   Per design Decision 11 and the test-policy requirement on agents and the test-control
   requirement on doctor. Add pure scripts/lib/testing_ci.py and a thin refresh in scripts/nogg
   with the 10-second bound and the cache at .nogging/state/testing/ci-check.json, reading
