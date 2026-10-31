@@ -87,10 +87,12 @@ A specialist returns a structured result and nothing else. It never claims,
 closes, or re-statuses a Bead, never commits, and never writes `openspec/`. On
 the specialist's return **you**:
 
-1. validate the work in stages: the tests of the changed files while working,
-   those tests plus lint of the changed files before each commit, and the
-   affected suite once per Bead before closing it. The full suite is CI's job
-   (`scripts/test` once per Bead only where the project has no CI). Run a long
+1. validate the work in stages, per the [test policy](docs/testing-policy.md):
+   `./scripts/nogg test changed` while working, `./scripts/nogg test commit`
+   before each commit, and `./scripts/nogg test bead` once per Bead before
+   closing it. The full suite is CI's job (`nogg test full` only for a
+   release, the nightly run or an explicit recorded reason). Weakening a test
+   takes a `Test-Integrity: <reason>` commit trailer and a discovery note. Run a long
    command as one blocking `Bash` call with a `timeout` that covers it, or with
    `run_in_background` and wait for the completion notification —
    `./scripts/nogg run-quiet -- <command>` keeps its output to one line on

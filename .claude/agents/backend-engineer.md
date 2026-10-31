@@ -21,9 +21,10 @@ stop and return control — you do not commit and you do not close anything.
 ## Tool scope
 
 You have `Read`, `Grep`, `Glob`, `Edit`, `Write`, and `Bash`. Use `Edit` and
-`Write` on source and test files only. Use `Bash` to run the build and the test
-suite: the tests of the files you change, or the narrower suite the task
-names; leave `scripts/test` to the Lead and CI. Run each long command as one
+`Write` on source and test files only. Use `Bash` to run the build and the tests
+with `./scripts/nogg test changed` (the tests of the files you change) or the
+narrower suite the task names, per `docs/testing-policy.md`; leave
+the later stages and the full suite to the Lead and CI. Run each long command as one
 blocking call with a long enough timeout and never poll it. The `PreToolUse`
 guard blocks any write under `openspec/`; do not try to work around it.
 

@@ -56,11 +56,12 @@ there. For each Bead the Lead Agent follows this path:
 10. Commit the Bead in several coherent steps within the configured commit
    range (`task_sizing.commit_lines`, default 100–600 changed lines;
    `./scripts/nogg task-sizing` prints it); every commit carries the `[<ID>]`
-   token and the tests for the code it changes. Test in stages: while
-   working, only the tests of the files you change; before each commit, those
-   tests plus lint of the changed files; once per Bead, before hand-off, the
-   affected suite. The full suite is CI's job (`scripts/test` once per Bead
-   only where the project has no CI). Run a long command as one blocking call
+   token and the tests for the code it changes. Test in stages
+   ([testing policy](testing-policy.md)): `nogg test changed` while working,
+   `nogg test commit` before each commit, `nogg test bead` once per Bead
+   before hand-off. The full suite is CI's job (`nogg test full` only for a
+   release, the nightly run or an explicit recorded reason), and weakening a
+   test takes a `Test-Integrity: <reason>` trailer and a discovery note. Run a long command as one blocking call
    with a timeout that covers it (`./scripts/nogg run-quiet -- <command>`) and
    never poll it: every poll re-sends the agent's whole context, so waiting
    costs tokens without doing work. Then write the

@@ -12,11 +12,14 @@ are confined to *Tool notes* at the end.
    commit stays within the configured commit range (`task_sizing.commit_lines`
    in `.nogging/config.json`; `./scripts/nogg task-sizing` prints it), is a
    Conventional Commit containing the Bead ID (e.g. `[SPEC-abc]`), and holds
-   the tests for the code it changes. Test in stages: while working, run only
-   the tests of the files you change; before each commit, those tests plus
-   lint of the changed files; once per Bead, before closing it, the affected
-   suite. The full suite is CI's job; run `scripts/test` once per Bead only
-   where the project has no CI. Run a long command (a suite, a build) as one
+   the tests for the code it changes. Test in stages, following the
+   [test policy](docs/testing-policy.md): `./scripts/nogg test changed` while
+   working, `./scripts/nogg test commit` before each commit, and
+   `./scripts/nogg test bead` once per Bead, before closing it. The full
+   suite is CI's job: `./scripts/nogg test full` is only for a release, the
+   nightly run or an explicit recorded reason. Weakening a test — deleting
+   it, adding a skip, dropping assertions — takes a `Test-Integrity:
+   <reason>` commit trailer and a discovery note on the Bead. Run a long command (a suite, a build) as one
    blocking call with a timeout long enough for it to finish —
    `./scripts/nogg run-quiet -- <command>` prints one line on success and
    only the tail on failure — and never poll a running command (*Tool notes*
