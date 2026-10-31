@@ -230,7 +230,7 @@
 
 ## 4. Live acceptance (test/)
 
-- [ ] TASK-SWK-008 [complex] [~150 loc: live acceptance report on the delivery host] Live session-wake acceptance with real Claude Code, Codex and Pi sessions.
+- [x] TASK-SWK-008 [complex] [~150 loc: live acceptance report on the delivery host] Live session-wake acceptance with real Claude Code, Codex and Pi sessions.
   Per design Decision 14: a host-capable Claude --full-access Lead runs it on this
   host, on throwaway Beads, recording versions of all four tools. One short real
   supervised session each on Claude Code, Codex and Pi shows: `turn_end` with an excerpt
