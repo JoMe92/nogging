@@ -110,6 +110,7 @@ module.exports = {
     { from: 'docs/failure-recovery.md', to: 'docs/nogging/failure-recovery.md' },
     { from: 'docs/using-with-codex.md', to: 'docs/nogging/using-with-codex.md' },
     { from: 'docs/using-with-pi.md', to: 'docs/nogging/using-with-pi.md' },
+    { from: 'docs/pi-extensions.md', to: 'docs/nogging/pi-extensions.md' },
     { from: 'docs/using-with-antigravity.md', to: 'docs/nogging/using-with-antigravity.md' },
     { from: 'docs/using-with-herdr.md', to: 'docs/nogging/using-with-herdr.md' },
     { from: 'docs/security-model.md', to: 'docs/nogging/security-model.md' },

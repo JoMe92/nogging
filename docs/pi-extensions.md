@@ -95,7 +95,7 @@ the guard, in the order you listed. The launch output prints
 `pi-extensions=<names>` and the session record stores the loaded names. An
 invalid value refuses the launch before any side effect; the details are in
 [Using Nogging with Pi](using-with-pi.md#enabling-optional-extensions--pi_extensions)
-and the key is in [configuration](configuration.md). Other agents ignore it.
+and the key is in [configuration](https://jome92.github.io/nogging/configuration/). Other agents ignore it.
 
 ## Enabling an extension for standalone Pi
 
@@ -191,7 +191,7 @@ holds no key, account identifier, header or raw response:
 
 A window the response lacked is omitted. A failed write does not stop the
 footer, and `/glm-usage` reports it. `nogg usage --agent pi` reads and writes
-the same file; see [Usage limits](usage-limits.md#pi-via-zai).
+the same file; see [Usage limits](https://jome92.github.io/nogging/usage-limits/#pi-via-zai).
 
 **Scope.** Only the Z.ai Global provider (`zai`) is supported. The China coding
 plan and other Pi providers are out of scope.
@@ -221,5 +221,5 @@ an override could send your key to another host.
 ## See also
 
 - [Using Nogging with Pi](using-with-pi.md): the rest of the Pi setup.
-- [Usage limits](usage-limits.md): `nogg usage --agent pi` and the launch gate.
-- [Commands](commands.md#pi-ext): `nogg pi-ext`.
+- [Usage limits](https://jome92.github.io/nogging/usage-limits/): `nogg usage --agent pi` and the launch gate.
+- [Commands](https://jome92.github.io/nogging/commands/#pi-ext): `nogg pi-ext`.
