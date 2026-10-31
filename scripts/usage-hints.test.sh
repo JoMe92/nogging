@@ -3,7 +3,7 @@
 # Covers:
 #   - Window hint field added for Claude missing usage source
 #   - evaluate_gate copies hint to projected windows
-#   - nogg usage prints "unknown (missing usage source) — run nogg usage install-statusline"
+#   - nogg usage prints "unknown (missing usage source) — <effect-plus-docs-link hint>"
 #   - Doctor Claude freshness note names install-statusline for missing cache
 #     and for unreadable/missing source
 #   - Does not edit usage_gate_admission() or alter gate decisions
@@ -17,12 +17,14 @@ import datetime as dt
 import io
 import json
 import os
+import re
 from pathlib import Path
 import sys
 import tempfile
 import unittest
 
-sys.path.insert(0, str(Path(sys.argv.pop()) / 'scripts'))
+ROOT = Path(sys.argv.pop())
+sys.path.insert(0, str(ROOT / 'scripts'))
 import nogg_usage as u
 
 class UsageHintsTest(unittest.TestCase):
@@ -35,7 +37,7 @@ class UsageHintsTest(unittest.TestCase):
             for w in rep['windows']:
                 self.assertEqual(w['status'], 'unknown')
                 self.assertEqual(w['reason'], 'missing usage source')
-                self.assertEqual(w['hint'], 'run nogg usage install-statusline')
+                self.assertEqual(w['hint'], u.CLAUDE_STATUSLINE_HINT)
 
     def test_non_claude_or_non_missing_no_hint(self):
         with tempfile.TemporaryDirectory() as td:
@@ -72,7 +74,7 @@ class UsageHintsTest(unittest.TestCase):
             self.assertEqual(len(gate['windows']), 2)
             for w in gate['windows']:
                 self.assertEqual(w['status'], 'unknown')
-                self.assertEqual(w['hint'], 'run nogg usage install-statusline')
+                self.assertEqual(w['hint'], u.CLAUDE_STATUSLINE_HINT)
 
     def test_usage_command_prints_hint(self):
         with tempfile.TemporaryDirectory() as td:
@@ -86,8 +88,28 @@ class UsageHintsTest(unittest.TestCase):
                 sys.stdout = sys_stdout
 
             output = out.getvalue()
-            self.assertIn("short: unknown (missing usage source) — run nogg usage install-statusline", output)
-            self.assertIn("weekly: unknown (missing usage source) — run nogg usage install-statusline", output)
+            self.assertIn("short: unknown (missing usage source) — " + u.CLAUDE_STATUSLINE_HINT, output)
+            self.assertIn("weekly: unknown (missing usage source) — " + u.CLAUDE_STATUSLINE_HINT, output)
+
+    def test_hint_is_one_line_with_effect_and_docs_link(self):
+        hint = u.CLAUDE_STATUSLINE_HINT
+        self.assertNotIn('\n', hint)
+        for part in ('nogg usage install-statusline', 'statusLine', '--dry-run',
+                     'https://jome92.github.io/nogging/usage-limits/#claude-usage-is-unknown-by-default'):
+            self.assertIn(part, hint)
+
+    def test_hint_anchor_heading_exists_in_docs(self):
+        anchor = u.CLAUDE_STATUSLINE_HINT.rsplit('#', 1)[1]
+        docs = ROOT / 'docs' / 'usage-limits.md'
+        headings = [line.lstrip('#').strip().lower() for line in docs.read_text().splitlines() if line.startswith('#')]
+        slugs = [re.sub(r'[^a-z0-9 -]', '', h).replace(' ', '-') for h in headings]
+        self.assertIn(anchor, slugs)
+
+    def test_doctor_note_carries_effect_and_link(self):
+        with tempfile.TemporaryDirectory() as td:
+            os.environ['XDG_CACHE_HOME'] = td
+            notes = u.quota_freshness_notes({'stale_seconds': 600})
+            self.assertIn('quota observation (claude): missing statusline cache \u2014 ' + u.CLAUDE_STATUSLINE_HINT, notes)
 
     def test_doctor_claude_freshness_notes(self):
         with tempfile.TemporaryDirectory() as td:

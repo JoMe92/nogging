@@ -315,7 +315,7 @@ mkdir -p "$HOME" "$XDG_CACHE_HOME" "$CODEX_HOME"
 
 # 5a: Missing cache hints
 doctor_out=$("$env5/repo/scripts/nogg" doctor || true)
-echo "$doctor_out" | grep -qF "NOTE  quota observation (claude): missing statusline cache — run \`nogg usage install-statusline\` to opt in" \
+echo "$doctor_out" | grep -qF "NOTE  quota observation (claude): missing statusline cache — opt in with nogg usage install-statusline (installs a capture wrapper as the statusLine in ~/.claude/settings.json; --dry-run previews it) — see https://jome92.github.io/nogging/usage-limits/#claude-usage-is-unknown-by-default" \
   && ok "doctor advises missing Claude cache and install-statusline command" || bad "doctor missing Claude cache note"
 echo "$doctor_out" | grep -qF "NOTE  quota observation (codex): missing usage source" \
   && ok "doctor advises missing Codex rollout source" || bad "doctor missing Codex note"

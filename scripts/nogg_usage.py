@@ -656,6 +656,12 @@ def pi_usage(model=None, provider=None, *, source=None, now=None, stale_after=60
             'windows': windows}
 
 
+CLAUDE_STATUSLINE_HINT = (
+    'opt in with nogg usage install-statusline (installs a capture wrapper as the '
+    'statusLine in ~/.claude/settings.json; --dry-run previews it) \u2014 see '
+    'https://jome92.github.io/nogging/usage-limits/#claude-usage-is-unknown-by-default')
+
+
 def inspect_usage(agent, *, source=None, now=None, stale_after=600, model=None, provider=None, probe=None):
     if agent == 'antigravity':
         return antigravity_usage(model, source=source, now=now, stale_after=stale_after)
@@ -711,7 +717,7 @@ def inspect_usage(agent, *, source=None, now=None, stale_after=600, model=None, 
             except (KeyError, ValueError, TypeError, OverflowError, OSError):
                 item['reason'] = 'missing or malformed window'
         if agent == 'claude' and item.get('reason') == 'missing usage source':
-            item['hint'] = 'run nogg usage install-statusline'
+            item['hint'] = CLAUDE_STATUSLINE_HINT
         windows.append(item)
     report = {'schema_version': 1, 'provider': agent, 'account': None,
               'model_group': None, 'status': 'known' if all(w['status'] == 'known' for w in windows) else 'unknown',
@@ -1688,7 +1694,7 @@ def quota_freshness_notes(config=None, now=None):
     # Claude observation check
     claude_cache = Path(os.environ.get('XDG_CACHE_HOME', str(Path.home() / '.cache'))) / 'nogging/usage/claude.json'
     if not claude_cache.exists():
-        notes.append("quota observation (claude): missing statusline cache — run `nogg usage install-statusline` to opt in")
+        notes.append(f"quota observation (claude): missing statusline cache \u2014 {CLAUDE_STATUSLINE_HINT}")
     else:
         try:
             obs = inspect_usage('claude', source=claude_cache, now=now, stale_after=stale_sec)
