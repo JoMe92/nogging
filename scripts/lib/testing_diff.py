@@ -55,16 +55,18 @@ DEFINITIONS = {
 }
 
 # Skip and expected-failure forms, added lines only.
+# Anchored at the start of the line: a skip form quoted inside a string, as in a
+# test of this very rule, is not a skip.
 SKIPS = {
     'python': [re.compile(p) for p in (
-        r'@pytest\.mark\.(?:skip|skipif|xfail)\b', r'\bpytest\.(?:skip|xfail)\s*\(',
-        r'@(?:unittest\.)?(?:skip|skipIf|skipUnless|expectedFailure)\b',
-        r'\.skipTest\s*\(')],
+        r'^\s*@pytest\.mark\.(?:skip|skipif|xfail)\b', r'^\s*(?:return\s+)?pytest\.(?:skip|xfail)\s*\(',
+        r'^\s*@(?:unittest\.)?(?:skip|skipIf|skipUnless|expectedFailure)\b',
+        r'^\s*(?:self\.)?skipTest\s*\(')],
     'js': [re.compile(p) for p in (
-        r'\b(?:it|test|describe)\.(?:skip|todo|failing)\b', r'\b(?:xit|xtest|xdescribe)\s*\(')],
-    'go': [re.compile(r'\bt\.(?:Skip|Skipf|SkipNow)\s*\(')],
-    'rust': [re.compile(r'#\[\s*ignore\b')],
-    'java': [re.compile(r'@(?:Disabled|Ignore)\b')],
+        r'^\s*(?:it|test|describe)\.(?:skip|todo|failing)\b', r'^\s*(?:xit|xtest|xdescribe)\s*\(')],
+    'go': [re.compile(r'^\s*t\.(?:Skip|Skipf|SkipNow)\s*\(')],
+    'rust': [re.compile(r'^\s*#\[\s*ignore\b')],
+    'java': [re.compile(r'^\s*@(?:Disabled|Ignore)\b')],
     'shell': [],
 }
 
