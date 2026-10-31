@@ -11491,8 +11491,10 @@ def main():
     tust = tusub.add_parser("status", help="usage store, collection and sync freshness")
     tust.add_argument("--json", action="store_true")
     usage = sub.add_parser("usage", help="inspect read-only local quota observations")
-    usage.add_argument("action", nargs="?", choices=("install-statusline",), default=None,
-                       help="opt-in usage helpers (install-statusline)")
+    usage.add_argument("action", nargs="?", choices=("install-statusline", "uninstall-statusline"), default=None,
+                       help="opt-in usage helpers (install-statusline, uninstall-statusline)")
+    usage.add_argument("--dry-run", action="store_true",
+                       help="with install-/uninstall-statusline: print the intended settings change and write nothing")
     usage.add_argument("--settings", default=None, help="path to claude settings.json for statusline installation")
     usage.add_argument("--wrapper-path", default=None, help="path to write statusline capture wrapper")
     usage.add_argument("--agent", choices=("codex", "claude", "antigravity", "agy", "pi"), default="codex")
@@ -11733,13 +11735,19 @@ def main():
         except ValueError as exc:   # ReportError carries the remedy
             raise RuntimeError(str(exc)) from exc
     elif args.command == "usage":
-        if args.action == "install-statusline":
+        if args.dry_run and args.action is None:
+            p.error("usage --dry-run requires an action (install-statusline or uninstall-statusline)")
+        if args.action in ("install-statusline", "uninstall-statusline"):
             try:
-                res = usage_module().install_statusline(settings_path=args.settings, wrapper_path=args.wrapper_path)
+                helper = (usage_module().install_statusline if args.action == "install-statusline"
+                          else usage_module().uninstall_statusline)
+                res = helper(settings_path=args.settings, wrapper_path=args.wrapper_path, dry_run=args.dry_run)
                 if args.json:
                     print(json.dumps(res, sort_keys=True))
                 else:
                     print(res["message"])
+                    if res.get("diff"):
+                        print(res["diff"], end="")
             except RuntimeError as exc:
                 print(f"nogg: {exc}", file=sys.stderr)
                 sys.exit(1)

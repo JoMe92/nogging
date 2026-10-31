@@ -72,8 +72,12 @@ install the statusline capture used by the launch usage gate.
 ./scripts/nogg usage --agent claude
 ./scripts/nogg usage --agent codex --model <model-name> --json
 ./scripts/nogg usage --agent pi
-./scripts/nogg usage install-statusline
+./scripts/nogg usage install-statusline [--dry-run] [--json]
+./scripts/nogg usage uninstall-statusline [--dry-run] [--json]
 ```
+
+`--dry-run` prints the intended `settings.json` diff and writes nothing;
+`uninstall-statusline` restores only the previous `statusLine` key.
 
 For `--agent pi` the command reads the shared Z.ai snapshot and, when it is
 stale, runs one bounded probe through Pi's own key resolver; set

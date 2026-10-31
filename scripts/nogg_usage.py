@@ -656,6 +656,12 @@ def pi_usage(model=None, provider=None, *, source=None, now=None, stale_after=60
             'windows': windows}
 
 
+CLAUDE_STATUSLINE_HINT = (
+    'opt in with nogg usage install-statusline (installs a capture wrapper as the '
+    'statusLine in ~/.claude/settings.json; --dry-run previews it) \u2014 see '
+    'https://jome92.github.io/nogging/usage-limits/#claude-usage-is-unknown-by-default')
+
+
 def inspect_usage(agent, *, source=None, now=None, stale_after=600, model=None, provider=None, probe=None):
     if agent == 'antigravity':
         return antigravity_usage(model, source=source, now=now, stale_after=stale_after)
@@ -711,7 +717,7 @@ def inspect_usage(agent, *, source=None, now=None, stale_after=600, model=None, 
             except (KeyError, ValueError, TypeError, OverflowError, OSError):
                 item['reason'] = 'missing or malformed window'
         if agent == 'claude' and item.get('reason') == 'missing usage source':
-            item['hint'] = 'run nogg usage install-statusline'
+            item['hint'] = CLAUDE_STATUSLINE_HINT
         windows.append(item)
     report = {'schema_version': 1, 'provider': agent, 'account': None,
               'model_group': None, 'status': 'known' if all(w['status'] == 'known' for w in windows) else 'unknown',
@@ -1553,37 +1559,91 @@ if __name__ == "__main__":
 """
 
 
-def install_statusline(settings_path=None, wrapper_path=None):
-    """Explicitly install or compose the Claude Code statusline usage capture wrapper.
-
-    Preserves existing user statusline through composition, or refuses with
-    actionable manual instructions if composition is unsupported or conflicts.
-    Preserves all unrelated user settings in settings.json.
-    """
+def _statusline_paths(settings_path, wrapper_path):
     settings_file = Path(settings_path).expanduser().resolve() if settings_path else (
         Path(os.environ.get('CLAUDE_CONFIG_DIR', str(Path.home() / '.claude'))) / 'settings.json'
     )
     wrapper_file = Path(wrapper_path).expanduser().resolve() if wrapper_path else (
         Path(os.environ.get('XDG_DATA_HOME', str(Path.home() / '.local/share'))) / 'nogging/claude-statusline'
     )
+    return settings_file, wrapper_file
 
-    existing_settings = {}
-    if settings_file.exists():
-        try:
-            content = settings_file.read_text(encoding='utf-8')
-            parsed = json.loads(content)
-            if not isinstance(parsed, dict):
-                raise ValueError('root must be a JSON object')
-            existing_settings = parsed
-        except Exception as exc:
-            raise RuntimeError(
-                f"cannot automatically compose statusline: settings file {settings_file} is malformed or unreadable ({exc}).\n"
-                "Manual instructions:\n"
-                f"1. Repair {settings_file} to ensure it contains valid JSON.\n"
-                "2. Configure a statusLine command that captures Claude's stdin JSON to "
-                "$XDG_CACHE_HOME/nogging/usage/claude.json before invoking your custom statusline."
-            ) from exc
 
+def _read_claude_settings(settings_file):
+    """Return (settings dict, text) or raise the shared malformed-settings refusal."""
+    if not settings_file.exists():
+        return {}, ''
+    try:
+        content = settings_file.read_text(encoding='utf-8')
+        parsed = json.loads(content)
+        if not isinstance(parsed, dict):
+            raise ValueError('root must be a JSON object')
+        return parsed, content
+    except Exception as exc:
+        raise RuntimeError(
+            f"cannot automatically compose statusline: settings file {settings_file} is malformed or unreadable ({exc}).\n"
+            "Manual instructions:\n"
+            f"1. Repair {settings_file} to ensure it contains valid JSON.\n"
+            "2. Configure a statusLine command that captures Claude's stdin JSON to "
+            "$XDG_CACHE_HOME/nogging/usage/claude.json before invoking your custom statusline."
+        ) from exc
+
+
+def _references_wrapper(statusline, wrapper_file):
+    if isinstance(statusline, dict):
+        statusline = statusline.get('command')
+    return isinstance(statusline, str) and (
+        str(wrapper_file) in statusline or 'nogging/claude-statusline' in statusline)
+
+
+def _settings_text(settings):
+    return json.dumps(settings, indent=2, sort_keys=True) + '\n'
+
+
+def _settings_diff(settings_file, old_text, new_text):
+    import difflib
+    return ''.join(difflib.unified_diff(
+        old_text.splitlines(keepends=True), new_text.splitlines(keepends=True),
+        fromfile=str(settings_file), tofile=str(settings_file)))
+
+
+def _write_text_atomic(path, text, mode, prefix):
+    import tempfile
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
+    with tempfile.NamedTemporaryFile('w', dir=path.parent, prefix=prefix, delete=False) as tf:
+        tmp = Path(tf.name)
+        tf.write(text)
+        tf.flush()
+        os.fsync(tf.fileno())
+    os.chmod(tmp, mode)
+    os.replace(tmp, path)
+
+
+def _backup_settings(settings_file, suffix):
+    """Copy the settings file byte for byte to <settings><suffix> (0600); None when absent."""
+    if not settings_file.exists():
+        return None
+    backup = settings_file.with_name(settings_file.name + suffix)
+    data = settings_file.read_bytes()
+    fd = os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'wb') as handle:
+        handle.write(data)
+    os.chmod(backup, 0o600)
+    return backup
+
+
+def _restore_record_path(wrapper_file):
+    return wrapper_file.with_name(wrapper_file.name + '.restore.json')
+
+
+def _plan_statusline_install(settings_file, wrapper_file):
+    """Validate and compute an install without touching the filesystem.
+
+    Preserves existing user statusline through composition, or refuses with
+    actionable manual instructions if composition is unsupported or conflicts.
+    Preserves all unrelated user settings in settings.json.
+    """
+    existing_settings, old_text = _read_claude_settings(settings_file)
     existing_statusline = existing_settings.get('statusLine')
     upstream_cmd = None
 
@@ -1606,41 +1666,18 @@ def install_statusline(settings_path=None, wrapper_path=None):
                     f"Ensure 'statusLine.command' in {settings_file} specifies a valid command before installing, "
                     "or remove 'statusLine' to use Nogging's standalone statusline capture."
                 )
-            if str(wrapper_file) in cmd or 'nogging/claude-statusline' in cmd:
-                return {
-                    'status': 'already_installed',
-                    'wrapper_path': str(wrapper_file),
-                    'settings_path': str(settings_file),
-                    'message': f"statusline capture already installed at {wrapper_file} and configured in {settings_file}"
-                }
-            upstream_cmd = cmd.strip()
+            upstream_cmd = None if _references_wrapper(cmd, wrapper_file) else cmd.strip()
         elif isinstance(existing_statusline, str):
-            if str(wrapper_file) in existing_statusline or 'nogging/claude-statusline' in existing_statusline:
-                return {
-                    'status': 'already_installed',
-                    'wrapper_path': str(wrapper_file),
-                    'settings_path': str(settings_file),
-                    'message': f"statusline capture already installed at {wrapper_file} and configured in {settings_file}"
-                }
-            upstream_cmd = existing_statusline.strip()
+            upstream_cmd = None if _references_wrapper(existing_statusline, wrapper_file) else existing_statusline.strip()
         else:
             raise RuntimeError(
                 f"cannot automatically compose existing statusline: unsupported statusLine configuration ({type(existing_statusline).__name__}).\n"
                 "Manual instructions:\n"
                 f"Configure 'statusLine' in {settings_file} as {{\"type\": \"command\", \"command\": \"...\"}} or remove it."
             )
-
-    import tempfile
-    wrapper_file.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
-    wrapper_content = _generate_statusline_wrapper(upstream_cmd)
-
-    with tempfile.NamedTemporaryFile('w', dir=wrapper_file.parent, prefix='.claude-statusline-', delete=False) as tf:
-        tmp_wrapper = Path(tf.name)
-        tf.write(wrapper_content)
-        tf.flush()
-        os.fsync(tf.fileno())
-    os.chmod(tmp_wrapper, 0o755)
-    os.replace(tmp_wrapper, wrapper_file)
+        if _references_wrapper(existing_statusline, wrapper_file):
+            return {'status': 'already_installed', 'upstream': None, 'previous': existing_statusline,
+                    'old_text': old_text, 'new_text': old_text}
 
     new_settings = dict(existing_settings)
     if isinstance(existing_statusline, dict):
@@ -1649,30 +1686,148 @@ def install_statusline(settings_path=None, wrapper_path=None):
         new_statusline['command'] = str(wrapper_file)
         new_settings['statusLine'] = new_statusline
     else:
-        new_settings['statusLine'] = {
-            'type': 'command',
-            'command': str(wrapper_file)
-        }
+        new_settings['statusLine'] = {'type': 'command', 'command': str(wrapper_file)}
+    return {'status': 'installed', 'upstream': upstream_cmd, 'previous': existing_statusline,
+            'old_text': old_text, 'new_text': _settings_text(new_settings)}
 
-    settings_file.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
-    with tempfile.NamedTemporaryFile('w', dir=settings_file.parent, prefix='.claude-settings-', delete=False) as tf:
-        tmp_settings = Path(tf.name)
-        json.dump(new_settings, tf, indent=2, sort_keys=True)
-        tf.write('\n')
-        tf.flush()
-        os.fsync(tf.fileno())
-    os.chmod(tmp_settings, 0o600 if settings_file.exists() else 0o644)
-    os.replace(tmp_settings, settings_file)
 
-    return {
-        'status': 'installed',
-        'wrapper_path': str(wrapper_file),
-        'settings_path': str(settings_file),
-        'composed_upstream': upstream_cmd,
-        'message': f"installed statusline capture at {wrapper_file}" + (
-            f" (composed with existing command: {upstream_cmd})" if upstream_cmd else ""
-        )
-    }
+def install_statusline(settings_path=None, wrapper_path=None, dry_run=False):
+    """Explicitly install or compose the Claude Code statusline usage capture wrapper.
+
+    A dry run returns the same result dict plus a unified ``diff`` and writes
+    nothing. A real install backs up the existing settings and records the
+    previous ``statusLine`` value beside the wrapper so it can be undone.
+    """
+    settings_file, wrapper_file = _statusline_paths(settings_path, wrapper_path)
+    plan = _plan_statusline_install(settings_file, wrapper_file)
+    result = {'wrapper_path': str(wrapper_file), 'settings_path': str(settings_file), 'dry_run': bool(dry_run)}
+    upstream_cmd = plan['upstream']
+
+    if plan['status'] == 'already_installed':
+        result['status'] = 'already_installed'
+        result['message'] = ("already installed; nothing would change" if dry_run else
+                             f"statusline capture already installed at {wrapper_file} and configured in {settings_file}")
+        if dry_run:
+            result['diff'] = ''
+        return result
+
+    result.update(status='installed', composed_upstream=upstream_cmd)
+    if dry_run:
+        lines = [f"would install statusline capture at {wrapper_file}"]
+        if upstream_cmd:
+            lines.append(f"would compose with: {upstream_cmd}")
+        result['message'] = '\n'.join(lines)
+        result['diff'] = _settings_diff(settings_file, plan['old_text'], plan['new_text'])
+        return result
+
+    _write_text_atomic(wrapper_file, _generate_statusline_wrapper(upstream_cmd), 0o755, '.claude-statusline-')
+    backup = _backup_settings(settings_file, '.nogging-install.bak')
+    record = {'schema_version': 1, 'settings_path': str(settings_file),
+              'previous_statusline': plan['previous'],
+              'installed_at': iso(dt.datetime.now(UTC))}
+    _write_text_atomic(_restore_record_path(wrapper_file), json.dumps(record, indent=2, sort_keys=True) + '\n',
+                       0o600, '.claude-statusline-restore-')
+    _write_text_atomic(settings_file, plan['new_text'], 0o600 if settings_file.exists() else 0o644,
+                       '.claude-settings-')
+    result['backup_path'] = str(backup) if backup else None
+    result['message'] = f"installed statusline capture at {wrapper_file}" + (
+        f" (composed with existing command: {upstream_cmd})" if upstream_cmd else "")
+    return result
+
+
+_MISSING = object()
+
+
+def _legacy_previous_statusline(wrapper_file):
+    """Previous statusLine for installs made before the restore record existed.
+
+    Read from the wrapper's baked-in UPSTREAM_COMMAND literal; _MISSING when the
+    wrapper is absent or unreadable.
+    """
+    import ast
+    try:
+        text = wrapper_file.read_text(encoding='utf-8')
+    except OSError:
+        return _MISSING
+    match = re.search(r'^UPSTREAM_COMMAND = (.+)$', text, re.MULTILINE)
+    if not match:
+        return _MISSING
+    try:
+        upstream = ast.literal_eval(match.group(1))
+    except (ValueError, SyntaxError):
+        return _MISSING
+    if isinstance(upstream, str) and upstream.strip():
+        return {'type': 'command', 'command': upstream}
+    return None
+
+
+def _recorded_previous_statusline(record_file):
+    try:
+        record = json.loads(record_file.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return _MISSING
+    if not isinstance(record, dict) or 'previous_statusline' not in record:
+        return _MISSING
+    return record['previous_statusline']
+
+
+def uninstall_statusline(settings_path=None, wrapper_path=None, dry_run=False):
+    """Undo install_statusline: restore only the statusLine key, then remove the wrapper and record.
+
+    Every other setting is untouched. A no-op reporting ``not_installed`` when the
+    capture is not configured; refuses without changes when the previous value
+    cannot be determined. The usage cache is left alone.
+    """
+    settings_file, wrapper_file = _statusline_paths(settings_path, wrapper_path)
+    record_file = _restore_record_path(wrapper_file)
+    settings, old_text = _read_claude_settings(settings_file)
+    result = {'wrapper_path': str(wrapper_file), 'settings_path': str(settings_file), 'dry_run': bool(dry_run)}
+
+    if not _references_wrapper(settings.get('statusLine'), wrapper_file):
+        result.update(status='not_installed', restored=None, backup_path=None)
+        result['message'] = (
+            f"statusline capture is not installed in {settings_file}; nothing changed"
+            + (f" (wrapper still exists at {wrapper_file}; remove it by hand if unwanted)" if wrapper_file.exists() else ""))
+        if dry_run:
+            result['diff'] = ''
+        return result
+
+    previous = _recorded_previous_statusline(record_file)
+    if previous is _MISSING:
+        previous = _legacy_previous_statusline(wrapper_file)
+    if previous is _MISSING:
+        install_backup = settings_file.with_name(settings_file.name + '.nogging-install.bak')
+        raise RuntimeError(
+            f"cannot uninstall statusline capture: no restore record at {record_file} and the wrapper {wrapper_file} "
+            "does not name the previous command, so the previous statusLine cannot be determined. Nothing was changed.\n"
+            "Manual instructions:\n"
+            f"1. Edit {settings_file} and restore or remove the 'statusLine' key yourself."
+            + (f"\n2. The install backup is at {install_backup}." if install_backup.exists() else ""))
+
+    new_settings = dict(settings)
+    if previous is None:
+        new_settings.pop('statusLine', None)
+    else:
+        new_settings['statusLine'] = previous
+    new_text = _settings_text(new_settings)
+    backup = settings_file.with_name(settings_file.name + '.nogging-uninstall.bak')
+    result.update(status='uninstalled', restored=previous, backup_path=str(backup))
+    restored = 'removed the statusLine key' if previous is None else 'restored the previous statusLine'
+    if dry_run:
+        result['message'] = f"would uninstall statusline capture: {restored} in {settings_file}, remove {wrapper_file} and {record_file}"
+        result['diff'] = _settings_diff(settings_file, old_text, new_text)
+        return result
+
+    _backup_settings(settings_file, '.nogging-uninstall.bak')
+    _write_text_atomic(settings_file, new_text, 0o600, '.claude-settings-')
+    for leftover in (wrapper_file, record_file):
+        try:
+            leftover.unlink()
+        except FileNotFoundError:
+            pass
+    result['message'] = (f"uninstalled statusline capture: {restored} in {settings_file} (backup: {backup}); "
+                         "the usage cache was left in place and expires on its own")
+    return result
 
 
 def quota_freshness_notes(config=None, now=None):
@@ -1688,7 +1843,7 @@ def quota_freshness_notes(config=None, now=None):
     # Claude observation check
     claude_cache = Path(os.environ.get('XDG_CACHE_HOME', str(Path.home() / '.cache'))) / 'nogging/usage/claude.json'
     if not claude_cache.exists():
-        notes.append("quota observation (claude): missing statusline cache — run `nogg usage install-statusline` to opt in")
+        notes.append(f"quota observation (claude): missing statusline cache \u2014 {CLAUDE_STATUSLINE_HINT}")
     else:
         try:
             obs = inspect_usage('claude', source=claude_cache, now=now, stale_after=stale_sec)
