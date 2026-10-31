@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# The single implementation of the Nogging test-integrity rule.
+#
+#   scripts/check-test-integrity <base> [--enforce]
+#
+# Inspects the whole range <base>...HEAD and flags, in test files as TEST_PATH_RE
+# sees them, a deleted test or test file, a newly added skip or expected-failure
+# marker, and a modified test file whose assertion count falls. A test that is
+# moved or renamed inside the range is not flagged. A `Test-Integrity: <reason>`
+# trailer on any commit in the range clears the findings, which then print as
+# justified. Without --enforce it prints and exits 0; with --enforce it exits 1
+# while an uncleared finding remains. A <base> that does not resolve exits 2.
+# The CI `invariants` job and `nogg test` both call this script; the analysis
+# itself is scripts/lib/testing_diff.py.
+set -euo pipefail
+
+usage() {
+  echo "usage: scripts/check-test-integrity <base> [--enforce]" >&2
+  exit 2
+}
+
+base=""
+enforce=()
+for arg in "$@"; do
+  case "$arg" in
+    --enforce) enforce=(--enforce) ;;
+    -*) usage ;;
+    *) [[ -z "$base" ]] || usage; base="$arg" ;;
+  esac
+done
+[[ -n "$base" ]] || usage
+
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+if ! git rev-parse --verify --quiet "$base^{commit}" >/dev/null; then
+  echo "Nogging: base '$base' does not resolve to a commit; fetch it first." >&2
+  exit 2
+fi
+if ! git merge-base "$base" HEAD >/dev/null 2>&1; then
+  echo "Nogging: '$base' and HEAD share no history; fetch the full base ref." >&2
+  exit 2
+fi
+
+reasons=()
+while IFS= read -r reason; do
+  [[ -n "${reason//[[:space:]]/}" ]] && reasons+=(--justified "$reason")
+done < <(git log --format='%(trailers:key=Test-Integrity,valueonly,unfold)' "$base..HEAD")
+
+git diff --no-color --no-ext-diff -M -U5 "$base...HEAD" |
+  python3 -B "$here/lib/testing_diff.py" ${enforce[@]+"${enforce[@]}"} ${reasons[@]+"${reasons[@]}"}
