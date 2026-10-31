@@ -26,6 +26,7 @@ ROTATE_BYTES = 5 * 1024 * 1024
 MAX_RESULT_BYTES = 32 * 1024 * 1024
 SLOWEST_KEPT = 10
 SLOWEST_PRINTED = 5
+FAILED_NAMES_KEPT = 5
 MAX_TEXT = 200
 MAX_REASON = 500
 STATUSES = ("passed", "failed", "skipped", "refused")
@@ -59,13 +60,13 @@ def slowest_tests(tests, limit=SLOWEST_KEPT):
 
 
 def _empty_detail():
-    return {"tests": None, "failed_tests": None, "skipped_tests": None, "slowest": []}
+    return {"tests": None, "failed_tests": None, "skipped_tests": None, "slowest": [], "failed_names": []}
 
 
 def merge_details(details):
     """One detail from several commands' details; a count is null only when no
     command reported it."""
-    merged, slowest = _empty_detail(), []
+    merged, slowest, names = _empty_detail(), [], []
     for detail in details:
         if detail is None:
             continue
@@ -73,7 +74,9 @@ def merge_details(details):
             if detail.get(key) is not None:
                 merged[key] = (merged[key] or 0) + detail[key]
         slowest.extend(detail.get("slowest") or [])
+        names.extend(detail.get("failed_names") or [])
     merged["slowest"] = slowest_tests(slowest)
+    merged["failed_names"] = names[:FAILED_NAMES_KEPT]
     return merged
 
 
@@ -90,7 +93,7 @@ def parse_junit(path):
     if not _readable(path):
         return None
     tests = failed = skipped = 0
-    timed, seen_root = [], False
+    timed, names, seen_root = [], [], False
     try:
         for _event, element in ET.iterparse(path, events=("end",)):
             tag = element.tag.rsplit("}", 1)[-1]
@@ -102,14 +105,17 @@ def parse_junit(path):
             children = {child.tag.rsplit("}", 1)[-1] for child in element}
             failed += bool(children & {"failure", "error"})
             skipped += "skipped" in children
-            name = clean_text(".".join(filter(None, (element.get("classname"), element.get("name")))))
-            timed.append({"name": name or "unnamed", "seconds": _seconds(element.get("time")) or 0.0})
+            name = clean_text(".".join(filter(None, (element.get("classname"), element.get("name"))))) or "unnamed"
+            timed.append({"name": name, "seconds": _seconds(element.get("time")) or 0.0})
+            if children & {"failure", "error"} and len(names) < FAILED_NAMES_KEPT:
+                names.append(name)
             element.clear()
     except (ET.ParseError, OSError, ValueError):
         return None
     if not seen_root:
         return None
-    return {"tests": tests, "failed_tests": failed, "skipped_tests": skipped, "slowest": slowest_tests(timed)}
+    return {"tests": tests, "failed_tests": failed, "skipped_tests": skipped, "slowest": slowest_tests(timed),
+            "failed_names": names}
 
 
 def parse_timings(path):
@@ -178,6 +184,7 @@ def build_record(*, stage, trigger, status, exit_code, seconds=0.0, wait_seconds
         "failed_tests": detail.get("failed_tests"),
         "skipped_tests": detail.get("skipped_tests"),
         "slowest": detail.get("slowest") or [],
+        "failed_names": detail.get("failed_names") or [],
     }
 
 
@@ -252,6 +259,10 @@ def valid_record(value):
         if number is not None and (type(number) not in (int, float) or _seconds(number) is None):
             return None
         record[key] = number
+    names = value.get("failed_names", [])
+    if not isinstance(names, list) or not all(isinstance(name, str) for name in names):
+        return None
+    record["failed_names"] = [clean_text(name) or "unnamed" for name in names[:FAILED_NAMES_KEPT]]
     record["slowest"] = _valid_slowest(value.get("slowest", []))
     return record if record["slowest"] is not None else None
 
