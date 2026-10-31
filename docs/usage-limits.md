@@ -6,7 +6,9 @@ them work. It is for operators and anyone running supervised sessions who
 wants to avoid mid-run rate-limit exhaustion.
 
 All commands run locally on the delivery host. Nogging never sends usage data
-over the network and never accepts or prints credentials or tokens.
+anywhere and never accepts or prints credentials or tokens. The two bounded
+probes for Antigravity and Pi read quota from the provider; the Pi probe
+resolves its key through Pi itself and keeps it in memory.
 
 ## Checking usage with `nogg usage`
 
@@ -14,6 +16,7 @@ over the network and never accepts or prints credentials or tokens.
 ./scripts/nogg usage --agent codex
 ./scripts/nogg usage --agent claude
 ./scripts/nogg usage --agent agy --model gemini-3.8-flash-medium
+./scripts/nogg usage --agent pi
 ./scripts/nogg usage --agent codex --json
 ```
 
@@ -23,8 +26,9 @@ resets, and whether a typical launch would still fit (`fits: yes/no`).
 `--json` emits the same observation in normalized form. Add `--model` when
 the provider maps models to separate pools (Antigravity).
 
-Nogging reads only local artifacts; it does not install capture, launch
-sessions or touch authentication files. Missing, unsupported, malformed,
+Nogging reads only local artifacts, with two bounded exceptions: the
+Antigravity probe and the Pi probe described below. It does not install
+capture, launch sessions or read authentication files. Missing, unsupported, malformed,
 future-dated or already-reset observations are reported as **unknown**, never
 as zero. Claude and Antigravity observations older than 600 seconds count as
 stale; a Codex observation stays valid until the window's own reset because
@@ -36,6 +40,7 @@ Which agent reports real numbers:
 | --- | --- | --- |
 | Codex | rollout session logs under `$CODEX_HOME/sessions` (default `~/.codex/sessions`) | works out of the box after Codex has run at least one turn |
 | Claude Code | the opt-in statusline cache (see below) | `unknown (missing usage source)` until you run `nogg usage install-statusline` |
+| Pi (Z.ai) | the shared snapshot `pi-zai.json` under `$XDG_CACHE_HOME/nogging/usage/`, refreshed by one bounded probe when it is stale; see [Pi via Z.ai](#pi-via-zai) | works out of the box when `pi` is installed and a Z.ai key is configured in Pi; other Pi providers report `unknown` |
 | Antigravity | a bounded `agy --print /usage` probe, cached under `$XDG_CACHE_HOME/nogging/usage/` | works out of the box when `agy` is installed; models outside a recognized group report `unknown model mapping` |
 
 ## Claude usage is unknown by default
@@ -102,6 +107,63 @@ There is no uninstall command; revert manually:
 
 With the cache gone, `nogg usage --agent claude` reports unknown again.
 
+## Pi via Z.ai
+
+`nogg usage --agent pi` reports the Z.ai coding-plan windows, the 5-hour
+*short* window and the *weekly* window, under the model group `zai-coding-plan`.
+The account stays unknown. It applies when the effective Pi provider is `zai`.
+Nogging takes the provider from the launch model's `zai/` prefix, else the Pi
+profile's `provider`, else `defaultProvider` in Pi's personal `settings.json`.
+Any other known provider reports both windows unknown with
+`no usage source for Pi provider <name>`.
+
+**Cache first.** The source is the shared snapshot `pi-zai.json`, the same file
+the [`glm-usage` extension](pi-extensions.md#glm-usage) writes while Pi runs. A
+snapshot no older than `usage_gate.stale_seconds` is used as it is. As for the
+other providers, a window whose reset has passed, or that resets before its own
+observation, is unknown.
+
+**The probe.** When the snapshot is stale, missing or malformed, Nogging runs one
+bounded probe and rewrites the snapshot (`source: "nogg-probe"`). It runs
+`pi auth print-api-key --provider zai` under a 15-second timeout with the output
+captured in memory, then one `GET` to the Z.ai quota endpoint under a 10-second
+timeout. The key stays in memory and goes only into that request's
+`Authorization` header. It is never written to disk, passed on a command line or
+into another process's environment, or shown in a report, log, session record or
+error message. The endpoint is a constant with no override, and a redirect is
+never followed. A failed probe never falls back to stale data. It reports both
+windows unknown with one reason:
+
+| Reason | Hint |
+| --- | --- |
+| `pi not installed` | `install pi` |
+| `no Z.ai API key configured in Pi` | `configure the ZAI Coding Plan key in Pi (/login)` |
+| `Z.ai rejected the key (HTTP <status>)` | |
+| `quota probe failed (<timeout\|network>)` | |
+| `unsupported quota response` | |
+
+A snapshot that is stale while the probe is off carries the hint `run nogg usage
+--agent pi`. Hints appear in `nogg usage`, in the warning of a launch admitted
+with unknown usage, and in `doctor`; they never change a decision.
+
+**`PI_NOGG_USAGE_PROBE`.** Set `PI_NOGG_USAGE_PROBE=0` (also `false`, `no` or
+`off`) to make Pi observation cache-only, as `AGY_NOGG_USAGE_PROBE=0` does for
+Antigravity. The repository test runner sets it, so no test touches your real
+`pi`.
+
+`doctor` never probes and makes no network call. When `pi` is on `PATH`, its
+quota-freshness NOTE covers the Pi snapshot like the Antigravity one.
+
+**Gate and routing.** Known Pi windows go through the launch gate unchanged,
+with the cap, estimate, reservations and exit 75 on denial. Pi used to be
+always unknown, so a routing entry's `on_unknown` for `pi` was the whole
+decision; now it applies only when the quota is unknown, for example with no
+key, a rejected key or another provider. The probe runs during launch admission, on the
+host side before any side effect, and adds at most the two timeouts. Unknown is
+never treated as zero, and no routing default changes: unknown Pi usage warns
+unless you set `on_unknown` to `deny`. The endpoint is undocumented; see
+[the endpoint risk](pi-extensions.md#the-undocumented-endpoint).
+
 ## Launch usage gate
 
 `./scripts/nogg session launch` admits an execution session (lead or
@@ -126,7 +188,10 @@ the keys and defaults are in
    while quotas are enforced account-wide across all active clients.
 3. **Unknown is not zero.** A missing, stale or failed observation is
    unknown usage, warned or denied per `usage_gate.on_unknown`.
-4. **Model mapping.** Antigravity maps a model to its pool through the
+4. **Pi quota is account-wide.** Z.ai counts the account, not this host, so a
+   fresh snapshot can understate use made elsewhere in that interval. A plan
+   without a weekly limit leaves that window unknown.
+5. **Model mapping.** Antigravity maps a model to its pool through the
    group descriptions in the probe result; an unset model, an unknown model
    family or an ambiguous match is `unknown model mapping`. Other groups'
    headroom never admits a launch.

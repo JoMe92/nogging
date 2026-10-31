@@ -47,7 +47,7 @@ behind them.
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
 | `session_agent` | string | `claude` | Agent a launch uses when you pass no `--agent`. |
-| `pi_extensions` | array of strings | `[]` | Names of the optional Nogging Pi extensions under `.pi/nogging/extensions/` that every `session launch --agent pi` loads, after the guard and in this order, for example `["glm-usage"]`. A name must be kebab-case, unique and have an `index.ts` in the launch working directory; otherwise the launch refuses before any side effect, naming the key and the value, and `validate` and `doctor` report a FAIL. The session record stores the loaded names and the launch output prints `pi-extensions=<names>`. An empty or absent list changes nothing, and other agents ignore the key. See [Using Nogging with Pi](using-with-pi.md). |
+| `pi_extensions` | array of strings | `[]` | Names of the optional Nogging Pi extensions under `.pi/nogging/extensions/` that every `session launch --agent pi` loads, after the guard and in this order, for example `["glm-usage"]`. A name must be kebab-case, unique and have an `index.ts` in the launch working directory; otherwise the launch refuses before any side effect, naming the key and the value, and `validate` and `doctor` report a FAIL. The session record stores the loaded names and the launch output prints `pi-extensions=<names>`. An empty or absent list changes nothing, and other agents ignore the key. `init` scaffolds `[]` and `update` keeps your value. See [Pi extensions](pi-extensions.md) and [Using Nogging with Pi](using-with-pi.md). |
 | `session_backend` | string | `tmux` | Terminal backend for launches without `--backend`: `tmux` or `herdr` (experimental). The `--backend` flag wins over this key. See [Using Nogging with herdr](using-with-herdr.md). |
 | `agent_routing_file` | path | `.nogging/agent-routing.json` | Repository-relative location of the agent routing file, resolved against the main checkout so every linked worktree reads the same file. See [the block below](#agent_routing_file). |
 | `session_tmux_command` | string | `tmux` | Executable used for the tmux backend. |
@@ -149,8 +149,8 @@ An optional object. Every key is optional, and the defaults are:
 | `enabled` | boolean | `true` | `false` turns admission off. |
 | `cap_percent` | number | `92` | A launch is refused when a known window is already over this percentage. |
 | `estimate_percent` | number or object | `5` | Expected cost of one launch. An object sets it per agent (`claude`, `codex`, `pi`, `antigravity`) with an optional `default`. |
-| `stale_seconds` | number | `600` | Age after which an observation counts as unknown. |
-| `on_unknown` | string | `warn` | `warn` launches with a warning when usage is unknown; `deny` refuses with exit 75. |
+| `stale_seconds` | number | `600` | Age after which an observation counts as unknown. For Pi it also sets how long the `pi-zai.json` snapshot is used before a probe refreshes it. |
+| `on_unknown` | string | `warn` | `warn` launches with a warning when usage is unknown; `deny` refuses with exit 75. Pi usage is known when a Z.ai key is configured in Pi, so this applies to Pi whenever that quota is unknown; see [Pi via Z.ai](usage-limits.md#pi-via-zai). |
 | `size_multipliers` | object | `{"small": 0.5, "medium": 1, "large": 2}` | Scale for the estimate of a Bead labelled `size:<name>`. |
 | `exclude_roles` | array of strings | `["planning", "orchestrator"]` | Roles that skip the gate: any of `lead`, `specialist`, `planning`, `orchestrator`, `loop`. The internal `loop` role (scheduled loop runs) is gated unless listed. |
 

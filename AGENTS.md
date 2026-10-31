@@ -321,6 +321,8 @@ the subsection for the tool you are running as, and ignore the others.
   `.claude/agents/*.md` are Claude-Code-only and are not ported to Pi. Where a
   separate session is overkill, the Lead Agent does the work inline under the
   same constraints.
+- **Optional extensions.** Opt-in features such as the `glm-usage` quota footer
+  live under `.pi/nogging/`; see `docs/pi-extensions.md`.
 - **Operator entry points.** `.pi/prompts/{plan,discovery-review,sync-now}.md`
   (same persona and steps as the Claude commands and Codex prompts). Pi reads
   `.pi/prompts/` directly from the repository — no symlink helper is needed
