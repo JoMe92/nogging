@@ -322,6 +322,34 @@ update; it never pushes. Its mirror commit is
 `chore(sync): mirror Beads execution evidence` with a `Nogging-Writer: sync`
 trailer.
 
+## Test integrity
+
+`scripts/check-test-integrity <base> [--enforce]` is the one rule that keeps a branch
+from weakening its tests. It diffs the whole range `<base>...HEAD`, never one commit
+at a time, and flags in test files (the `TEST_PATH_RE` of `scripts/lib/token_usage_report.py`):
+
+- a **deleted test**: a deleted test file, or a test name removed and added nowhere
+  else in the range, so a move or a rename passes;
+- a **new skip**: an added `skip`, `xfail`, `.skip`, `xit`, `t.Skip`, `#[ignore]` or
+  `@Disabled` form for pytest, unittest, Jest/Vitest, Go, Rust and JUnit;
+- **removed assertions**: a modified test file whose assertion count falls, a moved
+  assertion netting out. A shell test has no named cases, so it is flagged only when
+  the file is deleted or its `check`/`assert` count falls.
+
+Rust tests written inline in `src/` are outside `TEST_PATH_RE` and are not seen.
+
+Without `--enforce` the script prints its findings and exits 0. With it, the script
+exits 1 while a finding is uncleared. This repository's CI `invariants` job runs it
+with `--enforce` against `origin/$GITHUB_BASE_REF`. A base that does not resolve
+exits 2.
+
+A removal that is intended is justified in history, as `Nogging-Writer:` is: put a
+`Test-Integrity: <reason>` trailer in the message of any commit in the range, and
+the findings print as justified. The Lead's written rule is both parts: the trailer
+and a `discovery` note on the Bead (`bd update <id> --add-label discovery
+--append-notes "<why the test went>"`). CI has no `bd`, so only the trailer is
+checked there; an empty trailer clears nothing.
+
 ## Keeping a Lead branch current
 
 A Lead never integrates upstream with raw git while `openspec/` is read-only.
