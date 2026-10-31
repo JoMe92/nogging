@@ -39,6 +39,7 @@ HINTS = {REASON_NO_KEY: HINT_NO_KEY, REASON_NO_PI: HINT_NO_PI}
 _KEY = re.compile(r'^[\x21-\x7e]{1,512}$')
 _LABEL = re.compile(r'^[A-Za-z0-9 ._-]{1,32}$')
 _WINDOWS = {3: 'short', 6: 'weekly'}
+WINDOW_TYPES = frozenset(('TOKENS_LIMIT', 'CREDIT_LIMIT'))
 
 
 def _number(value):
@@ -56,8 +57,10 @@ def _constant(name):
 
 def parse_quota(body):
     """{'level'?, 'short'?, 'weekly'?} with (used_percent, resets_at) windows,
-    or None when the body is not a usable quota response. TIME_LIMIT entries and
-    unknown units are ignored; a window that does not validate is omitted."""
+    or None when the body is not a usable quota response. Token windows arrive
+    as TOKENS_LIMIT or, on current plans, CREDIT_LIMIT entries; TIME_LIMIT
+    entries and unknown units are ignored; a window that does not validate is
+    omitted."""
     if not isinstance(body, dict) or not _number(body.get('code')) or body['code'] != 200:
         return None
     data = body.get('data')
@@ -66,7 +69,7 @@ def parse_quota(body):
         return None
     quota = {}
     for entry in limits:
-        if not isinstance(entry, dict) or entry.get('type') != 'TOKENS_LIMIT':
+        if not isinstance(entry, dict) or entry.get('type') not in WINDOW_TYPES:
             continue
         key = _WINDOWS.get(entry.get('unit')) if isinstance(entry.get('unit'), int) and not isinstance(entry.get('unit'), bool) else None
         if key is None or key in quota:
