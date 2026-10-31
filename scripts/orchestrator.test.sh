@@ -172,6 +172,13 @@ for _ in $(seq 1 80); do [[ -f "$TMUX_STUB_DIR/sess-$name" ]] && break; sleep 0.
 [[ "$(record "$root/.nogging/state/sessions/$name.json" floor_lifted)" == "True" ]] \
   && echo "ok   - run: the session record is FULL-ACCESS (floor_lifted)" \
   || { echo "FAIL - run: floor_lifted not set"; fail=1; }
+budget=$(python3 -c '
+import json, sys
+env = json.load(open(sys.argv[1]))["env"]
+print(env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], env["CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS"])' "$root/.nogging/state/sessions/$name.settings.json")
+[[ "$budget" == "200000 100000" ]] \
+  && echo "ok   - run: the context budget reaches the effective settings" \
+  || { echo "FAIL - run: context budget: $budget"; fail=1; }
 [[ "$(git -C "$root" config --worktree --get user.name)" == "Nogging Orchestrator" ]] \
   && echo "ok   - run: sets the Nogging Orchestrator identity on the shared checkout (TASK-ACI-003)" \
   || { echo "FAIL - run: user.name is $(git -C "$root" config --get user.name 2>/dev/null || echo unset)"; fail=1; }

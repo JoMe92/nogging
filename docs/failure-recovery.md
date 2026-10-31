@@ -458,6 +458,29 @@ Start with `./scripts/nogg doctor` and `./scripts/nogg loop log <name>`.
 
 See [Scheduled loops](scheduled-loops.md).
 
+## Session dispatch is silent or holds its digest
+
+Session dispatch is on by default, and a missing orchestrator or timer is no failure.
+`doctor` says which applies.
+
+- **`dispatcher: no orchestrator session`**: the items are held, not lost. Run
+  `nogg orchestrator run`, and the items that still hold go out as one digest.
+- **`dispatcher: nothing fires a pass automatically`**: the loops timer is off.
+  Enable it as the [timer section](scheduled-loops.md#the-scheduler-timer) shows, or run
+  `nogg session dispatch --once` from your own scheduler.
+- **`WARN dispatcher: ... is enabled but the last pass was at ...`**: read
+  `journalctl --user -u nogg-loops-<slug>.service` for `the dispatch pass failed`. A
+  failed pass never stops the loops, and neither do the loops stop a pass.
+- **A digest stays queued**: `nogg session inbox` names the hold. A pause, quiet hours,
+  a busy orchestrator, typed input in its prompt and the usage hold all keep it queued,
+  and each clears by itself.
+- **`queue.json` or `state.json` was unreadable**: the pass moves it aside as
+  `*.corrupt`, logs that in `.nogging/state/dispatch/dispatch.jsonl` and starts clean.
+  Live conditions come back on the next pass, because they are read from real state.
+
+To stop it, pause with `nogg pause` or set `session_dispatch.enabled: false`. See
+[Session wake](session-wake.md).
+
 ## A session hit its usage limit
 
 `scripts/nogg session watch` classifies a session that has hit an account-wide

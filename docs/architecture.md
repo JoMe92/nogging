@@ -257,6 +257,22 @@ through `session stop` and `session cleanup`. The service sets
 the server must outlive the oneshot. A server started that way stays in the
 unit's cgroup, so systemd logs a left-over-process notice on later ticks.
 
+### Session wake
+
+`nogg session dispatch` is a level-triggered, stateless pass with no model. It derives
+each session's state from live evidence, so a missed event costs nothing, and it decides
+through the pure `scripts/lib/session_dispatch.py`, `session_wake.py`, `session_warm.py`
+and `session_pause.py` with the facts and the clock passed in. Dispatch is on unless
+`session_dispatch.enabled` is an explicit `false`, decided by one function that `session
+dispatch`, `session signal`, the tick and `doctor` share.
+
+`nogg loop tick` ends a due pause, then runs one pass, then evaluates loops. The pass has
+its own lock, `dispatch.lock`, and its own exception boundary, so a failure of either
+side leaves the other running. Its record is the audit log, not the journal, so a queue
+held for hours repeats no line. State lives under `.nogging/state/dispatch/` in the main
+checkout. With no orchestrator a digest has no target and is held, never dropped or
+retried in a loop. See [Session wake](session-wake.md).
+
 ### Session supervision vs. Task-tool specialists
 
 The Lead Agent's own session runs supervised (`sf-lead-<bead>-<nonce>`). When

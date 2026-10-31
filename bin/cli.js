@@ -117,6 +117,8 @@ function cmdUpdate(args) {
   install.recordVersion(ctx);
   install.installGitHooks(ctx);
   process.stdout.write(reporter.render(ctx));
+  const dispatchNotice = install.dispatchDefaultNotice(ctx);
+  if (dispatchNotice) process.stdout.write(`\n${dispatchNotice}\n`);
   const gaps = install.readinessVerdict(ctx);
   printNextSteps(ctx, 'update', gaps);
 }

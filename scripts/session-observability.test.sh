@@ -1008,7 +1008,7 @@ root="$work/doctor-sweep"; make_obs_root "$root"
 export NOGGING_ROOT="$root"
 got=$(run_py "
 import contextlib, io
-m.session_records = lambda: [
+m.session_records = lambda directory=None: [
     (None, {'name': 'sess-complete', 'bead_id': 'B1', 'agent': 'claude', 'state': 'running'}),
     (None, {'name': 'sess-blocked', 'bead_id': 'B2', 'agent': 'claude', 'state': 'running'}),
     (None, {'name': 'sess-manual', 'bead_id': 'B3', 'agent': 'claude', 'state': 'running'}),
@@ -1052,6 +1052,7 @@ m.multi_machine_enabled = lambda: False
 buf = io.StringIO()
 with contextlib.redirect_stdout(buf):
     m.doctor()
+assert 'health unavailable' not in buf.getvalue() and 'warm: unavailable' not in buf.getvalue(), buf.getvalue()
 checks_notes = [line for line in buf.getvalue().splitlines() if line.startswith('NOTE  session ') and ': checks ' in line]
 # TASK-CSL-003: without a cached sweep --checks observation every running
 # session's CI evidence is visibly unknown; liveness notes are unchanged.

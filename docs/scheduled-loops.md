@@ -161,6 +161,10 @@ policy, not a systemd one. Enable it in the main checkout's user session, and ru
 `loginctl enable-linger` if loops must fire without a login. `remove` prints the
 matching disable line.
 
+Each tick first runs one [session dispatch](session-wake.md) pass, under its own lock
+and exception boundary, so a failure of either side leaves the other running. An
+external `nogg loop tick` does the same.
+
 With `--no-systemd` no unit is rendered and nothing fires automatically; every
 command still works. Run `nogg loop tick` once a minute from an
 external scheduler you own, in the main checkout and outside any supervised

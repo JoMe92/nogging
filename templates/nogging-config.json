@@ -13,7 +13,7 @@
   "pi_extensions": [],
   "task_sizing": {"bead_prod_lines": [400, 1000], "commit_lines": [100, 600]},
   "session_dispatch": {
-    "enabled": false,
+    "enabled": true,
     "max_nudges": 2,
     "max_ci_nudges": 2,
     "stall_after": "15m",

@@ -47,7 +47,7 @@ expect "config: a typo is refused, naming the key" \
   "session dispatch config: session_dispatch: unknown key 'max_nudge'" "$(diagnose '{"session_dispatch": {"max_nudge": 2}}')"
 expect "config: orchestrator_context refuses an unknown key too" \
   "session dispatch config: orchestrator_context: unknown key 'window'" "$(diagnose '{"orchestrator_context": {"window": 1}}')"
-python3 - "$repo_root" "$here/lib" <<'PY' && ok "config: the template block is valid, disabled and retires nothing" || bad "config: template block"
+python3 - "$repo_root" "$here/lib" <<'PY' && ok "config: the template block is valid, on and retires nothing" || bad "config: template block"
 import json, os, sys
 sys.path.insert(0, sys.argv[2])
 sys.dont_write_bytecode = True
@@ -56,9 +56,112 @@ path = os.path.join(sys.argv[1], "templates/nogging-config.json")
 if os.path.exists(path):
     template = json.load(open(path))
     assert d.config_errors(template) == [], d.config_errors(template)
-    assert template["session_dispatch"]["enabled"] is False
+    assert template["session_dispatch"]["enabled"] is True
     assert template["session_dispatch"]["retire_merged"] is False
 PY
+
+# --- doctor's view of the dispatcher, with its facts stubbed ------------------------
+python3 - "$nogg" "$work/health" <<'PY' && ok "doctor: the notes, the stale WARN and the switch-off" || bad "doctor: see above"
+import json, pathlib, sys
+from datetime import datetime, timedelta, timezone
+from importlib.machinery import SourceFileLoader
+from unittest.mock import patch
+m = SourceFileLoader("sf_swk006d", sys.argv[1]).load_module()
+state = pathlib.Path(sys.argv[2]); state.mkdir()
+now = datetime(2026, 10, 30, 12, tzinfo=timezone.utc)
+timer = "nogg-loops-root.timer"
+live = ({"name": "orch"}, "idle")
+
+def health(block=None, target=(None, "target-not-running"), timer_state="not-found", last=None, items=(), pause=None,
+           budget=None):
+    (state / "state.json").write_text(json.dumps({"sessions": budget or {}, **({"last_pass_at": last.isoformat()} if last else {})}))
+    (state / "queue.json").write_text(json.dumps({"items": list(items)}))
+    with patch.dict(m.CFG, {"session_dispatch": block} if block is not None else {}), \
+         patch.object(m, "dispatch_dir", return_value=state), patch.object(m, "orchestrator_target", return_value=target), \
+         patch.object(m, "loop_timer_state", return_value=(timer, timer_state)), \
+         patch.object(m, "current_pause", return_value=pause):
+        if block is None:
+            m.CFG.pop("session_dispatch", None)
+        return m.dispatch_health_diagnostics(now)
+
+def about(lines, word): return [line for line in lines if word in line]
+
+# No key, no orchestrator, no timer: one NOTE each, each with its fix and the switch.
+item = {"key": "a|blocked|1", "kind": "blocked", "session": "a", "created_at": (now - timedelta(hours=3)).isoformat()}
+warnings, notes = health(items=[item])
+assert warnings == [], warnings
+held, fired = about(notes, "`nogg orchestrator run`"), about(notes, "`nogg session dispatch --once`")
+assert len(held) == 1 and "1 item(s) are held" in held[0] and "session_dispatch.enabled: false" in held[0], notes
+assert len(fired) == 1 and "session_dispatch.enabled: false" in fired[0] and timer in fired[0], notes
+assert len(about(notes, "orchestrator session")) == 1 and len(about(notes, "fires a pass")) == 1, notes
+assert about(notes, "1 item(s) queued, the oldest 3h old (blocked a)"), notes
+# Off or paused: neither of the two.
+warnings, notes = health({"enabled": False})
+assert not warnings and len(notes) == 1 and "off" in notes[0] and "keeps its own watchers" in notes[0], notes
+assert not about(health(pause={"until": "x"})[1], "`nogg orchestrator run`")
+assert not about(health(pause={"until": "x"})[1], "`nogg session dispatch --once`")
+# A timer and a fresh pass: it runs, and the orchestrator is told it needs no watcher.
+warnings, notes = health(target=live, timer_state="enabled", last=now - timedelta(seconds=40))
+assert not warnings and notes == ["dispatcher: running, last pass 40s ago; the orchestrator needs no watchers of its own"], notes
+# A timer and a silent dispatcher: one WARN naming the last pass, and the watchers stay.
+last = now - timedelta(minutes=6)
+warnings, notes = health(target=live, timer_state="enabled", last=last)
+assert len(warnings) == 1 and last.isoformat() in warnings[0], warnings
+assert about(notes, "not running; the orchestrator keeps its own watchers"), notes
+warnings, _ = health(target=live, timer_state="enabled")
+assert "no pass is recorded" in warnings[0], warnings
+# No timer: stale needs a timer, so there is no WARN. Unknown is not missing.
+assert health(timer_state="not-found", last=last)[0] == []
+assert not about(health(target=live, timer_state="unknown", last=now)[1], "fires a pass")
+# A spent budget is named; a broken block is the FAIL of the config check, not this one.
+notes = health(target=live, timer_state="enabled", last=now, budget={"lead-1": {"budget": {"nudges": 2}}})[1]
+assert about(notes, "lead-1 has spent its nudge budget"), notes
+assert health({"max_nudge": 2}) == ([], [])
+# Every line reads as the dispatcher's, never as the `session <name>:` note of one session.
+warnings, notes = health(target=live, timer_state="enabled", last=last, items=[item], budget={"lead-1": {"budget": {"nudges": 2}}})
+assert len(warnings + notes) >= 4 and all(line.startswith("dispatcher: ") for line in warnings + notes), warnings + notes
+assert all(line.startswith("dispatcher: ") for line in health()[1] + health({"enabled": False})[1])
+PY
+
+# The real path of `session_records` and `orchestrator_target` on a herdr config, with no
+# herdr to ask: nothing here is stubbed that takes the session directory.
+python3 - "$nogg" "$work/herdr" <<'PY' && ok "doctor: the health path runs on a herdr config" || bad "doctor: herdr, see above"
+import json, pathlib, sys
+from importlib.machinery import SourceFileLoader
+from unittest.mock import patch
+m = SourceFileLoader("sf_swk006h", sys.argv[1]).load_module()
+base = pathlib.Path(sys.argv[2]); sessions, state = base / "sessions", base / "dispatch"
+sessions.mkdir(parents=True); state.mkdir()
+(sessions / "nogg-orchestrator-x.json").write_text(json.dumps({
+    "name": "nogg-orchestrator-x", "bead_id": None, "role": "orchestrator", "agent": "claude", "state": "running",
+    "backend": "herdr", "backend_ref": {"label": "nogg-orchestrator-x", "herdr_session": "nogging"},
+    "started_at": "2026-10-30T00:00:00+00:00", "working_dir": str(base), "log_path": str(base / "o.log")}))
+with patch.dict(m.CFG, {"session_backend": "herdr"}), patch.object(m, "orchestrator_sessions_dir", return_value=sessions), \
+     patch.object(m, "dispatch_dir", return_value=state), patch.object(m, "loop_timer_state", return_value=("t.timer", "not-found")):
+    warnings, notes = m.dispatch_health_diagnostics()
+    assert warnings == [] and any("nothing fires a pass" in line for line in notes), (warnings, notes)
+    assert not any("unavailable" in line for line in notes + m.warm_diagnostics()), notes
+PY
+
+# --- the tick: the pass comes first and neither side can fail the other ------------
+python3 - "$nogg" <<'PY' && ok "tick: the failure of a pass is logged and repeats no output" || bad "tick: see above"
+import contextlib, io, sys
+from importlib.machinery import SourceFileLoader
+from unittest.mock import patch
+m = SourceFileLoader("sf_swk006t", sys.argv[1]).load_module()
+out, err = io.StringIO(), io.StringIO()
+with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+    with patch.object(m, "session_dispatch", side_effect=RuntimeError("boom for owner@example.com")):
+        m.dispatch_tick()
+    with patch.object(m, "session_dispatch", side_effect=SystemExit(3)):
+        m.dispatch_tick()
+    with patch.object(m, "session_dispatch", side_effect=lambda: print("queued blocked lead-1: held")):
+        m.dispatch_tick()
+assert out.getvalue() == "", out.getvalue()
+assert "the dispatch pass failed: boom" in err.getvalue() and "owner@example.com" not in err.getvalue(), err.getvalue()
+PY
+grep -q 'dispatch_tick()' "$nogg" && awk '/end_due_pause\(\)$/{p=NR} /dispatch_tick\(\)$/&&p&&NR==p+1{a=NR} /loop_runner_for_main\(\).tick\(\)/&&a&&NR==a+1{f=1} END{exit !f}' "$nogg" \
+  && ok "tick: the pause end, then the pass, then the loops" || bad "tick: the order changed"
 
 # --- the action paths, with the session verbs stubbed ----------------------------
 python3 - "$nogg" "$work/actions" <<'PY' && ok "actions: the send gate, resume, retirement and a failed step" || bad "actions: see above"
@@ -222,6 +325,7 @@ PY
   echo wip >"$work/dirty-lead/wip.txt"
 
   # A disabled config: nothing is read, written or sent.
+  configure '{"session_dispatch": {"enabled": false}}'
   out=$(dispatch --once 2>&1) && ok "disabled: exits 0" || bad "disabled: failed: $out"
   case "$out" in *disabled*) ok "disabled: says so" ;; *) bad "disabled: no notice in: $out" ;; esac
   [[ ! -e "$root/.nogging/state/dispatch" && "$(received dirty-lead)" == 0 ]] && ok "disabled: no state and no message" || bad "disabled: something happened"

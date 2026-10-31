@@ -99,7 +99,7 @@ refused by name.
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `session_dispatch` | object | see [the block below](#session_dispatch) | Deterministic follow-ups for supervised sessions. Off by default. |
+| `session_dispatch` | object | see [the block below](#session_dispatch) | Deterministic follow-ups for supervised sessions. On by default. |
 | `orchestrator_context` | object | see [the block below](#orchestrator_context) | Context budget values for the Orchestration Agent. |
 
 ## Multi-machine
@@ -161,11 +161,12 @@ they are fixed. The semantics are in
 
 ### `session_dispatch`
 
-An optional object. Every key is optional, and the template carries:
+An optional object. Every key is optional, and the template carries the block below.
+[Session wake](session-wake.md) explains what dispatch does and what it costs.
 
 ```json
 "session_dispatch": {
-  "enabled": false,
+  "enabled": true,
   "max_nudges": 2,
   "max_ci_nudges": 2,
   "stall_after": "15m",
@@ -184,7 +185,7 @@ An optional object. Every key is optional, and the template carries:
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `enabled` | boolean | `false` | With it off or absent, `session dispatch` prints that it is disabled and no session is nudged, retired or woken. |
+| `enabled` | boolean | `true` | Only an explicit `false` switches dispatch off: `session dispatch` then prints that it is disabled and no session is nudged, retired or woken. A missing key or block reads as on. |
 | `max_nudges` | integer | `2` | Nudges per head SHA for an idle Lead with gaps or no pull request. New commits restore them. Past the budget the condition is queued as `stuck`. |
 | `max_ci_nudges` | integer | `2` | Nudges for red CI, counted across fixes until CI is green. Past the budget the condition is queued as `ci_stuck`. |
 | `stall_after` | duration | `15m` | Log silence of a `working` session before the stall ladder starts. A second period queues `stalled`. |
@@ -237,6 +238,10 @@ An optional object, with unknown keys refused the same way:
 | --- | --- | --- | --- |
 | `auto_compact_window` | integer | `200000` | The Orchestration Agent's automatic compaction window, in tokens. |
 | `idle_compact_min_tokens` | integer | `100000` | Smallest context worth compacting while it idles. |
+
+`orchestrator run` writes them into the session's effective settings `env`, as
+`CLAUDE_CODE_AUTO_COMPACT_WINDOW` and `CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS`. A running
+orchestrator picks up a new value at its next `orchestrator restart`.
 
 ### `tier_overrides`
 
