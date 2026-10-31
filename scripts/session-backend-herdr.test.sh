@@ -352,6 +352,22 @@ with tempfile.TemporaryDirectory(prefix='nogg.', dir='/tmp') as temp:
         assert any(live_herdr_name in l and 'herdr' in l and 'working' in l for l in listing_lines)
         tmux_rec_file.unlink()
 
+        # herdr agent_status joins the evidence order: blocked is needs_input,
+        # done is idle, unknown proves nothing.
+        herdr_rec = json.loads((sessions / f'{live_herdr_name}.json').read_text())
+        for status, expected in (('blocked', ('needs_input', 'herdr')), ('done', ('idle', 'herdr')),
+                                 ('working', ('working', 'herdr')), ('unknown', ('unknown', 'none'))):
+            current_state = state()
+            for p in current_state['panes'].values():
+                if p.get('label') == live_herdr_name:
+                    p['agent_status'] = status
+            save(current_state)
+            detail = module.classify_session_detail(herdr_rec, {live_herdr_name})
+            assert (detail['state'], detail['source']) == expected, (status, detail['state'], detail['source'])
+        fault('fail_agent_get')
+        assert module.classify_session_detail(herdr_rec, {live_herdr_name})['state'] == 'unknown'
+        fault('fail_agent_get', False)
+
         module.session_backend = lambda name=None: backend if name == 'herdr' else type('Empty', (), {'live': lambda self, records: (set(), set())})()
         output = io.StringIO()
         with contextlib.redirect_stdout(output):

@@ -130,6 +130,8 @@ next start — fresh, resumed, or after a tool switch — every agent runs
 | Fresh `planning.lock`, not yours | A planning session is active elsewhere. Do not start execution that depends on unmaterialized work — wait or coordinate. |
 | Stale `orchestrator.lock` | The lock holder's process is verified dead or start time mismatched (or expired on a remote host). Reclaim with `./scripts/nogg orchestrator run --force` or restart the supervisor. An unverifiable holder (fenced caller or foreign PID namespace) is never reported stale. |
 | `LIMBO: <id> committed … but status=<status>` | The Bead has committed work: all of it, or only its first steps (a Bead committed in several steps shows `(newest of N token commits)`). List the commits (`git log --oneline --grep '\[<id>\]'`) and compare them with the task slice. Finish anything still missing from the last commit on. Once it is complete, run the affected suite (the full suite is CI's job; `scripts/test` only where the project has no CI), add the evidence note listing every commit SHA (`bd update <id> --append-notes "commits <sha>, <sha>; <evidence>"`), and `bd close <id>`. **Do not re-implement committed work** — that produces duplicate commits. |
+| A Bead or worktree marked `owned by session <name>` | Another Lead is running on it, so it is not yours to adopt: its launch Bead, or any open Bead of a change `session kickoff --change` authorized it for, until it signals `done`. Leave its worktree, branch, commits and notes alone, even if it looks unfinished, and report it instead; `worktree implement` refuses it. It raises no attention unless that Lead signalled `blocked`, when a person decides. A Lead proven dead holds nothing, so its Bead reads as an ordinary interrupted run, unless a live Lead holds its change. A session's own Bead is not marked. |
+| A Bead marked `session <name> may still be running` | Its liveness could not be established. Confirm the session ended (`./scripts/nogg session reap`) before adopting the Bead; `worktree implement` refuses it until then. |
 | `in_progress` Bead, `resumable` | Same as `LIMBO`: it has committed work. Check what is complete, finish what is missing, then verify, note and close. Never re-implement. |
 | `in_progress` Bead, `stale`, with a diff | Decide: finish the uncommitted diff, or `git stash` it and re-claim clean. Record the decision in the Bead note. |
 | `in_progress` Bead, `stale`, no diff | Likely never started. Re-claim and work it normally. |
@@ -431,6 +433,53 @@ host-side broker predates checkout-aware requests:
 - **Recovery:** Relaunch the supervised session under the updated host-side broker,
   then re-run `task-done <bead-id>`. Alternatively, the tick will be mirrored
   automatically by the sync timer or an unsandboxed sync run once the Bead is closed.
+
+## A scheduled loop stopped running
+
+Start with `./scripts/nogg doctor` and `./scripts/nogg loop log <name>`.
+
+- **`will not run`**: the timer is missing or disabled. Link its service and enable
+  it as the [timer section](scheduled-loops.md#the-scheduler-timer) shows, or run
+  `nogg loop tick` from your own scheduler.
+- **`unknown from this session`**: `systemctl` is denied in this session, so
+  `doctor` cannot read the timer; check it from a shell outside the session.
+- **The last tick is old**: read the service journal.
+- **`doctor` fails on the definitions file**: no new run starts until it is fixed.
+  Ticks keep running and keep supervising started runs.
+- **`suspended`**: consecutive slots failed. Read the reasons, fix the cause, then
+  run `nogg loop resume <name>`.
+- **A run stays active past `max_runtime`**: its session could not be retired, and
+  the tick retries every minute, even while the definitions file is invalid.
+  Never delete `state.json` to clear it, because the session would be orphaned.
+  Fix what the journal reports.
+- **A session listed as `loop:<name>` is left after a crash**: wait 10 minutes.
+  The tick adopts it by `loop_run_id` if its kickoff landed, or else stops and
+  retires it and logs `start interrupted`.
+
+See [Scheduled loops](scheduled-loops.md).
+
+## Session dispatch is silent or holds its digest
+
+Session dispatch is on by default, and a missing orchestrator or timer is no failure.
+`doctor` says which applies.
+
+- **`dispatcher: no orchestrator session`**: the items are held, not lost. Run
+  `nogg orchestrator run`, and the items that still hold go out as one digest.
+- **`dispatcher: nothing fires a pass automatically`**: the loops timer is off.
+  Enable it as the [timer section](scheduled-loops.md#the-scheduler-timer) shows, or run
+  `nogg session dispatch --once` from your own scheduler.
+- **`WARN dispatcher: ... is enabled but the last pass was at ...`**: read
+  `journalctl --user -u nogg-loops-<slug>.service` for `the dispatch pass failed`. A
+  failed pass never stops the loops, and neither do the loops stop a pass.
+- **A digest stays queued**: `nogg session inbox` names the hold. A pause, quiet hours,
+  a busy orchestrator, typed input in its prompt and the usage hold all keep it queued,
+  and each clears by itself.
+- **`queue.json` or `state.json` was unreadable**: the pass moves it aside as
+  `*.corrupt`, logs that in `.nogging/state/dispatch/dispatch.jsonl` and starts clean.
+  Live conditions come back on the next pass, because they are read from real state.
+
+To stop it, pause with `nogg pause` or set `session_dispatch.enabled: false`. See
+[Session wake](session-wake.md).
 
 ## A session hit its usage limit
 

@@ -1,6 +1,6 @@
 # Compatibility policy and matrix
 
-This page defines the supported environment for Nogging 3.1.x. “Supported”
+This page defines the supported environment for Nogging 3.x. “Supported”
 means the project claims the combination and supplies CI or recorded manual
 evidence. “Optional” means the core local workflow works without the component.
 Versions newer than the validated baseline are expected to work within the same
@@ -34,7 +34,7 @@ a hard gate, because they are not stable APIs.
 | Ubuntu Linux, x86_64 | Supported | GitHub Actions runs functional, install, validation, and acceptance jobs |
 | Debian-family Linux, aarch64 | Supported | dated Raspberry Pi acceptance report and maintainer-host full suite |
 | Other Linux distributions / architectures | Experimental | run `doctor`, the full suite, and the acceptance runbook before relying on them |
-| macOS, Windows, WSL | Unsupported for 3.1.x | no release gate covers path, shell, service-manager, or sandbox behavior |
+| macOS, Windows, WSL | Unsupported for 3.x | no release gate covers path, shell, service-manager, or sandbox behavior |
 | systemd user services | Optional, supported on declared Linux hosts | install may use `--no-systemd`; generated units are tested |
 | Other service managers | Unsupported | use manual `./scripts/nogg sync --now`; no persistent-unit claim |
 

@@ -399,7 +399,9 @@ Nogging SHALL provide `nogg loop add`, `list`, `show`, `log`, `pause`,
 `resume`, `run-now`, `approve`, `remove` and `tick`. `add` SHALL accept the
 schedule, run and usage fields as options plus `--prompt-file` or `--prompt`.
 On first use it SHALL write the host timezone into a new file and print it. It
-SHALL refuse an existing name and print that the files need committing. `remove`
+SHALL refuse an existing name and print that the files need committing only
+when the definitions file is not gitignored, so a host-local file gets no
+reminder. `remove`
 SHALL delete the definition and its prompt file and keep the run log. `pause`
 and `resume` SHALL change host-local state only. `run-now` SHALL run one manual
 slot through every admission check except the schedule and window, report a

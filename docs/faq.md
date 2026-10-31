@@ -64,8 +64,8 @@ On a public repository, yes. Beads syncs its Dolt database to the project's
 Git remote by default, so Bead titles, descriptions, notes, memories, owner
 identities and the change history are published with the code — and Dolt keeps
 every earlier value in its history. Keep the Beads database in a separate
-private repository for public projects; [Beads data and
-privacy](security-model.md#beads-data-and-privacy) has the exact steps.
+private repository for public projects; the [Beads data and privacy](security-model.md#beads-data-and-privacy)
+section has the exact steps.
 
 ## What happens when a run is interrupted?
 

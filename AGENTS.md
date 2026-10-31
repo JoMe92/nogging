@@ -61,6 +61,12 @@ the rest applies to every runtime — Claude Code, Codex, or another.
    any tool — this note is the primary "where was I" signal, and it costs
    nothing.
 
+6. End every supervised run with a signal: a pushed pull request and
+   `./scripts/nogg session signal done "PR #<n> open"`, or
+   `./scripts/nogg session signal blocked "<why>"`. A Bead note alone is not a
+   signal, because nobody reads it. A refused step means signal blocked at
+   once: never route around a refusal by switching runtime or retrying.
+
 ## The write boundary
 
 OpenSpec owns approved product intent, Beads owns executable work, Git owns the
@@ -86,8 +92,17 @@ fresh, resumed, or after a tool switch — **before selecting work with
    compare its commits (`git log --oneline --grep '\[<id>\]'`) with the task
    slice and finish what is missing; once complete, verify it (the affected
    suite, as in hard rule 3), add the evidence note with every commit SHA, and `bd close` it. **Never
-   re-implement committed work** (that produces duplicate commits).
+   re-implement committed work** (that produces duplicate commits). A Bead
+   `recover` marks `owned by session <name>` is not yours to adopt, even when it
+   looks unfinished: leave its worktree, branch, commits and notes alone.
 4. Only then select work with `bd ready`.
+
+A session launched with `--bead` works only that Bead, starting from its kickoff,
+not from being launched. It skips step 4, and whatever `recover` reports about any
+other Bead it reports to the operator instead of resolving; `recover` says so at
+the end of its output. Only `session kickoff --change` widens that scope to the
+change, and the Lead then holds the change's open Beads until it signals `done`;
+a custom kickoff message does neither.
 
 ## Specialist delegation
 
@@ -291,7 +306,11 @@ the subsection for the tool you are running as, and ignore the others.
   event and rejects a write/edit under `openspec/` unless the
   `.nogging/locks/openspec.readonly` sentinel is absent (a planning session
   is active); `plan-begin` / `plan-end` toggle it. The same extension
-  enforces the Nogging command floor on the shell tool. Pi's `restricted`
+  enforces the Nogging command floor on the shell tool. A second extension,
+  `.pi/extensions/nogging-lifecycle.ts`, loaded beside it in every supervised
+  session, reports `agent_start`, `agent_settled`, prompts and shutdown through
+  `session emit` (never `agent_end`), so `session watch` classifies Pi; it is
+  inert outside a supervised session and a missing file only warns. Pi's `restricted`
   authority level is **floor-only**: unlike Claude and Codex, there is no
   network or filesystem sandbox at either authority level — the guard
   extension and the `openspec/` write boundary are the only enforcement.
@@ -302,6 +321,8 @@ the subsection for the tool you are running as, and ignore the others.
   `.claude/agents/*.md` are Claude-Code-only and are not ported to Pi. Where a
   separate session is overkill, the Lead Agent does the work inline under the
   same constraints.
+- **Optional extensions.** Opt-in features such as the `glm-usage` quota footer
+  live under `.pi/nogging/`; see `docs/pi-extensions.md`.
 - **Operator entry points.** `.pi/prompts/{plan,discovery-review,sync-now}.md`
   (same persona and steps as the Claude commands and Codex prompts). Pi reads
   `.pi/prompts/` directly from the repository — no symlink helper is needed

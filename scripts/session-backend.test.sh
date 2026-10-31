@@ -87,6 +87,18 @@ assert backend.live([{'name': 's'}]) == ({'s', 'unmanaged'}, set())
 reply = subprocess.CompletedProcess([], 1, '', 'no server')
 assert backend.live([{'name': 's'}]) == (set(), set())
 assert not backend.exists(ref) and backend.capture(ref) == '' and backend.pid(ref) is None
+# A failed query is not proof of absence: only tmux's own words are, and a
+# connect failure counts only for a missing socket (texts from tmux 3.5a).
+for text, gone in (("can't find session: s\n", True), ('no server running on /tmp/x\n', True),
+                   ('error connecting to /tmp/x (No such file or directory)\n', True),
+                   ('error connecting to /tmp/x (Too many open files)\n', False),
+                   ('error connecting to /tmp/x (Permission denied)\n', False), ('', False)):
+    reply = subprocess.CompletedProcess([], 1, '', text)
+    assert backend.proves_gone(ref) is gone, text
+    assert calls[-1] == (('/custom/tmux', '-L', 'isolated', 'has-session', '-t', 's'), {'check': False}), calls[-1]
+reply = subprocess.CompletedProcess([], 0, '', '')
+assert backend.proves_gone(ref) is False
+reply = subprocess.CompletedProcess([], 1, '', 'no server')
 assert backend.attach_argv(ref, True) == ['/custom/tmux', '-L', 'isolated', 'attach', '-t', 's', '-r']
 backend.kill(ref)
 assert calls[-1] == (('/custom/tmux', '-L', 'isolated', 'kill-session', '-t', 's'), {'check': False})

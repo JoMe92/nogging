@@ -32,6 +32,7 @@ mkdir -p "$space_root/.nogging/state" "$space_root/scripts"
 copy_host_config "$repo_root/.nogging/config.json" "$space_root/.nogging/config.json"
 git init -q "$space_root"
 cp "$repo_root/scripts/nogg" "$space_root/scripts/"
+cp -r "$repo_root/scripts/lib" "$space_root/scripts/"
 chmod +x "$space_root/scripts/nogg"
 
 # 1. Test merge_observability_hooks with NOGGING_ROOT set to space_root
@@ -56,7 +57,7 @@ import json, os, shlex, sys
 
 d = json.loads(sys.argv[1])
 root = sys.argv[2]
-expected_stop = f"{shlex.quote(os.path.join(root, 'scripts/nogg'))} session emit turn_end"
+expected_stop = f"{shlex.quote(os.path.join(root, 'scripts/nogg'))} session emit turn_end --guard"
 expected_notif = f"{shlex.quote(os.path.join(root, 'scripts/nogg'))} session emit needs_input"
 
 hooks = d.get("hooks", {})

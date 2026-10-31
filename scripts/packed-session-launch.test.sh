@@ -212,6 +212,8 @@ while True:
                     time.sleep(0.02)
                 argv = json.loads(received.read_text())
                 assert argv
+                if agent == "pi":
+                    baseline_pi_argv = argv
                 if agent == "claude":
                     assert "--session-id" in argv and "--settings" in argv
                 elif agent == "codex":
@@ -234,6 +236,47 @@ while True:
                 assert planning_lock.read_bytes() == owner_lock_bytes
                 assert not (locks / "openspec.readonly").exists(), "execution cleanup closed another planner boundary"
                 print(f"packed {scenario}: {agent} launch/fence during planning/argv/log/stop/cleanup passed")
+
+            # TASK-PXG-006: the packed .pi/nogging tree is what a consumer
+            # enables through `pi_extensions`. Launch Pi with and without it.
+            def pi_extension_args(extra_config):
+                config = json.loads(config_path.read_text())
+                config.pop("pi_extensions", None)
+                config.update(extra_config)
+                config_path.write_text(json.dumps(config))
+                (arguments / "pi").unlink(missing_ok=True)
+                launched = subprocess.run([str(nogg), "session", "launch", "--role", "lead",
+                                           "--bead", "SPEC-packed", "--agent", "pi"],
+                                          cwd=consumer, env=env, text=True, capture_output=True, timeout=10)
+                assert launched.returncode == 0, launched.stderr
+                deadline = time.monotonic() + 5
+                while not (arguments / "pi").exists():
+                    assert time.monotonic() < deadline, f"{scenario}: pi never started"
+                    time.sleep(0.02)
+                pi_argv = json.loads((arguments / "pi").read_text())
+                running = [json.loads(p.read_text())["name"] for p in
+                           (consumer / ".nogging/state/sessions").glob("*.json")
+                           if not p.name.endswith(".settings.json")
+                           and json.loads(p.read_text()).get("agent") == "pi"
+                           and json.loads(p.read_text()).get("state") == "running"]
+                assert len(running) == 1
+                for verb in ("stop", "cleanup"):
+                    subprocess.run([str(nogg), "session", verb, running[0]], cwd=consumer, env=env,
+                                   stdout=subprocess.DEVNULL, check=True, timeout=10)
+                return [pi_argv[i + 1] for i in range(len(pi_argv) - 1) if pi_argv[i] == "--extension"]
+
+            glm_index = os.path.realpath(consumer / ".pi/nogging/extensions/glm-usage/index.ts")
+            assert (consumer / ".pi/nogging/extensions/glm-usage/index.ts").is_file()
+            enabled = pi_extension_args({"pi_extensions": ["glm-usage"]})
+            assert enabled[-1] == glm_index and enabled.count(glm_index) == 1, enabled
+            assert enabled[:-1] == [e for e in
+                [baseline_pi_argv[i + 1] for i in range(len(baseline_pi_argv) - 1)
+                 if baseline_pi_argv[i] == "--extension"]], enabled
+            absent = pi_extension_args({})
+            scaffolded = pi_extension_args({"pi_extensions": []})
+            assert absent == scaffolded == enabled[:-1], (absent, scaffolded, enabled)
+            assert not any("glm-usage" in e for e in absent)
+            print(f"packed {scenario}: pi launches with glm-usage only when enabled")
         finally:
             subprocess.run(["tmux", "-L", sock, "kill-server"], capture_output=True)
 PY

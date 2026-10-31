@@ -35,6 +35,20 @@ Full access is not inherited permission to work outside the named change. An
 Orchestration Agent remains orchestrate-only unless the operator explicitly
 requests a single planning or code takeover.
 
+### Scheduled-loop approval
+
+Loop definitions can be committed with repository code or stored at a configured
+ignored path. Runtime state and the approval ledger are host-local. The ledger
+binds approval to a hash of the timezone, normalized loop definition and prompt
+bytes; an edit makes that loop unapproved until reviewed and approved again.
+The ledger records the OS user name, not an email address. Prompt validation
+rejects common secret and token forms without printing the matched value.
+Approval is an operational safeguard against accidental changes, not a security
+boundary against another process with host write access. Inspect loop prompts
+and the launch authority before approving them. The Orchestration Agent may
+manage loops only on explicit Product Owner instruction; other supervised
+sessions cannot mutate loop definitions or host state.
+
 ### Vendor-specific limits
 
 - **Claude Code:** repository hooks and generated permission settings reduce
@@ -55,7 +69,10 @@ requests a single planning or code takeover.
 - **Codex:** restricted sessions use Codex's sandbox with outbound network off;
   trusted sessions use workspace-write with approvals disabled and network on.
   The repository execpolicy floor loads only after Codex trusts the `.codex/`
-  layer. It is not a host-wide policy.
+  layer. It is not a host-wide policy. Under `on-request` a command inside the
+  sandbox runs without a prompt, and one matching an `allow` rule in the user's
+  `$CODEX_HOME/rules/` leaves the sandbox without one. A restricted scheduled-loop
+  run therefore starts with no command tools and a read-only sandbox.
 - **Pi:** neither restricted nor trusted mode has a filesystem or network
   sandbox. The project guard extension enforces only the command floor and the
   OpenSpec boundary. Supervised Pi explicitly loads the extension with run-scoped approval; no standing trust change is required. Treat Pi
@@ -209,6 +226,51 @@ inherits the service environment and can outlive the terminal that enabled it.
 Inspect generated units and environment sources; do not place secrets directly
 in unit files. Session logs under `.nogging/state/sessions/` may contain prompts
 and command output, so protect and review them before sharing or publishing.
+
+### The Codex stop hook
+
+Codex runs a local hook directly, outside its sandbox, so a hook is a way out of
+the sandbox for whoever can define one. That decides three things about the stop
+guard's hook:
+
+- **It is user-level.** A project hook cannot be trusted in a fresh worktree: its
+  trust key holds the absolute path of `.codex/hooks.json`, and every Lead gets a
+  new one. `-c` trust has no effect. A persisted user-level record works from any
+  working directory, because a user hook's key has no project path.
+- **`--dangerously-bypass-hook-trust` is refused.** With it, a Lead in
+  `workspace-write` could write `.codex/hooks.json` in its own worktree and get a
+  command run outside its sandbox on its next stop. `session-launch` never passes
+  it, and a test asserts that.
+- **Only one constant command is ever trusted.** `nogg session-hooks install` is
+  an explicit operator act on personal configuration, like `codex-prompts-link`.
+  It records the hash Codex reports for the exact constant command, and only as
+  Codex lists it from the user-level file. A sandboxed Lead cannot edit that file,
+  and any later edit reads `modified` and is skipped. The command does nothing
+  outside a supervised session, and the text the guard sends a Lead is fixed: it
+  carries gap names, never agent output.
+
+**Known limit: installing this hook removes the sandbox as a boundary for every
+supervised Codex session in `workspace-write`, in every repository on that host.**
+That covers Lead, specialist and planning sessions, because the hook fires for all
+of them, and it holds under `on-request` approval too, because editing a file
+inside a writable root needs no approval. The trusted hash pins the command's text,
+not the file it runs. That file is `scripts/nogg` in the checkout, which such a
+session can edit: the wrapper adds the checkout with `--add-dir`, and only
+`openspec/` is read-only inside it. The hook then runs the edited file outside the
+sandbox, with the network and the operator's full filesystem, at that session's
+next stop. The hook also runs `git` on a checkout the session controls, where
+repository configuration such as `core.fsmonitor` or a clean filter runs commands,
+and session state under `.nogging/state/` is the session's to rewrite. An operator's
+own runs of `scripts/nogg`, and the sync timer's, already run that same file
+unsandboxed, so the weakness is not new, but the hook makes it immediate and under
+the session's control. Refusing `--dangerously-bypass-hook-trust` does not close
+this. Until the hook runs nothing a sandboxed session can write, install it only
+where you accept that. `status` and `doctor` repeat this warning while it is
+installed. Without it, Codex Leads run normally and only the stop guard is off.
+
+Codex keys a hook by its position in the file, so `remove` leaves an empty group
+in place of an entry that another hook follows. Splicing it out would renumber
+that hook and silently untrust it.
 
 ### Runtime state grants
 

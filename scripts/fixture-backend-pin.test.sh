@@ -14,6 +14,7 @@ set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$here/.." && pwd)"
+unset NOGG_OPENSPEC_FENCED  # hermetic: never test the fenced tmux -N transport here
 # shellcheck source=scripts/lib/test-env.sh
 source "$here/lib/test-env.sh"
 # shellcheck source=scripts/lib/test-fixture-config.sh
@@ -33,7 +34,8 @@ AFFECTED_SUITES=(
   antigravity-usage codex-exact-resume nogg planning-launch-profile planning-role
   session session-effort session-launch-agent-binary session-model-forwarding
   session-model-record session-models session-observability session-pid-identity
-  session-startup session-tier session-tier-overrides session-tmux-fenced-server
+  session-routing session-startup session-tier session-tier-overrides
+  session-tmux-fenced-server
   session-usage-collection usage-gate usage-history worktree-workflow
 )
 
@@ -102,6 +104,7 @@ import json, sys
 path = sys.argv[1]
 cfg = json.load(open(path))
 cfg["session_backend"] = "herdr"
+cfg.pop("tier_overrides", None)  # isolate from this repository's tier_overrides
 json.dump(cfg, open(path, "w"), indent=2)
 PY
 git -C "$scratch" init -q -b develop

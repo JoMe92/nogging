@@ -241,6 +241,38 @@ product decision.
   (never killing a server hosting other sessions). For herdr, the dedicated server
   is never stopped by cleanup.
 
+### Scheduled loops
+
+`nogg-loops-<slug>.timer` runs the oneshot `nogg loop tick` every minute in the
+main checkout, under a non-blocking `flock` on `.nogging/locks/loops.lock`. The
+tick is stateless: definitions come from `loops_file`, and runs, approvals and
+the event log live in `.nogging/state/loops/`, and a start is recorded before its
+side effect, so a later tick reconciles an interrupted one by `loop_run_id`.
+`pause`, `resume` and `remove` do not wait for a tick, which merges their
+changes when it writes state. A launch run goes through the same
+`session launch` path as any session, with the internal `loop` role, so it gets
+the command floor, the `openspec/` fence and usage admission, and it retires
+through `session stop` and `session cleanup`. The service sets
+`KillMode=process`: a tick can be the process that starts the tmux server, and
+the server must outlive the oneshot. A server started that way stays in the
+unit's cgroup, so systemd logs a left-over-process notice on later ticks.
+
+### Session wake
+
+`nogg session dispatch` is a level-triggered, stateless pass with no model. It derives
+each session's state from live evidence, so a missed event costs nothing, and it decides
+through the pure `scripts/lib/session_dispatch.py`, `session_wake.py`, `session_warm.py`
+and `session_pause.py` with the facts and the clock passed in. Dispatch is on unless
+`session_dispatch.enabled` is an explicit `false`, decided by one function that `session
+dispatch`, `session signal`, the tick and `doctor` share.
+
+`nogg loop tick` ends a due pause, then runs one pass, then evaluates loops. The pass has
+its own lock, `dispatch.lock`, and its own exception boundary, so a failure of either
+side leaves the other running. Its record is the audit log, not the journal, so a queue
+held for hours repeats no line. State lives under `.nogging/state/dispatch/` in the main
+checkout. With no orchestrator a digest has no target and is held, never dropped or
+retried in a loop. See [Session wake](session-wake.md).
+
 ### Session supervision vs. Task-tool specialists
 
 The Lead Agent's own session runs supervised (`sf-lead-<bead>-<nonce>`). When

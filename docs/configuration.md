@@ -47,7 +47,9 @@ behind them.
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
 | `session_agent` | string | `claude` | Agent a launch uses when you pass no `--agent`. |
+| `pi_extensions` | array of strings | `[]` | Names of the optional Nogging Pi extensions under `.pi/nogging/extensions/` that every `session launch --agent pi` loads, after the guard and in this order, for example `["glm-usage"]`. A name must be kebab-case, unique and have an `index.ts` in the launch working directory; otherwise the launch refuses before any side effect, naming the key and the value, and `validate` and `doctor` report a FAIL. The session record stores the loaded names and the launch output prints `pi-extensions=<names>`. An empty or absent list changes nothing, and other agents ignore the key. `init` scaffolds `[]` and `update` keeps your value. See [Pi extensions](pi-extensions.md) and [Using Nogging with Pi](using-with-pi.md). |
 | `session_backend` | string | `tmux` | Terminal backend for launches without `--backend`: `tmux` or `herdr` (experimental). The `--backend` flag wins over this key. See [Using Nogging with herdr](using-with-herdr.md). |
+| `agent_routing_file` | path | `.nogging/agent-routing.json` | Repository-relative location of the agent routing file, resolved against the main checkout so every linked worktree reads the same file. See [the block below](#agent_routing_file). |
 | `session_tmux_command` | string | `tmux` | Executable used for the tmux backend. |
 | `session_tmux_socket` | string | `nogging` | Name of the dedicated tmux socket; sessions never run on your default tmux server. |
 | `session_herdr_command` | string | `herdr` | Executable used for the herdr backend. |
@@ -93,11 +95,24 @@ refused by name.
 | `token_usage_refresh_drain_seconds` | number | `5` | Time budget, in seconds, for one such refresh. |
 | `token_usage_query_timeout_seconds` | number | `30` | Time limit, in seconds, for each local Dolt query behind `token-usage report`, `session`, `export`, `import` and `status`. A busy or very large store then fails with a clear error instead of hanging. |
 
+## Session wake
+
+| Key | Type | Default | Effect |
+| --- | --- | --- | --- |
+| `session_dispatch` | object | see [the block below](#session_dispatch) | Deterministic follow-ups for supervised sessions. On by default. |
+| `orchestrator_context` | object | see [the block below](#orchestrator_context) | Context budget values for the Orchestration Agent. |
+
 ## Multi-machine
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
 | `multi_machine` | boolean | `false` | When `true`, a trusted or orchestrator session runs `bd dolt pull` before it reads Beads state and `bd dolt push` after it writes any Bead. Use it only when several machines share one Dolt remote. See [Failure recovery](failure-recovery.md) for the recovery path if two machines write before either pulls. |
+
+## Loops
+
+| Key | Type | Default | Effect |
+| --- | --- | --- | --- |
+| `loops_file` | path | `.nogging/loops.json` | Repository-relative path of the scheduled loop definitions file. Each loop's prompt lives at `loops/<name>.md` in that file's directory. Set it to `.nogging/state/loops.json` to keep loops and prompts host-local and untracked; the prompts then share `.nogging/state/loops/` with the loop runtime files. A missing file means no loops. `nogg validate` and `doctor` fail on an invalid file or prompt. See [Commands](commands.md) for the `nogg loop` commands. |
 
 ## Agent state
 
@@ -134,8 +149,8 @@ An optional object. Every key is optional, and the defaults are:
 | `enabled` | boolean | `true` | `false` turns admission off. |
 | `cap_percent` | number | `92` | A launch is refused when a known window is already over this percentage. |
 | `estimate_percent` | number or object | `5` | Expected cost of one launch. An object sets it per agent (`claude`, `codex`, `pi`, `antigravity`) with an optional `default`. |
-| `stale_seconds` | number | `600` | Age after which an observation counts as unknown. |
-| `on_unknown` | string | `warn` | `warn` launches with a warning when usage is unknown; `deny` refuses with exit 75. |
+| `stale_seconds` | number | `600` | Age after which an observation counts as unknown. For Pi it also sets how long the `pi-zai.json` snapshot is used before a probe refreshes it. |
+| `on_unknown` | string | `warn` | `warn` launches with a warning when usage is unknown; `deny` refuses with exit 75. Pi usage is known when a Z.ai key is configured in Pi, so this applies to Pi whenever that quota is unknown; see [Pi via Z.ai](usage-limits.md#pi-via-zai). |
 | `size_multipliers` | object | `{"small": 0.5, "medium": 1, "large": 2}` | Scale for the estimate of a Bead labelled `size:<name>`. |
 | `exclude_roles` | array of strings | `["planning", "orchestrator"]` | Roles that skip the gate: any of `lead`, `specialist`, `planning`, `orchestrator`, `loop`. The internal `loop` role (scheduled loop runs) is gated unless listed. |
 
@@ -143,6 +158,90 @@ Unknown keys and out-of-range or mistyped values refuse every launch until
 they are fixed. The semantics are in
 [Running work in sessions](running-work-in-sessions.md) and
 [Usage limits](usage-limits.md).
+
+### `session_dispatch`
+
+An optional object. Every key is optional, and the template carries the block below.
+[Session wake](session-wake.md) explains what dispatch does and what it costs.
+
+```json
+"session_dispatch": {
+  "enabled": true,
+  "max_nudges": 2,
+  "max_ci_nudges": 2,
+  "stall_after": "15m",
+  "ci_timeout": "60m",
+  "retire_merged": false,
+  "wake": {
+    "urgent_quiet": "90s", "normal_quiet": "300s", "max_hold": "900s",
+    "min_gap": "300s", "max_wakes_per_hour": 4, "remind_after": "4h",
+    "hold_above_percent": 85,
+    "keep_warm": true, "keep_warm_after": "50m", "quiet_hours": []
+  },
+  "precompact_after": "50m",
+  "precompact_min_tokens": 100000
+}
+```
+
+| Key | Type | Default | Effect |
+| --- | --- | --- | --- |
+| `enabled` | boolean | `true` | Only an explicit `false` switches dispatch off: `session dispatch` then prints that it is disabled and no session is nudged, retired or woken. A missing key or block reads as on. |
+| `max_nudges` | integer | `2` | Nudges per head SHA for an idle Lead with gaps or no pull request. New commits restore them. Past the budget the condition is queued as `stuck`. |
+| `max_ci_nudges` | integer | `2` | Nudges for red CI, counted across fixes until CI is green. Past the budget the condition is queued as `ci_stuck`. |
+| `stall_after` | duration | `15m` | Log silence of a `working` session before the stall ladder starts. A second period queues `stalled`. |
+| `ci_timeout` | duration | `60m` | How long checks may stay pending before `ci_timeout` is queued. |
+| `retire_merged` | boolean | `false` | Stop and clean up a session whose pull request is merged, whose Bead is closed and whose tree is clean. |
+| `wake` | object | see the table below | Digest timing, keep-warm and quiet hours. |
+| `precompact_after` | duration | `50m` | Idle time before the one compaction ahead of a lapsing cache. It must stay under the one-hour cache lifetime, or nothing is ever sent. |
+| `precompact_min_tokens` | integer | `100000` | Smallest context worth that compaction. |
+
+The digest and the orchestrator's keep-warm read these `wake` keys.
+
+| Key | Type | Default | Effect |
+| --- | --- | --- | --- |
+| `urgent_quiet` | duration | `90s` | How long `blocked`, `needs_input`, `crashed` and `stuck` wait, so that a Lead that recovers by itself wakes nobody. |
+| `normal_quiet` | duration | `300s` | Calm before the other items go out, so that several landing together make one wake. |
+| `max_hold` | duration | `900s` | Longest that calm may delay the oldest item, so that a steady stream cannot starve delivery. |
+| `min_gap` | duration | `300s` | Least time between wakes. Urgent items ignore it. |
+| `max_wakes_per_hour` | integer | `4` | Ceiling on wakes per hour. Urgent items may exceed it. |
+| `remind_after` | duration | `4h` | When an item nobody acted on is repeated, once. A new head makes it a new item. It also ends the wait of an item that only unreadable evidence keeps. |
+| `hold_above_percent` | number | `85` | Non-urgent items and the keep-warm wait while a known usage window of the orchestrator's agent is above this. Unknown usage holds nothing. |
+| `keep_warm` | boolean | `true` | While work is active, send a Claude orchestrator one fixed line before its cache lapses. It is no wake, so `min_gap` and `max_wakes_per_hour` do not count it. `false` sends none and leaves the compaction alone. |
+| `keep_warm_after` | duration | `50m` | How long the orchestrator has been idle before that line. Any turn restarts it. It must stay under the one-hour cache lifetime, or nothing is ever sent. |
+| `quiet_hours` | array of strings | `[]` | Local-time windows in which the orchestrator is never woken: no digest, urgent included, and no keep-warm. Items wait, and the first pass after the window delivers what still holds as one digest. Nudges to Leads, retirement and CI tracking go on. |
+
+A duration is a whole number with an optional `s`, `m` or `h`. A `quiet_hours` window
+is `"HH:MM-HH:MM"` in the host's time zone, read from the wall clock on every pass. It
+may cross midnight, as `"22:00-07:00"` does, its end is outside it, and its two ends
+must differ. An unknown key or a bad value fails `validate` and `doctor`, naming it, and
+`session dispatch` refuses to run.
+
+With nothing active, in quiet hours or during a pause, no keep-warm goes out. Instead
+the orchestrator gets one `/compact` per idle period, once it has been idle for
+`precompact_after` with its cache still warm and its last recorded context above
+`precompact_min_tokens`. A context size that cannot be read skips it, and the cache then
+lapses. `doctor` prints a NOTE with these settings and the next compaction.
+
+A pause is a command and no key: [`nogg pause`](commands.md#pause) holds an enabled
+dispatcher for a few days and ends by itself, which a forgotten config edit would not.
+Its state, `.nogging/state/pause.json`, is host-local and never committed.
+
+### `orchestrator_context`
+
+An optional object, with unknown keys refused the same way:
+
+```json
+"orchestrator_context": {"auto_compact_window": 200000, "idle_compact_min_tokens": 100000}
+```
+
+| Key | Type | Default | Effect |
+| --- | --- | --- | --- |
+| `auto_compact_window` | integer | `200000` | The Orchestration Agent's automatic compaction window, in tokens. |
+| `idle_compact_min_tokens` | integer | `100000` | Smallest context worth compacting while it idles. |
+
+`orchestrator run` writes them into the session's effective settings `env`, as
+`CLAUDE_CODE_AUTO_COMPACT_WINDOW` and `CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS`. A running
+orchestrator picks up a new value at its next `orchestrator restart`.
 
 ### `tier_overrides`
 
@@ -221,3 +320,50 @@ little output; far larger ones grow the context and the cached re-reads of
 every turn. Raising the maximum well above 1000 therefore costs more tokens per
 line, not fewer. `./scripts/nogg token-usage report --group-by bead` shows the
 figure for your own Beads (see [Token usage](token-usage.md)).
+### `agent_routing_file`
+
+A repository-relative path, `.nogging/agent-routing.json` by default. It is
+the location of the **agent routing file**, the one versioned, user-owned file
+that defines which agent each role launches when you pass no `--agent`. The
+path is resolved against the repository's main checkout, so every linked
+worktree reads the same file; put it under `.nogging/state/` to keep a
+host-local order out of the repository.
+
+The file carries `schema_version: 1` and a `roles` object whose keys are
+`lead`, `specialist` and `planning`, each an ordered list of entries:
+
+```json
+{
+  "schema_version": 1,
+  "roles": {
+    "lead": [
+      {"agent": "pi", "backend": "herdr"},
+      {"agent": "codex", "backend": "herdr", "on_unknown": "deny",
+       "models": {"complex": {"model": "gpt-6-luna", "effort": "medium"}},
+       "allow": [{"model": "gpt-6-luna"},
+                 {"model": "gpt-6.1-sol", "efforts": ["low"],
+                  "note": "extremely hard tasks only"}]},
+      {"agent": "claude", "backend": "herdr"}
+    ],
+    "planning": [{"agent": "claude"}]
+  }
+}
+```
+
+An entry has a required `agent` (`claude`, `codex`, `pi` or `antigravity`;
+`agy` is an alias) and may have `backend` (`tmux` or `herdr`), `tiers` (a
+non-empty subset of `routine`, `standard`, `complex`), `models` (keyed by
+tier, each `{model, effort}`, with `effort` allowed only for `claude` and
+`codex`), `allow` (a non-empty list of `{model, efforts, note}`), `on_unknown`
+(`warn` or `deny`) and `note` (one line of at most 200 characters). Every
+`models` selection must satisfy the entry's own `allow` list. An
+`orchestrator` role, an empty list, two entries of one role with the same
+agent and written backend, an unknown key at any level and a duplicate JSON
+key are refused naming the file, the JSON path and the rule. A missing file
+means no routing: the installer never writes the file and `update` never
+changes it, and nothing Nogging ships contains a routing preference.
+
+Check the file with `./scripts/nogg route check`; `validate` and `doctor`
+report an invalid file as a FAIL, and `doctor` NOTEs entries that cannot run
+on this host. Launch-time behaviour is in
+[Running work in sessions](running-work-in-sessions.md).

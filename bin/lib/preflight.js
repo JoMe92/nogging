@@ -111,7 +111,7 @@ function checkHost(ctx, env = process.env) {
 
   if (!ctx.noSystemd) {
     if (onPath('systemctl', env)) optional.push('systemd');
-    else warnings.push('WARN systemd user services not found — fix: needed only for the sync timer and orchestrator service; pass --no-systemd to skip');
+    else warnings.push('WARN systemd user services not found — fix: needed only for the sync and loop timers and the orchestrator service; pass --no-systemd to skip');
   }
 
   const agents = AGENT_CLIS.filter(c => onPath(c, env));

@@ -1,0 +1,516 @@
+"""Agent routing file: schema_version 1 loader and validator.
+
+Pure module, shipped beside scripts/nogg and loaded like session_backend.
+It owns the `.nogging/agent-routing.json` schema (change
+configurable-agent-routing, design Decisions 2-3 and 8): parsing that refuses
+duplicate JSON keys, structural validation whose every error names the file,
+the JSON path and the rule, and `agy` -> `antigravity` normalization.
+
+The module deliberately imports nothing from scripts/nogg. The host injects
+its own model-name validator and effort tables (`validate_model`,
+`efforts_by_agent`, `tiers`), so this file stays testable without the CLI and
+the CLI keeps one authority for those vocabularies. Missing file means no
+routing; nothing here ever writes the file.
+"""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+DEFAULT_ROUTING_PATH = ".nogging/agent-routing.json"
+SCHEMA_VERSION = 1
+ROLES = ("lead", "specialist", "planning")
+AGENTS = ("claude", "codex", "pi", "antigravity")
+BACKENDS = ("tmux", "herdr")
+ON_UNKNOWN = ("warn", "deny")
+MAX_NOTE = 200
+ENTRY_KEYS = ("agent", "backend", "tiers", "models", "allow", "on_unknown", "note")
+ALLOW_KEYS = ("model", "efforts", "note")
+SELECTION_KEYS = ("model", "effort")
+
+
+def normalize_agent(agent):
+    """`agy` is an alias for `antigravity`, as in the model-selection table."""
+    return "antigravity" if agent == "agy" else agent
+
+
+def _is_one_line_text(value):
+    return (isinstance(value, str) and bool(value.strip())
+            and "\n" not in value and len(value) <= MAX_NOTE)
+
+
+class _RawPairs(dict):
+    """Dict keeping its source pairs, so duplicate keys stay reportable.
+
+    json.loads collapses duplicate keys silently; object_pairs_hook hands us
+    the raw pairs instead, and a later walk turns every duplicate into a
+    validation error naming its JSON path (design Decision 3).
+    """
+    pairs = ()
+
+
+def _pairs(pairs):
+    node = _RawPairs(pairs)
+    node.pairs = pairs  # instance attribute; the class default stays empty
+    return node
+
+
+def _collect_pairs(value):
+    """Recursively turn every mapping into a dict, collecting errors.
+
+    Returns `(data, errors)`; `data` shares leaves with the parsed tree.
+    """
+    errors = []
+    def walk(node, path):
+        where = "".join(path)
+        if isinstance(node, _RawPairs):
+            seen = set()
+            for key, _ in node.pairs:
+                if key in seen:
+                    errors.append(f"{where}{key}: duplicate JSON key "
+                                  "(rule: every key must appear at most once)")
+                seen.add(key)
+            out = {}
+            for key, item in node.pairs:
+                out[key] = walk(item, path + [key, "."])
+            return out
+        if isinstance(node, list):
+            base = where[:-1] if where.endswith(".") else where
+            return [walk(item, [f"{base}[{i}]."]) for i, item in enumerate(node)]
+        return node
+    return walk(value, []), errors
+
+
+def _parse(text, origin):
+    """Parse routing JSON; returns `(data or None, errors)`."""
+    try:
+        parsed = json.loads(text, object_pairs_hook=_pairs)
+    except ValueError as exc:
+        return None, [f"{origin}: not valid JSON ({exc}) "
+                      "(rule: the routing file must be one JSON object)"]
+    data, errors = _collect_pairs(parsed)
+    return data, errors
+
+
+def _keys(obj, where, errors, required, optional=()):
+    """Check object shape and unknown keys; returns False when unusable."""
+    if not isinstance(obj, dict):
+        errors.append(f"{where}: must be an object (rule: expected a JSON object)")
+        return False
+    for key in sorted(set(obj) - set(required) - set(optional)):
+        errors.append(f"{where}: unknown key {key!r} (rule: allowed keys are "
+                      f"{', '.join(required + optional)})")
+    for key in required:
+        if key not in obj:
+            errors.append(f"{where}: missing key {key!r} (rule: {key!r} is required)")
+    return True
+
+
+def routing_errors(data, *, validate_model, efforts_by_agent, tiers):
+    """Every reason `data` is not a valid routing document, each naming the
+    JSON path and the rule. An empty list means the document is valid.
+
+    `validate_model(value, origin)` raises RuntimeError naming `origin` for an
+    unacceptable model name; `efforts_by_agent` maps agent -> allowed efforts;
+    `tiers` is the ordered tier vocabulary. All are injected by the host.
+    """
+    errors = []
+    if not _keys(data, "", errors, ("schema_version", "roles")):
+        return errors
+    if type(data["schema_version"]) is not int or data["schema_version"] != SCHEMA_VERSION:
+        errors.append(f"schema_version: unsupported value {data['schema_version']!r}; "
+                      f"expected {SCHEMA_VERSION} (rule: schema_version must be "
+                      f"{SCHEMA_VERSION})")
+    roles = data.get("roles")
+    if not isinstance(roles, dict):
+        errors.append("roles: must be an object (rule: roles maps role -> entry list)")
+        return errors
+    for role in sorted(roles):
+        where = f"roles.{role}"
+        if role == "orchestrator":
+            errors.append(f"{where}: the orchestrator role is not routable "
+                          "(rule: roles are lead, specialist and planning; the "
+                          "orchestrator is driven by its own commands)")
+            continue
+        if role not in ROLES:
+            errors.append(f"{where}: unknown role {role!r} "
+                          f"(rule: roles are {', '.join(ROLES)})")
+            continue
+        entries = roles[role]
+        if not isinstance(entries, list) or not entries:
+            errors.append(f"{where}: must be a non-empty list of entries "
+                          "(rule: an empty list is refused; remove the role key "
+                          "instead)")
+            continue
+        seen_pairs = set()
+        for index, entry in enumerate(entries):
+            entry_where = f"{where}[{index}]"
+            if not _keys(entry, entry_where, errors, ("agent",), ENTRY_KEYS[1:]):
+                continue
+            agent = entry.get("agent")
+            if not isinstance(agent, str) or normalize_agent(agent) not in AGENTS:
+                errors.append(f"{entry_where}.agent: unknown agent {agent!r} "
+                              f"(rule: agent is one of {', '.join(AGENTS)}; "
+                              "'agy' is accepted as an alias)")
+                continue
+            agent = normalize_agent(agent)
+            backend = entry.get("backend")
+            if backend is not None and backend not in BACKENDS:
+                errors.append(f"{entry_where}.backend: unknown backend {backend!r} "
+                              f"(rule: backend is one of {', '.join(BACKENDS)})")
+            entry_tiers = entry.get("tiers")
+            if entry_tiers is not None:
+                if (not isinstance(entry_tiers, list) or not entry_tiers
+                        or any(t not in tiers for t in entry_tiers)):
+                    errors.append(f"{entry_where}.tiers: must be a non-empty subset of "
+                                  f"{', '.join(tiers)} (rule: tiers narrows the entry's "
+                                  "eligible tiers)")
+            on_unknown = entry.get("on_unknown")
+            if on_unknown is not None and on_unknown not in ON_UNKNOWN:
+                errors.append(f"{entry_where}.on_unknown: unknown value {on_unknown!r} "
+                              f"(rule: on_unknown is one of {', '.join(ON_UNKNOWN)})")
+            note = entry.get("note")
+            if note is not None and not _is_one_line_text(note):
+                errors.append(f"{entry_where}.note: must be a one-line note of at most "
+                              f"{MAX_NOTE} characters (rule: note is free text on one line)")
+            allow_models = {}
+            allow = entry.get("allow")
+            if allow is not None:
+                if not isinstance(allow, list) or not allow:
+                    errors.append(f"{entry_where}.allow: must be a non-empty list "
+                                  "(rule: allow lists acceptable model/effort pairs)")
+                else:
+                    for a_index, record in enumerate(allow):
+                        a_where = f"{entry_where}.allow[{a_index}]"
+                        if not _keys(record, a_where, errors, ("model",), ALLOW_KEYS[1:]):
+                            continue
+                        model = record.get("model")
+                        origin = f"{a_where}.model"
+                        try:
+                            validate_model(model, origin)
+                        except RuntimeError as exc:
+                            errors.append(str(exc))
+                            continue
+                        efforts = record.get("efforts")
+                        if efforts is not None:
+                            if agent not in efforts_by_agent:
+                                errors.append(f"{a_where}.efforts: not allowed for {agent} "
+                                              "(rule: efforts is allowed only for claude "
+                                              "and codex)")
+                            elif (not isinstance(efforts, list) or not efforts
+                                  or any(e not in efforts_by_agent[agent] for e in efforts)):
+                                errors.append(f"{a_where}.efforts: must be a non-empty "
+                                              f"subset of {', '.join(efforts_by_agent[agent])} "
+                                              f"(rule: efforts values for {agent})")
+                        allow_note = record.get("note")
+                        if allow_note is not None and not _is_one_line_text(allow_note):
+                            errors.append(f"{a_where}.note: must be a one-line note of at "
+                                          f"most {MAX_NOTE} characters (rule: note is free "
+                                          "text on one line)")
+                        allow_models.setdefault(model, record)
+            models = entry.get("models")
+            if models is not None:
+                if not isinstance(models, dict) or not models:
+                    errors.append(f"{entry_where}.models: must be a non-empty object keyed "
+                                  "by tier (rule: models maps tier -> {model, effort})")
+                else:
+                    for tier in sorted(models):
+                        s_where = f"{entry_where}.models.{tier}"
+                        selection = models[tier]
+                        if tier not in tiers:
+                            errors.append(f"{s_where}: unknown tier {tier!r} "
+                                          f"(rule: models keys are {', '.join(tiers)})")
+                        if (entry_tiers is not None and isinstance(entry_tiers, list)
+                                and tier not in entry_tiers):
+                            errors.append(f"{s_where}: tier {tier!r} is outside the entry's "
+                                          f"tiers ({', '.join(entry_tiers)}) (rule: a models "
+                                          "selection must be for an eligible tier)")
+                        if not _keys(selection, s_where, errors, (), SELECTION_KEYS) \
+                                or not isinstance(selection, dict):
+                            continue
+                        if not {"model", "effort"} & set(selection):
+                            errors.append(f"{s_where}: must set at least one of model or "
+                                          "effort (rule: an empty selection is refused)")
+                        s_model = selection.get("model")
+                        if s_model is not None:
+                            origin = f"{s_where}.model"
+                            try:
+                                validate_model(s_model, origin)
+                            except RuntimeError as exc:
+                                errors.append(str(exc))
+                        s_effort = selection.get("effort")
+                        if s_effort is not None:
+                            if agent not in efforts_by_agent:
+                                errors.append(f"{s_where}.effort: not allowed for {agent} "
+                                              "(rule: effort is allowed only for claude "
+                                              "and codex)")
+                            elif s_effort not in efforts_by_agent[agent]:
+                                errors.append(f"{s_where}.effort: {s_effort!r} is not one of "
+                                              f"{', '.join(efforts_by_agent[agent])} "
+                                              f"(rule: effort values for {agent})")
+                        # A models selection must satisfy the entry's own allow list.
+                        if allow_models and s_model is not None:
+                            record = allow_models.get(s_model)
+                            if record is None:
+                                errors.append(f"{s_where}.model: {s_model!r} is outside the "
+                                              "entry's allow list (rule: every models "
+                                              "selection must satisfy the entry's own allow)")
+                            else:
+                                allowed = record.get("efforts")
+                                if s_effort is not None and allowed is not None \
+                                        and s_effort not in allowed:
+                                    errors.append(f"{s_where}.effort: {s_effort!r} is not in "
+                                                  f"the allow list's efforts for {s_model!r} "
+                                                  "(rule: every models selection must satisfy "
+                                                  "the entry's own allow)")
+            pair = (agent, backend)
+            if pair in seen_pairs and backend is not None:
+                errors.append(f"{entry_where}: duplicate entry for agent {agent!r} on "
+                              f"backend {backend!r} (rule: two entries of one role must "
+                              "not share agent and written backend)")
+            seen_pairs.add(pair)
+    return errors
+
+
+def load_routing(path, *, main_checkout, validate_model, efforts_by_agent, tiers):
+    """Read and validate the routing file at `path`.
+
+    Returns `(routing, errors)`: `routing` maps role -> list of entries with
+    `agy` normalized to `antigravity`, and is `{}` when the file is absent or
+    carries no roles; `errors` is empty exactly when the file is absent or
+    valid. A missing file means no routing and is not an error. Relative
+    `agent_routing_file` keys resolve against `main_checkout`, so every linked
+    worktree reads the same file.
+    """
+    path = Path(path)
+    if not path.is_absolute():
+        path = (Path(main_checkout) / path).resolve()
+    origin = str(path)
+    try:
+        text = path.read_text()
+    except FileNotFoundError:
+        return {}, []
+    except OSError as exc:
+        return None, [f"{origin}: cannot be read ({exc}) "
+                      "(rule: the routing file must be readable)"]
+    data, errors = _parse(text, origin)
+    if data is None:
+        return None, errors
+    # Every error names the file, the JSON path and the rule.
+    errors = errors + [f"{origin}: {e}" for e in
+                       routing_errors(data, validate_model=validate_model,
+                                      efforts_by_agent=efforts_by_agent, tiers=tiers)]
+    if errors:
+        return None, errors
+    return {role: [dict(entry, agent=normalize_agent(entry["agent"]))
+                   for entry in data["roles"][role]]
+            for role in data.get("roles", {})}, []
+
+
+# --- Decision engine (design Decisions 4 and 6) -----------------------------
+
+SKIP_REASONS = ("operator-skip", "tier", "binary-missing", "authority",
+                "backend-unavailable", "model-not-allowed", "usage-denied",
+                "usage-unknown")
+EXIT_USAGE_WAIT = 75
+EXIT_REFUSED = 1
+EFFORT_AGENTS = ("claude", "codex")
+
+
+class RoutingFatal(RuntimeError):
+    """A defect that must refuse the launch rather than skip an entry.
+
+    A probe raises it for a malformed usage gate, tier-override block or
+    model-selection table, an unreadable profile or launch spec, a missing
+    Bead or an unmet dependency. The engine never catches it, nor any other
+    probe error: skipping past a broken install would hide it.
+    """
+
+
+def _detail(text, redact):
+    """One redacted line of at most MAX_NOTE characters."""
+    line = " ".join(str(text).split())
+    if redact is not None:
+        line = redact(line)
+    return line[:MAX_NOTE]
+
+
+def _probe(probes, name, *args):
+    probe = (probes or {}).get(name)
+    return None if probe is None else probe(*args)
+
+
+def _first_refusal(entry, *, tier, skip, backend, probes):
+    """The first failing pre-selection check as `(reason, detail)`, else None."""
+    agent = entry["agent"]
+    if agent in skip:
+        return "operator-skip", f"--skip-agent {agent}"
+    entry_tiers = entry.get("tiers")
+    if entry_tiers is not None and tier is None:
+        return "tier", "no tier given"
+    if entry_tiers is not None and tier not in entry_tiers:
+        return "tier", f"tier {tier} is outside {', '.join(entry_tiers)}"
+    if (probes or {}).get("binary") is not None and not probes["binary"](agent):
+        return "binary-missing", f"{agent} is not on PATH"
+    detail = _probe(probes, "authority", entry)
+    if detail:
+        return "authority", detail
+    detail = _probe(probes, "backend", entry, backend or entry.get("backend"))
+    if detail:
+        return "backend-unavailable", detail
+    return None
+
+
+def resolve_selection(entry, tier, explicit, baseline):
+    """Model and effort for one candidate (design Decision 6).
+
+    `baseline` is the host's table / profile / runtime-default resolution for
+    the candidate (keys `model`, `model_source`, `effort`, `effort_source`,
+    `tier_effort`, `tier_effort_source`, all optional). The entry's `models`
+    for the tier replace it with source `route`; an explicit launch value then
+    wins for model and effort while the tier effort stays the entry's or the
+    baseline's. An agent without efforts, such as Pi, records the tier with a
+    null tier effort.
+    """
+    baseline = baseline or {}
+    effort_agent = entry["agent"] in EFFORT_AGENTS
+    chosen = (entry.get("models") or {}).get(tier, {}) if tier is not None else {}
+    explicit = explicit or {}
+    sel = {"model": baseline.get("model"),
+           "model_source": baseline.get("model_source"),
+           "effort": baseline.get("effort") if effort_agent else None,
+           "effort_source": baseline.get("effort_source") if effort_agent else None,
+           "tier": tier,
+           "tier_effort": None, "tier_effort_source": None}
+    if tier is not None and effort_agent:
+        sel["tier_effort"] = baseline.get("tier_effort")
+        sel["tier_effort_source"] = baseline.get("tier_effort_source")
+    if chosen.get("model") is not None:
+        sel["model"], sel["model_source"] = chosen["model"], "route"
+    if chosen.get("effort") is not None and effort_agent:
+        sel["effort"] = sel["tier_effort"] = chosen["effort"]
+        sel["effort_source"] = sel["tier_effort_source"] = "route"
+    if explicit.get("model") is not None:
+        sel["model"], sel["model_source"] = explicit["model"], "launch"
+    if explicit.get("effort") is not None and effort_agent:
+        sel["effort"], sel["effort_source"] = explicit["effort"], "launch"
+    if sel["model"] is None:
+        sel["model_source"] = "runtime-default"
+    if effort_agent and sel["effort"] is None:
+        sel["effort_source"] = "runtime-default"
+    return sel
+
+
+def _allow_refusal(entry, sel):
+    """Why `sel` falls outside the entry's `allow` list, else None."""
+    allow = entry.get("allow")
+    if allow is None:
+        return None
+    model = sel["model"]
+    if model is None:
+        return ("model is the runtime default, which allow cannot verify "
+                "(rule: an entry with allow needs a named model)")
+    record = next((r for r in allow if r["model"] == model), None)
+    if record is None:
+        return f"model {model} is outside the entry's allow list"
+    efforts = record.get("efforts")
+    if efforts is None:
+        return None
+    if sel["effort"] is None:
+        return (f"effort is the runtime default, but allow restricts {model} "
+                f"to {', '.join(efforts)}")
+    if sel["effort"] not in efforts:
+        return (f"effort {sel['effort']} is outside the allowed efforts for "
+                f"{model} ({', '.join(efforts)})")
+    return None
+
+
+def _usage_check(entry, sel, probes):
+    """`(admitted, usage, skip)`: the gate verdict under the entry's on_unknown.
+
+    `skip` is `(reason, detail, retry_at)` when the entry is refused.
+    """
+    usage = _probe(probes, "usage", entry, sel) or {"state": "ok"}
+    state = usage.get("state", "ok")
+    if state == "denied":
+        return usage, ("usage-denied", usage.get("detail") or "usage gate denied",
+                       usage.get("retry_at"))
+    if state == "unknown":
+        policy = entry.get("on_unknown") or usage.get("on_unknown") or "warn"
+        if policy == "deny":
+            return usage, ("usage-unknown", usage.get("detail") or "usage unknown",
+                           None)
+    return usage, None
+
+
+def evaluate_route(entries, *, tier=None, skip=(), probes=None, backend=None,
+                   explicit=None, redact=None):
+    """Evaluate a role's entries in file order and return the decision.
+
+    No I/O: every fact comes from `probes`, a mapping of callables, and an
+    absent probe never skips. `binary(agent) -> bool`, `authority(entry)` and
+    `backend(entry, effective_backend)` return a refusal detail or None;
+    `selection(entry, tier)` returns the baseline for `resolve_selection`;
+    `usage(entry, selection)` returns `{"state": "ok"|"denied"|"unknown",
+    "retry_at", "detail", "on_unknown"}`. `skip` is the `--skip-agent` set,
+    `backend` the explicit `--backend`, `explicit` the pinned launch's
+    `--model` and `--effort`. `redact`, when given, scrubs every skip detail.
+
+    Returns `{"chosen", "skipped", "exit_code", "retry_at"}`. `chosen` is None
+    when every entry was skipped, else carries `index` (1-based), `agent`,
+    `backend`, `entry`, `selection`, `usage` and `warnings`; each skip carries
+    `index`, `agent`, `backend`, `reason`, `detail` and, for `usage-denied`,
+    `retry_at`. The exit code is 0 when chosen, 75 when an entry was skipped
+    for `usage-denied` alone, and 1 otherwise. Probe errors propagate: a
+    `RoutingFatal` is a defect, not a skip.
+    """
+    skip = {normalize_agent(agent) for agent in skip}
+    skipped = []
+    for index, entry in enumerate(entries, 1):
+        effective = backend or entry.get("backend")
+        refusal = _first_refusal(entry, tier=tier, skip=skip, backend=backend,
+                                 probes=probes)
+        sel = None
+        if refusal is None:
+            sel = resolve_selection(entry, tier, explicit,
+                                    _probe(probes, "selection", entry, tier))
+            detail = _allow_refusal(entry, sel)
+            if detail:
+                refusal = ("model-not-allowed", detail, None)
+        if refusal is None:
+            usage, refusal = _usage_check(entry, sel, probes)
+        if refusal is None:
+            warnings = []
+            if usage.get("state") == "unknown":
+                warnings.append(f"usage unknown: {usage.get('detail') or 'no data'}")
+            return {"chosen": {"index": index, "agent": entry["agent"],
+                               "backend": effective, "entry": entry,
+                               "selection": sel, "usage": usage,
+                               "warnings": warnings},
+                    "skipped": skipped, "exit_code": 0, "retry_at": None}
+        reason, detail, retry_at = (refusal + (None,))[:3]
+        record = {"index": index, "agent": entry["agent"], "backend": effective,
+                  "reason": reason, "detail": _detail(detail, redact)}
+        if reason == "usage-denied":
+            record["retry_at"] = retry_at
+        skipped.append(record)
+    waits = [s for s in skipped if s["reason"] == "usage-denied"]
+    retries = [s["retry_at"] for s in waits if s["retry_at"] is not None]
+    return {"chosen": None, "skipped": skipped,
+            "exit_code": EXIT_USAGE_WAIT if waits else EXIT_REFUSED,
+            "retry_at": min(retries) if retries else None}
+
+
+def pin_entry(entries, agent, backend=None):
+    """The `(index, entry)` an explicit `--agent` pins, else None (off-list).
+
+    The first entry for the agent applies, or the first with the written
+    `backend` when one is given; an entry without a written backend never
+    matches an explicit one.
+    """
+    agent = normalize_agent(agent)
+    for index, entry in enumerate(entries, 1):
+        if entry["agent"] == agent and (backend is None
+                                        or entry.get("backend") == backend):
+            return index, entry
+    return None

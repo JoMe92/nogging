@@ -62,6 +62,10 @@ check "pi guard extension installed" test -f "$repo/.pi/extensions/nogging-guard
 check "pi prompt plan.md installed"    test -f "$repo/.pi/prompts/plan.md"
 check "pi prompt discovery-review.md installed" test -f "$repo/.pi/prompts/discovery-review.md"
 check "pi prompt sync-now.md installed" test -f "$repo/.pi/prompts/sync-now.md"
+check "pi glm-usage extension installed" test -f "$repo/.pi/nogging/extensions/glm-usage/index.ts"
+check "pi extension home README installed" test -f "$repo/.pi/nogging/README.md"
+check "init scaffolds pi_extensions empty and enables nothing" \
+  node -e "const c=require('$repo/.nogging/config.json'); process.exit(Array.isArray(c.pi_extensions) && c.pi_extensions.length===0 ? 0 : 1)"
 check "launch prompts shipped"     test -f "$repo/.nogging/launch-prompts/autonomous.md"
 check "planning prompt shipped" test -f "$repo/.nogging/launch-prompts/planning.md"
 check "reference docs under docs/nogging" test -f "$repo/docs/nogging/architecture.md"
@@ -303,11 +307,35 @@ check "unit filename carries the slug" bash -c "[[ '$(basename "$unit")' == nogg
 tunit=$(find "$repo/systemd" -name 'nogg-sync-*.timer')
 check "timer binds the slugged service" grep -qx "Unit=nogg-sync-fresh.service" "$tunit"
 
+lsvc="$repo/systemd/nogg-loops-fresh.service"
+ltim="$repo/systemd/nogg-loops-fresh.timer"
+check "loop service rendered" test -f "$lsvc"
+check "loop service is a oneshot" grep -qx "Type=oneshot" "$lsvc"
+check "loop service targets the repo" grep -qx "WorkingDirectory=$repo" "$lsvc"
+check "loop service runs one tick" grep -qx "ExecStart=$repo/scripts/nogg loop tick" "$lsvc"
+check "loop service leaves its sessions running" grep -qx "KillMode=process" "$lsvc"
+check "loop service bounds a wedged tick" grep -qx "TimeoutStartSec=15min" "$lsvc"
+check "loop timer rendered" test -f "$ltim"
+check "loop timer fires every minute" grep -qx "OnCalendar=minutely" "$ltim"
+check "loop timer has no catch-up" grep -qx "Persistent=false" "$ltim"
+check "loop timer binds the slugged service" grep -qx "Unit=nogg-loops-fresh.service" "$ltim"
+check "loop timer is enable-able" grep -qx "WantedBy=timers.target" "$ltim"
+
+# A repository named after a unit keeps its units' next steps apart.
+named="$work/orchestrator"
+mkdir -p "$named"; git -C "$named" init -q
+named_out=$( cd "$named" && node "$cli" init --no-beads 2>&1 ) || true
+check "a repo named orchestrator gets one orchestrator step" \
+  test "$(grep -c 'Enable the always-on Orchestration Agent' <<<"$named_out")" -eq 1
+
 # --- --no-systemd -----------------------------------------------------
 nos="$work/nosystemd"
 mkdir -p "$nos"; git -C "$nos" init -q
 ( cd "$nos" && node "$cli" init --no-beads --no-systemd >/dev/null )
 check "--no-systemd skips the unit" [ ! -d "$nos/systemd" ]
+check "--no-systemd still installs the loop prompt" test -f "$nos/.nogging/launch-prompts/loop.md"
+check "--no-systemd still installs the loop modules" test -f "$nos/scripts/lib/loop_runner.py"
+check "--no-systemd still installs the loop guide" test -f "$nos/docs/nogging/scheduled-loops.md"
 
 # --- core.hooksPath warning ------------------------------------------
 hp="$work/hookspath"
@@ -322,13 +350,15 @@ mkdir -p "$upd"; git -C "$upd" init -q
 ( cd "$upd" && node "$cli" init --no-beads --no-systemd >/dev/null )
 printf 'stale agent\n' > "$upd/.claude/agents/architect.md"
 printf 'stale command\n' > "$upd/.claude/commands/plan.md"
+printf 'stale extension\n' > "$upd/.pi/nogging/extensions/glm-usage/index.ts"
 # Record the simulated old release baseline so update exercises clean refreshes.
 node - "$upd" "$root" <<'NODE'
 const path = require('path');
 const target = process.argv[2];
 const store = require(path.join(process.argv[3], 'bin/lib/manifest-store'));
 const installed = store.readManifest(target);
-for (const rel of ['.claude/agents/architect.md', '.claude/commands/plan.md']) {
+for (const rel of ['.claude/agents/architect.md', '.claude/commands/plan.md',
+                   '.pi/nogging/extensions/glm-usage/index.ts']) {
   installed.files[rel] = store.hashFile(path.join(target, rel));
 }
 store.writeManifest(target, installed);
@@ -338,20 +368,30 @@ printf '# Tasks\n\n- [ ] TASK-X-001 do a thing\n' > "$upd/openspec/changes/my-ch
 printf '# My project\n\nCustom purpose.\n' > "$upd/openspec/project.md"
 node -e "
   const f='$upd/.nogging/config.json'; const d=require(f);
-  d.nogging_version='0.0.1'; d.name='my-custom-name';
+  d.nogging_version='0.0.1'; d.name='my-custom-name'; d.pi_extensions=['glm-usage'];
   require('fs').writeFileSync(f, JSON.stringify(d,null,2)+'\n');
 "
 changes_before=$(cd "$upd" && git -C "$upd" hash-object openspec/changes/my-change/tasks.md 2>/dev/null || md5sum "$upd/openspec/changes/my-change/tasks.md")
 
+mkdir -p "$upd/.nogging/loops"
+printf '{"schema_version":1,"timezone":"UTC","loops":{}}\n' > "$upd/.nogging/loops.json"
+printf 'Keep this prompt.\n' > "$upd/.nogging/loops/night-work.md"
+loops_before=$(cat "$upd/.nogging/loops.json" "$upd/.nogging/loops/night-work.md" | sha256sum)
+
 rc=0
 ( cd "$upd" && node "$cli" update --no-systemd >/dev/null ) || rc=$?
 check "update exits 0" [ "$rc" -eq 0 ]
+loops_after=$(cat "$upd/.nogging/loops.json" "$upd/.nogging/loops/night-work.md" | sha256sum)
+check "update leaves the loop definitions and prompts unchanged" [ "$loops_before" = "$loops_after" ]
 
 changes_after=$(cd "$upd" && git -C "$upd" hash-object openspec/changes/my-change/tasks.md 2>/dev/null || md5sum "$upd/openspec/changes/my-change/tasks.md")
 check "update leaves openspec/changes untouched" [ "$changes_before" = "$changes_after" ]
 check "update leaves openspec/project.md untouched" grep -q "Custom purpose." "$upd/openspec/project.md"
 check "update refreshes a stale Claude agent" cmp -s "$root/.claude/agents/architect.md" "$upd/.claude/agents/architect.md"
 check "update refreshes a stale Claude command" cmp -s "$root/.claude/commands/plan.md" "$upd/.claude/commands/plan.md"
+check "update refreshes a stale Pi extension" cmp -s "$root/.pi/nogging/extensions/glm-usage/index.ts" "$upd/.pi/nogging/extensions/glm-usage/index.ts"
+check "update keeps an enabled pi_extensions list" \
+  node -e "process.exit(JSON.stringify(require('$upd/.nogging/config.json').pi_extensions)==='[\"glm-usage\"]' ? 0 : 1)"
 consumer_runner_checks update "$upd"
 
 new_name=$(node -e "process.stdout.write(require('$upd/.nogging/config.json').name)")
@@ -404,6 +444,9 @@ if command -v npm >/dev/null 2>&1; then
     check "packed install ships pi prompt plan.md" test -f "$packrepo/.pi/prompts/plan.md"
     check "packed install ships pi prompt discovery-review.md" test -f "$packrepo/.pi/prompts/discovery-review.md"
     check "packed install ships pi prompt sync-now.md" test -f "$packrepo/.pi/prompts/sync-now.md"
+    check "packed install ships the Pi extension home" diff -qr "$root/.pi/nogging" "$packrepo/.pi/nogging"
+    check "packed install enables no Pi extension" \
+      node -e "const c=require('$packrepo/.nogging/config.json'); process.exit(Array.isArray(c.pi_extensions) && c.pi_extensions.length===0 ? 0 : 1)"
     check "packed install ships launch prompts"     test -f "$packrepo/.nogging/launch-prompts/no-autonomous-claim.md"
     check "packed install ships planning prompt" test -f "$packrepo/.nogging/launch-prompts/planning.md"
     check "packed install ships the Pi guide"       test -f "$packrepo/docs/nogging/using-with-pi.md"
@@ -435,6 +478,177 @@ if command -v npm >/dev/null 2>&1; then
     check "packed install ships codex prompt sync-now.md" test -f "$packrepo/.codex/prompts/sync-now.md"
     check "packed install AGENTS.md has Tool notes"  grep -q 'Tool notes' "$packrepo/AGENTS.md"
     check "packed install AGENTS.md labels Pi"       grep -q '.pi/extensions/nogging-guard.ts' "$packrepo/AGENTS.md"
+
+    # --- session wake: dispatch is on in a default packed consumer --------------
+    wake="$work/packwake"; wakebin="$work/wakebin"; wakehome="$work/wakehome"
+    mkdir -p "$wake" "$wakebin" "$wakehome/.codex"; git -C "$wake" init -q -b develop
+    printf '{"hooks": {}}\n' > "$wakehome/.codex/hooks.json"
+    printf 'model = "personal"\n' > "$wakehome/.codex/config.toml"
+    personal() { cat "$wakehome/.codex/hooks.json" "$wakehome/.codex/config.toml" | sha256sum; }
+    personal_before=$(personal)
+    in_wake() { ( cd "$wake" && env -i HOME="$wakehome" PATH="$wakebin:$PATH" TMUX_TMPDIR="${TMUX_TMPDIR:-}" \
+      NOGG_TEST_ARGS_DIR="$wakebin" NOGGING_ROOT="$wake" GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid \
+      GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid "$@" ); }
+    wake_block() { # <python expression over `block`, a statement>: edit the config's dispatch block
+      python3 - "$wake/.nogging/config.json" "$1" <<'PY'
+import json, sys
+path, change = sys.argv[1:3]
+config = json.load(open(path))
+block = config["session_dispatch"]
+exec(change)
+json.dump(config, open(path, "w"), indent=2)
+PY
+    }
+    wake_key() { node -p "JSON.stringify(require('$wake/.nogging/config.json').session_dispatch.$1)"; }
+    printf '#!/bin/sh\necho not-found\nexit 1\n' > "$wakebin/systemctl"
+    printf '#!/bin/sh\necho "[]"\n' > "$wakebin/gh"
+    printf '#!/bin/sh\necho "[{\\"id\\":\\"B1\\",\\"status\\":\\"in_progress\\"}]"\n' > "$wakebin/bd"
+    chmod +x "$wakebin/systemctl" "$wakebin/gh" "$wakebin/bd"
+    in_wake node "$pkg/bin/cli.js" init --no-beads --no-systemd >/dev/null 2>&1
+    for shipped in scripts/lib/session_signals.py scripts/lib/session_dispatch.py scripts/lib/session_pause.py \
+                   scripts/lib/session_warm.py .pi/extensions/nogging-lifecycle.ts docs/nogging/session-wake.md; do
+      check "packed consumer has $shipped" test -f "$wake/$shipped"
+    done
+    check "packed consumer: dispatch is on" [ "$(wake_key enabled)" = "true" ]
+    check "packed consumer: retire_merged is off" [ "$(wake_key retire_merged)" = "false" ]
+    check "packed guide opens on the default" grep -q '^## Dispatch is on by default$' "$wake/docs/nogging/session-wake.md"
+
+    # With no orchestrator and no timer a pass exits 0, says nothing wrong and holds the digest.
+    rc=0
+    in_wake ./scripts/nogg session dispatch --once >"$work/wake.out" 2>"$work/wake.err" || rc=$?
+    check "no orchestrator: a pass exits 0" [ "$rc" -eq 0 ]
+    check "no orchestrator: a pass prints no error" [ ! -s "$work/wake.err" ]
+    held_queue="$wake/.nogging/state/dispatch/queue.json"
+    python3 - "$held_queue" <<'PY'
+import json, sys
+from datetime import datetime, timedelta, timezone
+old = (datetime.now(timezone.utc) - timedelta(seconds=1000)).isoformat()
+json.dump({"items": [{"key": "gone|error|m", "kind": "error", "session": "gone", "sticky": True, "reason": "held",
+                      "next": "n", "created_at": old}]}, open(sys.argv[1], "w"))
+PY
+    in_wake ./scripts/nogg session dispatch --once >/dev/null 2>"$work/wake.err"
+    in_wake ./scripts/nogg session dispatch --once >"$work/wake.out" 2>>"$work/wake.err"
+    check "no orchestrator: the digest is held" grep -q 'held: orchestrator target-not-running' "$work/wake.out"
+    check "no orchestrator: it is no error" [ ! -s "$work/wake.err" ]
+    check "no orchestrator: the item stays" grep -q 'gone|error|m' "$held_queue"
+    check "no orchestrator: the hold is logged once" \
+      test "$(grep -c 'held: orchestrator' "$wake/.nogging/state/dispatch/dispatch.jsonl")" -eq 1
+    doctor_out=$(in_wake ./scripts/nogg doctor 2>&1 || true)
+    check "doctor: one NOTE for the missing orchestrator" \
+      test "$(grep -c '^NOTE  dispatcher: no orchestrator session' <<<"$doctor_out")" -eq 1
+    check "doctor: one NOTE for the missing timer" \
+      test "$(grep -c '^NOTE  dispatcher: nothing fires a pass' <<<"$doctor_out")" -eq 1
+    check "doctor: both name the switch" \
+      test "$(grep -c 'session_dispatch.enabled: false. switches dispatch off' <<<"$doctor_out")" -eq 2
+    check "doctor: no WARN or FAIL about dispatch" bash -c "! grep -Eiq '^(WARN|FAIL).*dispatch' <<<\"\$1\"" _ "$doctor_out"
+
+    # The same install with a stub orchestrator nudges a Lead and delivers one digest.
+    if command -v tmux >/dev/null 2>&1; then
+      export TMUX_TMPDIR; TMUX_TMPDIR=$(mktemp -d /tmp/nogg-cli.XXXXXX)
+      wake_sock="nogg-cli-$$"
+      trap 'tmux -L "$wake_sock" kill-server 2>/dev/null || true; rm -rf "${work:?}" "${TMUX_TMPDIR:?}"' EXIT
+      python3 - "$wake/.nogging/config.json" "$wake_sock" <<'PY'
+import json, sys
+config = json.load(open(sys.argv[1]))
+config.update(session_tmux_socket=sys.argv[2], session_backend="tmux")
+config["usage_gate"] = {"enabled": False}
+json.dump(config, open(sys.argv[1], "w"), indent=2)
+PY
+      cat > "$wakebin/runtime.py" <<'PY'
+import sys
+rule = "─" * 80
+def paint():
+    print(rule + "\n❯ \n" + rule + "\n   ⏵⏵ bypass permissions on", flush=True)
+print("stub agent started", flush=True)
+paint()
+for line in sys.stdin:
+    with open(sys.argv[1], "a") as inbox:
+        inbox.write(line)
+    paint()
+PY
+      git init -q --bare -b develop "$work/wake-upstream.git"
+      printf '.nogging/\n' > "$wake/.gitignore"
+      in_wake git add .gitignore; in_wake git commit -qm init --no-verify
+      in_wake git remote add origin "$work/wake-upstream.git"; in_wake git push -q --no-verify -u origin develop
+      in_wake git worktree add -q -b feat/lead-1 "$work/wake-lead" develop
+      in_wake git -C "$work/wake-lead" push -q --no-verify -u origin feat/lead-1
+      echo wip > "$work/wake-lead/wip.txt"
+      python3 - "$wake" "$work/wake-lead" <<'PY'
+import json, pathlib, sys
+root, tree = sys.argv[1:3]
+sessions = pathlib.Path(root, ".nogging/state/sessions"); sessions.mkdir(parents=True, exist_ok=True)
+worktrees = pathlib.Path(root, ".nogging/state/worktrees"); worktrees.mkdir(parents=True, exist_ok=True)
+for name, role, bead in (("lead-1", "lead", "B1"), ("nogg-orchestrator-packwake", "orchestrator", None)):
+    record = {"name": name, "role": role, "agent": "claude", "state": "running", "working_dir": root,
+              "launch_prompt": "autonomous", "kickoff_sent_at": "2026-10-30T00:00:00+00:00",
+              "started_at": "2026-10-30T00:00:00+00:00", "log_path": root + "/" + name + ".log"}
+    if bead:
+        record["bead_id"] = bead
+    json.dump(record, (sessions / (name + ".json")).open("w"))
+json.dump({"bead_id": "B1", "path": tree}, (worktrees / "implementation--b1.json").open("w"))
+PY
+      for wake_session in lead-1 nogg-orchestrator-packwake; do
+        in_wake tmux -L "$wake_sock" new-session -d -s "$wake_session" -x 100 -y 12 \
+          "python3 $wakebin/runtime.py $work/$wake_session.inbox"
+        for _ in $(seq 1 50); do
+          tmux -L "$wake_sock" capture-pane -p -t "$wake_session" 2>/dev/null | grep -q '❯' && break; sleep 0.1
+        done
+      done
+      in_wake ./scripts/nogg session dispatch --once >/dev/null
+      python3 - "$wake/.nogging/state/dispatch/state.json" <<'PY'
+import json, sys
+from datetime import datetime, timedelta, timezone
+state = json.load(open(sys.argv[1]))
+for session in state["sessions"].values():
+    session["since"] = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+json.dump(state, open(sys.argv[1], "w"))
+PY
+      in_wake ./scripts/nogg session dispatch --once >/dev/null
+      for _ in $(seq 1 50); do
+        [ -s "$work/lead-1.inbox" ] && [ -s "$work/nogg-orchestrator-packwake.inbox" ] && break; sleep 0.1
+      done
+      check "stub orchestrator: the Lead is nudged" grep -q 'uncommitted changes' "$work/lead-1.inbox"
+      check "stub orchestrator: one digest arrives" \
+        test "$(grep -c '^\[nogg wake ' "$work/nogg-orchestrator-packwake.inbox")" -eq 1
+      tmux -L "$wake_sock" kill-server 2>/dev/null || true
+    else
+      echo "ok   - stub orchestrator check skipped (tmux not installed)"
+    fi
+
+    # `update` keeps a choice, says so only when there is none, and leaves a pause alone.
+    update_wake() { in_wake node "$pkg/bin/cli.js" update --no-systemd 2>&1; }
+    wake_block 'block.update(enabled=False); block["wake"]["quiet_hours"] = ["22:00-07:00"]'
+    in_wake ./scripts/nogg pause --days 1 >/dev/null
+    pause_before=$(sha256sum < "$wake/.nogging/state/pause.json")
+    update_out=$(update_wake)
+    check "update keeps an explicit false" [ "$(wake_key enabled)" = "false" ]
+    check "update keeps quiet hours" [ "$(wake_key wake.quiet_hours)" = '["22:00-07:00"]' ]
+    check "update with a choice prints no on-by-default line" bash -c "! grep -q 'Session dispatch is on' <<<\"\$1\"" _ "$update_out"
+    check "update leaves a pause alone" [ "$pause_before" = "$(sha256sum < "$wake/.nogging/state/pause.json")" ]
+    check "an explicit false: a pass is disabled" \
+      bash -c 'grep -q "is disabled" <<<"$1"' _ "$(in_wake ./scripts/nogg session dispatch --once 2>&1)"
+    check "doctor: an explicit false has neither NOTE" \
+      bash -c '! grep -Eq "no orchestrator session|nothing fires a pass" <<<"$1"' _ "$(in_wake ./scripts/nogg doctor 2>&1 || true)"
+    in_wake ./scripts/nogg resume >/dev/null
+    wake_block 'block["enabled"] = True'
+    update_out=$(update_wake)
+    check "update keeps an explicit true" [ "$(wake_key enabled)" = "true" ]
+    check "update with true prints no on-by-default line" bash -c "! grep -q 'Session dispatch is on' <<<\"\$1\"" _ "$update_out"
+    wake_block 'del block["enabled"]; block["max_nudges"] = 5'
+    update_out=$(update_wake)
+    check "update of an older repository writes no enabled key" [ "$(wake_key enabled)" = "undefined" ]
+    check "update of an older repository keeps its values" [ "$(wake_key max_nudges)" = "5" ]
+    check "update of an older repository says so once" \
+      test "$(grep -c 'Session dispatch is on' <<<"$update_out")" -eq 1
+    check "and names the switch" grep -q 'session_dispatch.enabled: false' <<<"$update_out"
+    check "and a pass runs" \
+      bash -c '! grep -q "is disabled" <<<"$1"' _ "$(in_wake ./scripts/nogg session dispatch --once 2>&1)"
+    in_wake ./scripts/nogg pause --days 1 >/dev/null
+    in_wake node "$pkg/bin/cli.js" remove >/dev/null 2>&1
+    check "remove deletes the guide" test ! -e "$wake/docs/nogging/session-wake.md"
+    check "remove leaves the dispatch state" test -d "$wake/.nogging/state/dispatch"
+    check "remove leaves the pause" test -f "$wake/.nogging/state/pause.json"
+    check "init, update and remove leave personal configuration alone" [ "$personal_before" = "$(personal)" ]
 
     # --- package "files" list validation (design Decision 6) ---------------
     # Every module the installer requires must be inside the tarball, else the
@@ -523,11 +737,19 @@ NODE
       cmp -s "$pkg2/.codex/rules/nogging.rules" "$packrepo/.codex/rules/nogging.rules"
 
     # remove cleans up the manifest and the leftover artifacts.
+    mkdir -p "$packrepo/.pi/skills/mine"
+    printf 'keep me\n' > "$packrepo/.pi/skills/mine/SKILL.md"
+    printf 'keep me too\n' > "$packrepo/.pi/settings.json"
     printf 'x\n' > "$packrepo/.codex/rules/nogging.rules.nogging-new"
     rc=0
     ( cd "$packrepo" && node "$pkg2/bin/cli.js" remove >/dev/null 2>&1 ) || rc=$?
     check "packed remove exits 0" [ "$rc" -eq 0 ]
     check "remove deletes the installed manifest" test ! -e "$manifest"
+    # remove deletes files, as for every verbatim tree; empty directories may remain.
+    check "remove deletes the Pi extension home" \
+      [ -z "$(find "$packrepo/.pi/nogging" -type f 2>/dev/null | head -1)" ]
+    check "remove leaves other .pi content" \
+      test "$(cat "$packrepo/.pi/skills/mine/SKILL.md" "$packrepo/.pi/settings.json")" = "$(printf 'keep me\nkeep me too')"
     check "remove deletes .nogging-new and .orig leftovers" \
       [ -z "$(find "$packrepo" \( -name '*.nogging-new' -o -name '*.orig' \) -not -path '*/.git/*' | head -1)" ]
   else

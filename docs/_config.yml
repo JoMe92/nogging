@@ -215,6 +215,24 @@ defaults:
       nav_order: 8
       description: Give each Nogging agent persona its own GitHub App identity, with registration, private key storage, installation and persona configuration steps.
   - scope:
+      path: "scheduled-loops.md"
+    values:
+      parent: Guides
+      nav_order: 9
+      description: Define and approve host-local scheduled work with Nogging loops.
+  - scope:
+      path: "session-wake.md"
+    values:
+      parent: Guides
+      nav_order: 10
+      description: What session dispatch does by default, what an orchestrator costs while it waits, how to pause it and how to switch it off.
+  - scope:
+      path: "pi-extensions.md"
+    values:
+      parent: Guides
+      nav_order: 11
+      description: Optional Pi extensions for Nogging - the .pi/nogging layout, writing and testing an extension, enabling it, and the glm-usage Z.ai quota footer.
+  - scope:
       path: "operations.md"
     values:
       title: Operations

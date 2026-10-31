@@ -9,6 +9,136 @@ and GitHub Releases for that history.
 
 ## [Unreleased]
 
+## [3.5.0] - 2026-10-31
+
+Session wake is the headline: finished or blocked sessions are noticed at once, and
+it is on by default. See `docs/session-wake.md`; set `session_dispatch.enabled: false`
+to switch it off.
+
+### Added
+
+- `nogg session dispatch [--once] [--dry-run] [--json]`: one deterministic
+  follow-up pass with no model. It
+  derives each Lead's state from live evidence, sends fixed, budgeted nudges
+  to idle sessions, waits out usage limits, retires merged sessions when
+  `retire_merged` is on, and queues what needs a decision. New
+  `session_dispatch` and `orchestrator_context` config blocks refuse unknown
+  keys in `validate` and `doctor`.
+- The wake digest: `session dispatch` re-evaluates its queue on every pass and
+  delivers what stays ready to the orchestrator as one message of at most
+  1.5 KiB, idle-only, through the verified send, with quiet periods, a rate
+  ceiling, a usage hold and one reminder. Item text is bounded, redacted and
+  labelled as data. `nogg session inbox [--json]` shows the queue in every
+  session, and the orchestrator prompt gains the wake protocol, the no-watcher
+  rule and the capability check for kickoffs.
+- `nogg pause [--until|--days] [--keep-loop <name> ...]`, `pause --status
+  [--json]` and `nogg resume`: hold automation for up to 60 days. No digest,
+  nudge, `limit` resume or scheduled loop goes out, the queue and retirement go
+  on, and the pause ends by itself at the first `loop tick` or `session dispatch
+  --once` past its end. What it held goes out as one digest with a `resumed`
+  summary, and a pause in which nothing happened costs no wake. Mutations run
+  from an operator shell and the Orchestration Agent; `--status` reads in every
+  session. `doctor`, `session list`, `loop list` and `session inbox` show it.
+- Launch-mode loops: a fresh, bounded `loop` session per run with the loop's
+  exact agent, tier and authority, stopped and retired when it finishes or
+  passes `max_runtime`. `init` and `update` render
+  `nogg-loops-<slug>.service` and `.timer`, and `doctor` reports the timer, a
+  stalled tick and unapproved, suspended or stale loops.
+- Agent routing: an optional, user-owned `.nogging/agent-routing.json`
+  (`agent_routing_file`) lists, per role (`lead`, `specialist`, `planning`), the
+  agents to try in order, each with optional `backend`, `tiers`, per-tier `models`,
+  an `allow` list and `on_unknown`. `nogg route [check]` prints or validates it,
+  and `validate` and `doctor` report an invalid file. `session launch` without
+  `--agent` starts the first entry that passes the real binary, authority, backend,
+  selection and usage checks, or refuses with exit 75 and lists every skip. An
+  explicit `--agent` is pinned to its entry, so an `allow` list holds. `--skip-agent`
+  is repeatable, and `session list` shows `route=#<n>` and `skipped=`. No file means
+  no routing, and nothing shipped contains a preference.
+- `nogg loop add`, `list`, `show`, `log`, `pause`, `resume`, `approve` and
+  `remove` for managing host-approved recurring work, with atomic host state,
+  hash-bound approvals, orchestrator guidance and the scheduled-loops guide.
+- `nogg session signal blocked|done "<reason>"` lets a supervised Lead state
+  the end of its work as a fact (allowed in the restricted profile, no network
+  or Dolt); `session watch` reports it as its own event.
+- Session events use one normalized schema with a field whitelist, redacted
+  one-line excerpts and rotation at 256 KiB. Claude's launch settings now also
+  wire `UserPromptSubmit`, `StopFailure` and `SessionEnd`, and Codex turns are
+  read from the rollout with no hook install.
+- Supervised Pi sessions load `.pi/extensions/nogging-lifecycle.ts`, which
+  reports `agent_start`, `agent_settled`, extension prompts and shutdown through
+  `session emit`, so Pi reads `working`, `idle` or `needs_input` in `watch`
+  instead of `unknown`. It does nothing outside a supervised session, never
+  uses `agent_end` as completion, and a missing file only warns at launch.
+- `nogg session completion-check` and a bounded stop guard: an autonomous Lead on
+  Claude Code, Codex or Pi that stops with uncommitted or unpushed work, or with
+  no signal, is continued once with a fixed message. Any failure of the check
+  allows the stop.
+- `nogg session-hooks {status,install,remove} --agent codex` manages the one
+  user-level Stop hook the guard needs on Codex, with trust recorded through
+  Codex's own API. `doctor` reports its state, and `init` and `update` never
+  install it.
+- `nogg session capabilities` reports what a Lead of an agent and authority can
+  do, derived from what launch resolves.
+- `.pi/nogging/`: a home for optional Pi extensions that Pi never discovers, with
+  conventions, shared helpers and an offline test runner
+  (`scripts/pi-extensions.test.sh`). The installer copies it on `init` and
+  `update` and enables nothing.
+- The `pi_extensions` config key (default `[]`): the extensions every
+  `session launch --agent pi` loads after the guard. An invalid value refuses the
+  launch, and `validate` and `doctor` report it.
+- `nogg pi-ext list|install|remove` manages an extension for standalone Pi through
+  Pi's own package command, and `doctor` notes a missing install, a stale path and
+  `npm:pi-glm-usage` next to `glm-usage`.
+- The `glm-usage` Pi extension: a footer and `/glm-usage` command for the Z.ai
+  coding-plan quota. It gets the key only from Pi, never prints it, marks a failed
+  refresh stale, and shares a key-free snapshot. See `docs/pi-extensions.md`.
+- `nogg usage --agent pi` reports the Z.ai 5-hour and weekly windows from that
+  snapshot, refreshed by one bounded, key-safe probe through
+  `pi auth print-api-key`. `PI_NOGG_USAGE_PROBE=0` makes it cache-only.
+- Release procedure step 7: verify the documentation site before the tag with
+  `scripts/docs-site.test.sh` and `scripts/docs-site-build` (every internal link and
+  anchor checked), after the full build repaired broken links and stale claims in
+  the site (#351). See `docs/releasing.md`.
+
+### Changed
+
+- Session dispatch is on by default: `session_dispatch.enabled` is `true` in the
+  template, and a missing key or block reads as on. Only an explicit `false`
+  switches it off, `retire_merged` stays `false`, and `update` keeps an existing
+  value. Without an orchestrator or a timer it degrades quietly: nudges and CI
+  tracking go on, the digest is held and `doctor` prints one NOTE each. See
+  `docs/session-wake.md`.
+- `nogg loop tick` runs one dispatch pass first, under its own lock and exception
+  boundary, and `orchestrator run` writes the `orchestrator_context` values into
+  the session's effective settings `env`.
+- Pi usage is known when a Z.ai key is configured in Pi, so the launch gate checks
+  its cap, estimate and reservations. It stays unknown, and follows
+  `usage_gate.on_unknown`, for other providers, a missing key or an unsupported
+  response.
+- `session watch` also reads herdr's `agent_status` (`blocked` is a question,
+  `done` is idle, `unknown` proves nothing), between the rollout and the pane.
+- `session watch` classifies every agent from one evidence order (structured
+  event, Codex rollout, pane adapter): an idle event yields to a pane that is
+  working, a Claude session no longer reads `idle` during a later turn, and
+  only question notifications (not `idle_prompt`) count as `needs_input`.
+- A `session launch` that cannot write its session or usage state refuses before
+  any side effect and says to signal blocked, instead of a raw `Errno 30`.
+- `AGENTS.md` gains hard rule 6 and the autonomous prompt replaces waiting for CI
+  with `session signal done`: a run ends with a signal, and a refused step means
+  signal blocked at once.
+- A Codex Lead launched for a Bead acknowledges its startup turn and waits for its
+  kickoff, and `recover` labels a Bead a live session owns, so no Lead adopts it.
+
+### Fixed
+
+- The Z.ai quota parser accepts `CREDIT_LIMIT` windows, so `nogg usage --agent pi`
+  and the `glm-usage` footer no longer lose the quota when the endpoint reports
+  its limit that way (#350).
+- A Lead launched for a Bead holds to its kickoff and that Bead, a Codex loop run binds
+  only to its own rollout, and `doctor` reports the loop timer as unknown when
+  `systemctl` is denied and dispatch health on the herdr backend.
+- Loop `send` runs reach a target that is waiting on background tasks.
+
 ## [3.4.0] - 2026-10-30
 
 ### Fixed

@@ -129,6 +129,8 @@ for rel, page in published:
         require(target_path.exists(), f"image asset is missing from {rel}: {target}")
 
     for label, target in link_re.findall(text):
+        require("\n" not in label or "[" in label or not re.search(r"\.md(#|$)", target),
+                f"{rel} link text spans a line break and jekyll-relative-links will not rewrite it: {target}")
         target = target.split("#", 1)[0].split("?", 1)[0]
         if not target or re.match(r"(?i)^(https?:|mailto:|tel:|javascript:)", target):
             continue
@@ -289,7 +291,7 @@ else:
     top = help_choices()
     require(bool(top), "scripts/nogg --help lists no subcommands")
     require(headings[2] == top, f"commands.md ## headings {headings[2]} differ from nogg --help {top}")
-    expected_sub = [f"{command} {sub}" for command in ("worktree", "pr", "orchestrator", "session")
+    expected_sub = [f"{command} {sub}" for command in ("worktree", "pr", "orchestrator", "session", "loop")
                     for sub in help_choices(command)]
     actual_sub = headings[3]
     require(actual_sub == expected_sub,

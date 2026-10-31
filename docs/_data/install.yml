@@ -3,6 +3,6 @@
 # literal copies; scripts/docs-site.test.sh checks all three are byte-identical
 # and scripts/release-pins.test.sh checks the tag. Bump it with the release
 # pins (docs/releasing.md step 4).
-tag: v3.4.0
-bootstrap: curl -fsSL https://raw.githubusercontent.com/JoMe92/nogging/v3.4.0/scripts/bootstrap | bash
-init: npx github:JoMe92/nogging#v3.4.0 init --no-systemd
+tag: v3.5.0
+bootstrap: curl -fsSL https://raw.githubusercontent.com/JoMe92/nogging/v3.5.0/scripts/bootstrap | bash
+init: npx github:JoMe92/nogging#v3.5.0 init --no-systemd

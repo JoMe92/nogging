@@ -2,6 +2,8 @@
 # `session launch --agent codex` session. It is the Codex-side sibling of
 # restricted.json: same intent (require approval for non-trivial actions,
 # no outbound network), expressed in Codex's sandbox / approval model.
+# `on-request` asks only before a command leaves the sandbox, so a command inside
+# it runs without a prompt. A restricted scheduled-loop run gets no command tools.
 #
 # Network split: this level keeps `network_access = false`, so `git push`,
 # `bd sync`, and `dolt push|pull` all fail with no network — the
@@ -11,7 +13,7 @@
 # Required keys (`session_launch()` refuses a spec without them):
 #   sandbox           one of read-only | workspace-write | danger-full-access
 #                     -> codex --sandbox <mode>
-#   ask_for_approval  one of untrusted | on-request | never
+#   ask_for_approval  one of on-request | never
 #                     -> codex --ask-for-approval <policy>
 #   network_access    bool; true  -> codex -c 'sandbox_workspace_write.network_access=true'
 #                           false -> codex -c 'sandbox_workspace_write.network_access=false'

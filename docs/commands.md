@@ -71,12 +71,17 @@ install the statusline capture used by the launch usage gate.
 ```bash
 ./scripts/nogg usage --agent claude
 ./scripts/nogg usage --agent codex --model <model-name> --json
+./scripts/nogg usage --agent pi
 ./scripts/nogg usage install-statusline
 ```
 
+For `--agent pi` the command reads the shared Z.ai snapshot and, when it is
+stale, runs one bounded probe through Pi's own key resolver; set
+`PI_NOGG_USAGE_PROBE=0` to make it cache-only.
+
 **Used by.** The operator and the Orchestration Agent.
 
-**Read more.** [Usage limits](usage-limits.md) and the
+**Read more.** [Usage limits](usage-limits.md) (see [Pi via Z.ai](usage-limits.md#pi-via-zai)) and the
 [launch usage gate](running-work-in-sessions.md#launch-usage-gate).
 
 ## validate
@@ -303,6 +308,31 @@ leaves one line in the context, not its whole output.
 
 **Read more.** [Operating model](operating-model.md).
 
+## session-hooks
+
+**Purpose.** Install, inspect or remove the one user-level Codex `Stop` hook that
+gives Codex Leads the stop guard. It merges a constant entry into
+`~/.codex/hooks.json`, records trust through Codex's own app-server and reads the
+result back from `hooks/list`. `status` reports `trusted`, `untrusted`, `modified`
+or `missing`, says `unknown` when Codex cannot be asked, and never fails. `remove`
+reverses both and leaves every other hook, and its trust, alone.
+
+**Common forms.**
+
+```bash
+./scripts/nogg session-hooks status --agent codex
+./scripts/nogg session-hooks install --agent codex
+./scripts/nogg session-hooks remove --agent codex
+```
+
+**Used by.** The operator, once per machine. `init` and `update` never do this,
+because it writes personal configuration, and because installing it removes the
+Codex sandbox as a boundary on that host: see the known limit in the security
+model first.
+
+**Read more.** [Using Nogging with Codex](using-with-codex.md) and the
+[Security model](security-model.md#the-codex-stop-hook).
+
 ## codex-prompts-link
 
 **Purpose.** Link the repository's Codex prompts into your Codex home as
@@ -318,6 +348,34 @@ leaves one line in the context, not its whole output.
 **Used by.** The operator, once per machine, when using Codex.
 
 **Read more.** [Using Nogging with Codex](using-with-codex.md).
+
+## pi-ext
+
+**Purpose.** List the Nogging Pi extensions under `.pi/nogging/extensions/`,
+and install or remove one for standalone Pi through Pi's own package command.
+`list` is read-only: it shows whether `pi_extensions` enables each extension
+and whether your personal Pi `settings.json` (under `PI_CODING_AGENT_DIR` or
+`~/.pi/agent`, never `auth.json`) names its path. `install` and `remove` run
+`pi install` or `pi remove` with the main checkout's
+`.pi/nogging/extensions/<name>/index.ts`, even from a linked worktree, so the
+entry survives worktree cleanup. They refuse an unknown name or a missing `pi`,
+never edit Pi's settings themselves and never pass `-l`.
+
+**Common forms.**
+
+```bash
+./scripts/nogg pi-ext list
+./scripts/nogg pi-ext install glm-usage
+./scripts/nogg pi-ext remove glm-usage
+```
+
+**Used by.** The operator, once per machine, when using standalone Pi. `init`
+and `update` never do this, because it writes personal configuration. `doctor`
+prints a NOTE for an enabled extension that is not installed, for
+`npm:pi-glm-usage` configured next to `glm-usage` (run `pi remove
+npm:pi-glm-usage`), and for an install whose path no longer exists.
+
+**Read more.** [Using Nogging with Pi](using-with-pi.md#enabling-optional-extensions--pi_extensions).
 
 ## models
 
@@ -335,6 +393,24 @@ an agent and tier, or validate the table with `check`. It makes no live probe.
 **Used by.** Lead Agents, the Orchestration Agent and the operator.
 
 **Read more.** [Model selection](model-selection.md).
+
+## route
+
+**Purpose.** Inspect the agent routing file: `check` validates it and exits
+non-zero naming every error; without `check` it prints every role's entries
+with their effective per-tier model and effort. It makes no live probe; the
+launch decides.
+
+**Common forms.**
+
+```bash
+./scripts/nogg route
+./scripts/nogg route check
+```
+
+**Used by.** Lead Agents, the Orchestration Agent and the operator.
+
+**Read more.** [Configuration](configuration.md#agent_routing_file).
 
 ## worktree
 
@@ -355,7 +431,9 @@ Allocate a planning worktree from updated `origin/develop`.
 
 ### worktree implement
 
-Allocate an implementation worktree for a Bead that is already claimed.
+Allocate an implementation worktree for a Bead that is already claimed. It
+refuses a Bead another Lead holds or may still hold, and refuses when it cannot
+tell.
 
 ```bash
 ./scripts/nogg worktree implement <bead-id> <branch>
@@ -505,6 +583,11 @@ Start a supervised session for a role. It changes no Beads.
 ./scripts/nogg session launch --role planning --planning-id <id> --description <description>
 ./scripts/nogg session launch --role lead --bead <bead-id> --agent codex --tier standard
 ```
+
+Without `--agent`, a role with a list in the agent routing file launches the first
+entry that passes; `--skip-agent <name>` skips an agent for that launch. See
+[Running work in sessions](running-work-in-sessions.md#choosing-the-agent) and `route`
+below.
 
 **Used by.** The operator and the Orchestration Agent. A specialist cannot
 launch sessions.
@@ -657,11 +740,263 @@ Wait out an account-wide usage limit, then send the session its resume message.
 
 ### session emit
 
-Append a structured event to the calling session's own event file. Agent hooks
-call it; it only works inside a launched session.
+Append a normalized lifecycle event to the calling session's own event file.
+Agent hooks call it; it only works inside a launched session. Hook JSON on
+stdin is read up to 64 KiB, invalid input is tolerated, and only a fixed set
+of fields is kept: the source, an error kind, the notification type, the count
+of background tasks and a redacted one-line excerpt of the last agent message
+(at most 300 characters). The file is rotated at 256 KiB. A `Notification`
+other than a question (for example `idle_prompt`) records nothing.
 
 ```bash
 ./scripts/nogg session emit <event>
+./scripts/nogg session emit turn_end --guard [--runtime <agent>]
 ```
 
+The events are `turn_start`, `turn_end`, `needs_input`, `turn_error` and
+`session_end`; Claude Code's launch settings wire them to `UserPromptSubmit`,
+`Stop`, `Notification`, `StopFailure` and `SessionEnd`. `--guard` is the `Stop`
+hook of an autonomous Lead: a stop with gaps prints `decision: "block"` once and
+records `guard_continue` instead of `turn_end`. `--runtime` names the hook's own
+runtime, so a Codex child inside a Claude session cannot speak for it.
+
 **Used by.** Agent hooks, not people.
+
+### session capabilities
+
+Report what a Lead of an agent and authority can do: launch child sessions, reach
+Dolt, push, open a pull request, rebase without an operator, and run in-process
+specialists. Every answer is derived from what `session launch` resolves, and one
+that cannot be established reads `unknown`, which a caller treats as no.
+
+```bash
+./scripts/nogg session capabilities --agent codex --profile trusted
+./scripts/nogg session capabilities --agent claude --profile restricted --json
+```
+
+**Used by.** The Orchestration Agent, before it writes a requirement into a
+kickoff.
+
+### session completion-check
+
+Report this session's gaps: `dirty` (uncommitted or untracked changes), `unpushed`
+(no upstream, or commits ahead) and `no-signal`. It uses local git only and reads
+the Bead's implementation worktree when one is allocated. It exits 1 with gaps and
+0 without them, and it exits 0 on any internal error, because a guard fails open.
+
+```bash
+./scripts/nogg session completion-check
+./scripts/nogg session completion-check --json
+```
+
+**Used by.** The stop guard on every runtime, and a Lead checking itself.
+
+### session signal
+
+State that this supervised session is `blocked` or `done`, with a reason of at
+most 300 characters. It needs neither the network nor Dolt, so a restricted
+Lead can run it, and it refuses outside a supervised session. A signal is a
+fact for `session watch`, which reports it as its own event; it never changes
+the classified state, so a session that signalled still reads `idle`. The
+command prints whether dispatch is on and what to do next.
+
+```bash
+./scripts/nogg session signal blocked "worktree rebase refused: needs an unfenced operator"
+./scripts/nogg session signal done "PR #321 open"
+```
+
+**Used by.** A Lead, at the end of its work. The Bead note still carries the
+prose.
+
+### session dispatch
+
+Run one deterministic follow-up pass, with no model. It reads every live Lead with a
+Bead and every planning session, decides from their real state, and acts: an idle
+Lead with gaps or red CI gets a fixed nudge, and what needs a decision is queued in
+`.nogging/state/dispatch/queue.json`. Nothing depends on a hook having fired, and a
+pass that is repeated does nothing twice. A fact it cannot read, such as a failing
+`gh` or `bd`, is `unknown` and produces no action. It never merges, answers a prompt,
+launches a session or chooses a model.
+
+Every pass re-evaluates the queue, so a condition that clears before delivery simply
+disappears. What stays ready goes to the orchestrator as one digest of at most 1.5 KiB
+that starts with `[nogg wake`, through the same verified send as a `send` loop and only
+while the orchestrator sits at its prompt: idle, or waiting on nothing but its own
+background job. A busy or absent orchestrator, or typed input in its composer, keeps
+the items for a later pass. The `wake` keys of
+[`session_dispatch`](configuration.md#session_dispatch) set the timing.
+
+Dispatch is on by default. With `session_dispatch.enabled: false` it prints that it is
+disabled and does nothing. It runs
+only in the main checkout and is refused in every supervised session, except with
+`--dry-run`, which reports the actions and sends, stops and writes nothing. When
+another pass holds `.nogging/locks/dispatch.lock` it exits 0. Every run is one pass,
+and `--once` says so for a scheduler.
+
+During a [`pause`](#pause) a pass still observes, queues, audits and retires merged
+sessions, and sends no digest, nudge or `limit` resume. The first pass at or after the
+end of a pause ends it. Inside `quiet_hours` it sends the orchestrator no digest, urgent
+items included, and goes on nudging Leads.
+
+A pass also keeps a Claude orchestrator's cache warm while work is active, with one
+fixed line after `keep_warm_after`. With nothing active, in quiet hours or during a
+pause it sends one `/compact` instead, and the cache then lapses. Both go only to an
+idle orchestrator with an empty composer, and neither counts as a wake.
+
+```bash
+./scripts/nogg session dispatch --once
+./scripts/nogg session dispatch --dry-run --json
+```
+
+**Used by.** An operator or an external scheduler. State, the queue and the
+`dispatch.jsonl` audit log live under `.nogging/state/dispatch/`. See
+[`session_dispatch`](configuration.md#session_dispatch).
+
+### session inbox
+
+Show the wake queue: the pending items, why delivery is held, the last wakes and the
+recent actions from the audit log. During a pause it says so and counts the held items.
+It only reads, and works with the dispatcher off. Item text is agent output, cleaned
+and labelled as data.
+
+```bash
+./scripts/nogg session inbox
+./scripts/nogg session inbox --json
+```
+
+**Used by.** Every session. The orchestrator reads it when a digest ends in
+`Overflow:`.
+## loop
+
+**Purpose.** Define recurring work in a repository file, approve its exact
+contents on this host, and inspect its schedule, state and run history. The
+definitions and prompts are versioned unless `loops_file` points to an ignored
+host-local path. Runtime state and approvals always stay under
+`.nogging/state/loops/` in the main checkout.
+
+**Common forms.**
+
+```bash
+./scripts/nogg loop add dependency-check --every 5d --start 2026-10-28T03:00 \\
+  --mode launch --agent codex --tier routine --prompt-file ./dependency-check.md
+./scripts/nogg loop list
+./scripts/nogg loop show dependency-check
+./scripts/nogg loop log dependency-check --limit 20
+./scripts/nogg loop pause dependency-check
+./scripts/nogg loop resume dependency-check
+./scripts/nogg loop run-now dependency-check
+./scripts/nogg loop approve dependency-check
+./scripts/nogg loop remove dependency-check
+./scripts/nogg loop tick
+```
+
+**Used by.** Operators and the Orchestration Agent. Mutations are refused in
+supervised sessions except the Orchestration Agent; reads are available to all
+roles.
+
+**Read more.** [Scheduled loops](scheduled-loops.md).
+
+
+### loop add
+
+Define a schedule and send or launch action with `--prompt` or `--prompt-file`.
+The command validates the prompt, writes the definition, and approves that exact
+definition on this host.
+
+### loop list
+
+Show the host status, next slot in local time and UTC, and last recorded outcome.
+Use `--json` for the versioned read contract.
+
+### loop show
+
+Show the definition, approval status, next five slots and active run. Use
+`--json` for machine-readable output.
+
+### loop log
+
+Show run history newest first. `--limit` bounds the number of events; an absent
+or empty history is an empty result. Use `--json` for machine-readable output.
+
+### loop pause
+
+Pause one loop on this host without editing its versioned definition.
+
+### loop resume
+
+Resume one loop on this host and clear its suspended status.
+
+### loop run-now
+
+Run one approved loop immediately through usage and target admission, without
+applying its schedule or time window. A busy target is reported as skipped.
+
+### loop approve
+
+Display the mode, target or agent, tier, authority and prompt hash, then approve
+the definition currently on disk for this host.
+
+### loop remove
+
+Remove the definition and its prompt while retaining run history.
+
+### loop tick
+
+Evaluate every enabled loop once. The command runs only in the main checkout,
+refuses every supervised session, and exits successfully when another tick
+holds the scheduler lock.
+
+During a [`pause`](#pause) it logs each due slot of a loop outside `keep_loops` once as
+`paused-global`, starts nothing for that loop and writes no state for it, so a loop
+paused on its own stays paused. It goes on supervising runs that already started. It
+ends a pause at its time first, with the dispatcher on or off.
+
+## pause
+
+**Purpose.** Hold automation while you are away. The orchestrator gets no digest,
+running Leads get no nudge or `limit` resume, and loops outside `--keep-loop` do not
+run. The queue, the audit log and the retirement of merged sessions go on, nothing is
+lost, and when the pause ends what it held reaches the orchestrator as one digest of
+at most 1.5 KiB. What does not fit follows in the next wake, and `session inbox` shows it.
+A pause stops no session and no timer, and blocks no launch made on purpose: `loop
+run-now` and `session launch` still work.
+
+**Common forms.**
+
+```bash
+./scripts/nogg pause --until 2026-11-03            # until 00:00 local on that date
+./scripts/nogg pause --until 2026-11-03T08:30      # until that local time
+./scripts/nogg pause --days 3 --keep-loop morning-report
+./scripts/nogg pause --status
+./scripts/nogg pause --status --json
+```
+
+`--days n` is `n` times 24 hours from now. The end must lie in the future and at most
+60 days away, so a forgotten pause ends by itself, at the first `loop tick` or
+`session dispatch --once` at or after it. `--keep-loop` may repeat, and each name must
+exist in the loops file. A refused end or name writes nothing. A second `pause`
+replaces the end and the kept loops and keeps the original start. The state is
+`.nogging/state/pause.json` in the main checkout, and a file that cannot be used counts
+as not paused and is a `doctor` WARN.
+
+**Used by.** An operator, and the Orchestration Agent when the Product Owner says they
+will be away. `pause` is refused in every other supervised session and outside the main
+checkout. `--status` only reads and works in every session. `doctor`, `session list`,
+`loop list` and `session inbox` show a pause too.
+
+## resume
+
+**Purpose.** End a pause now. If an item appeared or cleared during it, one `resumed`
+item is queued with the length of the pause, how many items were seen, how many cleared
+on their own and the sessions that finished, and it goes out with the held items as one
+digest on the next idle pass. A pause in which nothing happened queues nothing and costs
+no wake. With no pause it says so and exits 0.
+
+**Common forms.**
+
+```bash
+./scripts/nogg resume
+```
+
+**Used by.** The same callers as `pause`, under the same refusals. A loop paused with
+`loop pause` stays paused.

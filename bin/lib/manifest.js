@@ -17,11 +17,23 @@ module.exports = {
   verbatim: [
     'scripts/nogg',
     'scripts/nogg_usage.py',
+    'scripts/nogg_usage_zai.py',
     'scripts/lib/session_backend.py',
+    'scripts/lib/agent_routing.py',
     'scripts/lib/loop_schedule.py',
+    'scripts/lib/loop_config.py',
+    'scripts/lib/loop_state.py',
+    'scripts/lib/loop_runner.py',
+    'scripts/lib/loop_cli.py',
     'scripts/lib/session_backend_tmux.py',
     'scripts/lib/session_backend_herdr.py',
     'scripts/lib/session_codex_delivery.py',
+    'scripts/lib/session_signals.py',
+    'scripts/lib/session_hooks.py',
+    'scripts/lib/session_dispatch.py',
+    'scripts/lib/session_pause.py',
+    'scripts/lib/session_wake.py',
+    'scripts/lib/session_warm.py',
     'scripts/lib/token_usage_adapters.py',
     'scripts/lib/token_usage_antigravity.py',
     'scripts/lib/token_usage_collect.py',
@@ -37,6 +49,10 @@ module.exports = {
     'scripts/install-hooks',
     'scripts/test',
     'scripts/nogg.test.sh',
+    'scripts/loop-cli.test.sh',
+    'scripts/agent-routing.test.sh',
+    'scripts/loop-tick.test.sh',
+    'scripts/loop-docs.test.sh',
     'scripts/worktree-workflow.test.sh',
     'scripts/check-branch-name',
     'scripts/hooks/commit-msg',
@@ -75,6 +91,10 @@ module.exports = {
     // "files" list.
     { from: '.pi/prompts', to: '.pi/prompts' },
     { from: '.pi/extensions', to: '.pi/extensions' },
+    // The Nogging Pi extension home (.pi/nogging/): opt-in extensions such as
+    // glm-usage, enabled per repository through `pi_extensions`. Shipping the
+    // tree enables nothing; templates/nogging-config.json scaffolds [].
+    { from: '.pi/nogging', to: '.pi/nogging' },
     // launch-profiles ships both the Claude settings files (<level>.json) and
     // the Codex launch specs (<level>.codex.toml); the whole directory rides
     // along, and package.json "files" lists it.
@@ -90,12 +110,15 @@ module.exports = {
     { from: 'docs/failure-recovery.md', to: 'docs/nogging/failure-recovery.md' },
     { from: 'docs/using-with-codex.md', to: 'docs/nogging/using-with-codex.md' },
     { from: 'docs/using-with-pi.md', to: 'docs/nogging/using-with-pi.md' },
+    { from: 'docs/pi-extensions.md', to: 'docs/nogging/pi-extensions.md' },
     { from: 'docs/using-with-antigravity.md', to: 'docs/nogging/using-with-antigravity.md' },
     { from: 'docs/using-with-herdr.md', to: 'docs/nogging/using-with-herdr.md' },
     { from: 'docs/security-model.md', to: 'docs/nogging/security-model.md' },
     { from: 'docs/worktree-workflow.md', to: 'docs/nogging/worktree-workflow.md' },
     { from: 'docs/model-selection.md', to: 'docs/nogging/model-selection.md' },
     { from: 'docs/token-usage.md', to: 'docs/nogging/token-usage.md' },
+    { from: 'docs/scheduled-loops.md', to: 'docs/nogging/scheduled-loops.md' },
+    { from: 'docs/session-wake.md', to: 'docs/nogging/session-wake.md' },
   ],
 
   // Written only when the destination does not already exist.
@@ -160,6 +183,14 @@ module.exports = {
     {
       from: 'templates/systemd/nogg-orchestrator.service.tmpl',
       to: 'systemd/nogg-orchestrator-{slug}.service',
+    },
+    {
+      from: 'templates/systemd/nogg-loops.service.tmpl',
+      to: 'systemd/nogg-loops-{slug}.service',
+    },
+    {
+      from: 'templates/systemd/nogg-loops.timer.tmpl',
+      to: 'systemd/nogg-loops-{slug}.timer',
     },
   ],
 };

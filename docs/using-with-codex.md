@@ -56,6 +56,12 @@ the Claude trusted path: it pushes the feature branch, fast-forward-merges into
 session has no network, so `git push`, `bd sync`, and `dolt push|pull` all fail;
 it stops and reports instead.
 
+`on-request` asks only before a command leaves the sandbox: a command inside the
+sandbox runs without a prompt, and Codex no longer accepts `untrusted`. The
+restricted boundary is the sandbox and the command floor, not a per-command
+approval. A restricted [scheduled loop](scheduled-loops.md) run must not execute
+commands unapproved, so it starts with no command tools at all.
+
 ### Model and reasoning effort selection
 
 Codex sessions support launch-time model and reasoning effort selection:
@@ -288,6 +294,11 @@ or completion evidence cannot be established before
 typing into a turn that may still be running. A launch without a startup prompt
 and an exact resume do not require this startup-turn evidence.
 
+Because a Codex startup prompt starts a turn at once, a launch for a Bead wraps
+it: the session names that Bead, acknowledges readiness in one line and waits for
+the kickoff. It does not run recovery or touch any Bead, worktree or branch first,
+so it cannot adopt another live Lead's work.
+
 When Codex shows a single `[Pasted Content N chars]` token after Nogging pasted
 a long (200 or more characters) or multiline message, Nogging treats that as
 its pending message only when the composer was verified empty before the paste.
@@ -334,6 +345,32 @@ regardless of which agent hit the limit. Do not retry
 with a different model as a workaround; wait it out, or run
 `resume-when-ready <name>`, which dismisses a residual "switch model?" prompt
 by keeping the current model rather than switching.
+
+## How Nogging sees a Codex turn
+
+A Codex session needs no hook install for `session watch` to work. The end of
+a turn is read from the session's own rollout, found by its exact thread, so a
+finished turn classifies `idle` and `watch` shows the first line of Codex's
+last message. An aborted turn is also `idle`; a rollout with nothing
+recognizable is ignored and the pane decides. A Codex Lead states the end of
+its work with `./scripts/nogg session signal done|blocked "<reason>"`, which
+works in the restricted sandbox because it needs no network and no Dolt.
+
+The stop guard, which continues a Lead that would stop with work left, is the one
+part that needs an install, and only because it needs a real `Stop` hook:
+
+```bash
+./scripts/nogg session-hooks install --agent codex
+./scripts/nogg session-hooks status --agent codex
+```
+
+It adds one constant entry to `~/.codex/hooks.json`, which does nothing outside a
+supervised session, and records its trust through Codex's own API. Without it a
+Codex Lead still works and is still watched from the rollout; only the guard is
+off, and `doctor` says so. **Read the
+[Security model](security-model.md#the-codex-stop-hook) before installing it:**
+the hook runs `scripts/nogg` outside Codex's sandbox, and a sandboxed Lead can edit
+that file, so installing it removes the sandbox as a boundary on that host.
 
 ## Specialists
 

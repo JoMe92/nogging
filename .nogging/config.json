@@ -3,6 +3,7 @@
   "name": "Nogging",
   "sync_interval_seconds": 30,
   "beads_command": "bd",
+  "loops_file": ".nogging/state/loops.json",
   "planning_lock_ttl_seconds": 7200,
   "sync_lock_ttl_seconds": 120,
   "sync_max_attempts": 5,
@@ -32,5 +33,7 @@
     "code-reviewer": {"name": "Nogging Code Reviewer", "email": "code-reviewer@nogging.bot"},
     "test-runner": {"name": "Nogging Test Runner", "email": "test-runner@nogging.bot"}
   },
-  "multi_machine": false
+  "multi_machine": false,
+  "session_dispatch": {"retire_merged": true},
+  "tier_overrides": {"complex": {"claude": {"effort": "high"}}}
 }

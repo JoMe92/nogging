@@ -1,0 +1,12 @@
+{
+  "code": 200,
+  "success": true,
+  "data": {
+    "level": "placeholder-level",
+    "limits": [
+      {"type": "TOKENS_LIMIT", "unit": 3, "number": 5, "percentage": 37, "nextResetTime": 1792000000000},
+      {"type": "TIME_LIMIT", "unit": 5, "number": 1, "usage": 1000, "currentValue": 12, "remaining": 988, "percentage": 1, "nextResetTime": 1794600000000},
+      {"type": "TOKENS_LIMIT", "unit": 6, "number": 1, "percentage": 21, "nextResetTime": 1792200000000}
+    ]
+  }
+}

@@ -158,6 +158,15 @@ With no `--agent` flag the agent is the `session_agent` key in
 it opts in — per launch, or by setting that key. `session list` shows which
 agent each session runs in an `AGENT` column.
 
+**Routing.** If a role has a list in the
+[agent routing file](configuration.md#agent_routing_file), a launch without `--agent` starts the first
+entry that passes the binary, authority, backend, model and usage checks, and records
+which entry ran. When every entry is skipped the launch lists each one and exits 75.
+`--skip-agent <name>` (repeatable, routed launches only) skips an agent's entries for one
+launch. An explicit `--agent` is pinned to its entry, so that entry's `allow` list still holds. `session list`
+shows `route=#<n>` and `skipped=#<i>:<reason>` in the model column. A role with no list
+launches as before. `./scripts/nogg route` prints the effective list.
+
 The `restricted` and `trusted` authority levels mean the same *intent* for both
 agents, resolved differently:
 
@@ -298,6 +307,40 @@ up to 64 KiB via `O_APPEND` without waiting for line feeds (LF). This ensures
 full-screen TUIs and interactive prompts update live in `session log --follow`
 without freezing or unbounded buffer accumulation. Each log file is strictly
 bounded by `session_log_max_bytes` and rotated up to `session_log_rotation_depth`.
+
+### What `session watch` believes
+
+`session watch` classifies each session from one evidence order, whatever the
+agent: a fresh structured event from the session's own events file, then a
+Codex rollout's last turn, then herdr's `agent_status` (on herdr sessions:
+`blocked` is a question, `done` is idle, and `unknown` proves nothing), then the
+pane adapter. A Pi session reports its turns through a lifecycle extension the
+same way (see [`using-with-pi.md`](using-with-pi.md)). A Claude session reports
+`turn_start`, `turn_end`, a question, an API error and its end through hooks;
+a finished Codex turn is read from its own rollout with no hook installed,
+and the reply's first line shows as an `excerpt`. An `idle` from an event
+yields to a pane that is plainly working, so a turn whose start hook was lost
+is still seen as `working`, and nothing is ever read as finished from missing
+evidence: a session with none reads `unknown`.
+
+A Lead ends its work with `./scripts/nogg session signal done "<reason>"` or
+`signal blocked "<reason>"`. `watch` prints the signal as its own `done` or
+`blocked` line with the reason, once, until the next turn starts. The session
+still classifies `idle`, so `send`, loop deferral and `sweep` behave as before.
+
+An autonomous Lead that stops with uncommitted or unpushed work, or with no
+signal, is continued once with a fixed message instead of stopping silently. The
+stop guard applies only to a kicked-off `lead` under the `autonomous` prompt, on
+Claude Code, Codex and Pi. A `blocked` or `done` signal in that turn, background
+tasks or an API error let the stop through, and so does any failure of the check,
+because a broken guard must never trap a session. Claude Code and Codex allow the
+second stop through `stop_hook_active`, and Pi allows one continuation per user
+input. A continued stop shows as `guard_continue` in the event file. On Codex the
+guard needs the hook from `nogg session-hooks install --agent codex`.
+
+A launch from a sandbox that cannot write the session or usage state is refused
+before it creates anything, with a message that names the path and says to signal
+blocked. `nogg session capabilities` shows beforehand what a Lead can do.
 
 ## Attach and steer
 
@@ -659,8 +702,10 @@ the whole assigned change at kickoff, use:
 ./scripts/nogg session kickoff <name> --change <change-name>
 ```
 
-This records `authorized_change` in the session record. A custom kickoff message
-alone does not expand sweep scope. Sweep remains read-only: it neither claims
+This records `authorized_change` in the session record, and `recover` then marks
+the change's open Beads as owned by that Lead until it signals `done`. A custom
+kickoff message alone expands neither sweep scope nor ownership. Sweep remains
+read-only: it neither claims
 work nor sends input. Idle duration and buffered input are separate observations.
 
 Completion requires closed mapped work and a verified merged PR for the current

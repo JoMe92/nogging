@@ -6,9 +6,9 @@ whichever agent runs it. This page is for users who run the Nogging loop from
 **Pi** (`https://pi.dev/`, package `@earendil-works/pi-coding-agent`) instead
 of Claude Code or Codex, and covers what is specific to that setup.
 
-Everything verified below was checked hands-on against the installed
-`@earendil-works/pi-coding-agent@0.85.0` package (source and shipped example
-extensions), not just pi.dev's docs. Pi moves fast; where a detail is
+Everything verified below was checked against the installed
+`@earendil-works/pi-coding-agent@1.4.0` package (its source, shipped docs and
+type definitions), not just pi.dev's docs. Pi moves fast; where a detail is
 version-dependent it is called out so you can re-check.
 
 ## Prerequisites
@@ -42,13 +42,15 @@ In addition to the usual target-repo prerequisites (`bd`/Beads, `python3`,
 
 ## What the installer places under `.pi/`
 
-`npx github:JoMe92/nogging#<tag> init` (or `update`) ships two directories,
+`npx github:JoMe92/nogging#<tag> init` (or `update`) ships three directories,
 copied verbatim on every `init`/`update`:
 
 | Path | Behaviour |
 | --- | --- |
 | `.pi/prompts/{plan,discovery-review,sync-now}.md` | The **workflow prompts** — Pi reads `.pi/prompts/*.md` directly from the repository (confirmed from source: `resource-loader.js` resolves `<repo>/.pi/prompts` literally), so — unlike Codex — **no symlink helper is needed**. |
 | `.pi/extensions/nogging-guard.ts` | The **guard extension**: Pi's project-local floor, since Pi ships no native sandbox or execution-policy mechanism of its own. See *The guard extension* below. |
+| `.pi/extensions/nogging-lifecycle.ts` | The **lifecycle extension**: reports a supervised session's turns so `session watch` and `session send` can tell `working` from `idle`. See *The lifecycle extension* below. |
+| `.pi/nogging/` | The **optional extensions** home: a README of conventions, shared helpers under `lib/`, and one directory per extension under `extensions/` (today `glm-usage`). Pi never discovers it, so nothing in it loads until you enable it; see [Pi extensions](pi-extensions.md). `init` writes it and enables nothing, and `update` refreshes it and keeps your `pi_extensions` value. |
 
 A user's own `.pi/settings.json` or other `.pi/*` content is never touched.
 
@@ -76,6 +78,61 @@ container (a genuine option, but a new infra dependency this repo does not
 otherwise need — left to the operator, not managed by Nogging). Treat a Pi
 session's `restricted` level as weaker than the same word for Claude or
 Codex.
+
+## Enabling optional extensions — `pi_extensions`
+
+The extensions under `.pi/nogging/extensions/` load only when you enable them.
+List their names in `.nogging/config.json`:
+
+```json
+{ "pi_extensions": ["glm-usage"] }
+```
+
+Every `session launch --agent pi` then passes
+`--extension <working directory>/.pi/nogging/extensions/<name>/index.ts` to Pi
+after the guard (and the lifecycle extension), in the order you listed, resolved
+from the session's working directory like the guard. They load beside the guard
+and cannot replace or disable it. The session record stores
+`pi_extensions`, and the launch output prints `pi-extensions=<names>`. A value
+that is not an array of unique kebab-case names, or a name without an
+`index.ts`, refuses the launch before any side effect, and `validate` and
+`doctor` report it as a FAIL; run `nogg update` to restore a missing extension,
+or remove the name. An empty or absent list launches exactly as before, and
+other agents ignore the key. To load an extension in a Pi you start yourself,
+use `nogg pi-ext install <name>` instead. The extension itself, its footer and
+its conventions are described in [Pi extensions](pi-extensions.md).
+
+## The lifecycle extension — `.pi/extensions/nogging-lifecycle.ts`
+
+Pi has no hook file, so a supervised session reports its own lifecycle through
+an extension that `session launch` loads beside the guard, with `--extension`.
+It lives in `.pi/extensions/`, not under `.pi/nogging/`, because it must load in
+every supervised session. It maps Pi's events onto `scripts/nogg session emit`:
+
+| Pi event | Reported as | State in `watch` |
+| --- | --- | --- |
+| `agent_start` | `turn_start` | `working` |
+| `agent_settled` | `turn_end`, with the last assistant message as the excerpt | `idle` |
+| `agent_before_settle` with `outcome: "error"` | `turn_error` | `limit` for a rate limit, else `idle` |
+| `agent_before_settle` with gaps, in an autonomous Lead | `guard_continue`, and one more model request | `working` |
+| `ui_prompt_start` | `needs_input` | `needs_input` |
+| `ui_prompt_end` | `turn_start` during a run, else `turn_end` | `working` or `idle` |
+| `session_shutdown` (quit) | `session_end` | `ended` |
+
+That second `agent_before_settle` row is the stop guard: it asks `session
+completion-check` and, on gaps, appends the fixed message and continues the run.
+It continues at most once per user input, kept in the extension's memory, and any
+failure of the check, including a stuck child, lets the run settle.
+
+`agent_end` is never used as completion: a retry, recovery, compaction or queued
+message can start another run after it, so only `agent_settled` means finished.
+The extension does nothing unless `NOGG_SESSION_NAME` is set, so standalone Pi is
+unaffected. It uses only Node built-ins, runs each `session emit` as a
+timeout-bounded child that cannot hold Pi open, and swallows its own errors.
+A missing file only warns at launch: observability never blocks a session, and
+`watch` then falls back to herdr's status or the pane (`unknown` when neither
+exists). On herdr, `agent_status` joins the evidence, so a Pi session is
+classified on tmux and herdr alike.
 
 ## The guard extension — `.pi/extensions/nogging-guard.ts`
 
@@ -174,6 +231,7 @@ are reported back to the Lead Agent as discoveries.
 
 ## See also
 
+- [Pi extensions](pi-extensions.md) — the optional extensions home and the `glm-usage` quota footer.
 - `AGENTS.md` — the canonical, tool-neutral instruction file (its *Tool notes*
   section has the Claude-vs-Codex-vs-Pi summary).
 - [Operating model](operating-model.md) — roles, the delegation model, session supervision.

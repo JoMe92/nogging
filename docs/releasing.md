@@ -48,18 +48,33 @@ a release candidate or a final release.
    This confirms the version is valid semver, `package.json` and
    `package-lock.json` agree, `CHANGELOG.md` has the new section, and the
    working tree is clean. It reports the `vX.Y.Z` tag as "does not exist
-   yet" at this point — that is expected before step 7. Run it *after*
+   yet" at this point — that is expected before step 8. Run it *after*
    committing (step 5): the working-tree-clean check is only meaningful
    once the version bump itself is committed.
 
-7. **Tag** the release commit with an annotated tag and push both:
+7. **Verify the documentation site before the tag.** The site builds from
+   `main:/docs`, so what you tag is what goes live. Run the offline site suite
+   and the full site build (Docker and network):
+
+   ```bash
+   scripts/docs-site.test.sh
+   scripts/docs-site-build
+   ```
+
+   The build checks every internal link and anchor in the rendered HTML and
+   must report none broken. Optionally add `--screenshots <dir>` for the
+   landing page, a guide, the troubleshooting page and the 404 page at both
+   widths and in both colour schemes, plus the axe accessibility scan, which
+   must report no serious or critical finding.
+
+8. **Tag** the release commit with an annotated tag and push both:
 
    ```bash
    git tag -a vX.Y.Z -m "vX.Y.Z"
    git push origin <branch> vX.Y.Z
    ```
 
-8. **Run the consistency check again**, now against the tag:
+9. **Run the consistency check again**, now against the tag:
 
    ```bash
    scripts/release-check X.Y.Z
@@ -67,7 +82,7 @@ a release candidate or a final release.
 
    Every line SHALL report `OK`, including `tag 'vX.Y.Z' points at HEAD`.
 
-9. **Generate release artifacts** (a package tarball, its SHA-256 checksum,
+10. **Generate release artifacts** (a package tarball, its SHA-256 checksum,
    and a CycloneDX SBOM generated from the lockfile, or an explicit
    not-applicable note if SBOM generation fails):
 
@@ -78,7 +93,7 @@ a release candidate or a final release.
    Output lands under `dist/release/X.Y.Z/` (git-ignored — attach these
    files to the GitHub Release by hand, don't commit them).
 
-10. **Run the exact-tag install smoke test** against the pushed tag:
+11. **Run the exact-tag install smoke test** against the pushed tag:
 
     ```bash
     scripts/release-smoke-test github:JoMe92/nogging#vX.Y.Z
@@ -88,7 +103,14 @@ a release candidate or a final release.
     testing a change to it — run the same script against a local path
     instead for an offline dry run: `scripts/release-smoke-test .`
 
-11. **Hand off to acceptance.** A release candidate or final release still
+12. **Check the live site after the release.** Once the release has reached
+    `main` and GitHub Pages has rebuilt, open the live landing page and
+    confirm that its install command names the new `vX.Y.Z` tag, the same
+    tag as in `docs/_data/install.yml`. If it still shows the old tag, the
+    site has not rebuilt yet; check the Pages build before announcing the
+    release.
+
+13. **Hand off to acceptance.** A release candidate or final release still
     needs the full acceptance evidence (install, upgrade, rollback, uninstall,
     every supported agent path) described in
     [docs/acceptance.md](acceptance.md), filled in from
