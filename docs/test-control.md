@@ -120,6 +120,28 @@ Test detail comes from `{junit}` if the command uses it, else from `{timings}`. 
 malformed result file, one above 32 MiB, or a record that cannot be written changes
 nothing about the test result.
 
+## Does CI really run tests?
+
+`nogg doctor` checks, and a green `develop` that never ran a test is the failure it
+looks for. It asks `gh` for the newest runs on `testing.ci.branch` and for
+pull-request runs, and looks at up to three of them for a job whose name matches
+`testing.ci.job_pattern`, ignoring case. A job that was skipped or cancelled does not
+count; a job that failed does, because it proves the tests ran.
+
+| Result | `doctor` prints |
+| --- | --- |
+| tests ran | nothing |
+| the last test job is older than `testing.ci.max_age_days` | a NOTE with its age |
+| CI is configured and no test job is found | a WARN naming the branch, the pattern and the nightly fallback |
+| no CI configuration file exists | a NOTE naming the nightly fallback, unless a nightly run wrote a record |
+| `gh` is missing, unauthenticated, offline, has no GitHub remote or times out | nothing; an older cached result keeps its line with its age |
+
+The answer is cached in `.nogging/state/testing/ci-check.json` for
+`testing.ci.cache_seconds`, so `doctor` calls `gh` at most once in that time, and a
+refresh stops after 10 seconds. A pull-request run does not name its base branch, so
+a pull request against another branch counts too; the check is meant to catch a
+repository where test jobs do not run at all. It never changes `doctor`'s exit code.
+
 ## Exit codes
 
 | Code | Meaning |

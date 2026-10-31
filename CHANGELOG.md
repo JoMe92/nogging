@@ -11,6 +11,17 @@ and GitHub Releases for that history.
 
 ### Added
 
+- Agents now work on the test stages. `AGENTS.md` and its installed block, the Claude
+  block, `CLAUDE.md`, the autonomous and orchestrator launch prompts, the
+  `backend-engineer` and `test-runner` specialists and the operating model name
+  `nogg test changed` while working, `nogg test commit` before a commit and
+  `nogg test bead` once per Bead, link the test policy, and keep `nogg test full` for a
+  release, the nightly run or a recorded reason. Weakening a test takes a
+  `Test-Integrity: <reason>` trailer and a discovery note. `nogg doctor` also checks,
+  through `gh`, that CI really runs tests: a WARN when CI is configured and no test job
+  is found, a NOTE for an old test job or for no CI, nothing when `gh` is unreachable,
+  cached in `.nogging/state/testing/ci-check.json`, never changing the exit code.
+  (SPEC-4598)
 - A short, framework-neutral test policy ships as `docs/nogging/testing-policy.md`
   (what to always test, what not to test, the level per change, mocks only at
   process boundaries, expensive setup once per run, no real sleeps). The
