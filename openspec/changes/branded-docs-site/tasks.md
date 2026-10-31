@@ -188,7 +188,7 @@
 
 ## 4. Verification and release steps (test/)
 
-- [ ] TASK-BDS-014 [standard] [UI] Final site verification and release-procedure site steps.
+- [x] TASK-BDS-014 [standard] [UI] Final site verification and release-procedure site steps.
   Per design Decisions 10 and 11: run the full verification on integrated
   develop. That is the site suite, docs-site-build with zero broken links
   and anchors, screenshots of the landing page, one guide, the

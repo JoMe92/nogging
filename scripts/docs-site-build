@@ -22,7 +22,7 @@ case "${1:-}" in
     shift
     ;;
   --help|-h)
-    printf 'Usage: scripts/docs-site-build [--serve | --screenshots <dir>]\nBuild the docs site in a temporary GitHub Pages container and check local links and anchors.\n--serve starts a local preview at http://127.0.0.1:4000/nogging/\n--screenshots <dir> also captures the landing page, a guide and the 404 page at 375x812 and\n  1280x800 in light and dark into <dir> (outside the repository), and fails on any serious or\n  critical axe-core finding, a horizontal page scroll, a wrong scheme, a script error, an\n  off-site request or a theme toggle that does not switch and remember the scheme.\n'
+    printf 'Usage: scripts/docs-site-build [--serve | --screenshots <dir>]\nBuild the docs site in a temporary GitHub Pages container and check local links and anchors.\n--serve starts a local preview at http://127.0.0.1:4000/nogging/\n--screenshots <dir> also captures the landing page, a guide, the troubleshooting page and the 404 page at 375x812 and\n  1280x800 in light and dark into <dir> (outside the repository), and fails on any serious or\n  critical axe-core finding, a horizontal page scroll, a wrong scheme, a script error, an\n  off-site request or a theme toggle that does not switch and remember the scheme.\n'
     exit 0
     ;;
   *) printf 'Unknown option: %s\n' "$1" >&2; exit 2 ;;
@@ -162,6 +162,7 @@ const baseurl = '/nogging';
 const pages = [
   ['landing', `${baseurl}/`],
   ['guide', `${baseurl}/running-work-in-sessions/`],
+  ['troubleshooting', `${baseurl}/troubleshooting/`],
   ['404', `${baseurl}/no-such-page/`],
 ];
 const viewports = [[375, 812], [1280, 800]];
