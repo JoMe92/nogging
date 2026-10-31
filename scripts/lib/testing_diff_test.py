@@ -157,6 +157,11 @@ class RenameIsNotDeletion(unittest.TestCase):
         self.assertEqual(r.findings, [])
         self.assertEqual(r.tests_deleted, [])
         self.assertEqual(len(r.tests_added), 2)
+        self.assertEqual(r.tests_moved, r.tests_added)   # both are moves, so neither is a net addition
+
+    def test_a_new_test_is_not_a_move(self):
+        r = td.analyse(file_diff('scripts/lib/a_test.py', None, PY_OLD))
+        self.assertEqual(r.tests_moved, [])
 
     def test_git_rename_with_edits(self):
         new = PY_OLD.replace('assertTrue(True)', 'assertTrue(True)\n        self.assertFalse(False)')

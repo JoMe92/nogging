@@ -5045,6 +5045,10 @@ def token_usage_command(args):
         filters = {k: getattr(args, k) for k in rep.FILTERS}
         if args.group_by == "bead":
             context["bead_lines"] = lambda beads: rep.bead_git_lines(ROOT, beads, timeout=usage_query_timeout())
+            context["bead_tests"] = lambda beads: testing_report_module().bead_test_changes(
+                ROOT, beads, timeout=max(usage_query_timeout(), 60))
+            context["stage_seconds"] = lambda beads: testing_report_module().stage_seconds(
+                testing_modules()[1].read_records(TEST_STATE), beads)
         doc = rep.report(facts, meta, start, end, args.group_by, filters, now_dt, context)
         print(json.dumps(doc, indent=2, sort_keys=True) if args.json else render_usage_report(doc))
     elif args.usage_command == "session":
@@ -11089,6 +11093,7 @@ def doctor(audit=False, with_recover=False, with_sandbox=False, refuse_task_form
              "Git 2.30+, Bash 4.4+, OpenSpec 1.11.x, Beads 1.2.x, Dolt 2.3.x "
              "(docs/nogging/compatibility.md)"]
     notes.extend(routing_notes)
+    notes.extend(testing_trend_notes())
     notes.extend(loop_notes)
     notes.extend(pause_notes)
     notes.extend(dispatch_notes)
@@ -11547,6 +11552,7 @@ def run_quiet(command, log=None, tail=40):
 # through run_quiet as argv, under the deny rules of `run-quiet`, because the
 # strings come from a file a Lead can edit. A budget reports and never kills.
 TEST_STAGES = ("changed", "commit", "bead", "full")
+TEST_COMMANDS = TEST_STAGES + ("report", "integrity")
 TEST_EXIT_REFUSED, TEST_EXIT_NO_SLOT = 77, 75
 TEST_LOGS_KEPT = 20
 TEST_STATE = ORCHESTRATOR_HOME / ".nogging/state/testing"
@@ -11558,6 +11564,21 @@ def testing_modules():
     sys.dont_write_bytecode = True
     import testing_runs, testing_slots, testing_stages
     return testing_stages, testing_runs, testing_slots
+def testing_report_module():
+    """scripts/lib/testing_report.py: aggregation, the trend rule, the budget messages."""
+    testing_modules()
+    import testing_report
+    return testing_report
+def testing_trend_notes():
+    """`doctor`'s NOTEs from the run records: a stage whose median grew, a latest
+    run over budget, a Lead's `--allow-full`. Never a WARN, never an exit code."""
+    try:
+        stages, runs, _ = testing_modules()
+        threshold = stages.parse_testing(CFG.get("testing"))[0]["trend_threshold_percent"]
+        records = runs.read_records(TEST_STATE)
+        return testing_report_module().doctor_notes(records, dt.datetime.now(dt.timezone.utc), threshold)
+    except (OSError, ValueError, KeyError):
+        return []
 def testing_config_warnings():
     """`doctor`'s WARNs for the `testing` block; no block means nothing to read."""
     raw = CFG.get("testing")
@@ -11586,6 +11607,94 @@ def test_changed_paths(stage, settings, base):
         else:
             notes.append(f"note: no merge-base with {ref}; the change set is the uncommitted work only")
     return [path for output in outputs if output for path in output.split("\0") if path], notes
+def test_merge_point(settings, base):
+    """The merge-base of --base (default origin/<testing.ci.branch>) with HEAD, or None."""
+    point = test_git("merge-base", base or f"origin/{settings['ci']['branch']}", "HEAD")
+    return point.strip() if point else None
+def test_bead_labels(bead):
+    """The labels of a Bead, or None where the tracker cannot be reached. A quiet
+    read: integrity runs where `bd` may be absent, and that is no failure."""
+    try:
+        res = run(CFG["beads_command"], "show", bead, "--json", check=False, timeout=30)
+        decoded = json.loads(res.stdout.strip() or "[]") if res.returncode == 0 else None
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+    records = decoded.get("issues", decoded) if isinstance(decoded, dict) else decoded
+    records = [records] if isinstance(records, dict) else records
+    if not isinstance(records, list):
+        return None
+    for record in records:
+        if isinstance(record, dict) and str(issue_id(record)) == str(bead):
+            labels = record.get("labels")
+            return {str(label) for label in labels} if isinstance(labels, list) else set()
+    return None
+def test_integrity_check(settings, base):
+    """(exit code, unresolved) of the integrity rule over `<base>...HEAD`: the
+    rule script, then the `discovery` label of each Bead whose commit carries a
+    `Test-Integrity:` trailer where `bd` is reachable. Findings print. At
+    `testing.integrity: enforce` an uncleared finding is code 1; at `report`
+    nothing changes the code. unresolved: the base did not resolve (script exit 2)."""
+    enforce = settings["integrity"] == "enforce"
+    ref = base or f"origin/{settings['ci']['branch']}"
+    script = Path(__file__).resolve().parent / "check-test-integrity"
+    try:
+        result = subprocess.run([str(script), ref, *(["--enforce"] if enforce else [])], cwd=ROOT,
+                                capture_output=True, text=True, errors="replace", timeout=300)
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"test integrity: not run: {exc}", file=sys.stderr)
+        return 0, True
+    for line in (result.stdout + result.stderr).splitlines():
+        print(line)
+    if result.returncode == 2:
+        return 2, True
+    code = 1 if result.returncode == 1 else 0
+    log = test_git("log", "--format=%H%x1f%s%x1f%(trailers:key=Test-Integrity,valueonly,unfold)%x1e", f"{ref}..HEAD")
+    report = testing_report_module()
+    gaps = report.discovery_gaps(report.parse_trailer_log(log or ""), test_bead_labels)
+    for gap in gaps:
+        print(gap)
+    if gaps and enforce:
+        print(f"test integrity: {len(gaps)} justification{'s' if len(gaps) != 1 else ''} without a discovery note")
+        code = 1
+    return code, False
+def test_bead_extras(settings, base, bead):
+    """What the `bead` stage adds after its commands: the Bead's test-line count
+    against task_sizing.bead_test_lines, then the integrity rule. Returns the exit
+    code the integrity rule adds (0 or 1); every line is advice otherwise."""
+    report = testing_report_module()
+    point = test_merge_point(settings, base)
+    numstat = test_git("diff", "--numstat", "-M", point) if point else None
+    if numstat is not None:
+        counts = report.line_counts(numstat)
+        limits = task_sizing()[0]["bead_test_lines"]
+        message = report.budget_message(bead, counts, limits)
+        print(f"NOTE: {message}" if message else
+              f"test lines: {counts['test']} (task_sizing.bead_test_lines {limits[0]}-{limits[1]})")
+    code, unresolved = test_integrity_check(settings, base)
+    if unresolved:
+        print(f"test integrity: not checked: {base or 'origin/' + settings['ci']['branch']} did not resolve; "
+              "pass --base <ref> or fetch it")
+        return 0
+    return code
+def test_report(args):
+    """`nogg test report`: the daily rows, the trend, the slowest tests, the full
+    runs and the Beads outside bead_test_lines. No record is a message and exit 0."""
+    _, runs, _ = testing_modules()
+    report = testing_report_module()
+    now = dt.datetime.now(dt.timezone.utc)
+    days = args.days or report.DEFAULT_DAYS
+    records = runs.read_records(TEST_STATE)
+    start = report.window_start(now, days)
+    beads = sorted({r["bead"] for r in report.runs_between(records, start, now + dt.timedelta(seconds=1)) if r.get("bead")})
+    found = report.bead_findings(usage_report_module().bead_git_lines(ROOT, beads, timeout=60), task_sizing()[0]["bead_test_lines"]) if beads else []
+    doc = report.build_report(records, now, days, found)
+    print(json.dumps(doc, indent=2, sort_keys=True) if args.json else "\n".join(report.render_report(doc)))
+def test_integrity(args):
+    """`nogg test integrity [--base REF]`: the integrity rule alone, at the configured level."""
+    settings = testing_modules()[0].parse_testing(CFG.get("testing"))[0]
+    os.chdir(ROOT)
+    code, _ = test_integrity_check(settings, args.base)
+    sys.exit(code)
 def test_last_nightly():
     """When the last nightly record was written, in epoch seconds, or None."""
     try:
@@ -11730,7 +11839,8 @@ def test_stage(args):
             print(stages.skip_line(stage, skipped))
             for note in notes:
                 print(note)
-            finish("skipped", 0)
+            code = test_bead_extras(settings, args.base, identity["bead"]) if stage == "bead" else 0
+            finish("failed" if code else "skipped", code)
         denied = next(filter(None, (run_quiet_denied(step["argv"], rules) for step in steps)), None)
         if denied:
             print(f"refusing: the wrapped command could run {denied}, which this session's deny rules or the "
@@ -11756,6 +11866,8 @@ def test_stage(args):
                 print(f"slowest: {test['seconds']:.1f} s {test['name']}")
         if logs:
             runs.prune_logs(logs, TEST_LOGS_KEPT)
+        if stage == "bead":   # advice, and the rule at `enforce`; the stage's own failure keeps its code
+            code = code or test_bead_extras(settings, args.base, identity["bead"])
         finish("failed" if code else "passed", code, seconds=seconds, wait_seconds=waited,
                over_budget=over, detail=detail)
     finally:
@@ -11835,12 +11947,16 @@ def main():
     te = sub.add_parser("test", help="run one test stage under its budget and leave a run record",
         description="Run the commands of one test stage through run-quiet: changed and commit over the "
                     "uncommitted work, bead over the branch as well, full over everything. Budgets report and "
-                    "never kill. Exits with the stage's own code, 77 when refused and 75 with no heavy slot.")
-    te.add_argument("stage", choices=TEST_STAGES)
+                    "never kill. Exits with the stage's own code, 77 when refused and 75 with no heavy slot. "
+                    "`bead` ends with the integrity rule; `integrity` runs it alone; `report` prints the "
+                    "daily trend of the run records.")
+    te.add_argument("stage", choices=TEST_COMMANDS, metavar="{changed,commit,bead,full,report,integrity}")
     te.add_argument("--bead", metavar="ID", help="the Bead this run belongs to (default: the session's, "
                     "then the newest [<id>] commit on the branch)")
-    te.add_argument("--base", metavar="REF", help="bead: diff from the merge-base with REF "
+    te.add_argument("--base", metavar="REF", help="bead, integrity: diff from the merge-base with REF "
                     "(default: origin/<testing.ci.branch>)")
+    te.add_argument("--days", metavar="N", type=int, help="report: the window in days (default 14)")
+    te.add_argument("--json", action="store_true", help="report: print the JSON document")
     te.add_argument("--release", action="store_true", help="full: a release run; operator shell or "
                     "Orchestration Agent only")
     te.add_argument("--nightly", action="store_true", help="full: the nightly run; refused in any supervised session")
@@ -12134,9 +12250,19 @@ def main():
     elif args.command == "test":
         if args.stage != "full" and (args.release or args.nightly or args.allow_full is not None):
             te.error("--release, --nightly and --allow-full apply only to the full stage")
-        if args.base is not None and (args.stage != "bead" or not args.base or args.base.startswith("-")):
-            te.error("--base applies only to the bead stage and takes a ref")
-        test_stage(args)
+        if args.base is not None and (args.stage not in ("bead", "integrity") or not args.base
+                                      or args.base.startswith("-")):
+            te.error("--base applies only to the bead and integrity commands and takes a ref")
+        if (args.days is not None or args.json) and args.stage != "report":
+            te.error("--days and --json apply only to the report command")
+        if args.days is not None and args.days < 1:
+            te.error("--days must be a positive number of days")
+        if args.stage == "report":
+            test_report(args)
+        elif args.stage == "integrity":
+            test_integrity(args)
+        else:
+            test_stage(args)
     elif args.command == "codex-prompts-link": codex_prompts_link(args.unlink)
     elif args.command == "pi-ext":
         if args.action == "list":

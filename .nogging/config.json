@@ -37,6 +37,7 @@
   "session_dispatch": {"retire_merged": true},
   "tier_overrides": {"complex": {"claude": {"effort": "high"}}},
   "testing": {
+    "integrity": "enforce",
     "stages": {
       "changed": "scripts/test --only {test_files}",
       "commit": "scripts/test --only {test_files}",

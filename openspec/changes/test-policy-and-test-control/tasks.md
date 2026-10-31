@@ -132,7 +132,7 @@ runs the whole suite: name the suites in the task, and leave the rest to CI.
   scripts/installer-next-steps.test.sh, scripts/package-manifest.test.sh, and `systemd-analyze
   --user verify` on the rendered units where available. Branch feat/.
 
-- [ ] TASK-TPC-006 [standard] [~620 loc] Test cost is visible per Bead and as a trend, and the bead stage runs the integrity check.
+- [x] TASK-TPC-006 [standard] [~620 loc] Test cost is visible per Bead and as a trend, and the bead stage runs the integrity check.
   Per design Decisions 10 and 13 and the requirements on test metrics and the bead stage. Add
   pure scripts/lib/testing_report.py for daily aggregation, medians, the week-over-week change,
   explicit full runs and budget misses. Add `nogg test report [--days N] [--json]` and `nogg test

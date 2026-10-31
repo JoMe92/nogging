@@ -330,19 +330,8 @@ def numstat_path(path):
     return re.sub(r'//+', '/', path)
 
 
-def bead_git_lines(repo, beads, timeout=30, run=subprocess.run):
-    """{bead: {commits, production_lines, test_lines}} from the commits whose
-    subject carries `[<bead>]`, or None when git cannot answer.
-
-    Commits come from every local and remote-tracking branch and tag (not
-    stash, notes or Beads' refs/dolt/*), merges excluded; a rebased or
-    cherry-picked copy (same author time and subject) counts once, and a
-    commit naming several Beads counts for each. Lines are numstat added +
-    deleted per file, classified by classify_path; binary files count 0."""
-    beads = {b for b in beads if b}
-    out = {b: {'commits': 0, 'production_lines': 0, 'test_lines': 0} for b in beads}
-    if not beads:
-        return out
+def _git_runner(repo, timeout, run):
+    """A `git(*args, stdin=)` that returns stdout, or None when git cannot answer."""
     def git(*args, stdin=None):
         try:
             result = run(['git', '-C', str(repo), '-c', 'core.quotePath=false', *args], input=stdin,
@@ -351,6 +340,17 @@ def bead_git_lines(repo, beads, timeout=30, run=subprocess.run):
         except (OSError, ValueError, subprocess.SubprocessError):
             return None
         return result.stdout if result.returncode == 0 else None
+    return git
+
+
+def bead_commit_map(git, beads):
+    """{sha: [bead, ...]} of the commits whose subject carries `[<bead>]`, or
+    None when git cannot answer.
+
+    Commits come from every local and remote-tracking branch and tag (not
+    stash, notes or Beads' refs/dolt/*), merges excluded; a rebased or
+    cherry-picked copy (same author time and subject) counts once, and a
+    commit naming several Beads counts for each."""
     log = git('log', '--branches', '--remotes', '--tags', '--no-merges', '--format=%H%x1f%at%x1f%s')
     if log is None:
         return None
@@ -362,6 +362,22 @@ def bead_git_lines(repo, beads, timeout=30, run=subprocess.run):
         if tokens and (stamp, subject) not in seen:
             seen.add((stamp, subject))
             wanted[sha] = tokens
+    return wanted
+
+
+def bead_git_lines(repo, beads, timeout=30, run=subprocess.run):
+    """{bead: {commits, production_lines, test_lines}} from the commits whose
+    subject carries `[<bead>]` (bead_commit_map), or None when git cannot
+    answer. Lines are numstat added + deleted per file, classified by
+    classify_path; binary files count 0."""
+    beads = {b for b in beads if b}
+    out = {b: {'commits': 0, 'production_lines': 0, 'test_lines': 0} for b in beads}
+    if not beads:
+        return out
+    git = _git_runner(repo, timeout, run)
+    wanted = bead_commit_map(git, beads)
+    if wanted is None:
+        return None
     if not wanted:
         return out
     stat = git('log', '--no-walk=unsorted', '--stdin', '-M', '--numstat', '--format=%x1e%H',
@@ -550,20 +566,41 @@ def report(facts, meta, start, end, group_by, filters, now, context=None):
                                                                                    'local_only': True}),
            'store': context.get('store', 'present' if meta else 'absent'), 'notes': notes}
     if group_by == 'bead':
-        bead_view(doc, context.get('bead_lines'))
+        bead_view(doc, context.get('bead_lines'), context.get('bead_tests'), context.get('stage_seconds'))
     return doc
 
 
-def bead_view(doc, bead_lines):
+TEST_COST_STAGES = ('changed', 'commit', 'bead', 'full')
+
+
+def attach_tests(item, bead, tests, seconds):
+    """Test cost fields, stable and additive: null when their source is unavailable.
+
+    tests: {bead: {tests_added, tests_deleted, skips_added}} from the Bead's
+    commits (testing_diff). seconds: {bead: {stage: seconds or None}} from the
+    `nogg test` run records."""
+    found = (tests or {}).get(bead) if bead else None
+    for key in ('tests_added', 'tests_deleted', 'skips_added'):
+        item[key] = found[key] if found is not None else None
+    ran = (seconds or {}).get(bead) if bead else None
+    item['stage_seconds'] = {stage: ran.get(stage) for stage in TEST_COST_STAGES} if ran is not None else None
+
+
+def bead_view(doc, bead_lines, bead_tests=None, stage_seconds=None):
     """Attach git attribution and per-Bead totals (all runtimes) to a bead report.
 
     bead_lines(beads) -> {bead: {commits, production_lines, test_lines}} or None;
-    without it (or when it returns None) every git field is null."""
+    without it (or when it returns None) every git field is null. The optional
+    bead_tests(beads) and stage_seconds(beads) add the test cost fields of
+    attach_tests, with the same rule."""
     beads = sorted({r['bead'] for r in doc['rows'] if r['bead']})
     lines = bead_lines(beads) if callable(bead_lines) and beads else None
+    tests = bead_tests(beads) if callable(bead_tests) and beads else None
+    seconds = stage_seconds(beads) if callable(stage_seconds) and beads else None
     totals = {}
     for row in doc['rows']:
         attach_git(row, row['bead'], lines)
+        attach_tests(row, row['bead'], tests, seconds)
         total = totals.setdefault(row['bead'], {'bead': row['bead'], 'runtimes': [], 'sessions': set(),
                                                 'events': 0, 'wall_runtime_ms': 0, 'work': empty_work()})
         total['runtimes'].append(row['runtime'])
@@ -577,6 +614,7 @@ def bead_view(doc, bead_lines):
     for total in totals.values():
         total['sessions'] = sorted(total['sessions'])
         attach_git(total, total['bead'], lines)
+        attach_tests(total, total['bead'], tests, seconds)
     doc['beads'] = list(totals.values())
     doc['git'] = {'available': lines is not None or not beads,
                   'source': 'commit subjects carrying [<bead-id>] on all branches and tags'}
@@ -594,15 +632,21 @@ def render_bead_report(doc):
     width = max([4] + [len(r['bead'] or '-') for r in doc['rows']])
     head = (f"{'BEAD':<{width}}  {'AGENT':<11}  {'EVENTS':>6}  {'FRESH_IN':>11}  {'CACHE_READ':>12}  {'CACHE_WRITE':>11}  "
             f"{'OUTPUT':>9}  {'TOTAL':>12}  {'COMMITS':>7}  {'PROD_LINES':>10}  {'FRESH/LINE':>10}  "
-            f"{'OUT/LINE':>8}  {'TOTAL/LINE':>10}")
+            f"{'OUT/LINE':>8}  {'TOTAL/LINE':>10}  {'TESTS+':>6}  {'TESTS-':>6}  {'SKIPS+':>6}  "
+            f"{'TEST_SECS(c/m/b/f)':>18}")
     lines = [head]
+    def stage_cell(seconds):
+        return '-' if seconds is None else '/'.join('-' if seconds[k] is None else f'{seconds[k]:.0f}'
+                                                     for k in TEST_COST_STAGES)
     def line(bead, agent, item):
         w, p = item['work'], item['per_production_line']
         return (f"{bead or '-':<{width}}  {agent[:11]:<11}  {item['events']:>6}  "
                 f"{cell(w, 'fresh_input_tokens'):>11}  {cell(w, 'cache_read_tokens'):>12}  "
                 f"{cell(w, 'cache_write_tokens'):>11}  {cell(w, 'output_tokens'):>9}  {cell(w, 'total_tokens'):>12}  "
                 f"{num(item['commits']):>7}  {num(item['production_lines']):>10}  "
-                f"{num(p['fresh_input_tokens']):>10}  {num(p['output_tokens']):>8}  {num(p['total_tokens']):>10}")
+                f"{num(p['fresh_input_tokens']):>10}  {num(p['output_tokens']):>8}  {num(p['total_tokens']):>10}  "
+                f"{num(item.get('tests_added')):>6}  {num(item.get('tests_deleted')):>6}  "
+                f"{num(item.get('skips_added')):>6}  {stage_cell(item.get('stage_seconds')):>18}")
     totals = {t['bead']: t for t in doc.get('beads', [])}
     for index, row in enumerate(doc['rows']):
         lines.append(line(row['bead'], row['runtime'] or '-', row))
