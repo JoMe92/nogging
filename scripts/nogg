@@ -9452,6 +9452,18 @@ def _dispatch_targets(records):
         if (role == "planning" or (role == "lead" and rec.get("bead_id"))) and (
                 rec.get("state") in SESSION_ACTIVE_STATES or rec.get("state") == "failed"):
             yield rec
+def _dispatch_nightly():
+    """(queue actions, extra facts) from the nightly record, read on every pass. No
+    record means nothing failed. One that cannot be read clears nothing: an unknown
+    fact keeps the item, by the rule every session's evidence follows."""
+    nightly = testing_nightly_module()
+    try:
+        action = nightly.digest_action(test_read_nightly())
+    except FileNotFoundError:
+        return [], []
+    except (OSError, ValueError, RecursionError):
+        return [], [{"session": nightly.SESSION, "state": "unknown"}]
+    return ([action] if action else []), []
 def _dispatch_run(action, fact, memory, queue, moment):
     module, name, kind = dispatch_module(), action["session"], action["type"]
     if kind == "nudge":
@@ -9760,6 +9772,8 @@ def _dispatch_pass(dry_run, as_json):
     if not dry_run:
         _quarantine_dispatch_state("state.json")
     actions, memory = module.decide(facts, _read_dispatch_state("state.json"), dispatch_policy(pause), moment)
+    nightly_actions, nightly_facts = _dispatch_nightly()
+    actions.extend(nightly_actions)
     memory["last_pass_at"] = module.iso(moment)
     by_session = {fact["session"]: fact for fact in facts}
     results = []
@@ -9767,7 +9781,7 @@ def _dispatch_pass(dry_run, as_json):
         if action["type"] != "queue":
             outcome = "dry-run" if dry_run else _dispatch_apply(action, by_session[action["session"]], memory, queue, moment)
             results.append({**action, "outcome": outcome})
-    added, cleared = wake_lib.reconcile(queue, actions, facts, memory, wake_policy(), moment, redact)
+    added, cleared = wake_lib.reconcile(queue, actions, [*facts, *nightly_facts], memory, wake_policy(), moment, redact)
     results.extend({"type": "queue", "session": item["session"], "key": item["key"], "reason": item.get("reason"),
                     "kind": item["kind"], "outcome": "dry-run" if dry_run else "queued"} for item in added)
     if not dry_run:
@@ -9797,17 +9811,19 @@ def _dispatch_pass(dry_run, as_json):
     for item in items:
         print(f"queued {item.get('kind')} {item.get('session')}: {item.get('reason')}")
     print(f"session dispatch: {len(facts)} session(s), {len(results)} action(s), {len(items)} queued")
+def supervised_caller(purpose):
+    """True inside a supervised session, and when that cannot be ruled out."""
+    try:
+        records = [rec for _path, rec in session_records(orchestrator_sessions_dir())]
+        return (calling_session_record(records, purpose=purpose) is not None
+                or bool(os.environ.get("NOGG_SESSION_NAME")))
+    except RuntimeError:
+        return True
 def session_dispatch(dry_run=False, as_json=False):
     """One pass (design Decision 6), under the rules of `loop tick`: the main checkout
     only, refused in every supervised session except for `--dry-run`, which sends,
     stops and writes nothing, and a busy lock exits 0."""
-    try:
-        records = [rec for _path, rec in session_records(orchestrator_sessions_dir())]
-        supervised = (calling_session_record(records, purpose="session dispatch") is not None
-                      or bool(os.environ.get("NOGG_SESSION_NAME")))
-    except RuntimeError:
-        supervised = True
-    if supervised and not dry_run:
+    if supervised_caller("session dispatch") and not dry_run:
         raise RuntimeError("session dispatch is refused inside every supervised session; --dry-run is read-only and allowed")
     if ROOT.resolve() != ORCHESTRATOR_HOME.resolve():
         raise RuntimeError(f"session dispatch runs only in the main checkout: {ORCHESTRATOR_HOME}")
@@ -11082,6 +11098,8 @@ def doctor(audit=False, with_recover=False, with_sandbox=False, refuse_task_form
     ci_line = test_ci_diagnostics()
     if ci_line and ci_line[0] == "WARN":
         warnings.append(ci_line[1])
+    nightly_warnings, nightly_notes = test_nightly_diagnostics()
+    warnings.extend(nightly_warnings)
     for name, ok in checks: print(f"{'OK' if ok else 'FAIL'}  {name}")
     # Warnings are advisory (a committed-but-open Bead and the like): shown
     # distinctly from FAIL, and they never change doctor's exit code.
@@ -11107,6 +11125,7 @@ def doctor(audit=False, with_recover=False, with_sandbox=False, refuse_task_form
     notes.extend(artifact_notes)
     if ci_line and ci_line[0] == "NOTE":
         notes.append(ci_line[1])
+    notes.extend(nightly_notes)
     # Advisory only, like every other NOTE here: never a FAIL, never changes
     # doctor's exit code. `/plan`'s archive step (TASK-TCC-004) is what
     # actually archives a change; doctor only surfaces readiness.
@@ -11552,7 +11571,7 @@ def run_quiet(command, log=None, tail=40):
 # through run_quiet as argv, under the deny rules of `run-quiet`, because the
 # strings come from a file a Lead can edit. A budget reports and never kills.
 TEST_STAGES = ("changed", "commit", "bead", "full")
-TEST_COMMANDS = TEST_STAGES + ("report", "integrity")
+TEST_COMMANDS = TEST_STAGES + ("report", "integrity", "nightly")
 TEST_EXIT_REFUSED, TEST_EXIT_NO_SLOT = 77, 75
 TEST_LOGS_KEPT = 20
 TEST_STATE = ORCHESTRATOR_HOME / ".nogging/state/testing"
@@ -11722,32 +11741,40 @@ def test_ci_github_remote():
     `gh` call at all: the check stays offline."""
     out = test_git("remote", "-v")
     return bool(out) and "github.com" in out
+def test_ci_cache():
+    """The cached CI result, or None."""
+    try:
+        return json.loads((TEST_STATE / TEST_CI_CACHE).read_text())
+    except (OSError, ValueError):
+        return None
+def test_ci_store(entry):
+    """Keep a refreshed CI result; losing it only costs the next refresh."""
+    cache_path = TEST_STATE / TEST_CI_CACHE
+    if entry is None:
+        return
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = cache_path.with_name(cache_path.name + f".{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(entry))
+        os.replace(tmp, cache_path)
+    except OSError:
+        pass
+def test_ci_inputs():
+    """What every reader of the CI result passes in: (module, ci block, configured,
+    bounded gh caller, epoch now)."""
+    stages = testing_modules()[0]
+    import testing_ci
+    gh = test_ci_run_gh(time.monotonic() + testing_ci.REFRESH_SECONDS) if test_ci_github_remote() \
+        else (lambda argv: None)
+    return testing_ci, stages.parse_testing(CFG.get("testing"))[0]["ci"], bool(stages.ci_files(ROOT)), gh, time.time()
 def test_ci_diagnostics():
     """(level, text) for `doctor`'s CI reality check, or None. Never raises, never
     changes the exit code; the decisions live in scripts/lib/testing_ci.py."""
     try:
-        stages = testing_modules()[0]
-        import testing_ci
-        ci = stages.parse_testing(CFG.get("testing"))[0]["ci"]
-        configured = bool(stages.ci_files(ROOT))
-        now = time.time()
-        cache_path = TEST_STATE / TEST_CI_CACHE
-        try:
-            cache = json.loads(cache_path.read_text())
-        except (OSError, ValueError):
-            cache = None
-        gh = test_ci_run_gh(time.monotonic() + testing_ci.REFRESH_SECONDS) if test_ci_github_remote() \
-            else (lambda argv: None)
-        line, entry = testing_ci.check(ci, configured, gh, now, cache=cache,
+        testing_ci, ci, configured, gh, now = test_ci_inputs()
+        line, entry = testing_ci.check(ci, configured, gh, now, cache=test_ci_cache(),
                                        nightly_recorded=test_last_nightly() is not None)
-        if entry is not None:
-            try:
-                cache_path.parent.mkdir(parents=True, exist_ok=True)
-                tmp = cache_path.with_name(cache_path.name + f".{os.getpid()}.tmp")
-                tmp.write_text(json.dumps(entry))
-                os.replace(tmp, cache_path)
-            except OSError:
-                pass
+        test_ci_store(entry)
         return line
     except Exception as exc:
         return ("NOTE", f"CI reality check unavailable: {exc.__class__.__name__}")
@@ -11873,6 +11900,178 @@ def test_stage(args):
     finally:
         shutil.rmtree(results, ignore_errors=True)
 
+# `test nightly`: the fallback where no CI runs tests (Decision 12). The gates and the
+# record live in scripts/lib/testing_nightly.py; this is only the effects.
+def testing_nightly_module():
+    testing_modules()
+    import testing_nightly
+    return testing_nightly
+def test_read_nightly():
+    """The last nightly record, validated. Raises FileNotFoundError with no record, and
+    OSError or ValueError for one that cannot be read: it is no trust boundary."""
+    nightly = testing_nightly_module()
+    data = pause_module().read_regular(TEST_STATE / nightly.RECORD_FILE, DISPATCH_STATE_BYTES)
+    record = nightly.valid_record(json.loads(data))
+    if record is None:
+        raise ValueError("malformed nightly record")
+    return record
+def test_nightly_record():
+    """The last nightly record, or None."""
+    try:
+        return test_read_nightly()
+    except (OSError, ValueError, RecursionError):
+        return None
+def test_nightly_diagnostics():
+    """(warnings, notes) for `doctor`: a failed last run, and the timer to enable where
+    nothing else tests the branch. Never raises, never changes the exit code."""
+    try:
+        cached = test_ci_cache()
+        kind = cached.get("result") if isinstance(cached, dict) else None
+        if not testing_modules()[0].ci_files(ROOT):
+            kind = "absent"
+        return testing_nightly_module().doctor_lines(test_nightly_record(), kind,
+                                                     f"nogg-nightly-{slugify(ORCHESTRATOR_HOME.name)}")
+    except Exception:
+        return [], []
+def test_nightly_lock():
+    """A descriptor held until this process exits, or None when a run holds it: a run
+    started by hand must not reset the worktree under the timer's."""
+    fd = os.open(data_dir(TEST_STATE) / "nightly.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(fd)
+        return None
+    return fd
+def test_nightly_git(*args, cwd=None):
+    """The output of one Git call, or None when it fails. It never prompts, and it runs
+    none of the repository's hooks: this is no Lead's checkout to act on."""
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    try:
+        result = subprocess.run(["git", "-c", "core.hooksPath=/dev/null", *args], cwd=cwd or ORCHESTRATOR_HOME,
+                                env=env, capture_output=True, text=True, timeout=300)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return result.stdout if result.returncode == 0 else None
+def test_nightly_target(branch):
+    """(commit to test or None, offline). A failed fetch tests the last known commit."""
+    ref = f"refs/remotes/origin/{branch}"
+    offline = test_nightly_git("fetch", "--quiet", "origin", f"+refs/heads/{branch}:{ref}") is None
+    head = test_nightly_git("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
+    return head.strip() if head else None, offline
+def test_nightly_host():
+    """(1-minute load, cores, local hour): the facts of a firing."""
+    try:
+        load = os.getloadavg()[0]
+    except OSError:
+        load = 0.0
+    return load, os.cpu_count() or 1, dt.datetime.now().hour
+def test_nightly_worktree(path, head):
+    """Put the retained worktree at `head`, detached first so no branch can move. Ignored
+    files survive, so `node_modules` stays. Raises RuntimeError with what went wrong."""
+    known = str(path.resolve()) in canonical_repository_state(ORCHESTRATOR_HOME)["checkout_roots"]
+    if path.exists() and not known:
+        raise RuntimeError(f"{path} exists and is no worktree of this repository")
+    steps = [(("checkout", "--quiet", "--force", "--detach", head), path), (("clean", "-ffdq"), path)] \
+        if path.exists() else [(("worktree", "add", "--quiet", "--force", "--detach", str(path), head), None)]
+    for step, cwd in steps:
+        if test_nightly_git(*step, cwd=cwd) is None:
+            raise RuntimeError(f"git {step[0]} failed for {path}")
+def test_nightly_run(nightly, runs, settings, head, offline):
+    """Steps 5 to 7 of a firing: the exit code, or None when the run never got a slot
+    and so tested nothing. Any other end, a killed suite included, leaves a record."""
+    run_id, start, log = runs.new_id(), time.monotonic(), TEST_STATE / nightly.LOG_FILE
+    def finish(code, step, failed=()):
+        at = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat()
+        atomic_json_state(TEST_STATE / nightly.RECORD_FILE, nightly.build_record(
+            run_id=run_id, at=at, status=nightly.FAILED if code else nightly.PASSED, head=head,
+            seconds=time.monotonic() - start, log=nightly.LOG_PATH, failed=failed, offline=offline, step=step))
+        return code
+    def refuse(message, step):
+        print(f"nogg test nightly: {message}", file=sys.stderr)
+        log.write_text(message + "\n")
+        return finish(1, step)
+    path = nightly.worktree_path(ORCHESTRATOR_HOME)
+    try:
+        test_nightly_worktree(path, head)
+    except RuntimeError as exc:
+        return refuse(str(exc), nightly.WORKTREE_STEP)
+    os.chdir(path)
+    os.environ["NOGGING_ROOT"] = str(path)   # the suite and its config are those of the tested commit
+    for command in settings["nightly"]["setup"]:
+        argv = shlex.split(command)
+        denied = run_quiet_denied(argv, run_quiet_deny_rules())
+        if denied:
+            return refuse(f"testing.nightly.setup could run {denied}, which the command floor denies",
+                          nightly.SETUP_STEP)
+        code = run_quiet(argv, str(log))
+        if code:
+            return finish(code, nightly.SETUP_STEP)
+    code = run_quiet([str(Path(__file__).resolve()), "test", "full", "--nightly"], str(log))
+    if code == TEST_EXIT_NO_SLOT:
+        return None
+    return finish(code, nightly.FULL_STEP, test_nightly_failed(nightly, runs, head, log) if code else ())
+def test_nightly_failed(nightly, runs, head, log):
+    """The failed test names, and the run's whole log kept beside the record: the
+    stage's own log is pruned with the newest 20, so a digest could outlive it."""
+    record = next((row for row in reversed(runs.read_records(TEST_STATE))
+                   if row["stage"] == "full" and row["trigger"] == "nightly" and row["head"] == head), None)
+    names = record["failed_names"] if record else []
+    try:
+        kept = sorted((TEST_STATE / "logs").glob(f"full-{record['id']}.*.log"), key=lambda path: path.stat().st_mtime) \
+            if record else []
+        if kept:
+            shutil.copyfile(kept[-1], log)
+        with open(log, encoding="utf-8", errors="replace") as lines:
+            return names or nightly.failed_from_log(lines)
+    except OSError:
+        return names
+def test_nightly():
+    """One firing of the nightly timer, gates in Decision 12's order. A gate that stops
+    the run exits 0; a run exits with its own code, so the unit shows a failure."""
+    stages, runs, slots = testing_modules()
+    nightly = testing_nightly_module()
+    settings = stages.parse_testing(CFG.get("testing"))[0]
+    done = nightly.quiet_exit(settings["nightly"]["enabled"], supervised_caller("nogg test nightly"))
+    if done:
+        print(f"nogg test nightly: {done}")
+        return
+    for key in ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE"):
+        os.environ.pop(key, None)   # a run with these set would act on the wrong repository
+    lock = test_nightly_lock()
+    if lock is None:
+        print("nogg test nightly: another nightly run is in progress")
+        return
+    def skip(reason, head=None):
+        print(f"nogg test nightly: skipped: {reason}")
+        try:
+            runs.append_record(TEST_STATE, runs.build_record(stage=nightly.STAGE, trigger="nightly", status="skipped",
+                                                             exit_code=0, reason=reason, head=head))
+        except OSError as exc:
+            print(f"nogg test nightly: run record not written: {exc.strerror or exc}", file=sys.stderr)
+    branch = settings["ci"]["branch"]
+    testing_ci, ci, configured, gh, now_seconds = test_ci_inputs()
+    result, entry = testing_ci.current(ci, configured, gh, now_seconds, cache=test_ci_cache())
+    test_ci_store(entry)
+    reason = nightly.ci_skip(result["result"])
+    if reason:
+        return skip(reason)
+    head, offline = test_nightly_target(branch)
+    if head is None:
+        return skip(f"no origin/{branch} to test")
+    reason = nightly.tested_skip(test_nightly_record(), head)
+    if reason:
+        return skip(reason, head)
+    load, cores, hour = test_nightly_host()
+    reason = nightly.deferral(load, cores, slots.holders(slots.slot_root(), settings["max_parallel_heavy"]), hour)
+    if reason:
+        return skip(f"deferred: {reason}", head)
+    code = test_nightly_run(nightly, runs, settings, head, offline)
+    if code is None:
+        return skip("deferred: no heavy test slot in time", head)
+    print(f"nogg test nightly: {'failed' if code else 'passed'} at {head[:12]}")
+    sys.exit(code)
+
 def main():
     p = argparse.ArgumentParser(); sub = p.add_subparsers(dest="command", required=True)
     ch = sub.add_parser("credential-helper", help="mint an in-memory GitHub App credential for Git")
@@ -11949,8 +12148,9 @@ def main():
                     "uncommitted work, bead over the branch as well, full over everything. Budgets report and "
                     "never kill. Exits with the stage's own code, 77 when refused and 75 with no heavy slot. "
                     "`bead` ends with the integrity rule; `integrity` runs it alone; `report` prints the "
-                    "daily trend of the run records.")
-    te.add_argument("stage", choices=TEST_COMMANDS, metavar="{changed,commit,bead,full,report,integrity}")
+                    "daily trend of the run records. nightly is one firing of the nightly timer: it decides "
+                    "whether to run the full stage in a retained worktree, for repositories whose CI runs no tests.")
+    te.add_argument("stage", choices=TEST_COMMANDS, metavar="{changed,commit,bead,full,report,integrity,nightly}")
     te.add_argument("--bead", metavar="ID", help="the Bead this run belongs to (default: the session's, "
                     "then the newest [<id>] commit on the branch)")
     te.add_argument("--base", metavar="REF", help="bead, integrity: diff from the merge-base with REF "
@@ -12257,10 +12457,14 @@ def main():
             te.error("--days and --json apply only to the report command")
         if args.days is not None and args.days < 1:
             te.error("--days must be a positive number of days")
+        if args.stage == "nightly" and args.bead:
+            te.error("--bead does not apply to the nightly run")
         if args.stage == "report":
             test_report(args)
         elif args.stage == "integrity":
             test_integrity(args)
+        elif args.stage == "nightly":
+            test_nightly()
         else:
             test_stage(args)
     elif args.command == "codex-prompts-link": codex_prompts_link(args.unlink)
