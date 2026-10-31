@@ -162,12 +162,8 @@ An optional always-on Orchestration Agent can drive these for you; see
 [Orchestration](docs/operating-model.md#orchestration). Session dispatch is on by
 default: it nudges idle Leads, tracks CI and wakes the orchestrator only for decisions.
 [Session wake](docs/session-wake.md) says what that costs, how to pause it and how to
-switch it off.
-
-Recurring work belongs in an approved [scheduled loop](docs/scheduled-loops.md). An optional
-`.nogging/agent-routing.json` makes `session launch` without `--agent` try your agents in
-order ([routing](docs/configuration.md#agent_routing_file)). Pi sessions can load optional
-[Pi extensions](docs/pi-extensions.md) such as the `glm-usage` quota footer.
+switch it off. Recurring work is an approved [scheduled loop](docs/scheduled-loops.md); an optional routing
+file picks the agent for a launch ([configuration](docs/configuration.md)); Pi loads [extensions](docs/pi-extensions.md).
 
 ### Close out
 
