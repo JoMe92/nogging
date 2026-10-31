@@ -242,7 +242,7 @@ defaults:
       path: "testing-policy.md"
     values:
       parent: Guides
-      nav_order: 12
+      nav_order: 13
       description: A short, framework-neutral test policy - what to always test, what not to test, which level fits a change, where mocks belong, and why setup runs once.
   - scope:
       path: "operations.md"

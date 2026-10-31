@@ -129,4 +129,4 @@ nothing about the test result.
 | 75 | no heavy slot came free in time |
 | 77 | refused: the full-suite lock, a claimed trigger, or a deny rule |
 
-See [Configuration](configuration.md#testing) for every key of the `testing` block.
+See [Configuration](https://jome92.github.io/nogging/configuration/#testing) for every key of the `testing` block.
