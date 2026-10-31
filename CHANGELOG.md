@@ -11,6 +11,16 @@ and GitHub Releases for that history.
 
 ### Added
 
+- A nightly fallback for repositories whose CI runs no tests. `init` and `update` render
+  `systemd/nogg-nightly-<slug>.service` and `.timer` and enable nothing; `doctor` says
+  when to. `nogg test nightly` skips where CI runs the tests or the commit was already
+  tested, defers on a busy host except at the 05:17 firing, and runs
+  `testing.nightly.setup` and the full stage at low priority in a retained
+  `<main>-nightly` worktree, leaving the shared checkout untouched. It writes
+  `.nogging/state/testing/nightly-last.json`. A failed run is a `doctor` WARN and one
+  non-urgent `nightly_failed` digest item that clears when a later run passes, and a
+  fresh record locks `nogg test full` under `auto`. Run records also gain up to five
+  `failed_names` from JUnit. `remove` names the worktree. (SPEC-kps8)
 - Agents now work on the test stages. `AGENTS.md` and its installed block, the Claude
   block, `CLAUDE.md`, the autonomous and orchestrator launch prompts, the
   `backend-engineer` and `test-runner` specialists and the operating model name

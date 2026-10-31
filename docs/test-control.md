@@ -182,6 +182,62 @@ refresh stops after 10 seconds. A pull-request run does not name its base branch
 a pull request against another branch counts too; the check is meant to catch a
 repository where test jobs do not run at all. It never changes `doctor`'s exit code.
 
+## The nightly run
+
+Where no CI runs tests, a timer does it. `init` and `update` always render
+`systemd/nogg-nightly-<slug>.service` and `.timer`, because only a look at the real CI
+runs can tell whether they are needed. Nothing runs until you enable the timer, and
+`doctor` says when to, with a NOTE, where the CI result is `none` or no CI is configured
+and no nightly run is recorded:
+
+```bash
+systemctl --user link "$PWD/systemd/nogg-nightly-<slug>.service"
+systemctl --user enable --now "$PWD/systemd/nogg-nightly-<slug>.timer"
+```
+
+The timer fires at 01:17, 02:17, 03:17, 04:17 and 05:17 local time. Each firing is one
+`nogg test nightly`, which goes through these steps and stops at the first that says so:
+
+1. It exits at once when `testing.nightly.enabled` is false or a supervised session
+   calls it. Nothing is recorded.
+2. It skips when the CI result is `ran`. The cached result is used for
+   `testing.ci.cache_seconds` and refreshed after that. An `unknown` result runs: you
+   enabled the timer.
+3. It fetches `testing.ci.branch`. If the fetch fails it tests the last known
+   `origin/<branch>`, and the record says so. It skips a commit the last nightly record
+   already holds, passed or failed, so a commit runs at most once.
+4. It defers while the 1-minute load is above half the core count or a heavy slot is
+   held. The 05:17 firing runs anyway, so a busy host still gets a run.
+5. It updates the worktree at `<main>-nightly`, a sibling of the main checkout, with a
+   forced detached checkout and `git clean -ffd`. Ignored files survive, so
+   `node_modules` stays. The shared checkout and every Lead's worktree stay untouched:
+   the fetch only moves `origin/<branch>`.
+6. It runs `testing.nightly.setup`, then `nogg test full --nightly` in that worktree, at
+   `Nice=15` and idle I/O priority. The suite and its `testing` block are those of the
+   tested commit; `setup` comes from the main checkout, under the same deny rules as a
+   stage.
+7. It writes `.nogging/state/testing/nightly-last.json`: `run_id`, `at`, `status`, `head`,
+   `seconds`, `log`, up to five names in `failed`, `offline` and `step`, which says how far
+   the run got (`full`, `setup` or `worktree`). The run's whole log is kept beside it as
+   `nightly-last.log`, because the stage's own log goes with the newest 20.
+
+Every skip and deferral is one record of stage `nightly` in `runs.jsonl`, with its reason.
+A firing the gates stopped exits 0; a run exits with its own code, so the unit shows a
+failure. A run that waited `slot_wait_seconds` and got no slot tested nothing: it leaves
+no nightly record, and the next firing tries again.
+
+`nogg test full` is locked under `auto` for 3 days after a nightly record, since something
+else is testing the branch.
+
+**A failed run reaches you twice.** `doctor` prints a WARN, whether dispatch is on or not,
+and a dispatch pass holds one non-urgent [digest](session-wake.md) item of kind
+`nightly_failed`, naming the commit and the log. Both clear when a later run passes. The
+commit stays tested, so to run it again, delete `nightly-last.json`. That is also how to
+clear the WARN after CI starts running tests, because the nightly run then skips.
+
+To stop using it, disable the timer, then remove the worktree with `git worktree remove
+--force <main>-nightly`. `remove` names both.
+
 ## Exit codes
 
 | Code | Meaning |
