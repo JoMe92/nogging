@@ -149,12 +149,13 @@ has() { argv | grep -qF -- "$2" && ok "$1" || { bad "$1 (missing: $2)"; argv; };
 lacks() { argv | grep -qF -- "$2" && { bad "$1 (present: $2)"; argv; } || ok "$1"; }
 said() { grep -qF -- "$2" "$out" && ok "$1" || bad "$1 (missing: $2)"; }
 # field <dotted.path>: one value of the newest record, as JSON ("missing" when absent).
+# Newest by launch time: names of launches in the same second sort by their random nonce.
 field() {
   python3 - "$root" "$1" <<'PY'
 import glob, json, sys
 paths = [p for p in glob.glob(sys.argv[1] + "/.nogging/state/sessions/*.json")
          if not p.endswith(".settings.json")]
-value = json.load(open(sorted(paths)[-1]))
+value = max((json.load(open(path)) for path in paths), key=lambda rec: rec["usage_started_at"])
 for part in sys.argv[2].split("."):
     if isinstance(value, list) and int(part) < len(value):
         value = value[int(part)]
@@ -294,8 +295,8 @@ SHIM
 printf '#!/bin/sh\nexport HERDR_STUB_DIR=%q\nexec %q "$@"\n' "$work/herdr" \
   "$repo_root/scripts/fixtures/herdr/bin/herdr" >"$work/herdr-bin/herdr"
 printf '#!/bin/sh\nexec sleep 60\n' >"$work/herdr-bin/codex"
-cp "$work/agents/claude" "$work/herdr-bin/"
-chmod +x "$work/herdr-bin/herdr" "$work/herdr-bin/codex"
+cp "$work/herdr-bin/codex" "$work/herdr-bin/claude"
+chmod +x "$work/herdr-bin/herdr" "$work/herdr-bin/codex" "$work/herdr-bin/claude"
 patch_config "cfg.update(session_herdr_command='$work/herdr-bin/herdr', session_herdr_session='rt')"
 export PATH="$work/herdr-bin:$base_path" HERDR_STUB_DIR="$work/herdr"
 "$work/herdr-bin/herdr" --session rt server stop >/dev/null 2>&1 || true
@@ -305,6 +306,20 @@ expect "herdr: Codex starts" agent '"codex"'
 expect "herdr: on herdr" backend '"herdr"'
 expect "herdr: entry 1 skipped" routing.skipped.0.reason '"binary-missing"'
 said "herdr: routing line" "routing=lead#2 codex/herdr; skipped #1 pi/herdr: binary-missing"
+"$nogg" session stop "$(field name | tr -d '"')" >/dev/null 2>&1 || true
+
+# An exact resume on a herdr entry takes an allowed explicit model as on tmux.
+printf '%s\n' '{"schema_version": 1, "roles": {"lead": [{"agent": "claude", "backend": "herdr",
+  "models": {"complex": {"model": "claude-route-model"}},
+  "allow": [{"model": "claude-route-model"}, {"model": "claude-changed"}]}]}}' >"$root/.nogging/agent-routing.json"
+launched herdr-resume-origin --tier complex --full-access
+session_id=$(field claude_session_id | tr -d '"')
+"$nogg" session stop "$(field name | tr -d '"')" >/dev/null 2>&1 || true
+launched herdr-resume-explicit --agent claude --tier complex --resume "$session_id" --model claude-changed --full-access
+expect "herdr-resume-explicit: on herdr" backend '"herdr"'
+expect "herdr-resume-explicit: the explicit model" requested_model '"claude-changed"'
+expect "herdr-resume-explicit: launch provenance" model_source '"launch"'
+expect "herdr-resume-explicit: same conversation" claude_session_id "\"$session_id\""
 "$nogg" session stop "$(field name | tr -d '"')" >/dev/null 2>&1 || true
 export PATH="$work/agents:$base_path"
 
