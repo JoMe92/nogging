@@ -168,6 +168,41 @@ read -r state source _ <<<"$(cls codex 'Working (3s)' "$fx/codex-rollout-unknown
 expect "classify: an unknown rollout falls through to the pane adapter" "working pane" "$state $source"
 read -r state source _ <<<"$(cls codex '› ' "$fx/codex-rollout-unknown.jsonl")"
 [[ "$source" != rollout ]] && ok "classify: an unrecognized rollout is never read as finished" || bad "classify: unknown rollout read as $state"
+# A Codex usage limit: the rollout's terminal error is read, never taken for idle (TASK-SWF-001).
+read -r state source excerpt <<<"$(cls codex '› Ask Codex to do anything' "$fx/codex-rollout-limit.jsonl")"
+expect "classify: a rollout that ended in a usage limit is limit, even with an idle composer" "limit rollout" "$state $source"
+expect "classify: the limit excerpt is the cleaned message" "yes" \
+  "$([[ "$(cls codex '› ' "$fx/codex-rollout-limit.jsonl")" == "limit rollout You’ve hit your usage limit."* ]] && echo yes || echo no)"
+set_events turn_start turn_end
+read -r state source _ <<<"$(cls codex '› ' "$fx/codex-rollout-limit.jsonl")"
+expect "classify: an idle turn_end event does not hide a rollout limit" "limit rollout" "$state $source"
+rm -f "$events"
+read -r state source _ <<<"$(cls codex 'Working (3s)' "$fx/codex-rollout-limit-resumed.jsonl")"
+expect "classify: a resumed turn is working at once" "working rollout" "$state $source"
+read -r state source _ <<<"$(cls codex '› ' "$fx/codex-rollout-limit-relimited.jsonl")"
+expect "classify: a resume that hits the limit again is limit again" "limit rollout" "$state $source"
+read -r state source _ <<<"$(cls codex "$(cat "$fx/codex-pane-limit.txt")")"
+expect "classify: with no rollout the limit pane with an idle composer is limit" "limit pane" "$state $source"
+read -r state source _ <<<"$(cls codex "$(cat "$fx/codex-pane-limit-resumed.txt")")"
+expect "classify: a stale limit message above a resumed turn stays working" "working pane" "$state $source"
+limit_fact() { # limit_fact <rollout-fixture> <pane-file>: the dispatch evidence's limit fields, in a UTC zone
+  PANE="$(cat "$2")" ROLLOUT="$1" TZ=UTC python3 - "$nogg" <<'PY2'
+import os, sys
+from importlib.machinery import SourceFileLoader
+m = SourceFileLoader("sf_swf001u", sys.argv[1]).load_module()
+m.tmux_sessions = lambda: {"s1"}
+m.session_pane_text = lambda name, escapes=False: os.environ["PANE"]
+if os.environ["ROLLOUT"]:
+    m.resolve_codex_thread_id = lambda rec, merge=False: "thread-0001"
+    m._codex_rollout_path = lambda thread, cwd: os.environ["ROLLOUT"]
+detail = m.classify_session_detail({"name": "s1", "agent": "codex", "working_dir": "/scratch/work"})
+print(detail["state"], detail["until"], detail["at"])
+PY2
+}
+expect "limit: the reset time is read against the error's own timestamp" \
+  "limit 2026-10-31T12:51:00+00:00 2026-10-31T07:46:19.094Z" "$(limit_fact "$fx/codex-rollout-limit.jsonl" "$fx/codex-pane-limit.txt")"
+expect "limit: a message with no readable time has no reset time" \
+  "limit None 2026-10-31T07:46:19.094Z" "$(limit_fact "$fx/codex-rollout-limit-noreset.jsonl" "$fx/codex-pane-limit.txt")"
 python3 - "$repo_root/scripts/lib" "$fx" <<'PY' && ok "reader: last_turn reports the end kind, message and abort reason" || bad "reader: last_turn"
 import sys
 sys.path.insert(0, sys.argv[1])

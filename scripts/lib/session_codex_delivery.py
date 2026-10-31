@@ -17,18 +17,24 @@ TURN_STATE_LIMIT = 1 * 1024 * 1024
 
 TERMINAL_EVENTS = {"task_complete", "turn_aborted", "turn_interrupted", "task_aborted", "task_interrupted"}
 EXCERPT_SOURCE_LIMIT = 4000
+ERROR_MESSAGE_LIMIT = 200
 
 
 def last_turn(path: str | os.PathLike[str]) -> dict[str, Any]:
     """Read bounded Codex rollout events and describe the last turn.
 
     Returns {"state": running|idle|none, "end": task_complete|aborted|None,
-    "message": raw last_agent_message or None, "reason": abort reason or None}.
+    "message": raw last_agent_message or None, "reason": abort reason or None,
+    "error": the terminal record's error or None}. `error` is {"kind":
+    codex_error_info when it is a string else None, "message": at most 200
+    characters, "at": the record's timestamp}; a clean turn, or an error of a
+    shape this reader does not know, has none, and a non-string kind is never
+    guessed.
     Only a task_started followed by a terminal task event proves an idle turn.
     Unknown event names and unreadable records are ignored so newer Codex
     versions stay readable and nothing is read as finished by guesswork.
     """
-    result: dict[str, Any] = {"state": "none", "end": None, "message": None, "reason": None}
+    result: dict[str, Any] = {"state": "none", "end": None, "message": None, "reason": None, "error": None}
     try:
         source = Path(path)
         with source.open("rb") as stream:
@@ -47,7 +53,7 @@ def last_turn(path: str | os.PathLike[str]) -> dict[str, Any]:
             payload = record.get("payload")
             event = payload.get("type") if isinstance(payload, dict) else None
             if event == "task_started":
-                result.update(state="running", end=None, message=None, reason=None)
+                result.update(state="running", end=None, message=None, reason=None, error=None)
             elif event in TERMINAL_EVENTS and result["state"] == "running":
                 message = payload.get("last_agent_message")
                 reason = payload.get("reason")
@@ -55,10 +61,23 @@ def last_turn(path: str | os.PathLike[str]) -> dict[str, Any]:
                     state="idle",
                     end="task_complete" if event == "task_complete" else "aborted",
                     message=message[:EXCERPT_SOURCE_LIMIT] if isinstance(message, str) else None,
-                    reason=reason[:200] if isinstance(reason, str) else None)
+                    reason=reason[:200] if isinstance(reason, str) else None,
+                    error=_turn_error(payload.get("error"), record.get("timestamp")))
         return result
     except (OSError, ValueError, TypeError):
-        return {"state": "none", "end": None, "message": None, "reason": None}
+        return {"state": "none", "end": None, "message": None, "reason": None, "error": None}
+
+
+def _turn_error(error: Any, stamp: Any) -> dict[str, Any] | None:
+    """The terminal record's error, bounded; None for anything this reader does not know."""
+    if not isinstance(error, dict):
+        return None
+    kind, message = error.get("codex_error_info"), error.get("message")
+    if not isinstance(message, str) and not isinstance(kind, str):
+        return None
+    return {"kind": kind if isinstance(kind, str) else None,
+            "message": message[:ERROR_MESSAGE_LIMIT] if isinstance(message, str) else "",
+            "at": stamp if isinstance(stamp, str) else None}
 
 
 def turn_state(path: str | os.PathLike[str]) -> str:

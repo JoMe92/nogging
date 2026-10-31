@@ -122,5 +122,52 @@ class LastTurnTests(unittest.TestCase):
         self.assertIsNone(turn["message"])
 
 
+
+
+FIXTURES = Path(__file__).resolve().parent.parent / "fixtures" / "session-signals"
+
+
+class TurnErrorTests(unittest.TestCase):
+    def test_a_usage_limit_is_the_terminal_error_of_the_turn(self):
+        turn = reader.last_turn(FIXTURES / "codex-rollout-limit.jsonl")
+        self.assertEqual("idle", turn["state"])
+        self.assertEqual("usage_limit_exceeded", turn["error"]["kind"])
+        self.assertEqual("2026-10-31T07:46:19.094Z", turn["error"]["at"])
+        self.assertIn("try again at 12:51 PM", turn["error"]["message"])
+
+    def test_a_clean_turn_has_no_error_and_a_new_turn_clears_it(self):
+        self.assertIsNone(reader.last_turn(FIXTURES / "codex-rollout-complete.jsonl")["error"])
+        resumed = reader.last_turn(FIXTURES / "codex-rollout-limit-resumed.jsonl")
+        self.assertEqual(("running", None), (resumed["state"], resumed["error"]))
+
+    def test_the_newest_error_wins(self):
+        turn = reader.last_turn(FIXTURES / "codex-rollout-limit-relimited.jsonl")
+        self.assertEqual("2026-10-31T12:52:04.100Z", turn["error"]["at"])
+        self.assertIn("3:30 PM", turn["error"]["message"])
+
+    def test_an_object_kind_is_no_kind_and_the_message_is_bounded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "r.jsonl"
+            lines = [{"type": "event_msg", "payload": {"type": "task_started"}},
+                     {"timestamp": "2026-10-31T01:00:00Z", "type": "event_msg",
+                      "payload": {"type": "task_complete", "error": {"message": "x" * 500,
+                                                                      "codex_error_info": {"http": 500}}}}]
+            path.write_text("\n".join(json.dumps(line) for line in lines) + "\n")
+            error = reader.last_turn(path)["error"]
+            self.assertIsNone(error["kind"])
+            self.assertEqual(200, len(error["message"]))
+
+    def test_an_unknown_error_shape_is_none(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "r.jsonl"
+            for error in ("boom", 5, ["x"], {}, {"other": 1}):
+                lines = [{"type": "event_msg", "payload": {"type": "task_started"}},
+                         {"type": "event_msg", "payload": {"type": "task_complete", "error": error}}]
+                path.write_text("\n".join(json.dumps(line) for line in lines) + "\n")
+                self.assertIsNone(reader.last_turn(path)["error"], error)
+
+    def test_a_missing_rollout_has_no_error(self):
+        self.assertIsNone(reader.last_turn("/nonexistent/rollout.jsonl")["error"])
+
 if __name__ == "__main__":
     unittest.main()
