@@ -100,6 +100,7 @@ class Result:
 
     def __init__(self):
         self.tests_added = []        # [(path, name)]
+        self.tests_moved = []        # [(path, name)], added names the range also removes elsewhere
         self.tests_deleted = []      # [(path, name)], names not added anywhere in the range
         self.skips_added = []        # [(path, line)]
         self.assertion_deltas = {}   # path -> added minus removed, moves netted out
@@ -107,7 +108,7 @@ class Result:
         self.findings = []
 
     def as_dict(self):
-        return {'tests_added': self.tests_added, 'tests_deleted': self.tests_deleted,
+        return {'tests_added': self.tests_added, 'tests_moved': self.tests_moved, 'tests_deleted': self.tests_deleted,
                 'skips_added': self.skips_added, 'assertion_deltas': self.assertion_deltas,
                 'deleted_files': self.deleted_files, 'findings': [tuple(f) for f in self.findings]}
 
@@ -272,6 +273,7 @@ def analyse(diff_text):
         per_file.append((f, lang, removed, a_lines, r_lines, a_skips))
 
     # A name removed and added anywhere in the range is a move; the rest is gone.
+    result.tests_moved = [t for t in result.tests_added if t[1] in names_removed]
     gone = {n for n in names_removed if n not in names_added}
     for name in sorted(gone):
         for path in names_removed[name]:
