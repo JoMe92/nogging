@@ -34,5 +34,6 @@
     "test-runner": {"name": "Nogging Test Runner", "email": "test-runner@nogging.bot"}
   },
   "multi_machine": false,
+  "session_dispatch": {"retire_merged": true},
   "tier_overrides": {"complex": {"claude": {"effort": "high"}}}
 }
