@@ -124,7 +124,7 @@ refused by name.
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `task_sizing` | object | `{"bead_prod_lines": [400, 1000], "commit_lines": [100, 600]}` | The size one Bead and one commit should have. Planning and Lead guidance read it; `validate` only reports a NOTE. See [the block below](#task_sizing). |
+| `task_sizing` | object | `{"bead_prod_lines": [400, 1000], "commit_lines": [100, 600], "bead_test_lines": [1, 1500]}` | The size one Bead and one commit should have. Planning and Lead guidance read it; `validate` only reports a NOTE. See [the block below](#task_sizing). |
 
 ## Blocks
 
@@ -282,23 +282,27 @@ See [Security model](security-model.md).
 
 ### `task_sizing`
 
-An optional object with two optional keys, each a `[min, max]` pair of positive
+An optional object with three optional keys, each a `[min, max]` pair of positive
 integers. An absent key takes its default:
 
 ```json
-"task_sizing": {"bead_prod_lines": [400, 1000], "commit_lines": [100, 600]}
+"task_sizing": {"bead_prod_lines": [400, 1000], "commit_lines": [100, 600],
+                "bead_test_lines": [1, 1500]}
 ```
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
 | `bead_prod_lines` | `[min, max]` | `[400, 1000]` | Production lines (tests excluded) one task, and so one Bead, targets. The Planning Agent writes each task as a vertical slice in this range, splits one above the maximum, and tags it `[~N loc]`. A task outside the range states its reason in the tag, e.g. `[~80 loc: security fix]`. |
 | `commit_lines` | `[min, max]` | `[100, 600]` | Changed lines one commit targets. A Lead commits a Bead in several coherent steps in this range, each carrying the `[<bead-id>]` token, with tests in the same commit as the code they cover. |
+| `bead_test_lines` | `[min, max]` | `[1, 1500]` | Test lines (added plus deleted, in test files) one Bead should carry. The minimum makes a Bead with production code and no test line visible; the maximum flags a Bead that over-tests. Advisory, like the other keys. See the [testing policy](testing-policy.md). |
 
 `./scripts/nogg task-sizing` prints the ranges in effect and whether each one is
 configured or the default. `./scripts/nogg validate` adds a NOTE for an open
 task whose estimate is below the `bead_prod_lines` minimum or above its maximum
 without a reason, and for a live change most of whose open tasks carry no
-estimate. A malformed value is a WARN and keeps the default. Neither ever fails
+estimate. It also adds a NOTE for an open task whose `Tests:` field is missing or names no
+size, and for a task that already has a Bead and whose `Check:` demands the full
+suite; `validate` and `materialize` refuse that `Check:` on a task with no Bead yet. A malformed value is a WARN and keeps the default. Neither ever fails
 `validate`, so a change planned before estimates existed stays valid. See
 [Operating model](operating-model.md#task-sizing).
 
