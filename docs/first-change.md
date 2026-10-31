@@ -37,7 +37,8 @@ In Claude Code, run:
 The Planning Agent asks what you want built, then works through a fixed
 sequence: it allocates its own planning worktree, takes the planning lock,
 writes an OpenSpec change with stable task IDs in `tasks.md`, each task a
-vertical slice tagged with its size estimate `[~N loc]`, validates it,
+vertical slice tagged with its size estimate `[~N loc]` and a `Tests:` field
+that names its test scenarios and sizes, validates it,
 commits it, materializes the tasks into Beads and wires their dependencies.
 You should see it finish by releasing the lock and retiring the planning
 worktree. Nothing it wrote touches your working branch.

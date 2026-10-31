@@ -68,6 +68,15 @@ own action after kickoff.
    (production lines, tests excluded); a task outside the range names its
    reason in the tag, e.g. `[~80 loc: security fix]` or
    `[~1400 loc: generated client, one unit]`.
+   Every task also carries a `Tests:` field that names the scenarios to test
+   and a size for each: `small` (in-process, no subprocess, under a second
+   each), `medium` (local processes and temporary repositories, stubs only at
+   process boundaries, seconds each) or `large` (a packed install or a real
+   multi-process flow, only where a scenario cannot be shown smaller); a
+   documentation task says `Tests: none (<reason>)`. Its `Check:` names the
+   suites or test files the task affects and never the full suite
+   (`scripts/test`, a whole suite, `nogg test full`): `validate` and
+   `materialize` refuse that on a new task. Follow `docs/testing-policy.md`.
 
 6. **Validate.** Run `./scripts/nogg validate` and
    `openspec validate <change> --strict --no-interactive` (always name the

@@ -16,7 +16,8 @@ command and want the short answer first. Terms are in the order you meet them.
 
 - **change**: one OpenSpec change directory holding the proposal, design, specs and `tasks.md` for an agreed piece of work; see [Concepts](concepts.md).
 - **task ID**: the stable `TASK-…` identifier of one line in `tasks.md`, carried by its Bead as an `openspec:task:` label; see [Operating model](operating-model.md).
-- **task sizing**: the configured line ranges for one task (and so one Bead) and for one commit; a task is a vertical slice delivering one testable capability, tagged with its production-line estimate `[~N loc]`; see [`task_sizing`](configuration.md#task_sizing).
+- **task sizing**: the configured line ranges for one task (and so one Bead) and for one commit; a task is a vertical slice delivering one testable capability, tagged with its production-line estimate `[~N loc]` and a test budget (`bead_test_lines`); see [`task_sizing`](configuration.md#task_sizing).
+- **test policy**: the short, framework-neutral rules for what to test, at which level and what not to test, shipped as [`testing-policy.md`](testing-policy.md); each task names its tests and their size (`small`, `medium`, `large`) in a `Tests:` field.
 - **Bead**: one tracked unit of work in the Beads issue tracker, normally one task of a change; see [Concepts](concepts.md).
 - **claim**: taking a Bead for yourself with `bd update <id> --claim` before you start; see [Your first change](first-change.md).
 - **discovery**: a finding that matters to the plan, recorded on the Bead with the `discovery` label and a prose note; see [Operating model](operating-model.md#discoveries).

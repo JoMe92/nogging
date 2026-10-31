@@ -128,6 +128,20 @@ raising the maximum far above that costs more per line, not less (see
 configured commit range (step 10 above). See
 [Configuration](https://jome92.github.io/nogging/configuration/#task_sizing).
 
+Each task also carries a `Tests:` field that names the scenarios to test and
+gives each a size: `small` (in-process, no subprocess, under a second each),
+`medium` (local processes and temporary repositories, stubs only at process
+boundaries, seconds each) or `large` (a packed install or a real multi-process
+flow, only where a scenario cannot be shown smaller). A documentation task says
+`Tests: none (<reason>)`. A task's `Check:` names the suites or test files it
+affects; it never demands the full suite (bare `scripts/test`, a whole suite,
+`nogg test full`), which is CI's job. `./scripts/nogg validate` and
+`materialize` refuse such a `Check:` on a task that has no Bead yet and only
+print a NOTE for one that does; a missing `Tests:` field is a NOTE too. A
+Bead also has a test budget, `task_sizing.bead_test_lines`, the added plus
+deleted lines in test files it should stay within. What to test, and at which
+level, is in the [testing policy](testing-policy.md).
+
 ## Orchestration
 
 The **Orchestration Agent** is a third session persona, above the Planning Agent

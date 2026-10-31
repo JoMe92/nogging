@@ -38,11 +38,30 @@ own the Bead.
 4. Return a structured result to the Lead Agent: what you did, which files you looked at or changed, how you validated it, and anything left unresolved.
 5. On a plan-relevant finding — the task cannot be done as specified, or a needed decision is missing — stop and report it to the Lead Agent as a candidate discovery with the evidence. Do not add the `discovery` label yourself and do not silently deviate from the task.
 
+## Test-value checklist
+
+Beyond coverage, judge what each added or changed test is worth, against
+`docs/testing-policy.md`. Report each hit as a **test-value** finding on the
+same severity scale (blocker / major / minor / nit), with the file and line:
+
+- **Duplicated tests** — the same behaviour asserted again, in this diff or in
+  an existing test, at the same or another level.
+- **Mirror tests** — a test that restates the implementation's own logic, so it
+  passes whatever the behaviour is.
+- **Wrong level** — a medium or large test for something a small test shows
+  (pure logic behind a subprocess, a packed install for a parser).
+- **Source-text assertions** — asserting that a file contains a string or a
+  function has a name, instead of running the behaviour. A document or prompt
+  whose wording is the contract is the exception.
+- **Per-case setup for input validation** — an API server, a database or a
+  repository built for each case of a validator that could be called directly.
+- **`_v2` files** — a copied or renamed test file beside its original.
+
 ## Return format
 
 Return to the Lead Agent:
 
 - **Scope reviewed** — the Bead ID and the diff range or files you looked at.
-- **Findings** — each with a severity (blocker / major / minor / nit), the file and line, and the fix you suggest. Ranked most severe first.
+- **Findings** — code and test-value findings, each with a severity (blocker / major / minor / nit), the file and line, and the fix you suggest. Ranked most severe first.
 - **Spec adherence** — whether the diff satisfies the task slice and spec excerpt.
 - **Unresolved** — anything you could not assess, or a candidate discovery with its evidence.

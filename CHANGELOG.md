@@ -11,6 +11,17 @@ and GitHub Releases for that history.
 
 ### Added
 
+- A short, framework-neutral test policy ships as `docs/nogging/testing-policy.md`
+  (what to always test, what not to test, the level per change, mocks only at
+  process boundaries, expensive setup once per run, no real sleeps). The
+  `code-reviewer` specialist gains a test-value checklist. A `tasks.md` task now
+  carries a `Tests:` field with sizes (`small`, `medium`, `large`) in every
+  runtime's planning prompt; `nogg validate` and `materialize` refuse a new task
+  whose `Check:` demands the full suite (bare `scripts/test`, a whole suite,
+  `nogg test full`) before any Bead is created, and only print a NOTE for a task
+  that already has a Bead. A missing or sizeless `Tests:` field is a NOTE.
+  `task_sizing.bead_test_lines` (default `[1, 1500]`) adds a per-Bead test-line
+  budget to `nogg task-sizing`. (SPEC-s8ev)
 - `nogg usage install-statusline --dry-run` previews the wrapper, the composed
   command and a diff of the Claude `settings.json` and writes nothing. A real
   install now backs up `settings.json` (`.nogging-install.bak`) and records
