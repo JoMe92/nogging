@@ -14,6 +14,7 @@ import sys
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import testing_diff  # noqa: E402
+import testing_runs as runs  # noqa: E402
 import token_usage_report as usage  # noqa: E402
 
 SCHEMA = "nogg.test.report/v1"
@@ -218,6 +219,46 @@ def bead_findings(lines, limits):
             found.append({"bead": bead, "test_lines": row["test_lines"],
                           "production_lines": row["production_lines"], "message": message})
     return found
+
+
+DISCOVERY_LABEL = "discovery"
+
+
+def parse_trailer_log(text):
+    """[(sha, subject, reason)] of the commits in `git log --format=%H%x1f%s%x1f
+    %(trailers:key=Test-Integrity,valueonly,unfold)%x1e` text that carry a
+    non-empty Test-Integrity reason."""
+    commits = []
+    for chunk in text.split("\x1e"):
+        sha, _, rest = chunk.strip("\n").partition("\x1f")
+        subject, _, reason = rest.partition("\x1f")
+        if sha.strip() and reason.strip():
+            commits.append((sha.strip(), subject, reason.strip()))
+    return commits
+
+
+def discovery_gaps(commits, labels_of):
+    """One line per Bead whose commit justifies a weakened test with a
+    `Test-Integrity:` trailer but whose Bead has no `discovery` label, so the
+    note the rule also asks for does not exist (design Decision 10).
+
+    labels_of(bead) -> a set of labels, or None where the tracker is not
+    reachable; an unreachable tracker or a subject naming no Bead is no gap."""
+    gaps, seen = [], set()
+    for sha, subject, reason in commits:
+        match = runs.BEAD_TOKEN_RE.search(subject)
+        if not match or match.group(1) in seen:
+            continue
+        bead = match.group(1)
+        labels = labels_of(bead)
+        if labels is None:
+            continue
+        seen.add(bead)
+        if DISCOVERY_LABEL not in labels:
+            gaps.append(f"FLAGGED: commit {sha[:9]} justifies a weakened test (Test-Integrity: {reason}) but Bead "
+                        f"{bead} has no `{DISCOVERY_LABEL}` label; record the reason with "
+                        f"`bd update {bead} --add-label {DISCOVERY_LABEL} --append-notes \"<why>\"`")
+    return gaps
 
 
 def build_report(records, now, days, beads=()):
