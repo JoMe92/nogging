@@ -34,7 +34,8 @@ AFFECTED_SUITES=(
   antigravity-usage codex-exact-resume nogg planning-launch-profile planning-role
   session session-effort session-launch-agent-binary session-model-forwarding
   session-model-record session-models session-observability session-pid-identity
-  session-startup session-tier session-tier-overrides session-tmux-fenced-server
+  session-routing session-startup session-tier session-tier-overrides
+  session-tmux-fenced-server
   session-usage-collection usage-gate usage-history worktree-workflow
 )
 
