@@ -23,6 +23,14 @@ to switch it off.
 
 ### Added
 
+- `nogg usage install-statusline --dry-run` previews the wrapper, the composed
+  command and a diff of the Claude `settings.json` and writes nothing. A real
+  install now backs up `settings.json` (`.nogging-install.bak`) and records
+  the previous `statusLine`. New `nogg usage uninstall-statusline [--dry-run]
+  [--json]` restores only that key, backs up first, removes the wrapper and the
+  record, and is a no-op reporting `not_installed` when the capture is absent.
+  The Claude `unknown` hint now states the effect in one line and links the
+  docs section. (#280)
 - `nogg session dispatch [--once] [--dry-run] [--json]`: one deterministic
   follow-up pass with no model. It
   derives each Lead's state from live evidence, sends fixed, budgeted nudges
