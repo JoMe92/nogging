@@ -11074,6 +11074,7 @@ def doctor(audit=False, with_recover=False, with_sandbox=False, refuse_task_form
     artifact_warnings, artifact_notes = installer_artifact_diagnostics()
     warnings.extend(artifact_warnings)
     warnings.extend(task_sizing()[2])
+    warnings.extend(testing_config_warnings())
     for name, ok in checks: print(f"{'OK' if ok else 'FAIL'}  {name}")
     # Warnings are advisory (a committed-but-open Bead and the like): shown
     # distinctly from FAIL, and they never change doctor's exit code.
@@ -11536,6 +11537,176 @@ def run_quiet(command, log=None, tail=40):
             if handler is not None:
                 signal.signal(signum, handler)
 
+# `test`: one entry point per testing moment. The decisions live in
+# scripts/lib/testing_*.py; this is only the wiring and the effects. Commands go
+# through run_quiet as argv, under the deny rules of `run-quiet`, because the
+# strings come from a file a Lead can edit. A budget reports and never kills.
+TEST_STAGES = ("changed", "commit", "bead", "full")
+TEST_EXIT_REFUSED, TEST_EXIT_NO_SLOT = 77, 75
+TEST_LOGS_KEPT = 20
+TEST_STATE = ORCHESTRATOR_HOME / ".nogging/state/testing"
+def testing_modules():
+    """Load the `nogg test` logic from scripts/lib beside this script."""
+    lib = str(Path(__file__).resolve().parent / "lib")
+    if lib not in sys.path:
+        sys.path.insert(0, lib)
+    sys.dont_write_bytecode = True
+    import testing_runs, testing_slots, testing_stages
+    return testing_stages, testing_runs, testing_slots
+def testing_config_warnings():
+    """`doctor`'s WARNs for the `testing` block; no block means nothing to read."""
+    raw = CFG.get("testing")
+    return [] if raw is None else testing_modules()[0].parse_testing(raw)[1]
+def test_git(*args):
+    """The stdout of a read-only Git call in this checkout, or None. Bytes first:
+    a path in a change set need not be valid UTF-8."""
+    try:
+        result = subprocess.run(["git", *args], cwd=ROOT, capture_output=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return os.fsdecode(result.stdout) if result.returncode == 0 else None
+def test_changed_paths(stage, settings, base):
+    """(paths, notes) of a stage's change set: tracked changes and untracked
+    files against HEAD, plus for `bead` the diff from its merge-base. --no-renames
+    and --diff-filter=d leave a moved or deleted path's old name out."""
+    diff = ("diff", "--name-only", "-z", "--no-renames", "--diff-filter=d")
+    outputs, notes = [test_git(*diff, "HEAD"), test_git("ls-files", "--others", "--exclude-standard", "-z")], []
+    if stage == "bead":
+        ref = base or f"origin/{settings['ci']['branch']}"
+        point = test_git("merge-base", ref, "HEAD")
+        if point:
+            outputs.append(test_git(*diff, point.strip(), "HEAD"))
+        elif base:
+            raise RuntimeError(f"test: no merge-base with --base {base}")
+        else:
+            notes.append(f"note: no merge-base with {ref}; the change set is the uncommitted work only")
+    return [path for output in outputs if output for path in output.split("\0") if path], notes
+def test_last_nightly():
+    """When the last nightly record was written, in epoch seconds, or None."""
+    try:
+        stamp = json.loads((TEST_STATE / "nightly-last.json").read_text()).get("at")
+        return dt.datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
+    except (OSError, ValueError, AttributeError):
+        return None
+def test_log_dir():
+    """The main checkout's log directory, or None for run-quiet's default log
+    when a fenced session cannot write there: no log place stops a test."""
+    logs = TEST_STATE / "logs"
+    try:
+        logs.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return None
+    return logs if os.access(logs, os.W_OK) else None
+def test_bead(explicit, rec, settings, runs):
+    """--bead, then the session's Bead, then the newest token on this branch."""
+    if explicit or (rec or {}).get("bead_id"):
+        return explicit or rec["bead_id"]
+    subjects = test_git("log", "--format=%s", "-n", "200", f"origin/{settings['ci']['branch']}..HEAD")
+    return runs.bead_from_subjects(subjects.splitlines()) if subjects else None
+def test_slot(slots, settings, stage, finish):
+    """Take a heavy slot for this run: (descriptor, seconds waited). It stays held
+    until this process exits, however it exits. No slot in time ends the run."""
+    root, count = slots.slot_root(), settings["max_parallel_heavy"]
+    wait = settings["slot_wait_seconds"]
+    def waiting(held):
+        print(f"waiting for a heavy test slot, held by {', '.join(held) or 'another run'}; up to {wait} s", flush=True)
+    try:
+        fd, waited = slots.acquire(root, count, stage, wait, waiting, slots.poll_seconds())
+    except slots.SlotsUnusable as exc:
+        print(f"running without a heavy test slot: {exc}", flush=True)
+        return None, 0.0
+    if fd is None:
+        print(f"no heavy test slot after {waited:.0f} s (testing.slot_wait_seconds), held by "
+              f"{', '.join(slots.holders(root, count)) or 'another run'}", file=sys.stderr)
+        finish("refused", TEST_EXIT_NO_SLOT, wait_seconds=waited)
+    return fd, waited
+def test_stage(args):
+    """Run one stage and leave one record. A stage's own exit code is the result;
+    nothing after the commands (detail, budget, record, logs) can change it."""
+    stages, runs, slots = testing_modules()
+    settings = stages.parse_testing(CFG.get("testing"))[0]
+    sys.stdout.reconfigure(errors="backslashreplace")   # a path need not be valid UTF-8
+    os.chdir(ROOT)
+    stage, run_id = args.stage, runs.new_id()
+    budget = settings["budgets"][stage]
+    rec, session, role, refusal = None, os.environ.get("NOGG_SESSION_NAME"), os.environ.get("NOGG_SESSION_ROLE"), None
+    rules = []
+    try:
+        rec = run_quiet_session_record()
+        rules = run_quiet_deny_rules(rec)
+        session, role = (rec or {}).get("name") or session, (rec or {}).get("role") or role
+    except RuntimeError as exc:   # a named session with no readable rules fails closed
+        refusal = str(exc)
+    identity = dict(session=session, role=role, bead=test_bead(args.bead, rec, settings, runs),
+                    branch=(test_git("branch", "--show-current") or "").strip() or None,
+                    head=(test_git("rev-parse", "HEAD") or "").strip() or None)
+    trigger, reason = "stage", None
+    def finish(status, code, **fields):
+        fields = {"trigger": trigger, "reason": reason, **fields}
+        record = runs.build_record(stage=stage, status=status, exit_code=code, budget_seconds=budget,
+                                   run_id=run_id, **identity, **fields)
+        try:
+            runs.append_record(TEST_STATE, record)
+        except OSError as exc:
+            print(f"nogg test: run record not written: {exc.strerror or exc}", file=sys.stderr)
+        sys.exit(code)
+    if refusal:
+        print(refusal, file=sys.stderr)
+        finish("refused", TEST_EXIT_REFUSED, trigger="none")
+    ci_configured = bool(stages.ci_files(ROOT))
+    if stage == "full":
+        last = test_last_nightly()
+        decision = stages.full_decision(settings, ci_configured, stages.nightly_in_use(last, time.time()),
+                                        release=args.release, nightly=args.nightly, allow_full=args.allow_full,
+                                        role=role, supervised=bool(session or role))
+        if not decision["allowed"]:
+            print(decision["message"], file=sys.stderr)
+            finish("refused", TEST_EXIT_REFUSED, trigger=decision["trigger"])
+        trigger, reason = decision["trigger"], decision["reason"]
+    commands = stages.stage_commands(stage, settings, ci_configured=ci_configured,
+                                     test_changed=os.access("scripts/test-changed", os.X_OK))
+    needs_files = stage != "full" and any("{files}" in c or "{test_files}" in c for c in commands)
+    paths, notes = test_changed_paths(stage, settings, args.base) if needs_files else ([], [])
+    files, test_files = stages.change_set(paths)
+    results = tempfile.mkdtemp(prefix="nogg-test.")
+    try:
+        steps, skipped = stages.plan_stage(commands, files, test_files,
+                                           lambda i: (f"{results}/junit.{i}.xml", f"{results}/timings.{i}.tsv"))
+        if not steps:
+            print(stages.skip_line(stage, skipped))
+            for note in notes:
+                print(note)
+            finish("skipped", 0)
+        denied = next(filter(None, (run_quiet_denied(step["argv"], rules) for step in steps)), None)
+        if denied:
+            print(f"refusing: the wrapped command could run {denied}, which this session's deny rules or the "
+                  "command floor deny; a wrapper never lifts them", file=sys.stderr)
+            finish("refused", TEST_EXIT_REFUSED)
+        slot, waited = test_slot(slots, settings, stage, finish) if stage in settings["heavy_stages"] else (None, 0.0)
+        logs, ran, code = test_log_dir(), [], 0
+        start = time.monotonic()
+        for number, step in enumerate(steps):
+            ran.append(step)
+            code = run_quiet(step["argv"], str(logs / f"{stage}-{run_id}.{number}.log") if logs else None)
+            if code:
+                break
+        seconds = time.monotonic() - start
+        detail = runs.read_detail(ran)
+        over = stages.over_budget(seconds, budget)
+        for note in notes:
+            print(note)
+        if over:
+            print(stages.budget_line(stage, seconds, budget))
+        if over or stage in ("bead", "full"):
+            for test in detail["slowest"][:runs.SLOWEST_PRINTED]:
+                print(f"slowest: {test['seconds']:.1f} s {test['name']}")
+        if logs:
+            runs.prune_logs(logs, TEST_LOGS_KEPT)
+        finish("failed" if code else "passed", code, seconds=seconds, wait_seconds=waited,
+               over_budget=over, detail=detail)
+    finally:
+        shutil.rmtree(results, ignore_errors=True)
+
 def main():
     p = argparse.ArgumentParser(); sub = p.add_subparsers(dest="command", required=True)
     ch = sub.add_parser("credential-helper", help="mint an in-memory GitHub App credential for Git")
@@ -11607,6 +11778,19 @@ def main():
     rq.add_argument("--tail", metavar="N", type=run_quiet_tail_count, default=40,
         help="log lines printed on failure (default 40)")
     rq.add_argument("stray", nargs="*", help=argparse.SUPPRESS)   # a command given without --
+    te = sub.add_parser("test", help="run one test stage under its budget and leave a run record",
+        description="Run the commands of one test stage through run-quiet: changed and commit over the "
+                    "uncommitted work, bead over the branch as well, full over everything. Budgets report and "
+                    "never kill. Exits with the stage's own code, 77 when refused and 75 with no heavy slot.")
+    te.add_argument("stage", choices=TEST_STAGES)
+    te.add_argument("--bead", metavar="ID", help="the Bead this run belongs to (default: the session's, "
+                    "then the newest [<id>] commit on the branch)")
+    te.add_argument("--base", metavar="REF", help="bead: diff from the merge-base with REF "
+                    "(default: origin/<testing.ci.branch>)")
+    te.add_argument("--release", action="store_true", help="full: a release run; operator shell or "
+                    "Orchestration Agent only")
+    te.add_argument("--nightly", action="store_true", help="full: the nightly run; refused in any supervised session")
+    te.add_argument("--allow-full", metavar="REASON", help="full: run despite the lock; the reason is recorded")
     shk = sub.add_parser("session-hooks", help="manage the user-level Codex Stop hook behind the stop guard")
     shk.add_argument("action", choices=("status", "install", "remove"))
     shk.add_argument("--agent", choices=("codex",), required=True)
@@ -11893,6 +12077,12 @@ def main():
             rq.error(f"refusing: the wrapped command could run {denied}, which this session's deny "
                      "rules or the command floor deny; a wrapper never lifts them")
         sys.exit(run_quiet(run_quiet_command, args.log, args.tail))
+    elif args.command == "test":
+        if args.stage != "full" and (args.release or args.nightly or args.allow_full is not None):
+            te.error("--release, --nightly and --allow-full apply only to the full stage")
+        if args.base is not None and (args.stage != "bead" or not args.base or args.base.startswith("-")):
+            te.error("--base applies only to the bead stage and takes a ref")
+        test_stage(args)
     elif args.command == "codex-prompts-link": codex_prompts_link(args.unlink)
     elif args.command == "pi-ext":
         if args.action == "list":

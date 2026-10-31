@@ -205,6 +205,20 @@ function dispatchDefaultNotice(ctx) {
     '(docs/nogging/session-wake.md).';
 }
 
+// The one line `update` prints for a repository with no `testing` block. Nothing is
+// written: the defaults apply, and a block of its own silences the line.
+function testingDefaultNotice(ctx) {
+  let data;
+  try {
+    data = JSON.parse(fsops.readTarget('.nogging/config.json', ctx));
+  } catch (_) {
+    return null;
+  }
+  if (data && 'testing' in data) return null;
+  return '`nogg test` runs on its defaults here: set `testing.stages` in .nogging/config.json for your own ' +
+    'test runners (docs/nogging/test-control.md).';
+}
+
 // Install the two git hooks, unless core.hooksPath diverts Git away from
 // .git/hooks (the known Beads collision) — in that case warn instead.
 function installGitHooks(ctx) {
@@ -293,6 +307,7 @@ module.exports = {
   migrateLegacyStateRoot,
   readRecordedVersion,
   dispatchDefaultNotice,
+  testingDefaultNotice,
   copyVerbatim,
   copyDocs,
   writeScaffold,

@@ -34,7 +34,7 @@ runs the whole suite: name the suites in the task, and leave the rest to CI.
   scripts/runtime-guidance-docs.test.sh, scripts/docs-site.test.sh,
   scripts/package-manifest.test.sh. Branch docs/.
 
-- [ ] TASK-TPC-002 [complex] [~850 loc] `nogg test changed|commit|bead|full` runs every stage under budgets, the full lock and host-wide slots, and leaves a record.
+- [x] TASK-TPC-002 [complex] [~850 loc] `nogg test changed|commit|bead|full` runs every stage under budgets, the full lock and host-wide slots, and leaves a record.
   Per design Decisions 1 to 8 and 14 and the test-control requirements from "One entry
   point" through "A malformed testing block". Add pure scripts/lib/testing_stages.py (the
   whole `testing` block with every key of Decision 2, stage resolution, change sets,

@@ -126,6 +126,12 @@ refused by name.
 | --- | --- | --- | --- |
 | `task_sizing` | object | `{"bead_prod_lines": [400, 1000], "commit_lines": [100, 600], "bead_test_lines": [1, 1500]}` | The size one Bead and one commit should have. Planning and Lead guidance read it; `validate` only reports a NOTE. See [the block below](#task_sizing). |
 
+## Test control
+
+| Key | Type | Default | Effect |
+| --- | --- | --- | --- |
+| `testing` | object | see the block | What `nogg test` runs per stage, its budgets, the full-suite lock and the heavy slots. See [the block below](#testing). |
+
 ## Blocks
 
 ### `usage_gate`
@@ -324,6 +330,47 @@ little output; far larger ones grow the context and the cached re-reads of
 every turn. Raising the maximum well above 1000 therefore costs more tokens per
 line, not fewer. `./scripts/nogg token-usage report --group-by bead` shows the
 figure for your own Beads (see [Token usage](token-usage.md)).
+### `testing`
+
+An optional object. Every key is optional, an absent key takes its default, and
+`update` never edits it. These are the defaults, with `stages` empty:
+
+```json
+"testing": {
+  "stages": {},
+  "budgets": {"changed": 300, "commit": 600, "bead": 1800, "full": 7200},
+  "max_parallel_heavy": 2,
+  "heavy_stages": ["bead", "full"],
+  "slot_wait_seconds": 3600,
+  "full_lock": "auto",
+  "integrity": "report",
+  "trend_threshold_percent": 30,
+  "ci": {"branch": "develop", "job_pattern": "test", "max_age_days": 7, "cache_seconds": 21600},
+  "nightly": {"enabled": true, "setup": []}
+}
+```
+
+| Key | Type | Default | Effect |
+| --- | --- | --- | --- |
+| `stages` | object | `{}` | `changed`, `commit`, `bead` and `full`, each a command string or a list run in order that stops at the first failure. A stage with no entry uses its fallback. |
+| `budgets` | object | as above | Seconds per stage. A run above its budget is reported and keeps its exit code. |
+| `max_parallel_heavy` | integer | `2` | Heavy runs at once on this host, for this user. |
+| `heavy_stages` | list | `["bead", "full"]` | The stages that take a slot. |
+| `slot_wait_seconds` | integer | `3600` | How long a heavy run waits for a slot before it exits 75. |
+| `full_lock` | string | `auto` | `auto` locks `nogg test full` where a CI configuration file exists or a nightly run is in use; `always` locks; `never` does not. |
+| `integrity` | string | `report` | `enforce` makes a test-integrity finding fail the stage. |
+| `trend_threshold_percent` | number | `30` | The week-over-week growth `doctor` reports. |
+| `ci` | object | as above | The integration branch, the job-name pattern that counts as a test job, how old a run may be, and how long a CI check is cached. `ci.branch` also sets the base of the `bead` stage. |
+| `nightly` | object | as above | Whether the nightly run may run, and the commands it runs first. |
+
+A command never goes through a shell: it is split into arguments, and it passes
+the deny rules of `run-quiet`. Four placeholders expand: `{files}` and
+`{test_files}` as a whole word, into one `./`-prefixed argument per path, and
+`{junit}` and `{timings}` into fresh result paths, also inside a word such as
+`--junitxml={junit}`. A malformed value is a `doctor` WARN naming the key, and
+that key keeps its default; an unknown key is a WARN too. Neither ever fails a
+command. See [Test control](test-control.md).
+
 ### `agent_routing_file`
 
 A repository-relative path, `.nogging/agent-routing.json` by default. It is

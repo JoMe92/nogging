@@ -312,6 +312,38 @@ leaves one line in the context, not its whole output.
 
 **Read more.** [Operating model](operating-model.md).
 
+## test
+
+**Purpose.** Run one test stage through `run-quiet`, under its budget and the
+session's deny rules, and leave one record. `changed` and `commit` cover the
+tracked changes and untracked files, `bead` adds the branch's diff from its
+merge-base, and `full` runs everything. Commands come from `testing.stages`, or
+from fallbacks that keep an existing repository working. A stage that ran nothing
+prints `skipped: <stage> ran no tests (<reason>)` and exits 0. A run above its
+budget prints an `over budget:` line and keeps its exit code. `bead` and `full`
+hold one of the host-wide heavy slots and print their five slowest tests.
+
+`full` is refused with exit 77 wherever CI runs it, unless `--release` (an
+operator shell or the Orchestration Agent), `--nightly` (outside any supervised
+session) or `--allow-full "<reason>"` permits it. The exit code is the stage's
+own, 77 when refused and 75 when no heavy slot came free in time.
+
+**Common forms.**
+
+```bash
+./scripts/nogg test changed
+./scripts/nogg test commit
+./scripts/nogg test bead [--base <ref>] [--bead <id>]
+./scripts/nogg test full --allow-full "migration touches every test"
+./scripts/nogg test full --release
+```
+
+**Used by.** A Lead Agent or specialist at each testing moment, the operator
+before a release.
+
+**Read more.** [Test control](test-control.md) and
+[Configuration](configuration.md#testing).
+
 ## session-hooks
 
 **Purpose.** Install, inspect or remove the one user-level Codex `Stop` hook that
