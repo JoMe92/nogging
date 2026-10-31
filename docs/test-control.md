@@ -108,6 +108,46 @@ cleaning. If that directory cannot be used, the run goes ahead without a slot an
 says so, because a limit that stops tests from running is worse than one that
 sometimes does not apply.
 
+## Integrity
+
+The `bead` stage ends with the test-integrity rule over the branch's change set, and
+`nogg test integrity [--base <ref>]` runs it alone. The rule is
+`scripts/check-test-integrity`: it flags a deleted test or test file, a newly added
+skip or expected failure and a modified test file whose assertion count falls, and a
+moved or renamed test is no finding. A `Test-Integrity: <reason>` trailer on a commit
+in the range justifies the findings. Where `bd` is reachable, the Bead named by that
+commit's `[<id>]` token must also carry the `discovery` label, so the reason is
+written down where a planning session reads it.
+
+`testing.integrity` sets what a finding does. At `report`, the default, findings
+print and the exit code stays the stage's own. At `enforce` an uncleared finding
+makes `bead` or `integrity` exit 1; this repository sets `enforce`. A base that does
+not resolve prints a line in `bead` and exits 2 in `integrity`. A consumer gets the
+check through `nogg test bead`; to enforce it in CI too, add the one line shown in
+[Operating model](operating-model.md).
+
+`bead` also prints the Bead's test-line count against `task_sizing.bead_test_lines`.
+A Bead above the maximum, or one that changes production code with no test line,
+gets a `NOTE:` naming the count and the budget. It never changes the exit code.
+
+## Reading the cost
+
+`nogg test report [--days N] [--json]` prints, for the last `N` days (default 14), a
+row per day and stage with the runs, failures, median seconds and over-budget runs,
+then the week-over-week change of each stage's median, the slowest tests, the full
+runs with their trigger and reason, and the Beads outside `bead_test_lines`. With no
+record yet it says so and exits 0. `--json` prints the same as one document.
+`token-usage report --group-by bead` adds the per-Bead columns described in
+[Token usage](token-usage.md).
+
+`doctor` turns the same records into NOTEs, never a WARN or a failure:
+
+- a stage whose median over the last 7 days exceeds the 7 days before by
+  `testing.trend_threshold_percent` (default 30), with at least three runs in each
+  window;
+- a stage whose latest run was over its budget;
+- a Lead session's `--allow-full` in the last 7 days.
+
 ## Run records
 
 Each run appends one JSON line to `.nogging/state/testing/runs.jsonl` in the main

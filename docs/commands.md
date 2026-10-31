@@ -328,6 +328,11 @@ operator shell or the Orchestration Agent), `--nightly` (outside any supervised
 session) or `--allow-full "<reason>"` permits it. The exit code is the stage's
 own, 77 when refused and 75 when no heavy slot came free in time.
 
+`bead` also prints the Bead's test-line count against `task_sizing.bead_test_lines`
+and ends with the test-integrity rule; `integrity` runs that rule alone, and
+`testing.integrity: enforce` makes an uncleared finding exit 1. `report` prints the
+daily cost and trend of the run records. The `doctor` NOTEs read the same records.
+
 **Common forms.**
 
 ```bash
@@ -336,6 +341,8 @@ own, 77 when refused and 75 when no heavy slot came free in time.
 ./scripts/nogg test bead [--base <ref>] [--bead <id>]
 ./scripts/nogg test full --allow-full "migration touches every test"
 ./scripts/nogg test full --release
+./scripts/nogg test integrity [--base <ref>]
+./scripts/nogg test report [--days N] [--json]
 ```
 
 **Used by.** A Lead Agent or specialist at each testing moment, the operator

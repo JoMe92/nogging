@@ -22,6 +22,18 @@ and GitHub Releases for that history.
   is found, a NOTE for an old test job or for no CI, nothing when `gh` is unreachable,
   cached in `.nogging/state/testing/ci-check.json`, never changing the exit code.
   (SPEC-4598)
+- Test cost is visible. `nogg test report [--days N] [--json]` prints a daily row
+  per stage (runs, failures, median seconds, over-budget runs), the week-over-week
+  change, the slowest tests, explicit full runs and the Beads outside
+  `task_sizing.bead_test_lines`. `token-usage report --group-by bead` adds tests
+  added, tests deleted, skips added and stage seconds per Bead, keeping every
+  existing JSON field. `doctor` prints a NOTE when a stage's median rises past
+  `testing.trend_threshold_percent` week over week, when its latest run was over
+  budget, or when a Lead session used `--allow-full`. `nogg test bead` prints the
+  Bead's test-line count and ends with the integrity rule, and `nogg test
+  integrity [--base <ref>]` runs it alone; `testing.integrity` sets `report` or
+  `enforce`, and a `Test-Integrity:` trailer also needs a `discovery` label on its
+  Bead where `bd` is reachable. This repository sets `enforce`. (SPEC-sxk7)
 - A short, framework-neutral test policy ships as `docs/nogging/testing-policy.md`
   (what to always test, what not to test, the level per change, mocks only at
   process boundaries, expensive setup once per run, no real sleeps). The

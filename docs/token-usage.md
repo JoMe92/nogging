@@ -64,10 +64,13 @@ Bead at launch is grouped under `-`. Each row shows:
 | `TOTAL` | All input (cached and fresh) plus output. |
 | `COMMITS`, `PROD_LINES` | The Bead's commits and their production lines (see below). |
 | `FRESH/LINE`, `OUT/LINE`, `TOTAL/LINE` | Those tokens divided by production lines. |
+| `TESTS+`, `TESTS-`, `SKIPS+` | Tests added, tests deleted and skips added across the Bead's commits (see below). |
+| `TEST_SECS(c/m/b/f)` | Seconds the Bead's `nogg test` runs took in the `changed`, `commit` (`m`), `bead` and `full` stages. |
 
 `--json` carries the same fields: `work` for the tokens, plus `commits`,
-`production_lines`, `test_lines` and `per_production_line`. A `beads` list
-holds the per-Bead totals.
+`production_lines`, `test_lines` and `per_production_line`, and the test cost
+fields `tests_added`, `tests_deleted`, `skips_added` and `stage_seconds` (an
+object keyed by stage). A `beads` list holds the per-Bead totals.
 
 **Fresh input per runtime.** The stored input always includes cache reads, so
 fresh input is input minus cache read for every runtime:
@@ -107,6 +110,17 @@ The commits are not limited to the report window, so make `--from`/`--to`
 cover the Bead's whole run. The git fields are null (`-` in text) when git is
 unavailable or the Bead has no commits. The per-line fields are also null
 when the Bead has no production lines, or when a row has no usage events.
+
+**Test cost.** The test fields answer whether a Bead's tests were worth
+their time. `tests_added`, `tests_deleted` and `skips_added` come from the
+same analysis as the [test-integrity rule](test-control.md#integrity), run over
+the diff of the Bead's commits as one range, so a test moved between files is
+neither added nor deleted. `stage_seconds` sums the Bead's records in
+`.nogging/state/testing/runs.jsonl`, which only `nogg test` writes; a stage the
+Bead never ran is `null` (`-` in text). All four fields are `null` when
+git is unavailable or the Bead has no commits, and they never change an existing
+field. `nogg test report` lists the Beads whose test lines fall outside
+`task_sizing.bead_test_lines`.
 
 **Reading it.** Fresh input and output per production line are the cost of
 the work itself. Cached input grows with every turn spent waiting or polling,
