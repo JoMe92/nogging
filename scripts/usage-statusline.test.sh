@@ -306,6 +306,73 @@ else
     && ok "refused malformed settings.json with manual instructions" || bad "malformed JSON error message"
 fi
 
+# --- Test 6: --dry-run previews and writes nothing; real install backs up and records ---
+env6=$(setup_test_env 6)
+export HOME="$env6/home"
+export XDG_CACHE_HOME="$env6/cache"
+export XDG_DATA_HOME="$env6/data"
+export CLAUDE_CONFIG_DIR="$env6/claude_config"
+mkdir -p "$HOME" "$XDG_CACHE_HOME" "$CLAUDE_CONFIG_DIR"
+cat >"$CLAUDE_CONFIG_DIR/settings.json" <<'JSON'
+{
+  "model": "opus",
+  "statusLine": {
+    "command": "echo upstream-line",
+    "padding": 2,
+    "type": "command"
+  }
+}
+JSON
+snapshot() { (cd "$env6" && find home cache claude_config data -print0 2>/dev/null | sort -z | xargs -0 -r stat -c '%n %F %s %Y' ; find claude_config -type f -exec sha256sum {} +); }
+before6=$(snapshot)
+"$env6/repo/scripts/nogg" usage install-statusline --dry-run >"$out" 2>&1 || bad "dry-run failed"
+after6=$(snapshot)
+[[ "$before6" == "$after6" ]] && [[ ! -e "$XDG_DATA_HOME" ]] && ok "dry-run leaves the fixture tree byte-identical, no new directories" || bad "dry-run modified the tree"
+grep -qF "would install statusline capture at $XDG_DATA_HOME/nogging/claude-statusline" "$out" \
+  && grep -qF "would compose with: echo upstream-line" "$out" \
+  && grep -qF -- "--- $CLAUDE_CONFIG_DIR/settings.json" "$out" \
+  && grep -qF -- "+++ $CLAUDE_CONFIG_DIR/settings.json" "$out" \
+  && grep -qF -- "+    \"command\": \"$XDG_DATA_HOME/nogging/claude-statusline\"" "$out" \
+  && ok "dry-run prints wrapper, composed command and settings diff" || bad "dry-run output"
+"$env6/repo/scripts/nogg" usage install-statusline --dry-run --json >"$out" 2>&1
+python3 - "$out" <<'PY' && ok "dry-run --json shape" || bad "dry-run --json"
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d['dry_run'] is True and d['status'] == 'installed' and d['composed_upstream'] == 'echo upstream-line'
+assert '+++' in d['diff'] and 'backup_path' not in d
+PY
+"$env6/repo/scripts/nogg" usage --dry-run >"$out" 2>&1 && bad "--dry-run without an action should fail" \
+  || { grep -qF "requires an action" "$out" && ok "--dry-run without an action is an argparse error"; } || bad "--dry-run w/o action message"
+
+# dry-run against a missing settings file diffs against empty and creates nothing
+env6b=$(setup_test_env 6b)
+export CLAUDE_CONFIG_DIR="$env6b/claude_config" XDG_DATA_HOME="$env6b/data"
+"$env6b/repo/scripts/nogg" usage install-statusline --dry-run >"$out" 2>&1
+[[ ! -e "$CLAUDE_CONFIG_DIR" && ! -e "$XDG_DATA_HOME" ]] && grep -qF -- "+++ $CLAUDE_CONFIG_DIR/settings.json" "$out" \
+  && ok "dry-run with no settings file creates no directory" || bad "dry-run with no settings file"
+
+# real install: backup (byte for byte, 0600) and restore record
+export CLAUDE_CONFIG_DIR="$env6/claude_config" XDG_DATA_HOME="$env6/data"
+cp "$CLAUDE_CONFIG_DIR/settings.json" "$work/settings6.orig"
+"$env6/repo/scripts/nogg" usage install-statusline >"$out" 2>&1 || bad "real install after dry-run failed"
+cmp -s "$work/settings6.orig" "$CLAUDE_CONFIG_DIR/settings.json.nogging-install.bak" \
+  && [[ "$(stat -c %a "$CLAUDE_CONFIG_DIR/settings.json.nogging-install.bak")" == "600" ]] \
+  && ok "install backs up settings byte for byte with mode 0600" || bad "install backup"
+record="$XDG_DATA_HOME/nogging/claude-statusline.restore.json"
+python3 - "$record" "$CLAUDE_CONFIG_DIR/settings.json" <<'PY' && [[ "$(stat -c %a "$record")" == "600" ]] && ok "install writes a 0600 restore record" || bad "restore record"
+import json, sys
+r = json.load(open(sys.argv[1]))
+assert r['schema_version'] == 1 and r['settings_path'] == sys.argv[2]
+assert r['previous_statusline'] == {"command": "echo upstream-line", "padding": 2, "type": "command"}
+assert r['installed_at'].endswith('Z')
+PY
+rm -f "$CLAUDE_CONFIG_DIR/settings.json.nogging-install.bak" "$record"
+"$env6/repo/scripts/nogg" usage install-statusline >"$out" 2>&1
+[[ ! -e "$CLAUDE_CONFIG_DIR/settings.json.nogging-install.bak" && ! -e "$record" ]] && grep -qF "already installed" "$out" \
+  && ok "already-installed re-run writes neither backup nor record" || bad "idempotent path wrote files"
+"$env6/repo/scripts/nogg" usage install-statusline --dry-run >"$out" 2>&1
+grep -qF "already installed; nothing would change" "$out" && ok "dry-run on an installed state reports no change" || bad "dry-run already installed"
+
 # --- Test 5: Doctor freshness hints ---
 env5=$(setup_test_env 5)
 export HOME="$env5/home"
