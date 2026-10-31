@@ -584,6 +584,11 @@ Start a supervised session for a role. It changes no Beads.
 ./scripts/nogg session launch --role lead --bead <bead-id> --agent codex --tier standard
 ```
 
+Without `--agent`, a role with a list in the agent routing file launches the first
+entry that passes; `--skip-agent <name>` skips an agent for that launch. See
+[Running work in sessions](running-work-in-sessions.md#choosing-the-agent) and `route`
+below.
+
 **Used by.** The operator and the Orchestration Agent. A specialist cannot
 launch sessions.
 

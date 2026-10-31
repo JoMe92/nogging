@@ -164,6 +164,11 @@ default: it nudges idle Leads, tracks CI and wakes the orchestrator only for dec
 [Session wake](docs/session-wake.md) says what that costs, how to pause it and how to
 switch it off.
 
+Recurring work belongs in an approved [scheduled loop](docs/scheduled-loops.md). An optional
+`.nogging/agent-routing.json` makes `session launch` without `--agent` try your agents in
+order ([routing](docs/configuration.md#agent_routing_file)). Pi sessions can load optional
+[Pi extensions](docs/pi-extensions.md) such as the `glm-usage` quota footer.
+
 ### Close out
 
 The Lead commits in coherent steps, each with the `[<ID>]` token in the

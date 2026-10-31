@@ -158,6 +158,15 @@ With no `--agent` flag the agent is the `session_agent` key in
 it opts in — per launch, or by setting that key. `session list` shows which
 agent each session runs in an `AGENT` column.
 
+**Routing.** If a role has a list in the [agent routing
+file](configuration.md#agent_routing_file), a launch without `--agent` starts the first
+entry that passes the binary, authority, backend, model and usage checks, and records
+which entry ran. When every entry is skipped the launch lists each one and exits 75.
+`--skip-agent <name>` (repeatable, routed launches only) skips an agent's entries for one
+launch. An explicit `--agent` is pinned to its entry, so that entry's `allow` list still holds. `session list`
+shows `route=#<n>` and `skipped=#<i>:<reason>` in the model column. A role with no list
+launches as before. `./scripts/nogg route` prints the effective list.
+
 The `restricted` and `trusted` authority levels mean the same *intent* for both
 agents, resolved differently:
 
