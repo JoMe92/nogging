@@ -34,6 +34,9 @@ module.exports = {
     'scripts/lib/session_pause.py',
     'scripts/lib/session_wake.py',
     'scripts/lib/session_warm.py',
+    'scripts/lib/testing_runs.py',
+    'scripts/lib/testing_slots.py',
+    'scripts/lib/testing_stages.py',
     'scripts/lib/testing_tasks.py',
     'scripts/lib/token_usage_adapters.py',
     'scripts/lib/token_usage_antigravity.py',
@@ -122,6 +125,7 @@ module.exports = {
     { from: 'docs/token-usage.md', to: 'docs/nogging/token-usage.md' },
     { from: 'docs/scheduled-loops.md', to: 'docs/nogging/scheduled-loops.md' },
     { from: 'docs/session-wake.md', to: 'docs/nogging/session-wake.md' },
+    { from: 'docs/test-control.md', to: 'docs/nogging/test-control.md' },
     { from: 'docs/testing-policy.md', to: 'docs/nogging/testing-policy.md' },
   ],
 

@@ -119,6 +119,8 @@ function cmdUpdate(args) {
   process.stdout.write(reporter.render(ctx));
   const dispatchNotice = install.dispatchDefaultNotice(ctx);
   if (dispatchNotice) process.stdout.write(`\n${dispatchNotice}\n`);
+  const testingNotice = install.testingDefaultNotice(ctx);
+  if (testingNotice) process.stdout.write(`\n${testingNotice}\n`);
   const gaps = install.readinessVerdict(ctx);
   printNextSteps(ctx, 'update', gaps);
 }

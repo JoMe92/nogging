@@ -638,6 +638,17 @@ PY
     update_out=$(update_wake)
     check "update of an older repository writes no enabled key" [ "$(wake_key enabled)" = "undefined" ]
     check "update of an older repository keeps its values" [ "$(wake_key max_nudges)" = "5" ]
+    check "a new install scaffolds the testing block with empty stages" \
+      [ "$(node -p "JSON.stringify(require('$wake/.nogging/config.json').testing.stages)")" = "{}" ]
+    check "update with a testing block prints no testing line" \
+      bash -c "! grep -q 'nogg test. runs on its defaults' <<<\"\$1\"" _ "$update_out"
+    wake_block 'del config["testing"]'
+    update_out=$(update_wake)
+    check "update of a repository with no testing block says so once" \
+      test "$(grep -c 'nogg test. runs on its defaults' <<<"$update_out")" -eq 1
+    check "and names where to set stages" grep -q 'testing.stages' <<<"$update_out"
+    check "and writes no testing block" \
+      [ "$(node -p "typeof require('$wake/.nogging/config.json').testing")" = "undefined" ]
     check "update of an older repository says so once" \
       test "$(grep -c 'Session dispatch is on' <<<"$update_out")" -eq 1
     check "and names the switch" grep -q 'session_dispatch.enabled: false' <<<"$update_out"

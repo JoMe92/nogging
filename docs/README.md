@@ -36,6 +36,7 @@ documentation site is available at <https://jome92.github.io/nogging/>.
 | [Session wake](session-wake.md) | Dispatch, the wake digest, pause and quiet hours; on by default |
 | [Testing policy](testing-policy.md) | What to test, at which level, and what not to test |
 | [Scheduled loops](scheduled-loops.md) | Recurring work as approved loop definitions |
+| [Test control](test-control.md) | One command per testing moment, with budgets, a full-suite lock and heavy slots |
 | [Model selection](model-selection.md) | Choose a model and effort level for a session |
 | [Agent identities](agent-identities.md) | Configure GitHub identities for agent personas |
 

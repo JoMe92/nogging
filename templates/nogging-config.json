@@ -28,6 +28,18 @@
     "precompact_after": "50m",
     "precompact_min_tokens": 100000
   },
+  "testing": {
+    "stages": {},
+    "budgets": {"changed": 300, "commit": 600, "bead": 1800, "full": 7200},
+    "max_parallel_heavy": 2,
+    "heavy_stages": ["bead", "full"],
+    "slot_wait_seconds": 3600,
+    "full_lock": "auto",
+    "integrity": "report",
+    "trend_threshold_percent": 30,
+    "ci": {"branch": "develop", "job_pattern": "test", "max_age_days": 7, "cache_seconds": 21600},
+    "nightly": {"enabled": true, "setup": []}
+  },
   "orchestrator_context": {"auto_compact_window": 200000, "idle_compact_min_tokens": 100000},
   "nogging_version": "0.0.0",
   "personas": {
