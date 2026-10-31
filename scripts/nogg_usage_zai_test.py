@@ -77,6 +77,16 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(quota['short'], (37, dt.datetime.fromtimestamp(1792000000, UTC)))
         self.assertEqual(quota['weekly'], (21, dt.datetime.fromtimestamp(1792200000, UTC)))
 
+    def test_credit_limit_is_the_real_response_shape(self):
+        # Observed 2026-10-31: current plans answer with CREDIT_LIMIT entries
+        # and the 5-hour window may carry no nextResetTime at all. That window
+        # is omitted; the response must still parse as supported.
+        quota = z.parse_quota(fixture('credit-limit-windows'))
+        self.assertIsNotNone(quota)
+        self.assertEqual(quota['level'], 'placeholder-level')
+        self.assertNotIn('short', quota)
+        self.assertEqual(quota['weekly'], (21, dt.datetime.fromtimestamp(1792200000, UTC)))
+
     def test_time_limit_is_ignored(self):
         quota = z.parse_quota(fixture('time-limit-unit5'))
         self.assertEqual(sorted(k for k in quota if k in ('short', 'weekly')), ['short', 'weekly'])
