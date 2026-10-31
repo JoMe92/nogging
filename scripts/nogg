@@ -2075,6 +2075,10 @@ def materialize(change):
     selected = [(task, info) for task, info in tasks.items()
                 if info["change"] == change and not info.get("archived")]
     if not selected: raise RuntimeError(f"no tasks found for change {change}")
+    # Refuse a new task that demands the full suite before the first `bd create`.
+    refusals, _notes = task_format_findings(issues, only_changes={change})
+    if refusals:
+        raise AuditError("task format refused; no Bead was created:\n- " + "\n- ".join(refusals))
     # `issues` comes from beads(), which reads the full status set, so a task
     # whose mapped Bead is already closed counts as materialized and is not
     # recreated (discovery SPEC-dvu: a partly-done change was duplicating the
@@ -2277,7 +2281,9 @@ def record_mapping_health(branch, diagnostics, processed_changes):
 # Task sizing (`task_sizing` in .nogging/config.json): the production-line range
 # one Bead targets and the line range one commit targets. Planning and Lead
 # guidance only: `validate` reports a NOTE, nothing is ever refused.
-TASK_SIZING_DEFAULTS = {"bead_prod_lines": (400, 1000), "commit_lines": (100, 600)}
+# `bead_test_lines` is the budget for added plus deleted lines in test files per Bead.
+TASK_SIZING_DEFAULTS = {"bead_prod_lines": (400, 1000), "commit_lines": (100, 600),
+                        "bead_test_lines": (1, 1500)}
 # `[~N loc]` estimates production lines (tests excluded); `[~N loc: <reason>]`
 # states why a task is smaller than the configured minimum or larger than the maximum.
 TASK_ESTIMATE_RE = re.compile(r"\[~\s*(\d+)\s*loc\b\s*(?::\s*([^\]]*))?\]", re.I)
@@ -2362,6 +2368,29 @@ def task_sizing_notes():
             notes.append(f"task sizing: {change.name}: {missing} of {len(blocks)} open tasks "
                          f"carry no [~N loc] estimate")
     return notes
+
+def task_format_findings(issues=None, only_changes=None):
+    """(refusals, notes) for the open tasks of live changes: a `Check:` that
+    demands the full suite, and a missing or sizeless `Tests:` field.
+
+    Deliberately outside `mapping_audit`: `doctor`, `recover` and `sync` read
+    that audit, and an old plan must never stall them. Only `validate` and
+    `materialize` turn a refusal into a failure.
+    """
+    mapped = set()
+    for issue in (beads() if issues is None else issues):
+        classified = classify_mapping(issue)
+        if classified.kind == "mapped":
+            mapped.add(classified.task)
+    refusals, notes = [], []
+    for change in sorted(changes(), key=lambda path: path.name):
+        file = change / "tasks.md"
+        if not file.exists() or (only_changes is not None and change.name not in only_changes):
+            continue
+        found = tasks_module().task_format_findings(open_task_blocks(file.read_text()), mapped, change.name)
+        refusals.extend(found[0])
+        notes.extend(found[1])
+    return refusals, notes
 
 def mapping_health_lines():
     last = read_last_success()
@@ -7288,6 +7317,11 @@ def wake_module():
     dispatch_module()
     import session_wake
     return session_wake
+def tasks_module():
+    """Load the pure tasks.md field checks from scripts/lib beside this script."""
+    dispatch_module()
+    import testing_tasks
+    return testing_tasks
 def pause_module():
     """Load the pure pause logic from scripts/lib beside this script."""
     dispatch_module()
@@ -10969,7 +11003,7 @@ def dispatch_health_diagnostics(moment=None):
                  for name, budget in module.spent_budgets(memory, policy))
     return warnings, notes
 
-def doctor(audit=False, with_recover=False, with_sandbox=False):
+def doctor(audit=False, with_recover=False, with_sandbox=False, refuse_task_format=False):
     # A fresh install starts with the OpenSpec write boundary closed. Bootstrap
     # the sentinel once, only when nothing has toggled the boundary yet (no
     # sentinel and no planning lock). An install whose repo has core.hooksPath
@@ -10991,6 +11025,17 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
         warnings.extend(validation_warnings)
     except Exception as exc: problems = [str(exc)]
     checks.extend((p, False) for p in problems)
+    # Task format (`Check:` and `Tests:`): only `validate` fails on it. `doctor`
+    # shows the same findings as NOTEs, so it and `sync` stay green on any plan.
+    task_refusals, task_notes = [], []
+    try:
+        task_refusals, task_notes = task_format_findings(issues)
+    except (OSError, ValueError) as exc:
+        task_notes.append(f"task format check unavailable: {exc}")
+    if refuse_task_format:
+        checks.extend((refusal, False) for refusal in task_refusals)
+    else:
+        task_notes = [f"{refusal} (validate and materialize refuse it)" for refusal in task_refusals] + task_notes
     checks.extend(loop_config_diagnostics())
     checks.extend(session_dispatch_diagnostics())
     checks.extend(pi_extensions_diagnostics())
@@ -11062,6 +11107,7 @@ def doctor(audit=False, with_recover=False, with_sandbox=False):
         notes.extend(task_sizing_notes())
     except (OSError, ValueError) as exc:
         notes.append(f"task sizing check unavailable: {exc}")
+    notes.extend(task_notes)
     if SKIP_RECORD.exists():
         try: srec = json.loads(SKIP_RECORD.read_text())
         except (ValueError, OSError): srec = {}
@@ -11876,7 +11922,8 @@ def main():
     elif args.command == "orchestrator": orchestrator_cmd(args)
     elif args.command == "pause": pause_cmd(args)
     elif args.command == "resume": resume_cmd()
-    else: doctor(args.command == "audit", getattr(args, "recover", False), getattr(args, "sandbox", False))
+    else: doctor(args.command == "audit", getattr(args, "recover", False), getattr(args, "sandbox", False),
+                 refuse_task_format=args.command == "validate")
 def session_cmd(args):
     if args.session_command == "herdr-server":
         try:

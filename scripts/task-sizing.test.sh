@@ -51,18 +51,25 @@ write_config ""
 out=$(sizing)
 check "absent key prints the default Bead range" has "$out" "bead_prod_lines: 400-1000 (default)"
 check "absent key prints the default commit range" has "$out" "commit_lines: 100-600 (default)"
+check "absent key prints the default test budget" has "$out" "bead_test_lines: 1-1500 (default)"
 
 write_config '{"bead_prod_lines": [200, 800]}'
 out=$(sizing)
 check "a configured Bead range is printed as configured" has "$out" "bead_prod_lines: 200-800 (configured)"
 check "an unset commit range keeps its default" has "$out" "commit_lines: 100-600 (default)"
 
-write_config '{"bead_prod_lines": [900, 100], "commit_lines": "many", "bogus": 1}'
+write_config '{"bead_test_lines": [10, 800]}'
+out=$(sizing)
+check "a configured test budget is printed as configured" has "$out" "bead_test_lines: 10-800 (configured)"
+
+write_config '{"bead_test_lines": [0, 99], "bead_prod_lines": [900, 100], "commit_lines": "many", "bogus": 1}'
 out=$(sizing)
 check "an inverted range falls back to the default" has "$out" "bead_prod_lines: 400-1000 (default)"
 check "a mistyped range falls back to the default" has "$out" "commit_lines: 100-600 (default)"
 check "a malformed range is a WARN" has "$out" "WARN  task_sizing.bead_prod_lines"
 check "an unknown key is a WARN" has "$out" "WARN  task_sizing.bogus"
+check "a malformed test budget falls back to the default" has "$out" "bead_test_lines: 1-1500 (default)"
+check "a malformed test budget is a WARN" has "$out" "WARN  task_sizing.bead_test_lines"
 
 # --- validate: NOTEs only, the exit code never changes -------------------------
 write_config ""
@@ -72,7 +79,8 @@ change sized '- [ ] TASK-SZ-001 Feature slice [~600 loc]
 baseline_rc=$(validate)
 out=$(cat "$work/validate.out")
 check "a well-sized change gets no task sizing NOTE" lacks "$out" "task sizing: sized"
-check "a below-minimum task with a reason gets no NOTE" lacks "$out" "TASK-SZ-002"
+sizing_notes=$(grep 'task sizing:' <<<"$out" || true)
+check "a below-minimum task with a reason gets no NOTE" lacks "$sizing_notes" "TASK-SZ-002"
 check "a ticked task is not checked" lacks "$out" "TASK-SZ-003 (~20 loc)"
 
 change small '- [ ] TASK-SM-001 Contracts only [~80 loc]
@@ -103,8 +111,9 @@ rc=$(validate)
 out=$(cat "$work/validate.out")
 check "an oversized task without a reason gets one NOTE naming it" \
   has "$out" "NOTE  task sizing: large: TASK-LG-001 (~2400 loc) above the configured 1000-line Bead maximum without a reason"
-check "an above-maximum task with a reason gets no NOTE" lacks "$out" "TASK-LG-002"
-check "an estimate equal to the maximum gets no NOTE" lacks "$out" "TASK-LG-003"
+sizing_notes=$(grep 'task sizing:' <<<"$out" || true)
+check "an above-maximum task with a reason gets no NOTE" lacks "$sizing_notes" "TASK-LG-002"
+check "an estimate equal to the maximum gets no NOTE" lacks "$sizing_notes" "TASK-LG-003"
 check "the oversized NOTE asks for a split" has "$out" "split it or state why"
 check "an oversized task is never a FAIL" bash -c '! grep -q "^FAIL.*TASK-LG" "$0"' "$work/validate.out"
 check "an oversized task never changes the validate exit code" test "$rc" = "$baseline_rc"
