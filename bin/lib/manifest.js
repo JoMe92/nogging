@@ -34,6 +34,7 @@ module.exports = {
     'scripts/lib/session_pause.py',
     'scripts/lib/session_wake.py',
     'scripts/lib/session_warm.py',
+    'scripts/lib/testing_ci.py',
     'scripts/lib/testing_runs.py',
     'scripts/lib/testing_slots.py',
     'scripts/lib/testing_stages.py',
