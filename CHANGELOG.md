@@ -9,6 +9,12 @@ and GitHub Releases for that history.
 
 ## [Unreleased]
 
+## [3.5.0] - 2026-10-31
+
+Session wake is the headline: finished or blocked sessions are noticed at once, and
+it is on by default. See `docs/session-wake.md`; set `session_dispatch.enabled: false`
+to switch it off.
+
 ### Added
 
 - `nogg session dispatch [--once] [--dry-run] [--json]`: one deterministic
@@ -38,6 +44,16 @@ and GitHub Releases for that history.
   passes `max_runtime`. `init` and `update` render
   `nogg-loops-<slug>.service` and `.timer`, and `doctor` reports the timer, a
   stalled tick and unapproved, suspended or stale loops.
+- Agent routing: an optional, user-owned `.nogging/agent-routing.json`
+  (`agent_routing_file`) lists, per role (`lead`, `specialist`, `planning`), the
+  agents to try in order, each with optional `backend`, `tiers`, per-tier `models`,
+  an `allow` list and `on_unknown`. `nogg route [check]` prints or validates it,
+  and `validate` and `doctor` report an invalid file. `session launch` without
+  `--agent` starts the first entry that passes the real binary, authority, backend,
+  selection and usage checks, or refuses with exit 75 and lists every skip. An
+  explicit `--agent` is pinned to its entry, so an `allow` list holds. `--skip-agent`
+  is repeatable, and `session list` shows `route=#<n>` and `skipped=`. No file means
+  no routing, and nothing shipped contains a preference.
 - `nogg loop add`, `list`, `show`, `log`, `pause`, `resume`, `approve` and
   `remove` for managing host-approved recurring work, with atomic host state,
   hash-bound approvals, orchestrator guidance and the scheduled-loops guide.
@@ -79,6 +95,10 @@ and GitHub Releases for that history.
 - `nogg usage --agent pi` reports the Z.ai 5-hour and weekly windows from that
   snapshot, refreshed by one bounded, key-safe probe through
   `pi auth print-api-key`. `PI_NOGG_USAGE_PROBE=0` makes it cache-only.
+- Release procedure step 7: verify the documentation site before the tag with
+  `scripts/docs-site.test.sh` and `scripts/docs-site-build` (every internal link and
+  anchor checked), after the full build repaired broken links and stale claims in
+  the site (#351). See `docs/releasing.md`.
 
 ### Changed
 
@@ -108,6 +128,16 @@ and GitHub Releases for that history.
   signal blocked at once.
 - A Codex Lead launched for a Bead acknowledges its startup turn and waits for its
   kickoff, and `recover` labels a Bead a live session owns, so no Lead adopts it.
+
+### Fixed
+
+- The Z.ai quota parser accepts `CREDIT_LIMIT` windows, so `nogg usage --agent pi`
+  and the `glm-usage` footer no longer lose the quota when the endpoint reports
+  its limit that way (#350).
+- A Lead launched for a Bead holds to its kickoff and that Bead, a Codex loop run binds
+  only to its own rollout, and `doctor` reports the loop timer as unknown when
+  `systemctl` is denied and dispatch health on the herdr backend.
+- Loop `send` runs reach a target that is waiting on background tasks.
 
 ## [3.4.0] - 2026-10-30
 

@@ -32,7 +32,7 @@ In addition to the usual target-repo prerequisites (`bd`/Beads, `python3`,
 
 ## What the installer places under `.claude/`
 
-`npx github:JoMe92/nogging#v3.4.0 init` (or `update`) installs:
+`npx github:JoMe92/nogging#v3.5.0 init` (or `update`) installs:
 
 | Path | Behaviour |
 | --- | --- |
