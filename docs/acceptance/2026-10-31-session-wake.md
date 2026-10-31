@@ -6,10 +6,11 @@ design Decision 14.
 **Overall: partial, not accepted as it stands.** Real sessions on Claude Code, Codex and
 Pi proved the core path: `turn_end` in `session watch`, a stop guard on a dirty tree on
 every runtime, a `blocked` signal out of the Codex sandbox, fixed nudges, red and green
-checks, and coalesced digests. One documented behaviour **failed**: a Codex usage limit
-is not recognised. Pi can lose lifecycle events under load. Keep-warm, pause, quiet
-hours and retirement were **not** shown live, and automated tests are not counted as
-live results here. This report does not establish Product Owner acceptance.
+checks, and coalesced digests. Two behaviours **failed**: a Codex usage limit is not
+recognised, and a red check that a later run turned green on the same commit still reads
+as failing. Pi can lose lifecycle events under load. Keep-warm, pause, quiet hours and
+retirement were **not** shown live, and automated tests are not counted as live results
+here. This report does not establish Product Owner acceptance.
 
 ## Run metadata
 
@@ -53,7 +54,7 @@ seen live, whatever the tests say.
 | 2 | Stop guard continues a Lead with a dirty tree | pass | Each tree held an untracked `swk-probe.txt`, and each stop was continued once and then allowed: `guard_continue` then `turn_end` at Claude 10:25:12, Pi 10:29:33 (its first guard shows only in the pane), Codex 11:54:59. The Pi and Codex panes show `uncommitted changes`; Claude's later `stuck` item says the same |
 | 3 | `session signal blocked` from the Codex sandbox reaches a digest | pass | Signal 11:56:02, queued 11:56:07, delivered 11:58:08 as `w-20261031T115808Z`, which matches `urgent_quiet`. The orchestrator answered in one message |
 | 4 | Fixed nudge lands only when idle | partial | Claude: 10:28:11 and 10:29:12, each after a `turn_end`. Pi: 10:32:09 and 10:34:04. Both then reached `stuck`. Codex nudges landed on a session stopped by its limit (Finding 1) |
-| 5 | Red check nudges the Lead | pass | Real Pi Lead, PR #350: 07:42:07 and 09:18:05, naming `invariants`, then `ci_stuck` at 09:19:06 once `max_ci_nudges` was spent |
+| 5 | Red check nudges the Lead | pass | Real Pi Lead, PR #350: the 07:42:07 nudge named `invariants`, which had really failed at 07:39. The second nudge at 09:18:05 and `ci_stuck` at 09:19:06 fired the same path, but on a false red (row 19) |
 | 6 | Green check produces `ready_for_review` | pass | PR #351 queued 10:59:08, held by the usage rule, delivered 11:04:09, merged 11:05:00. PR on `…ebeq…` queued 11:41:09, delivered 11:47:05 |
 | 7 | Two items coalesced into one wake | pass | `w-20261031T103108Z items=2 urgent=1`: `stuck` and `ci_stuck` in one digest |
 | 8 | Merged session retired when enabled | skipped | Never reached. The orchestrator's merge routine stops the session first: `…ykda…` at 10:33:56, `…ks3v…` 15 s after its merge at 11:05:15. No `retire` entry exists (Finding 4) |
@@ -67,6 +68,7 @@ seen live, whatever the tests say.
 | 16 | How the quota weights a read against a write | skipped | Not separable; see *Warm and cold* |
 | 17 | A comparable period against the baseline | partial | Measured, but not truly comparable; see *Against the baseline* |
 | 18 | A usage limit waits, then resumes | fail | Not on the task's list, found on the way (Finding 1) |
+| 19 | A green re-run clears a red check | fail | Not on the task's list, seen on PR #350 and PR #355 (Finding 3) |
 
 `scripts/session-wake-integration.test.sh` and `scripts/session-guard.test.sh` pass on
 this commit (159.6 s together). They cover pause and quiet hours with an injected clock
@@ -94,10 +96,17 @@ for a planning session.
    five minutes and sent no nudge. Later turns recorded correctly. Likely cause: the
    extension's `EMIT_TIMEOUT_MS` is 3000, and it kills `scripts/nogg`, whose startup alone
    took 2.2 to 3.5 s at this host's load. That is measured, not proven by reproduction.
-3. **A digest can carry a stale item.** `ci_stuck` on PR #350 was queued at 09:19, held 72
-   minutes by the usage rule, and delivered at 10:31 as "CI still failing: invariants".
-   The orchestrator checked and found `invariants` green. Item text should be read as
-   true when queued. The cause was not established.
+3. **A superseded failure still counts as red (fail, verified).** GitHub's
+   `statusCheckRollup` is per commit and keeps every run, and `_observe_checks` reports
+   any failed entry, so a later success on the same commit does not clear it. On PR #350
+   `invariants` failed at 07:39 and passed at 07:58 on head `39fa5c5`, yet the Lead was
+   nudged at 09:18 and `ci_stuck` reached the orchestrator at 10:31 as "CI still failing:
+   invariants". It reproduced on this report's own PR: #355 reused the commit of closed
+   PR #354, whose run failed, so `invariants` read as failing while `gh pr checks` showed
+   it passing, and the Lead was nudged at 12:05 and 12:08. Each false red costs a Lead
+   turn, and spends the CI budget towards a false `ci_stuck`. A new commit clears it.
+   `_pr_state_for_branch` reads the same rollup and treats a non-passing entry as
+   unresolved, so it may affect merged-state checks too; that was not tested.
 4. **`retire_merged` has no live candidate on this host.** The orchestrator stops a
    session in its own merge routine within seconds, so the dispatcher's step has not run
    on real work. This is a working-practice gap, and it leaves the feature unproven.
@@ -180,6 +189,8 @@ Each of these needs the operator or a config change, which a Lead must not make:
 - The Codex probe declined its file step, so the file for the dirty-tree guard was placed
   by the supervising Lead. The guard, the hook and the turn were real.
 - The Codex scenario ran 90 minutes late, after its limit reset.
+- PR #354 failed `invariants` because its branch name matched no `openspec/changes/`
+  directory. Its commit moved to `test/session-wake` as PR #355.
 - `./scripts/nogg worktree rebase` refused with "requester session does not own this
   checkout", so this report sits on the branch's original base. Nothing was routed around.
 
