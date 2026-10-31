@@ -13,7 +13,7 @@ are confined to *Tool notes* at the end.
    in `.nogging/config.json`; `./scripts/nogg task-sizing` prints it), is a
    Conventional Commit containing the Bead ID (e.g. `[SPEC-abc]`), and holds
    the tests for the code it changes. Test in stages, following the
-   [test policy](docs/testing-policy.md): `./scripts/nogg test changed` while
+   test policy (`docs/nogging/testing-policy.md`): `./scripts/nogg test changed` while
    working, `./scripts/nogg test commit` before each commit, and
    `./scripts/nogg test bead` once per Bead, before closing it. The full
    suite is CI's job: `./scripts/nogg test full` is only for a release, the

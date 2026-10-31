@@ -27,7 +27,7 @@ detail specific to Claude Code.
   and its scope; `scripts/nogg orchestrator {run,status,stop,restart}` and
   `.claude/commands/orchestrate.md` drive it.
 - **Claude-only:** test with the stages of `AGENTS.md` hard rule 3 and the
-  [test policy](docs/testing-policy.md) — `nogg test changed`, `commit`, `bead` —
+  test policy (`docs/nogging/testing-policy.md`) — `nogg test changed`, `commit`, `bead` —
   never `scripts/test` once per Bead.
 - **Claude-only:** a long command (a suite, a build) is one blocking `Bash`
   call with a `timeout` that covers the run (up to 10 minutes), or
