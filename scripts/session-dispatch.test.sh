@@ -32,6 +32,34 @@ else
   ok "session_dispatch_test.py skipped (installed consumer copy)"
 fi
 
+# --- the newest run of each check decides (TASK-SWF-003) -------------------------
+if [[ -d "$here/fixtures/check-rollups" ]]; then
+  python3 - "$nogg" "$here/fixtures/check-rollups" >"$work/rollup.out" 2>&1 <<'PY' && ok "latest check entries: superseded, newer, tie, pending, malformed" || { bad "latest check entries"; cat "$work/rollup.out"; }
+import json, pathlib, sys
+from importlib.machinery import SourceFileLoader
+m = SourceFileLoader("sf_swf003", sys.argv[1]).load_module()
+fx = lambda n: json.loads((pathlib.Path(sys.argv[2]) / (n + ".json")).read_text())
+def outcomes(n): return sorted((c.get("name") or c.get("context"), m._check_outcome(c)) for c in m._latest_check_entries(fx(n)))
+assert outcomes("superseded-failure") == [("lint", "pass"), ("test", "pass")]
+assert outcomes("newer-failure") == [("test", "fail")]
+assert outcomes("shared-commit") == [("test", "pass")]
+assert outcomes("tie") == [("test", "fail")]
+assert outcomes("pending-newer") == [("test", "pending")]
+assert outcomes("no-time") == [("test", "fail")]
+assert outcomes("status-context") == [("legacy", "pass")]
+assert outcomes("two-workflows") == [("test", "fail"), ("test", "pass")]
+# Pure: the input is untouched and an empty rollup stays empty.
+src = fx("superseded-failure"); m._latest_check_entries(src); assert src == fx("superseded-failure")
+assert m._latest_check_entries([]) == []
+for bad in ("malformed",):
+    try: m._latest_check_entries(fx(bad))
+    except (TypeError, AttributeError): pass
+    else: raise AssertionError("a malformed rollup was reduced")
+PY
+else
+  ok "latest check entries skipped (installed consumer copy)"
+fi
+
 # --- config refusal through doctor ----------------------------------------------
 diagnose() { # diagnose <json>: the config diagnostics for that config
   python3 - "$nogg" "$1" <<'PY'

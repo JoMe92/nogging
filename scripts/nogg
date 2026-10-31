@@ -8873,7 +8873,7 @@ def _pr_state_for_branch(branch):
         checks = row.get("statusCheckRollup")
         if not isinstance(checks, list):
             return None
-        for check in checks:
+        for check in _latest_check_entries(checks):
             outcome = check.get("conclusion") or check.get("state")
             if outcome not in ("SUCCESS", "NEUTRAL", "SKIPPED"):
                 return "CHECKS_UNRESOLVED"
@@ -9011,6 +9011,48 @@ def _check_outcome(check):
         if state == "SUCCESS": return "pass"
         return "pending" if state in CHECKS_PENDING else "fail"
     return "pending"
+_CHECK_RANK = {"pass": 0, "pending": 1, "fail": 2}
+def _check_time(check):
+    """The run's own time (`startedAt`, else `completedAt`) as a UTC
+    timestamp, or None when absent, unreadable or gh's zero placeholder."""
+    for key in ("startedAt", "completedAt"):
+        raw = check.get(key)
+        if not isinstance(raw, str) or not raw:
+            continue
+        try:
+            when = dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if when.year < 2000:
+            continue
+        return when.replace(tzinfo=when.tzinfo or dt.timezone.utc).timestamp()
+    return None
+def _latest_check_entries(rollup):
+    """Reduce a statusCheckRollup to the newest run of each check, so a
+    superseded failure no longer counts. A check run is keyed by workflow
+    and name, a status context by its context. Of two runs of one check the
+    later one wins; on a tie, or when either has no usable time, the worse
+    outcome is kept, because losing a real failure is the harm to avoid.
+    Pure; a non-dict entry raises so the caller reports `unknown`."""
+    newest = {}
+    for check in rollup:
+        if not isinstance(check, dict):
+            raise TypeError("check entry is not an object")
+        if check.get("context") and not check.get("name"):
+            key = ("context", str(check["context"]))
+        else:
+            key = ("run", str(check.get("workflowName") or ""), str(check.get("name") or ""))
+        held = newest.get(key)
+        if held is None:
+            newest[key] = check
+            continue
+        new_t, old_t = _check_time(check), _check_time(held)
+        if new_t is not None and old_t is not None and new_t != old_t:
+            if new_t > old_t:
+                newest[key] = check
+        elif _CHECK_RANK[_check_outcome(check)] > _CHECK_RANK[_check_outcome(held)]:
+            newest[key] = check
+    return list(newest.values())
 def _observe_checks(branch):
     """One remote observation of the PR checks for `branch`. Any lookup or
     decode failure yields status `unknown` with the reason; it never
@@ -9036,7 +9078,7 @@ def _observe_checks(branch):
         entries = sorted((str(c.get("name") or c.get("context") or "unnamed"),
                           str(c.get("workflowName") or ""), _check_outcome(c),
                           str(c.get("detailsUrl") or c.get("targetUrl") or ""))
-                         for c in rollup)
+                         for c in _latest_check_entries(rollup))
     except (ValueError, TypeError, AttributeError):
         return dict(obs, status="unknown", error="could not parse pull request checks")
     failed = [e[0] for e in entries if e[2] == "fail"]

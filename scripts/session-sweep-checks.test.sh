@@ -107,5 +107,37 @@ with tempfile.TemporaryDirectory() as tmp:
     assert 'gh' not in inspect.getsource(m._checks_summary)
     src = inspect.getsource(m.doctor)
     assert '_checks_summary(_load_checks_cache(' in src and 'session_sweep_checks' not in src
+# The newest run of each check decides (TASK-SWF-003): committed rollup fixtures.
+fixdir = pathlib.Path(sys.argv[1])/'scripts/fixtures/check-rollups'
+def fixture(name): return json.loads((fixdir/f'{name}.json').read_text())
+def observed(name, **kw):
+    with patch.object(m, 'run', side_effect=lambda *a, **k: result(out=json.dumps(pr(*fixture(name)))) if a[0]=='gh' else fake_run(*a)):
+        return m._observe_checks('feature')
+for name, status, failed, pending in [
+        ('superseded-failure', 'passing', [], []), ('newer-failure', 'failing', ['test'], []),
+        ('shared-commit', 'passing', [], []), ('tie', 'failing', ['test'], []),
+        ('pending-newer', 'pending', [], ['test']), ('no-time', 'failing', ['test'], []),
+        ('status-context', 'passing', [], []), ('two-workflows', 'failing', ['test'], [])]:
+    obs = observed(name)
+    assert (obs['status'], obs['failed'], obs['pending']) == (status, failed, pending), (name, obs)
+assert observed('superseded-failure')['total'] == 2
+assert observed('malformed')['status'] == 'unknown'
+# A superseded run no longer changes the fingerprint; a newer run does.
+base = fixture('superseded-failure')
+older = dict(base[0], detailsUrl='https://example.invalid/runs/0', startedAt='2026-10-31T07:00:00Z')
+def fp(rollup):
+    with patch.object(m, 'run', side_effect=lambda *a, **k: result(out=json.dumps(pr(*rollup))) if a[0]=='gh' else fake_run(*a)):
+        return m._observe_checks('feature')['fingerprint']
+assert fp(base) == fp([older] + base)
+assert fp(base) != fp(base + [dict(base[1], detailsUrl='https://example.invalid/runs/3', startedAt='2026-10-31T09:00:00Z')])
+# The merged-branch resolution reads the same reduction.
+def pr_state(name):
+    rows = [dict(state='MERGED', headRefOid=HEAD, statusCheckRollup=name if isinstance(name, list) else fixture(name))]
+    with patch.object(m, 'run', side_effect=lambda *a, **k: result(out=json.dumps(rows)) if a[0]=='gh' else fake_run(*a)):
+        return m._pr_state_for_branch('feature')
+for name, expected in [('superseded-failure', 'MERGED'), ('newer-failure', 'CHECKS_UNRESOLVED'),
+                       ('pending-newer', 'CHECKS_UNRESOLVED'), ('tie', 'CHECKS_UNRESOLVED'),
+                       ('shared-commit', 'MERGED'), ('malformed', None)]:
+    assert pr_state(name) == expected, (name, pr_state(name))
 print('Sweep checks fingerprint, acknowledgement, unknown and doctor cache regressions passed')
 PY

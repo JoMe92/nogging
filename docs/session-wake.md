@@ -108,6 +108,13 @@ Each condition is judged after a settle of 60 seconds.
 A new commit restores the nudge budget. The CI budget counts across fixes until CI is
 green, because every fix moves the head.
 
+The newest run of each check decides these CI rows. A check run is identified by its
+workflow and name, a status context by its context, and only the entry with the latest
+start time counts, so a failure that a later re-run superseded is no longer red. If two
+runs tie, or a run has no readable time, the worse outcome is kept, and a newer run that
+is still going makes the check pending. This also holds when two pull requests share a
+commit. A rollup that cannot be read is `unknown`, never passing.
+
 ## The digest format
 
 ```text

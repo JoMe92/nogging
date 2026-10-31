@@ -1,0 +1,22 @@
+[
+ {
+  "__typename": "CheckRun",
+  "name": "test",
+  "workflowName": "CI",
+  "status": "COMPLETED",
+  "conclusion": "SUCCESS",
+  "startedAt": "2026-10-31T08:00:00Z",
+  "completedAt": "2026-10-31T08:03:00Z",
+  "detailsUrl": "https://example.invalid/runs/1"
+ },
+ {
+  "__typename": "CheckRun",
+  "name": "test",
+  "workflowName": "CI",
+  "status": "COMPLETED",
+  "conclusion": "FAILURE",
+  "startedAt": "2026-10-31T08:10:00Z",
+  "completedAt": "2026-10-31T08:13:00Z",
+  "detailsUrl": "https://example.invalid/runs/2"
+ }
+]
