@@ -129,6 +129,8 @@ for rel, page in published:
         require(target_path.exists(), f"image asset is missing from {rel}: {target}")
 
     for label, target in link_re.findall(text):
+        require("\n" not in label or "[" in label or not re.search(r"\.md(#|$)", target),
+                f"{rel} link text spans a line break and jekyll-relative-links will not rewrite it: {target}")
         target = target.split("#", 1)[0].split("?", 1)[0]
         if not target or re.match(r"(?i)^(https?:|mailto:|tel:|javascript:)", target):
             continue

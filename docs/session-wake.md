@@ -51,8 +51,8 @@ Nothing depends on a hook having fired, so a missed event costs nothing. The pas
 repeatable: running it twice sends nothing twice.
 
 **The tick.** `nogg loop tick` runs from the `nogg-loops-<slug>.timer` every minute. It
-ends a pause that is due, runs one pass, then evaluates the [scheduled
-loops](scheduled-loops.md). The pass and the loops each have their own lock and their
+ends a pause that is due, runs one pass, then evaluates the
+[scheduled loops](scheduled-loops.md). The pass and the loops each have their own lock and their
 own exception boundary, so neither can fail the other.
 
 **A nudge** is a fixed message from a template, never model text. It goes only to an
