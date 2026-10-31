@@ -120,17 +120,23 @@ function unitState(name, env = process.env) {
   return 'unknown';
 }
 
-const isLoopTimer = (unit) => path.basename(unit.rel).startsWith('nogg-loops-');
-const loopService = (unit) => unit.rel.replace(/\.timer$/, '.service');
+// Timers whose service must be linked first, by the unit's name prefix.
+const PAIRED_TIMERS = { 'nogg-loops-': 'loop scheduler', 'nogg-nightly-': 'nightly test' };
+const pairedLabel = (unit) => {
+  const prefix = Object.keys(PAIRED_TIMERS).find((name) => path.basename(unit.rel).startsWith(name));
+  return prefix && PAIRED_TIMERS[prefix];
+};
+const pairedService = (unit) => unit.rel.replace(/\.timer$/, '.service');
 
 function enableHint(unit, state) {
   const suffix = state === 'unknown' ? ' if not already enabled' : '';
   if (unit.kind === 'timer') {
-    if (isLoopTimer(unit)) {
+    const label = pairedLabel(unit);
+    if (label) {
       // Enabling a timer by path links only the timer; it refuses to start
       // until its service is on the unit search path too.
-      return `Enable the loop scheduler timer${suffix}: ` +
-        `\`systemctl --user link "$PWD/${loopService(unit)}" && ` +
+      return `Enable the ${label} timer${suffix}: ` +
+        `\`systemctl --user link "$PWD/${pairedService(unit)}" && ` +
         `systemctl --user enable --now "$PWD/${unit.rel}"\``;
     }
     return `Enable the sync timer${suffix}: \`systemctl --user enable --now "$PWD/${unit.rel}"\``;
@@ -173,9 +179,12 @@ function nextStepItems(ctx, command, gaps = [], env = process.env) {
     }
   } else {
     for (const unit of ctx.units) {
-      const linked = isLoopTimer(unit) ? ` ${path.basename(loopService(unit))}` : '';
+      const linked = pairedLabel(unit) ? ` ${path.basename(pairedService(unit))}` : '';
       required.push(`Disable ${path.basename(unit.rel)} before the checkout is moved or deleted: ` +
         `\`systemctl --user disable --now ${path.basename(unit.rel)}${linked}\``);
+    }
+    if (ctx.nightlyWorktree) {
+      required.push(`Remove the nightly test worktree: \`git worktree remove --force ${ctx.nightlyWorktree}\``);
     }
     required.push('Review the shared .gitignore entries and the Git hooks left behind; ownership cannot be inferred safely.');
     required.push('Commit the removal.');

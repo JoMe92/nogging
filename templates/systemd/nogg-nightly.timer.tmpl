@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the Nogging nightly test check hourly through the night ({{NAME}})
+
+[Timer]
+OnCalendar=*-*-* 01..05:17:00
+Persistent=false
+Unit=nogg-nightly-{{SLUG}}.service
+
+[Install]
+WantedBy=timers.target

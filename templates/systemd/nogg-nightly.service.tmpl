@@ -1,0 +1,15 @@
+[Unit]
+Description=Nogging nightly test run ({{NAME}})
+After=default.target
+
+[Service]
+Type=oneshot
+WorkingDirectory={{WORKDIR}}
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+# The full stage yields to anything else this host does overnight.
+Nice=15
+IOSchedulingClass=idle
+# The 7,200 s default budget of the full stage, the 3,600 s slot wait and room for the
+# setup commands. A budget never kills a run; this bound only ends a wedged one.
+TimeoutStartSec=6h
+ExecStart={{WORKDIR}}/scripts/nogg test nightly

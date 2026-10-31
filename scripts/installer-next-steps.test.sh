@@ -80,10 +80,12 @@ check "init: the orchestrator item adds linger and is optional" \
   grep -Eq '^  5\. Enable the always-on Orchestration Agent: .*loginctl enable-linger .* \(optional\)$' <<<"$out"
 check "init: the loop timer item names the rendered unit and is optional" \
   grep -Eq '^  6\. Enable the loop scheduler timer: `systemctl --user link "\$PWD/systemd/nogg-loops-repo\.service" && systemctl --user enable --now "\$PWD/systemd/nogg-loops-repo\.timer"` \(optional\)$' <<<"$out"
+check "init: the nightly timer item links its service and is optional" \
+  grep -Eq '^  7\. Enable the nightly test timer: `systemctl --user link "\$PWD/systemd/nogg-nightly-repo\.service" && systemctl --user enable --now "\$PWD/systemd/nogg-nightly-repo\.timer"` \(optional\)$' <<<"$out"
 check "init: required items come before optional ones" \
   test "$(lineno 'Start your first plan')" -lt "$(lineno 'Enable the sync timer')"
 check "init: only optional items carry the marker" \
-  test "$(grep -c '(optional)$' <<<"$out")" -eq 3
+  test "$(grep -c '(optional)$' <<<"$out")" -eq 4
 check "init: nothing suggests plan-begin" bash -c '! grep -Fq "plan-begin" <<<"$1"' _ "$out"
 
 # --- init --no-systemd drops the unit items ---------------------------------
@@ -93,6 +95,8 @@ check "--no-systemd: still lists the required items" grep -Eq '^  3\. Start your
 check "--no-systemd: no sync timer item" bash -c '! grep -Fq "sync timer" <<<"$1"' _ "$out"
 check "--no-systemd: no orchestrator item" bash -c '! grep -Fq "Orchestration Agent" <<<"$1"' _ "$out"
 check "--no-systemd: no loop timer item" bash -c '! grep -Fq "loop scheduler" <<<"$1"' _ "$out"
+check "--no-systemd: no nightly timer item" bash -c '! grep -Fq "nightly test" <<<"$1"' _ "$out"
+check "--no-systemd: no nightly unit" test ! -e "$nosd/systemd"
 
 # --- init --dry-run prints no verdict and no steps --------------------------
 dry="$work/dry/repo"; new_repo "$dry"
@@ -111,6 +115,7 @@ check "update: exits 0" test "$status" -eq 0
 check "update: doctor is a step" grep -Eq '^  [0-9]\. Check the installation: `\./scripts/nogg doctor`' <<<"$out"
 check "update: no timer hint when the timer is enabled" bash -c '! grep -Fq "sync timer" <<<"$1"' _ "$out"
 check "update: no loop hint when its timer is enabled" bash -c '! grep -Fq "loop scheduler" <<<"$1"' _ "$out"
+check "update: no nightly hint when its timer is enabled" bash -c '! grep -Fq "nightly test timer" <<<"$1"' _ "$out"
 check "update: the disabled orchestrator is offered, without the qualifier" \
   grep -Eq '^  [0-9]\. Enable the always-on Orchestration Agent: ' <<<"$out"
 check "update: the verdict is unchanged" grep -Fxq "$verdict" <<<"$out"
@@ -123,6 +128,15 @@ check "update, probe unavailable: the timer hint is qualified" \
 check "update, probe unavailable: the loop hint is qualified" \
   grep -Eq '^  [0-9]\. Enable the loop scheduler timer if not already enabled: ' <<<"$out"
 
+# --- update: a consumer installed before the nightly units gains them ------
+rm "$repo/systemd/nogg-nightly-repo.service" "$repo/systemd/nogg-nightly-repo.timer"
+stub "$bin" systemctl "echo \"\$*\" >>'$work/systemctl.log'; exit 1"
+run "$repo" update --no-beads --no-hooks
+check "update: the nightly service is rendered" test -f "$repo/systemd/nogg-nightly-repo.service"
+check "update: the nightly timer is rendered" test -f "$repo/systemd/nogg-nightly-repo.timer"
+check "update: neither is enabled" bash -c '! grep -Eq "(^|[[:space:]])(enable|start|link)([[:space:]]|$)" "$1"' _ "$work/systemctl.log"
+check "update: the nightly timer is offered" grep -Fq 'Enable the nightly test timer if not already enabled: ' <<<"$out"
+
 # --- update: a preserved file is counted as the first step ------------------
 printf '# my edit\n' >>"$repo/.codex/rules/nogging.rules"
 run "$repo" update --no-beads --no-hooks
@@ -130,6 +144,7 @@ check "update after a local edit: the first step reviews the .nogging-new file" 
   grep -Eq '^  1\. Review each \.nogging-new file \(1\)' <<<"$out"
 
 # --- remove: the disable steps name the rendered units ----------------------
+mkdir "$repo-nightly"
 run "$repo" remove
 check "remove: exits 0" test "$status" -eq 0
 check "remove: the sync timer is disabled by name" \
@@ -138,10 +153,16 @@ check "remove: the orchestrator service is disabled by name" \
   grep -Eq '^  2\. Disable nogg-orchestrator-repo\.service .*`systemctl --user disable --now nogg-orchestrator-repo\.service`' <<<"$out"
 check "remove: the loop timer is disabled by name" \
   grep -Eq '^  3\. Disable nogg-loops-repo\.timer before the checkout is moved or deleted: `systemctl --user disable --now nogg-loops-repo\.timer nogg-loops-repo\.service`' <<<"$out"
-check "remove: shared entries are left for review" grep -Eq '^  4\. Review the shared \.gitignore entries and the Git hooks' <<<"$out"
-check "remove: the last step commits the removal" grep -Eq '^  5\. Commit the removal\.' <<<"$out"
+check "remove: the nightly timer is disabled by name" \
+  grep -Eq '^  4\. Disable nogg-nightly-repo\.timer before the checkout is moved or deleted: `systemctl --user disable --now nogg-nightly-repo\.timer nogg-nightly-repo\.service`' <<<"$out"
+check "remove: the nightly worktree is named" \
+  grep -Eq "^  5\. Remove the nightly test worktree: \`git worktree remove --force .*/repo-nightly\`" <<<"$out"
+check "remove: the worktree is left in place" test -d "$repo-nightly"
+check "remove: shared entries are left for review" grep -Eq '^  6\. Review the shared \.gitignore entries and the Git hooks' <<<"$out"
+check "remove: the last step commits the removal" grep -Eq '^  7\. Commit the removal\.' <<<"$out"
 run "$work/nosd/repo" remove
 check "remove, no units rendered: no disable step" bash -c '! grep -Fq "disable --now" <<<"$1"' _ "$out"
+check "remove, no worktree: none is named" bash -c '! grep -Fq "nightly test worktree" <<<"$1"' _ "$out"
 
 # --- the installer's doctor -------------------------------------------------
 doc="$work/doctor/repo"; new_repo "$doc"
