@@ -270,7 +270,7 @@ the filters as a bottom sheet that closes with Done, Escape or a tap outside, an
 the button. From 960 px the same filters are a sidebar and the Beads form a table. Controls are at
 least 44 pixels high and the page does not scroll sideways at 360 pixels. The table, the cards and the
 sheet were written to these rules but have not been looked at in a real browser on a phone; the
-acceptance of TASK-DSH-011 records that check.
+live acceptance of the dashboard records that check.
 
 ## Detail
 
