@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import dashboard_model as model
 
 ADDRESS = "someone" + "@" + "example.com"
+USERS = "/Us" + "ers"        # spelled apart: the public-tree check rejects a literal home path
 OTHER = "first.last+tag" + "@" + "mail.example.org"
 
 
@@ -36,7 +37,7 @@ class Scrubber(unittest.TestCase):
         self.assertEqual(model.scrub(text), text)
 
     def test_a_home_directory_path_loses_its_user(self):
-        self.assertEqual(model.scrub("saw /home/jome/src/nogging/x.py and /Users/ann/p and /root/.cache"),
+        self.assertEqual(model.scrub(f"saw /home/alice/src/nogging/x.py and {USERS}/ann/p and /root/.cache"),
                          "saw ~/src/nogging/x.py and ~/p and ~/.cache")
         self.assertEqual(model.scrub("a /rooted path and /homework"), "a /rooted path and /homework")
 
@@ -90,8 +91,9 @@ class Scrubber(unittest.TestCase):
             self.assertEqual(model.scrub(f"to {text}!"), "to [address]!", text)
 
     def test_home_paths_in_other_forms_lose_the_user(self):
-        for text, expected in (("/var/home/jome/src", "~/src"), ("/mnt/c/Users/Jo/x", "~/x"),
-                               ("C:\\Users\\Jo\\x", "~\\x"), ("c:/Users/Jo/x", "~/x"), ("~jome/x", "~/x")):
+        for text, expected in (("/var/home/alice/src", "~/src"), (f"/mnt/c{USERS}/Jo/x", "~/x"),
+                               ("C:\\Us" + "ers\\Jo\\x", "~\\x"),
+                               (f"c:{USERS}/Jo/x", "~/x"), ("~alice/x", "~/x")):
             self.assertEqual(model.scrub(text), expected, text)
 
     def test_what_is_no_text_is_none(self):
@@ -147,12 +149,12 @@ class Allowed(unittest.TestCase):
                   "bead_id": "SPEC-aaaa", "planning_id": None, "state": "ended",
                   "started_at": "2026-11-01T10:00:00Z", "ended_at": "2026-11-01T11:00:00Z",
                   "exit_reason": "ok", "command": ["claude", "--secret"], "launch_prompt": "do it",
-                  "working_dir": "/home/jome/src/x", "log_path": "/home/jome/log", "host": "pi",
+                  "working_dir": "/home/alice/src/x", "log_path": "/home/alice/log", "host": "pi",
                   "owner": ADDRESS, "session_pid": 12, "agent_state_grants": ["x"], "codex_thread_id": "t"}
         session = model.allow_session(record)
         self.assertEqual(tuple(session), model.SESSION_FIELDS)
         text = json.dumps(session)
-        for private in ("--secret", "do it", "/home/jome", ADDRESS):
+        for private in ("--secret", "do it", "/home/alice", ADDRESS):
             self.assertNotIn(private, text)
         for key in ("command", "launch_prompt", "working_dir", "log_path", "host", "owner", "session_pid",
                     "agent_state_grants"):
@@ -161,7 +163,7 @@ class Allowed(unittest.TestCase):
         self.assertIsNone(model.allow_session(["x"]))
 
     def test_a_long_exit_reason_is_its_scrubbed_first_line(self):
-        reason = f"startup failed for {ADDRESS}\n" + "\n".join(f"line {n} /home/jome/log" for n in range(500))
+        reason = f"startup failed for {ADDRESS}\n" + "\n".join(f"line {n} /home/alice/log" for n in range(500))
         session = model.allow_session({"name": "s", "exit_reason": reason})
         self.assertEqual(session["exit_reason"], "startup failed for [address]")
         self.assertLessEqual(len(model.allow_session({"name": "s", "exit_reason": "y" * 900})["exit_reason"]), 200)

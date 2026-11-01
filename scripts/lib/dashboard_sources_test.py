@@ -59,13 +59,13 @@ class Beads(unittest.TestCase):
         self.assertNotIn(ADDRESS, json.dumps(snapshot))
 
     def test_a_source_error_is_a_class_and_never_the_text(self):
-        down = "dial tcp 127.0.0.1:3307: connect: connection refused /home/jome/.beads user@example.com"
+        down = "dial tcp 127.0.0.1:3307: connect: connection refused /home/alice/.beads user@example.com"
         with self.assertRaises(cache.SourceError) as caught:
             sources.read_beads("bd", ".", Runner(fail=down))
         self.assertEqual(caught.exception.kind, "dolt_unreachable")
         self.assertNotIn("jome", str(caught.exception))
         with self.assertRaises(cache.SourceError) as caught:
-            sources.read_beads("bd", ".", Runner(fail="panic: nil pointer at /home/jome/x"))
+            sources.read_beads("bd", ".", Runner(fail="panic: nil pointer at /home/alice/x"))
         self.assertEqual((caught.exception.kind, str(caught.exception)), ("bd_error", "bd_error"))
 
     def test_a_missing_bd_a_timeout_and_bad_output_are_classified(self):
@@ -86,14 +86,14 @@ class Beads(unittest.TestCase):
 
 class Sessions(unittest.TestCase):
     def test_a_session_record_is_allow_listed_and_sorted(self):
-        records = [{"name": "b", "started_at": "2026-11-01T10:00:00Z", "command": ["x"], "log_path": "/home/jome/l"},
+        records = [{"name": "b", "started_at": "2026-11-01T10:00:00Z", "command": ["x"], "log_path": "/home/alice/l"},
                    {"name": "a", "started_at": "2026-10-01T10:00:00Z", "exit_reason": f"{ADDRESS}\nmore"},
                    "junk", {"no": "name"}]
         snapshot = sources.read_sessions(records)
         self.assertEqual([item["name"] for item in snapshot["sessions"]], ["a", "b"])
         self.assertEqual(snapshot["floor"], "2026-10-01T10:00:00Z")
         text = json.dumps(snapshot)
-        for private in ("command", "log_path", "/home/jome", ADDRESS, "more"):
+        for private in ("command", "log_path", "/home/alice", ADDRESS, "more"):
             self.assertNotIn(private, text)
 
     def test_no_record_at_all_is_absent(self):

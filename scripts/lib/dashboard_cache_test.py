@@ -163,7 +163,7 @@ class Failures(unittest.TestCase):
 
     def test_the_text_of_an_error_never_reaches_the_status(self):
         reader = Reader()
-        reader.error = RuntimeError("password=hunter2 in /home/jome/.secret")
+        reader.error = RuntimeError("password=hunter2 in /home/alice/.secret")
         refresher, _ = make({"beads": reader})
         refresher.step()
         text = json.dumps(refresher.status())
@@ -201,7 +201,7 @@ class Survival(unittest.TestCase):
 
     def test_a_gate_that_raises_is_a_failed_source_not_a_dead_thread(self):
         def gate():
-            raise PermissionError("no access to /home/jome/state")
+            raise PermissionError("no access to /home/alice/state")
         refresher, clock = make({"sessions": Reader(), "beads": Reader()}, {"sessions": gate})
         self.assertEqual(refresher.step(), "beads")
         self.assertEqual(refresher.step(), "sessions")

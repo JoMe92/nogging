@@ -16,7 +16,7 @@ import dashboard_server as ds
 import dashboard_sources as sources
 
 ADDRESS = "someone" + "@" + "example.com"
-STDERR_TEXT = "dial tcp 127.0.0.1:3307: connection refused (/home/jome/.beads, user" + "@" + "example.org)"
+STDERR_TEXT = "dial tcp 127.0.0.1:3307: connection refused (/home/alice/.beads, user" + "@" + "example.org)"
 STUB = f"""#!{sys.executable}
 import json, os, sys
 stub = os.environ["STUB_DIR"]
