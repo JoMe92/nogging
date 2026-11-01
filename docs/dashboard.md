@@ -229,6 +229,65 @@ before.
 
 ## Usage data
 
+Two sources are slow, so they refresh in the background, behind a gate, and never for a
+request. Neither adds anything to your repository.
+
+### Git
+
+The `git` source lists every commit whose subject carries a Bead token such as
+`[SPEC-1cu]`, on all local and remote-tracking branches and tags, with its production and
+test lines. Merges do not count, and a rebased or cherry-picked copy counts once.
+
+- It reloads only when the hash of `git for-each-ref` over branches, remotes and tags
+  moves. Other refs, such as Dolt's, do not cause a reload.
+- A commit never changes, so its line counts stay in memory and later reads ask Git only
+  for new commits.
+- A token is anything in brackets shaped like a Bead ID, because this source reads without
+  the Bead list. `[wip]` does not count; `[skip-ci]` would.
+- Commits include unmerged work. Commits without a token appear only as a count.
+- Subjects pass the scrubber. Author names and addresses are never read.
+
+### Tokens
+
+The `tokens` source reads the local usage store and keeps known work per Bead, per day and
+runtime and per model, for the whole history. Raw facts are dropped once they are reduced:
+no device, hostname, session or store path stays in memory.
+
+Dolt allows no write beside a running read: an insert fails at once with `database is read
+only`, and the collector moves a batch to quarantine after three such failures. A periodic
+read would make that far more likely, so the source holds a read lease:
+
+- The lease is a shared, non-blocking lock on `collector.lock`, held for all Dolt calls of a
+  read. Taking it creates and changes nothing, and it leaves `Store.locked()` as it was.
+- If a collection is inside, the source touches no Dolt: it stays `stale` with the reason
+  `busy` and tries again 30 seconds later.
+- If a collection starts during a read, the collector waits. Every Dolt call of the read
+  inherits the lease, so this also holds when the dashboard dies mid-read and its Dolt
+  child lives on.
+- With no lock file or no store the source reads `absent`, and nothing is created.
+- All Dolt calls of one read share a cap of 45 seconds. Past it the read is killed, and the
+  source backs off like any failed source.
+- It reloads only when `last_success_at` in `collector/status.json` moves.
+
+A waiting collector delays `session stop` by the length of the read, about 9 seconds on a
+store of 1.4 GB, and at most by the cap. The lease does not cover a manual `nogg token-usage
+report`: run during a collection, it can still cost the collector an import attempt, which
+the next pass retries.
+
+### What the numbers mean
+
+Tokens are the known counters of the usage store. They are not a cost and not a share of a
+quota. A counter the source could not report stays unknown instead of counting as zero.
+
+- `floors` holds the earliest fact per runtime. Before that date there is no data, not zero.
+- `partial` names each runtime whose sums miss something: a fresh input or output nobody can
+  prove, a fact the adapter calls incomplete, a fact with no time, or consumption reported
+  across a day boundary. That last case stays out of the days, because splitting it would
+  invent numbers, but it counts for its Bead and model.
+- A Bead with runtime but no usage event has no token entry, rather than zero.
+- `pending_batches` counts the batches in the spool. The dashboard counts them and never
+  imports them.
+
 ## Beads
 
 ## Detail
