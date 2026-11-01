@@ -84,8 +84,8 @@ which `scripts/dashboard.test.sh` runs by glob. Medium tests use a stub `bd` and
   repository without a store" with no directory or lock created, "Pending usage stays pending",
   "Nothing changed" on the for-each-ref gate.
   Check: scripts/dashboard.test.sh, new scripts/dashboard-usage.test.sh,
-  scripts/packed-token-usage.test.sh, scripts/lib/token_usage_report_test.py,
-  scripts/lib/token_usage_store_test.py. Branch feat/.
+  scripts/token-usage-store.test.sh, scripts/token-usage-collect.test.sh,
+  scripts/token-usage-report.test.sh, scripts/packed-token-usage.test.sh. Branch feat/.
 
 ## 3. Views
 
