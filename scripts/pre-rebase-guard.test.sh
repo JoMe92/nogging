@@ -19,8 +19,8 @@ check() { # check <description> <command...>
   if "$@" >/dev/null 2>&1; then ok "$desc"; else bad "$desc"; fi
 }
 
-export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.test
-export GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.test
+export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=agent@nogging.bot
+export GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=agent@nogging.bot
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
 
 # new_fixture <name> <upstream-touches-openspec: yes|no>
