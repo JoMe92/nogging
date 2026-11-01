@@ -1,0 +1,83 @@
+/* The Bead table (TASK-DSH-005). Phone and tablet (under 960 px): rows are cards and the filters
+   are a bottom sheet. From 960 px: a table with a filter sidebar. Nothing here scrolls the page
+   sideways, and every control is at least 44 px (--target) high. */
+.beads-layout { display: grid; gap: var(--space-4); grid-template-columns: minmax(0, 1fr); }
+.beads-layout > * { min-width: 0; }
+.beads-main { display: grid; gap: var(--space-3); align-content: start; }
+
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); }
+.bead-search { flex: 1 1 100%; min-width: 0; width: 100%; }
+.result-count { margin: 0; color: var(--text-2); font-size: var(--type-2); }
+
+.check { display: flex; align-items: center; gap: var(--space-2); min-height: var(--target); cursor: pointer; }
+.check input { flex: none; width: 22px; height: 22px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+.check-text { min-width: 0; overflow-wrap: anywhere; }
+.check-count { margin-left: auto; padding-left: var(--space-2); color: var(--text-2); font-size: var(--type-1); font-variant-numeric: tabular-nums; }
+
+/* The filters. */
+.filters { display: none; }
+.filter-group { margin: 0 0 var(--space-3); padding: 0; border: 0; min-width: 0; }
+.filter-group legend { padding: 0; margin-bottom: var(--space-1); font-family: var(--font-head); font-weight: 600; font-size: var(--type-2); }
+.filters-head { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-3); }
+.filters-head h3 { margin: 0; }
+.filters-head .btn { margin-left: auto; }
+.filters-backdrop { display: none; }
+
+@media (max-width: 959px) {
+  .filters.open {
+    display: block; position: fixed; left: 0; right: 0; bottom: 0; z-index: 41; max-height: 85vh; overflow-y: auto;
+    padding: var(--space-4) var(--space-4) calc(var(--space-4) + env(safe-area-inset-bottom));
+    background: var(--surface); border-top: 1px solid var(--border); border-radius: var(--radius) var(--radius) 0 0;
+  }
+  .filters-backdrop.open { display: block; position: fixed; inset: 0; z-index: 40; background: rgba(0, 0, 0, 0.45); }
+  .filters-head { position: sticky; top: calc(-1 * var(--space-4)); z-index: 1; margin: calc(-1 * var(--space-4)) calc(-1 * var(--space-4)) var(--space-3);
+    padding: var(--space-3) var(--space-4); background: var(--surface); border-bottom: 1px solid var(--border); }
+}
+
+/* Cards, the phone and tablet form. */
+.table-wrap { display: none; }
+.bead-cards { display: grid; gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
+.bead-card {
+  position: relative; display: grid; gap: var(--space-2); min-height: var(--target); padding: var(--space-3) var(--space-4);
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer;
+}
+.bead-card:hover { background: var(--hover); }
+.card-top { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); }
+.card-id { color: var(--text-2); overflow-wrap: anywhere; }
+.card-title { font-weight: 500; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+.card-meta { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3); color: var(--text-2); font-size: var(--type-1); overflow-wrap: anywhere; }
+/* The title link covers the card, so the whole card is one touch target. */
+.card-title .bead-link::after { content: ""; position: absolute; inset: 0; border-radius: var(--radius); }
+.card-title .bead-link:focus-visible { outline: none; }
+.card-title .bead-link:focus-visible::after { outline: 3px solid var(--focus); outline-offset: 2px; }
+
+.pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.pager-status { color: var(--text-2); font-size: var(--type-1); }
+.pager .btn[aria-disabled="true"] { opacity: 0.55; cursor: default; }
+.pager .btn[aria-disabled="true"]:hover { background: transparent; }
+
+/* The table, from 960 px. */
+@media (min-width: 960px) {
+  .beads-layout { grid-template-columns: 16rem minmax(0, 1fr); align-items: start; }
+  .filters { display: block; position: sticky; top: calc(56px + var(--space-4)); max-height: calc(100vh - 56px - 2 * var(--space-4)); overflow-y: auto;
+    padding: var(--space-3) var(--space-4); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+  .filters-head, .filters-toggle { display: none; }
+  .bead-search { flex: 1 1 18rem; width: auto; max-width: 28rem; }
+  .bead-cards { display: none; }
+  .table-wrap { display: block; overflow-x: auto; }
+  .bead-table { width: 100%; border-collapse: collapse; font-size: var(--type-2); }
+  .bead-table th, .bead-table td { padding: var(--space-2) var(--space-3); text-align: left; vertical-align: top; border-bottom: 1px solid var(--border); }
+  .bead-table th { padding: 0 var(--space-1); background: var(--surface); white-space: nowrap; }
+  .bead-table td.col-title { width: 34%; min-width: 14rem; }
+  .bead-table td.col-id, .bead-table td.col-updated, .bead-table td.col-age, .bead-table td.col-priority { white-space: nowrap; }
+  .bead-row { cursor: pointer; }
+  .bead-row:hover td { background: var(--hover); }
+  .clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
+}
+.sort-btn {
+  display: inline-flex; align-items: center; gap: var(--space-1); min-height: var(--target); padding: 0 var(--space-2);
+  border: 0; border-radius: var(--radius); background: transparent; color: var(--text); font: inherit; font-weight: 600; cursor: pointer;
+}
+.sort-btn:hover { background: var(--hover); }
+.sort-mark { min-width: 1em; font-size: var(--type-1); }
+.bead-link { color: var(--link); }
