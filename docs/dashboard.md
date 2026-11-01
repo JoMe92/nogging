@@ -235,7 +235,7 @@ request. Neither adds anything to your repository.
 ### Git
 
 The `git` source lists every commit whose subject carries a Bead token such as
-`[SPEC-1cu]`, on all local and remote-tracking branches and tags, with its production and
+`[SPEC-abc]`, on all local and remote-tracking branches and tags, with its production and
 test lines. Merges do not count, and a rebased or cherry-picked copy counts once.
 
 - It reloads only when the hash of `git for-each-ref` over branches, remotes and tags

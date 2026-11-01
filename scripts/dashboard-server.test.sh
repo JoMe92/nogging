@@ -13,7 +13,7 @@ fi
 PYTHONDONTWRITEBYTECODE=1 python3 - "$root" <<'PY'
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
-import json, os, select, signal, socket, stat, subprocess, sys, tempfile, urllib.request
+import json, os, select, signal, socket, stat, subprocess, sys, tempfile, threading, time, urllib.request
 
 source = Path(sys.argv[1])
 nogg = source / "scripts/nogg"
@@ -58,10 +58,27 @@ def port_of(line):
 
 
 def children(pid):
+    """The children of every thread of `pid`. A thread may end while this walks them."""
     found = []
     for task in Path(f"/proc/{pid}/task").iterdir():
-        found += (task / "children").read_text().split()
+        try:
+            found += (task / "children").read_text().split()
+        except OSError:
+            pass
     return found
+
+
+def settled(port, seconds=30):
+    """Whether every source has finished its first turn: the refresher runs Git and Dolt
+    in the background, so only then does a child process mean that a request left one."""
+    deadline, tick = time.monotonic() + seconds, threading.Event()
+    while time.monotonic() < deadline:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/v1/freshness", timeout=5) as reply:
+            states = [item["state"] for item in json.loads(reply.read())["data"].values()]
+        if states and not {"loading", "refreshing"} & set(states):
+            return True
+        tick.wait(0.05)
+    return False
 
 
 def state_files(repo):
@@ -78,6 +95,7 @@ with tempfile.TemporaryDirectory(prefix="nogg fixture ") as tmp:
     check("the operator starts it and it prints its address", port is not None, line)
     with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=5) as reply:
         check("the shell is served from the shipped files", reply.status == 200 and b"auth.js" in reply.read())
+    check("every source settles", settled(port))
     check("no child process runs", children(process.pid) == [])
     check("a loopback start creates no secret", not (repo / ".nogging/state/dashboard").exists())
     process.send_signal(signal.SIGTERM)
