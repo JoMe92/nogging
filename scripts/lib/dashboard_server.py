@@ -15,6 +15,7 @@ from io import BytesIO
 from pathlib import Path
 
 import dashboard_cache as cache
+import dashboard_graph as graph
 import dashboard_model as model
 import dashboard_security as sec
 
@@ -137,10 +138,11 @@ def route_auth(server, request):
     return api_response(server, "auth", {}, headers=[("Set-Cookie", cookie)])
 
 
-def render_api(server, name, sources, build):
+def render_api(server, name, sources, build, memo=None):
     """A cached API response built from the named sources. It is built and compressed
-    once per change of those sources, so a request only looks it up. Every API request
-    is demand: it keeps the refresher awake."""
+    once per change of those sources, so a request only looks it up. `memo` tells apart
+    the responses of a route that takes parameters. Every API request is demand: it keeps
+    the refresher awake."""
     server.refresher.touch()
 
     def make(snapshots, statuses):
@@ -149,7 +151,7 @@ def render_api(server, name, sources, build):
                "sources": statuses, "data": build(snapshots, statuses)}
         body = json.dumps(doc, sort_keys=True).encode()
         return Response(200, body, gzipped=gzip.compress(body, mtime=0))
-    return server.refresher.render(name, sources, make)
+    return server.refresher.render(memo or name, sources, make)
 
 
 def route_freshness(server, request):
@@ -175,7 +177,20 @@ def route_summary(server, request):
 
 
 def route_graph(server, request):
-    return api_error(server, 501)
+    """One change as a flow. The other scopes answer 501 until their owner lands. A reload
+    that changes nothing rebuilds the envelope, and the layout comes from the graph cache."""
+    try:
+        scope, closed = graph.parse_query(request.query)
+    except ValueError:
+        return api_error(server, 400)
+    if not scope.startswith("change:"):
+        return api_error(server, 501)
+
+    def build(snapshots, statuses):
+        generation = statuses.get("beads", {}).get("generation")
+        return server.graph_cache.view(generation, (scope, closed),
+                                       lambda: graph.graph_view(snapshots.get("beads") or {}, scope, closed))
+    return render_api(server, "graph", ["beads"], build, memo=f"graph?{scope}&{closed}")
 
 
 ROUTES = ((re.compile(r"/api/v1/auth"), route_auth),
@@ -369,6 +384,7 @@ class DashboardServer(ThreadingHTTPServer):
         self.bind_address, self.assets, self.readers = bind, assets, readers
         # The refresher is built here and started by `serve`: a request only reads it.
         self.refresher = refresher or cache.Refresher(readers, gates, clock=clock, wall_clock=wall_clock)
+        self.graph_cache = graph.GraphCache()
         self.secret, self.clock, self.wall_clock = secret, clock, wall_clock
         self.read_deadline = read_deadline
         self.token_required = not bind.loopback

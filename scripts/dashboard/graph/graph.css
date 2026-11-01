@@ -1,0 +1,37 @@
+/* The graph view (design Decisions 15 and 16). Colours come only from tokens.css. A node's
+   status colour comes from its `status-<name>` class in base.css; its shape tells it apart. */
+.graph { display: grid; gap: var(--space-3); }
+.graph-scroll { overflow: auto; overscroll-behavior: contain; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); }
+.graph-canvas { display: block; }
+.graph-toggle { display: inline-flex; align-items: center; min-height: var(--target); margin-bottom: var(--space-2); }
+
+.graph-box { fill: var(--surface); stroke: currentColor; stroke-width: 1.5; }
+.graph-node.status-in_progress .graph-box,
+.graph-node.status-blocked .graph-box { stroke-width: 3; }
+.graph-node.status-deferred .graph-box { stroke-dasharray: 6 4; }
+.graph-closed .graph-box,
+.graph-closed .shape { opacity: 0.55; }
+.graph-ghost .graph-box { fill: none; stroke-dasharray: 2 4; }
+.graph-group .graph-box { fill: var(--surface-2); }
+.graph-critical .graph-box { stroke: var(--accent); stroke-width: 3; }
+
+.graph-node[role="link"] { cursor: pointer; outline: none; }
+.graph-node[role="link"]:hover .graph-box { fill: var(--hover); }
+.graph-node:focus-visible .graph-box { stroke: var(--focus); stroke-width: 4; }
+
+.graph-id, .graph-title { fill: var(--text); font-size: 12px; }
+.graph-id { font-family: var(--font-mono); }
+
+.graph-edge { stroke: var(--text-2); stroke-width: 1.5; }
+.graph-edge-critical { stroke: var(--accent); stroke-width: 3; }
+.graph-edge-closed { stroke-dasharray: 1 4; stroke-linecap: round; }
+.graph-edge-reversed { stroke-dasharray: 6 4; }
+.graph-arrow { fill: var(--text-2); }
+.graph-arrow-critical { fill: var(--accent); }
+
+.graph-legend { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); margin: 0; padding: 0; list-style: none; font-size: var(--type-1); }
+.graph-legend li { display: inline-flex; align-items: center; gap: var(--space-1); }
+.graph-ghost-sample { width: 24px; height: 12px; border: 1px dotted var(--text-2); border-radius: 2px; }
+
+.graph-changes { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
+.graph-changes li { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); min-height: var(--target); }
