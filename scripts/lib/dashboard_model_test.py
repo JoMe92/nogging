@@ -63,6 +63,37 @@ class Scrubber(unittest.TestCase):
         self.assertEqual(model.scrub("test_a_session_record_has_allow_listed_fields_only"),
                          "test_a_session_record_has_allow_listed_fields_only")
 
+    def test_a_long_run_is_scrubbed_in_linear_time(self):
+        import time
+        for blob in ("-" * 200_000, "a." * 100_000, "a" * 200_000, "%" * 200_000, "a@" * 50_000):
+            start = time.monotonic()
+            model.scrub(blob)
+            self.assertLess(time.monotonic() - start, 1.0, blob[:4])
+
+    def test_keyed_values_in_the_common_pasted_forms_are_replaced(self):
+        for text, expected in (("GITHUB_TOKEN=abcd1234efgh5678", "GITHUB_TOKEN=[secret]"),
+                               ("OPENAI_API_KEY=sk_live1234", "OPENAI_API_KEY=[secret]"),
+                               ('{"password": "hunter2xyz"}', '{"password": "[secret]"}'),
+                               ('{"token":"abcd1234efgh5678abcd"}', '{"token":"[secret]"}'),
+                               ("Authorization: Basic dXNlcjpwYXNzd29yZA==", "Authorization: Basic [secret]"),
+                               ("password: hunter2", "password: [secret]"),
+                               ("DB_PASSWORD=pa55word", "DB_PASSWORD=[secret]")):
+            self.assertEqual(model.scrub(text), expected, text)
+
+    def test_credentials_in_a_url_are_replaced(self):
+        self.assertEqual(model.scrub("clone https://user:p4ss@host.example/x.git"), "clone https://[secret]@host.example/x.git")
+        self.assertEqual(model.scrub("postgres://admin:hunter2@db:5432/x"), "postgres://[secret]@db:5432/x")
+        self.assertEqual(model.scrub("see https://example.com/a/b?c=d"), "see https://example.com/a/b?c=d")
+
+    def test_unicode_encoded_and_dotless_addresses_are_replaced(self):
+        for text in ("j\u00f6ne@ex\u00e4mple.de", "joe@localhost", "user%40example.com", "a.b+c@d-e.example.org"):
+            self.assertEqual(model.scrub(f"to {text}!"), "to [address]!", text)
+
+    def test_home_paths_in_other_forms_lose_the_user(self):
+        for text, expected in (("/var/home/jome/src", "~/src"), ("/mnt/c/Users/Jo/x", "~/x"),
+                               ("C:\\Users\\Jo\\x", "~\\x"), ("c:/Users/Jo/x", "~/x"), ("~jome/x", "~/x")):
+            self.assertEqual(model.scrub(text), expected, text)
+
     def test_what_is_no_text_is_none(self):
         self.assertIsNone(model.scrub(None))
         self.assertIsNone(model.scrub(12))
@@ -71,10 +102,8 @@ class Scrubber(unittest.TestCase):
         self.assertEqual(model.first_line("\n  first line\nsecond"), "first line")
         self.assertIsNone(model.first_line("  \n \n"))
         # Cut at 200 characters, and an address that straddles the cut is not left half open.
-        text = "x" * 195 + " " + ADDRESS
-        out = model.first_line(text)
-        self.assertEqual(len(out), 200)
-        self.assertNotIn("@", out)
+        out = model.first_line("x" * 190 + " " + ADDRESS + " " + "y" * 50)
+        self.assertEqual(out, "x" * 190 + " [address]")      # exactly 200, cut after the scrub
 
 
 class Allowed(unittest.TestCase):
@@ -184,6 +213,11 @@ class Lists(unittest.TestCase):
         demo = model.change_list(self.snapshot())["changes"][0]
         self.assertEqual(demo, {"change": "demo", "total": 2, "ready": 1,
                                 "by_status": {"open": 1, "in_progress": 0, "blocked": 0, "deferred": 0, "closed": 1}})
+
+    def test_a_status_named_like_the_counter_is_just_a_status(self):
+        snapshot = {"beads": [model.allow_bead(raw_bead(status="_ready"))], "ready": ["SPEC-aaaa"]}
+        entry = model.change_list(snapshot)["changes"][0]
+        self.assertEqual((entry["by_status"]["_ready"], entry["ready"], entry["total"]), (1, 1, 1))
 
     def test_an_empty_snapshot_lists_nothing(self):
         self.assertEqual(model.bead_list({}), {"beads": []})

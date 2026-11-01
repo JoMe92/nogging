@@ -173,11 +173,13 @@ class ReadOnly(Live):
 
     def test_no_snapshot_lands_on_disk(self):
         refresher = self.start()
-        before = sorted(self.home.rglob("*"))
+        def listing():
+            return sorted(path for path in Path(self.tmp.name).rglob("*") if path.name != "calls.jsonl")
+        before, cwd_before = listing(), sorted(Path.cwd().iterdir())
         self.load(refresher, 3)
         self.get("/api/v1/beads")
-        self.assertEqual(sorted(self.home.rglob("*")), before)
-        self.assertEqual(sorted(path.name for path in self.static.iterdir()), ["index.html"])
+        self.assertEqual(listing(), before)
+        self.assertEqual(sorted(Path.cwd().iterdir()), cwd_before)
 
     def test_the_stub_is_not_asked_to_start_dolt(self):
         refresher = self.start()

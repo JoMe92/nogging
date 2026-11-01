@@ -94,19 +94,19 @@ class Refresher:
         self.last_demand = self.clock()
         self._wake.set()
 
+    def _status_of(self, cell, pub, now):
+        state = pub.state
+        if state == "fresh" and now - pub.checked > STALE_AFTER * cell.interval:
+            state = "stale"      # the refresher was idle or is busy on a slow source
+        item = {"state": state, "as_of": iso(pub.as_of), "generation": pub.generation}
+        if pub.reason and state in ("stale", "unavailable"):
+            item["reason"] = pub.reason
+        return item
+
     def status(self):
         """{source: {state, as_of, generation[, reason]}} as the envelope states it."""
-        now, out = self.clock(), {}
-        for name, cell in self.cells.items():
-            pub = cell.published
-            state = pub.state
-            if state == "fresh" and now - pub.checked > STALE_AFTER * cell.interval:
-                state = "stale"      # the refresher was idle or is busy on a slow source
-            item = {"state": state, "as_of": iso(pub.as_of), "generation": pub.generation}
-            if pub.reason and state in ("stale", "unavailable"):
-                item["reason"] = pub.reason
-            out[name] = item
-        return out
+        now = self.clock()
+        return {name: self._status_of(cell, cell.published, now) for name, cell in self.cells.items()}
 
     def snapshot(self, name):
         """The last good snapshot of a source, or None while it is loading, unavailable or absent."""
@@ -114,18 +114,19 @@ class Refresher:
         return cell.published.snapshot if cell else None
 
     def render(self, route, names, build):
-        """`build(snapshots)` for the named sources, memoised on their states, times and
-        generations, so a response is built and compressed once per change and not once per
-        request. The memo is an LRU of 32 entries."""
-        names = [name for name in names if name in self.cells]
-        status = self.status()
-        key = (route, tuple((name, tuple(sorted(status[name].items()))) for name in names))
+        """`build(snapshots, statuses)` for the named sources, memoised on their states,
+        times and generations, so a response is built and compressed once per change and
+        not once per request. The memo is an LRU of 32 entries. Each cell is read once, so
+        the status and the data of a response always come from the same publication."""
+        now = self.clock()
+        pubs = {name: self.cells[name].published for name in names if name in self.cells}
+        status = {name: self._status_of(self.cells[name], pub, now) for name, pub in pubs.items()}
+        key = (route, tuple((name, tuple(sorted(item.items()))) for name, item in status.items()))
         with self._render_lock:
             if key in self._renders:
                 self._renders.move_to_end(key)
                 return self._renders[key]
-        snapshots = {name: self.cells[name].published.snapshot for name in names}
-        value = build(snapshots, {name: status[name] for name in names})
+        value = build({name: pub.snapshot for name, pub in pubs.items()}, status)
         with self._render_lock:
             self._renders[key] = value
             while len(self._renders) > RENDER_ENTRIES:
@@ -160,7 +161,20 @@ class Refresher:
             self._changed.notify_all()
 
     def _refresh(self, cell):
+        """One attempt. Nothing escapes: whatever goes wrong, the thread lives on, and the
+        source reports a fixed class and keeps its last good snapshot."""
         old = cell.published
+        try:
+            self._load(cell, old)
+        except Exception:
+            self._fail(cell, old, "error")
+
+    def _fail(self, cell, old, kind):
+        cell.failures = min(cell.failures + 1, 64)      # 64 doublings are far past the cap
+        cell.due = self.clock() + min(BACKOFF_MAX, BACKOFF_FIRST * 2 ** (cell.failures - 1))
+        self._publish(cell, state="stale" if old.snapshot is not None else "unavailable", reason=kind)
+
+    def _load(self, cell, old):
         # The gate runs first: no change, no reload, and the snapshot stays as it is.
         token = cell.gate() if cell.gate else None
         if cell.gate and old.snapshot is not None and token == cell.gate_token and old.state in ("fresh", "stale"):
@@ -171,8 +185,9 @@ class Refresher:
         try:
             snapshot = cell.reader()
         except Absent:
+            # The generation moves when data disappears, so a client watching it refetches.
             self._publish(cell, state="absent", snapshot=None, as_of=None, checked=self.clock(), reason=None,
-                          digest=None)
+                          digest=None, generation=old.generation + (old.snapshot is not None))
             cell.gate_token, cell.failures, cell.due = token, 0, self.clock() + cell.interval
             return
         except Busy:
@@ -181,10 +196,7 @@ class Refresher:
             return
         except Exception as exc:
             # Only a fixed class leaves this method; the exception text never does.
-            kind = exc.kind if isinstance(exc, SourceError) else "error"
-            cell.failures += 1
-            cell.due = self.clock() + min(BACKOFF_MAX, BACKOFF_FIRST * 2 ** (cell.failures - 1))
-            self._publish(cell, state="stale" if old.snapshot is not None else "unavailable", reason=kind)
+            self._fail(cell, old, exc.kind if isinstance(exc, SourceError) else "error")
             return
         digest = digest_of(snapshot)
         changed = digest != old.digest
@@ -206,7 +218,12 @@ class Refresher:
 
     def _run(self):
         while not self._stop.is_set():
-            if self.step() is not None:
+            try:
+                if self.step() is not None:
+                    continue
+            except Exception:
+                self._wake.wait(BUSY_RETRY)       # never die: a later tick tries again
+                self._wake.clear()
                 continue
             wait = self.wait_time()
             self._wake.wait(wait)

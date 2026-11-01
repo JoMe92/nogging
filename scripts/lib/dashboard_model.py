@@ -38,24 +38,29 @@ TEST_RAN = ("passed", "failed")
 
 # --- the scrubber -----------------------------------------------------------------
 
-_EMAIL = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)+")
-_HOME = re.compile(r"(?:/home/[^/\s'\"`<>()\[\]{},;:]+|/Users/[^/\s'\"`<>()\[\]{},;:]+|/root(?![A-Za-z0-9_.-])"
-                   r"|[A-Za-z]:\\Users\\[^\\\s'\"`<>()\[\]{},;:]+)")
+# The address pattern is anchored to the start of a run of its own characters, so a long
+# run with no `@` is scanned once and not once per start position.
+_EMAIL = re.compile(r"(?<![\w.%+\-])[\w.%+\-]+?(?:@|%40)[\w\-]+(?:\.[\w\-]+)*")
+_USERINFO = re.compile(r"(?<=://)[^/\s@:]+:[^/\s@]+@")
+_STOP = r"[^/\s'\"`<>()\[\]{},;:]"
+_HOME = re.compile(rf"(?:(?:/var|/mnt/[A-Za-z])?/(?:home|Users)/{_STOP}+|/root(?![A-Za-z0-9_.-])"
+                   rf"|[A-Za-z]:[\\/]+Users[\\/]+[^\\/\s'\"`<>()\[\]{{}},;:]+)")
+_TILDE_USER = re.compile(r"(?<![\w/~])~[A-Za-z][\w.\-]*(?=/)")
 _PREFIXED = re.compile(
     r"(?<![A-Za-z0-9])(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_\-]{16,}"
     r"|xox[abprs]-[A-Za-z0-9\-]{10,}|AKIA[0-9A-Z]{16}|glpat-[A-Za-z0-9_\-]{16,}|AIza[0-9A-Za-z_\-]{30,}"
     r"|eyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]*)")
-_KEYED = re.compile(r"(?i)\b(token|secret|password|passwd|api[_-]?key|authorization|credential)s?"
-                    r"(\s*[:=]\s*[\"']?)([A-Za-z0-9_+/=\-]{12,})")
+# `GITHUB_TOKEN=…`, `"password": "…"`, `Authorization: Basic …`: a key word, then a value.
+_KEYED = re.compile(r"(?i)(?<![A-Za-z])((?:token|secret|password|passwd|api[_-]?key|authorization|credential)s?\w*[\"']?"
+                    r"\s*[:=]\s*[\"']?(?:(?:basic|bearer|token)\s+)?)([A-Za-z0-9_+/=\-]{6,})")
 _BEARER = re.compile(r"(?i)\b(bearer\s+)([A-Za-z0-9_+/=.\-]{12,})")
 _LONG = re.compile(r"(?<![A-Za-z0-9_\-])[A-Za-z0-9_\-]{32,}(?![A-Za-z0-9_\-])")
 _HEX = re.compile(r"[0-9a-fA-F]+")
 
 
 def _keyed(match):
-    value = match.group(3)
     # A value with no digit is a word such as "constant-time", not a secret.
-    return match.group(0) if not re.search(r"\d", value) else f"{match.group(1)}{match.group(2)}[secret]"
+    return match.group(0) if not re.search(r"\d", match.group(2)) else f"{match.group(1)}[secret]"
 
 
 def _long(match):
@@ -74,8 +79,10 @@ def scrub(text):
     Best effort, and documented as such. None for anything that is not text."""
     if not isinstance(text, str):
         return None
+    text = _USERINFO.sub("[secret]@", text)
     text = _EMAIL.sub("[address]", text)
     text = _HOME.sub("~", text)
+    text = _TILDE_USER.sub("~", text)
     text = _PREFIXED.sub("[secret]", text)
     text = _KEYED.sub(_keyed, text)
     text = _BEARER.sub(lambda m: f"{m.group(1)}[secret]", text)
@@ -115,7 +122,7 @@ def utc_iso(value):
 
 def _line(value, limit=LINE_LIMIT):
     """A short scrubbed single line, or None."""
-    return scrub(value.strip()[:limit]) if isinstance(value, str) and value.strip() else None
+    return scrub(value.strip()[:4 * limit])[:limit] if isinstance(value, str) and value.strip() else None
 
 
 def _count(value):
@@ -225,16 +232,15 @@ def change_list(snapshot):
     """`data` of /api/v1/changes: per change the Bead counts by status. Beads without a
     change label form one entry whose `change` is null, so they stay reachable."""
     ready = set(snapshot.get("ready") or ())
-    groups = {}
+    groups, ready_counts = {}, {}
     for bead in snapshot.get("beads") or ():
-        group = groups.setdefault(change_of(bead), {name: 0 for name in STATUS_ORDER})
+        change = change_of(bead)
+        group = groups.setdefault(change, {name: 0 for name in STATUS_ORDER})
         status = bead.get("status") or "unknown"
         group[status] = group.get(status, 0) + 1
-        group["_ready"] = group.get("_ready", 0) + (bead["id"] in ready)
+        ready_counts[change] = ready_counts.get(change, 0) + (bead["id"] in ready)
     rows = []
     for change in sorted(groups, key=lambda value: (value is None, value or "")):
-        counts = dict(groups[change])
-        ready_count = counts.pop("_ready", 0)
-        rows.append({"change": change, "total": sum(counts.values()), "ready": ready_count,
-                     "by_status": counts})
+        rows.append({"change": change, "total": sum(groups[change].values()), "ready": ready_counts[change],
+                     "by_status": groups[change]})
     return {"changes": rows}

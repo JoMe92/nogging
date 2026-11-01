@@ -196,6 +196,62 @@ class Failures(unittest.TestCase):
         self.assertEqual(refresher.status()["tests"], {"state": "absent", "as_of": None, "generation": 0})
 
 
+class Survival(unittest.TestCase):
+    """Whatever a reader, a gate or a snapshot does, the refresher keeps going."""
+
+    def test_a_gate_that_raises_is_a_failed_source_not_a_dead_thread(self):
+        def gate():
+            raise PermissionError("no access to /home/jome/state")
+        refresher, clock = make({"sessions": Reader(), "beads": Reader()}, {"sessions": gate})
+        self.assertEqual(refresher.step(), "beads")
+        self.assertEqual(refresher.step(), "sessions")
+        self.assertEqual(refresher.status()["sessions"]["reason"], "error")
+        self.assertNotIn("jome", json.dumps(refresher.status()))
+        self.assertEqual(refresher.status()["beads"]["state"], "fresh")
+
+    def test_a_snapshot_that_cannot_be_serialised_is_a_failed_source(self):
+        import datetime
+        refresher, _ = make({"beads": Reader({"at": datetime.datetime(2026, 1, 1)})})
+        refresher.step()
+        self.assertEqual(refresher.status()["beads"], {"state": "unavailable", "as_of": None, "generation": 0,
+                                                        "reason": "error"})
+
+    def test_the_backoff_survives_a_thousand_failures(self):
+        reader = Reader()
+        reader.error = cache.SourceError("bd_error")
+        refresher, clock = make({"beads": reader})
+        for _ in range(1100):
+            refresher.step()
+            wait = refresher.wait_time()
+            clock.advance(wait)
+        self.assertEqual(wait, cache.BACKOFF_MAX)
+        self.assertEqual(refresher.status()["beads"]["reason"], "bd_error")
+
+    def test_the_thread_loop_lives_through_an_exception(self):
+        refresher, _ = make({"beads": Reader()})
+        calls = []
+
+        def step():
+            calls.append(1)
+            if len(calls) == 1:
+                raise RuntimeError("boom")
+            refresher._stop.set()
+            return None
+        refresher.step = step
+        refresher._wake.set()
+        refresher._run()
+        self.assertEqual(len(calls), 2)
+
+    def test_data_that_disappears_moves_the_generation(self):
+        reader = Reader({"n": 1})
+        refresher, clock = make({"tests": reader})
+        refresher.step()
+        reader.error = cache.Absent()
+        clock.advance(120)
+        refresher.step()
+        self.assertEqual(refresher.status()["tests"], {"state": "absent", "as_of": None, "generation": 2})
+
+
 class Demand(unittest.TestCase):
     def test_no_clients_for_five_minutes_starts_no_source(self):
         reader = Reader()

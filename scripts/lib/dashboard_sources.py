@@ -36,7 +36,7 @@ def bd_json(command, args, home, run=subprocess.run, timeout=BD_TIMEOUT):
     argv = [*([command] if isinstance(command, str) else command), "--readonly", "--sandbox", *args]
     env = {**os.environ, "BEADS_DOLT_AUTO_START": "0", "GIT_OPTIONAL_LOCKS": "0", "DOLT_DISABLE_EVENT_FLUSH": "1"}
     try:
-        done = run(argv, cwd=home, env=env, text=True, capture_output=True, timeout=timeout, stdin=subprocess.DEVNULL)
+        done = run(argv, cwd=home, env=env, encoding="utf-8", errors="replace", capture_output=True, timeout=timeout, stdin=subprocess.DEVNULL)
     except FileNotFoundError:
         raise SourceError("bd_absent") from None
     except (subprocess.TimeoutExpired, OSError):
@@ -45,7 +45,7 @@ def bd_json(command, args, home, run=subprocess.run, timeout=BD_TIMEOUT):
         raise SourceError(classify(done.stderr))
     try:
         return json.loads(done.stdout or "null")
-    except ValueError:
+    except (ValueError, RecursionError):
         raise SourceError("bd_error") from None
 
 

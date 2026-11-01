@@ -157,7 +157,9 @@ Free text (titles, descriptions, notes, close reasons, labels and exit reasons) 
 scrubber that replaces e-mail-like strings with `[address]`, token-like strings with
 `[secret]` and home-directory paths with `~`. It catches the common shapes: addresses,
 well-known token prefixes, JSON web tokens, `token=…` and `Bearer …` values and long
-random strings. Git object names and hyphenated names such as session names stay readable.
+random strings. Git object names (40 or 64 hex characters) and hyphenated names such as session names stay
+readable, so a secret of exactly that shape is not caught unless a key word such as `token=`
+precedes it. Credentials in a URL (`https://user:pass@host`) are replaced.
 It cannot know what a secret looks like in free text, so it will miss some and may hide a
 harmless string. On this repository's own history it would match a handful of notes. Treat
 the dashboard as a view for people who may already read the Beads, and do not write
