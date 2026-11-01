@@ -246,7 +246,7 @@ class Store:
             if self.database.exists() and any(self.database.iterdir()):
                 raise StoreError('unrecognized usage database; preserve it for recovery')
             self.database.mkdir(mode=0o700, exist_ok=True)
-            self._dolt('init', '--name', 'Nogging Usage', '--email', 'usage@nogging.local')
+            self._dolt('init', '--name', 'Nogging Usage', '--email', 'usage@nogging.bot')
             statements = [
                 'CREATE TABLE store_meta (singleton INT PRIMARY KEY, schema_version INT NOT NULL, identity_version INT NOT NULL, project_id VARCHAR(36) NOT NULL)',
                 f'INSERT INTO store_meta VALUES (1, {SCHEMA_VERSION}, {IDENTITY_VERSION}, {literal(project_id or str(uuid.uuid4()))})',
@@ -277,7 +277,7 @@ class Store:
 
     def _commit(self, message):
         self._dolt('add', '.')
-        self._dolt('commit', '--allow-empty', '--author', 'Nogging Usage <usage@nogging.local>', '-m', message)
+        self._dolt('commit', '--allow-empty', '--author', 'Nogging Usage <usage@nogging.bot>', '-m', message)
 
     def device(self):
         """Local device identity lives outside the cloned database."""
