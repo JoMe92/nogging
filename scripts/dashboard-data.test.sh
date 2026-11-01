@@ -111,10 +111,12 @@ with tempfile.TemporaryDirectory(prefix="nogg data ") as tmp:
     subprocess.run(["git", "-C", str(repo), "worktree", "add", "-q", "-b", "linked", str(linked)], check=True)
     before = state_files(repo)
 
-    # It runs from a linked worktree: records and Beads of the canonical checkout.
+    # It runs from a linked worktree: records and Beads of the canonical checkout. Wait for
+    # all five sources: the refresher runs Git in the background, and the child check below
+    # asks whether a request left a process, not whether the refresher is busy.
     process, port = start(linked, stub_dir)
     check("a linked worktree starts it", port is not None)
-    doc = settled(port, ["beads", "sessions", "tests"])
+    doc = settled(port, ["beads", "sessions", "tests", "git", "tokens"])
     states = {name: item["state"] for name, item in doc["data"].items()}
     check("a linked worktree reads the sessions, tests and Beads of the main checkout",
           states.get("beads") == states.get("sessions") == states.get("tests") == "fresh", str(states))
