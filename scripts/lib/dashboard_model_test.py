@@ -222,7 +222,8 @@ class Lists(unittest.TestCase):
         self.assertEqual((entry["by_status"]["_ready"], entry["ready"], entry["total"]), (1, 1, 1))
 
     def test_an_empty_snapshot_lists_nothing(self):
-        self.assertEqual(model.bead_list({}), {"beads": []})
+        self.assertEqual(model.bead_list({}), {"beads": [], "facets": {
+            "status": [], "type": [], "priority": [], "change": [], "label": []}})
         self.assertEqual(model.change_list({}), {"changes": []})
 
 
