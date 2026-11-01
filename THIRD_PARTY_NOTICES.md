@@ -18,6 +18,14 @@ Repository templates, generated service templates, agent prompts, tests, and
 documentation authored specifically for Nogging are covered by the root ISC
 License unless a file states otherwise.
 
+## Dashboard
+
+The dashboard's assets are part of the npm package.
+
+| Material | Origin | License | Notes |
+| --- | --- | --- | --- |
+| Poppins 400, 500, 600 and 700, latin subset `woff2` under `scripts/dashboard/fonts/` | Copies of the files under `docs/assets/fonts/` described below | SIL Open Font License 1.1 | `Copyright 2020 The Poppins Project Authors`. The full license text ships next to the fonts in `scripts/dashboard/fonts/OFL.txt`. |
+
 ## Documentation site
 
 The documentation site is built from `docs/` by GitHub Pages. Its assets are

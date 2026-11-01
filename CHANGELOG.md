@@ -9,6 +9,13 @@ and GitHub Releases for that history.
 
 ## [Unreleased]
 
+### Added
+
+- `nogg dashboard`, an optional foreground read-only web dashboard. It binds to a
+  private address only, needs a token for every network bind, and answers GET and
+  HEAD with a strict response policy. The server and the shell land first; data and
+  views follow. See `docs/dashboard.md`.
+
 ## [3.6.0] - 2026-11-01
 
 The headline is the test policy and test control: a repository that uses Nogging no

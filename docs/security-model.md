@@ -282,6 +282,34 @@ HOME-contained directories as sandbox writable roots. Records and listings
 show the source and paths. Treat granting credential-bearing state as write
 access to those credentials. See [Codex runtime state grants](using-with-codex.md).
 
+## The dashboard
+
+`nogg dashboard` is optional and read-only. It binds to a literal private address,
+and a network bind needs a 256-bit token that the browser trades for a signed
+cookie. It answers GET and HEAD only, checks `Host`, `Origin` and the peer address
+before serving, and sends a strict content security policy. See
+[Dashboard](dashboard.md).
+
+The residual risks are these:
+
+- **Plain HTTP.** There is no TLS. On a shared LAN or Wi-Fi anyone who can read the
+  traffic sees the page, the cookie and, on first use, the token in the
+  `Authorization` header. With that they can read the dashboard until the token is
+  rotated. `Secure` cannot be set on a cookie over plain HTTP. Prefer a Tailscale
+  address, whose traffic is encrypted, and treat a LAN bind on a network you do not
+  control as a disclosure of everything the dashboard shows.
+- **Loopback has no token.** Another user account on the same host can read a
+  loopback dashboard. Nogging's supported hosts are single-operator.
+- **Forwarding.** The peer check catches a forward that keeps a public source
+  address. It cannot see SNAT, `ssh -R` or a reverse proxy, where the peer looks
+  local. A forward to a network bind leaves the `Host` check and the token as the
+  remaining defences; a forward to a loopback bind leaves only `Host`, so do not
+  add such a name with `--allow-host`.
+- **What is on the page.** Bead text is scrubbed best effort, not guaranteed. Treat
+  an open dashboard like the Beads data behind it.
+- **The secret file.** Any process running as the operator can read it, including
+  an agent session with host access. Rotate it after any doubt.
+
 ## Beads data and privacy
 
 Beads keeps every Bead — titles, descriptions, notes, `bd remember` memories,

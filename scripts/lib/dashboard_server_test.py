@@ -468,11 +468,19 @@ class Announce(unittest.TestCase):
         self.assertNotIn(self.secret, stream.getvalue())
         self.assertIn("terminal", stream.getvalue())
 
+    def test_a_lan_bind_warns_about_plain_http_and_tailscale_does_not(self):
+        lan, tailscale = self.stream(False), self.stream(False)
+        ds.announce(sec.check_bind("192.168.1.5"), 8742, self.secret, lan)
+        ds.announce(sec.check_bind("100.101.102.103"), 8742, self.secret, tailscale)
+        self.assertIn("plain HTTP", lan.getvalue())
+        self.assertNotIn("plain HTTP", tailscale.getvalue())
+
     def test_loopback_prints_no_link(self):
         stream = self.stream(True)
         ds.announce(LOOPBACK, 8742, None, stream)
         self.assertIn("http://127.0.0.1:8742/", stream.getvalue())
         self.assertNotIn("token", stream.getvalue())
+        self.assertNotIn("plain HTTP", stream.getvalue())
 
     def test_the_qr_tool_gets_the_link_on_stdin_only(self):
         seen = {}

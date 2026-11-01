@@ -432,6 +432,9 @@ def announce(bind, port, secret, stream=None, which=shutil.which, run=subprocess
     print(f"Nogging dashboard on http://{bind.host}:{port}/ (read-only; Ctrl-C stops it)", file=stream, flush=True)
     if bind.loopback:
         return
+    warning = sec.plain_http_warning(bind)
+    if warning:
+        print(warning, file=stream, flush=True)
     if not stream.isatty():
         print("The access link is not printed because output is not a terminal; "
               "start `nogg dashboard` on a terminal to print it.", file=stream, flush=True)

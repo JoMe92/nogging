@@ -82,6 +82,16 @@ def check_bind(value):
                       f"{LIST_HINT}")
 
 
+def plain_http_warning(bind):
+    """What to tell the operator about a bind whose traffic may be read on the way.
+    Loopback stays on the host, and Tailscale's range is encrypted by WireGuard; the
+    same range as carrier NAT is what `--list-binds` warns about."""
+    if bind.loopback or ipaddress.ip_address(bind.address) in _CGNAT:
+        return None
+    return ("WARNING: this bind is plain HTTP, so anyone who can read this network can read "
+            "the pages and replay the cookie. Prefer a Tailscale address.")
+
+
 def peer_allowed(peer):
     """Whether a connecting peer lies in the bind allow-list. A zone a kernel adds
     to a link-local peer is dropped; a mapped address is refused, as for a bind."""
