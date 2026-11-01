@@ -230,7 +230,7 @@ responses to clients that accept them.
 ### Requirement: The dashboard adds no state
 
 The dashboard SHALL add no Bead, dependency, fact, commit or configuration. Its only file SHALL be the
-access secret. Every `bd` call SHALL use `--readonly --sandbox` with a timeout, and the process
+access secret, created on the first non-loopback start or token rotation. Every `bd` call SHALL use `--readonly --sandbox` with a timeout, and the process
 SHALL set `BEADS_DOLT_AUTO_START=0` and `GIT_OPTIONAL_LOCKS=0`. It SHALL NOT start, stop or restart
 Dolt, run usage collection, drain the usage spool, run `doctor`, or persist any snapshot to disk. A
 request SHALL be served from memory and SHALL NOT start a subprocess.
@@ -380,7 +380,9 @@ SHALL be documented as best effort. Stderr of a source SHALL NOT reach a client.
 ### Requirement: Bead text is rendered as text
 
 The client SHALL render every value from the API with text nodes and SHALL NOT use `innerHTML` or an
-equivalent sink. It SHALL NOT render Markdown or auto-link Bead text. Line breaks SHALL be preserved.
+equivalent sink. It SHALL NOT render Markdown or turn a URL in Bead text into a link. It MAY link a
+known Bead ID or a SHA of that Bead's own commits to the dashboard's own routes. Line breaks SHALL be
+preserved.
 
 #### Scenario: A note contains markup
 
