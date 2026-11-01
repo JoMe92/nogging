@@ -14,6 +14,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO
 from pathlib import Path
 
+import dashboard_cache as cache
+import dashboard_model as model
 import dashboard_security as sec
 
 DEFAULT_PORT = 8742
@@ -135,16 +137,33 @@ def route_auth(server, request):
     return api_response(server, "auth", {}, headers=[("Set-Cookie", cookie)])
 
 
+def render_api(server, name, sources, build):
+    """A cached API response built from the named sources. It is built and compressed
+    once per change of those sources, so a request only looks it up. Every API request
+    is demand: it keeps the refresher awake."""
+    server.refresher.touch()
+
+    def make(snapshots, statuses):
+        as_of = max((item["as_of"] for item in statuses.values() if item["as_of"]), default=None)
+        doc = {"schema": f"nogg.dashboard.{name}/v1", "as_of": as_of or iso(server.wall_clock()),
+               "sources": statuses, "data": build(snapshots, statuses)}
+        body = json.dumps(doc, sort_keys=True).encode()
+        return Response(200, body, gzipped=gzip.compress(body, mtime=0))
+    return server.refresher.render(name, sources, make)
+
+
 def route_freshness(server, request):
-    return api_error(server, 501)
+    return render_api(server, "freshness", list(server.refresher.cells), lambda snapshots, statuses: statuses)
 
 
 def route_beads(server, request):
-    return api_error(server, 501)
+    return render_api(server, "beads", ["beads"],
+                      lambda snapshots, statuses: model.bead_list(snapshots.get("beads") or {}))
 
 
 def route_changes(server, request):
-    return api_error(server, 501)
+    return render_api(server, "changes", ["beads"],
+                      lambda snapshots, statuses: model.change_list(snapshots.get("beads") or {}))
 
 
 def route_bead_detail(server, request):
@@ -345,8 +364,11 @@ class DashboardServer(ThreadingHTTPServer):
     request_queue_size = 64
 
     def __init__(self, bind, port, *, assets, readers, secret=None, allow_hosts=(),
-                 clock=time.monotonic, wall_clock=time.time, read_deadline=READ_DEADLINE):
+                 clock=time.monotonic, wall_clock=time.time, read_deadline=READ_DEADLINE,
+                 gates=None, refresher=None):
         self.bind_address, self.assets, self.readers = bind, assets, readers
+        # The refresher is built here and started by `serve`: a request only reads it.
+        self.refresher = refresher or cache.Refresher(readers, gates, clock=clock, wall_clock=wall_clock)
         self.secret, self.clock, self.wall_clock = secret, clock, wall_clock
         self.read_deadline = read_deadline
         self.token_required = not bind.loopback
@@ -461,13 +483,14 @@ def announce(bind, port, secret, stream=None, which=shutil.which, run=subprocess
             pass
 
 
-def serve(bind, port, readers, *, static_dir, secret_path, allow_hosts=(), stop=None, stream=None):
+def serve(bind, port, readers, *, static_dir, secret_path, allow_hosts=(), stop=None, stream=None, gates=None):
     """Run in the foreground until SIGINT or SIGTERM, or until `stop` is set."""
     assets = load_assets(static_dir)
     secret = sec.ensure_secret(secret_path) if not bind.loopback else None
     watch = sec.SecretWatch(secret_path, secret) if secret else None
     try:
-        server = DashboardServer(bind, port, assets=assets, readers=readers, secret=watch, allow_hosts=allow_hosts)
+        server = DashboardServer(bind, port, assets=assets, readers=readers, secret=watch, allow_hosts=allow_hosts,
+                                 gates=gates)
     except OSError as exc:
         if exc.errno == errno.EADDRINUSE:
             raise RuntimeError(f"port {port} is already in use on {bind.address}; "
@@ -481,9 +504,11 @@ def serve(bind, port, readers, *, static_dir, secret_path, allow_hosts=(), stop=
             signal.signal(number, lambda *_: stop.set())
     worker = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.2}, daemon=True)
     worker.start()
+    server.refresher.start()           # the socket is open: the first load never delays it
     try:
         announce(bind, server.port, secret, stream)
         stop.wait()
     finally:
+        server.refresher.stop()
         server.shutdown()
         server.server_close()

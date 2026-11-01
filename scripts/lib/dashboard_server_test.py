@@ -310,8 +310,8 @@ class Requests(Harness):
         self.start()
         self.assertEqual(self.call("/api/v1/beads", headers=["Origin: http://attacker.example"])[0], 403)
         self.assertEqual(self.call("/api/v1/beads", headers=["Sec-Fetch-Site: cross-site"])[0], 403)
-        self.assertEqual(self.call("/api/v1/beads", headers=[f"Origin: http://{self.host}"])[0], 501)
-        self.assertEqual(self.call("/api/v1/beads", headers=["Sec-Fetch-Site: same-origin"])[0], 501)
+        self.assertEqual(self.call("/api/v1/summary", headers=[f"Origin: http://{self.host}"])[0], 501)
+        self.assertEqual(self.call("/api/v1/summary", headers=["Sec-Fetch-Site: same-origin"])[0], 501)
 
     def test_path_traversal(self):
         (self.root / "state").mkdir()
