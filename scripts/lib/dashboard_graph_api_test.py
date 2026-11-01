@@ -97,6 +97,12 @@ class Graph(data.Live):
                 self.assertEqual(self.get("/api/v1/graph?" + path)[0], 200)
             self.assertEqual(view.call_count, 4)      # depth 1, depth 2, ready, the change
 
+    def test_loading_shows_an_empty_neighbourhood_and_frontier_and_their_state(self):
+        self.start()
+        for scope in ("bead:SPEC-aaaa&depth=2", "ready"):
+            status, doc = self.get(f"/api/v1/graph?scope={scope}")
+            self.assertEqual((status, doc["data"]["nodes"], doc["sources"]["beads"]["state"]), (200, [], "loading"), scope)
+
     def test_a_malformed_query_is_refused_and_says_nothing_back(self):
         self.loaded([bead("SPEC-aaaa")])
         for query in ("", "?scope=", "?scope=change:%2e%2e%2fetc", "?scope=change:demo&closed=maybe",
