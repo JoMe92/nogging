@@ -11,7 +11,8 @@ import unittest
 from unittest import mock
 
 import token_usage_store
-from token_usage_store import Store, StoreError, StoreTimeout, StoreUnavailable, fact, latest_revisions
+from token_usage_store import (LeaseAbsent, LeaseBusy, Store, StoreError, StoreTimeout, StoreUnavailable, fact,
+                               latest_revisions)
 
 ROOT = Path(__file__).resolve().parents[2]
 loader = importlib.machinery.SourceFileLoader('nogg_storage_test', str(ROOT / 'scripts/nogg'))
@@ -111,6 +112,86 @@ class DoltBoundTests(unittest.TestCase):
         for bad in (True, 0, -1, 'slow', None):
             with mock.patch.dict(nogg.CFG, {'token_usage_query_timeout_seconds': bad}):
                 self.assertEqual(nogg.usage_query_timeout(), 30.0, bad)
+
+
+class ReadLeaseTests(unittest.TestCase):
+    """The lease against the writer lock. The collision it prevents is proved with
+    real Dolt in scripts/dashboard-usage.test.sh; these need no Dolt."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix='nogg-lease-')
+        self.addCleanup(self.temp.cleanup)
+        self.state = Path(self.temp.name)
+        self.store = Store(self.state, lambda _: {'state_dir': str(self.state)})
+
+    def tree(self):
+        return sorted((str(p.relative_to(self.state)), p.stat().st_mode, p.stat().st_mtime_ns)
+                      for p in self.state.rglob('*'))
+
+    def test_a_missing_lock_creates_nothing(self):
+        with self.assertRaises(LeaseAbsent):
+            with self.store.read_lease():
+                self.fail('no lease without a lock file')
+        self.assertEqual(self.tree(), [])
+
+    def test_a_held_writer_lock_refuses_the_lease(self):
+        with self.store.locked():
+            with self.assertRaises(LeaseBusy):
+                with self.store.read_lease():
+                    self.fail('no lease while a writer is inside')
+
+    def test_the_lease_changes_nothing_and_is_released(self):
+        with self.store.locked():
+            pass
+        before = self.tree()
+        with self.store.read_lease():
+            with self.store.read_lease():      # readers share it
+                pass
+        self.assertEqual(self.tree(), before)
+        with self.store.locked():              # released: an exclusive lock is free again
+            pass
+
+    def test_a_writer_waits_for_the_lease(self):
+        with self.store.locked():
+            pass
+        entered = threading.Event()
+        def writer():
+            with self.store.locked():
+                entered.set()
+        thread = threading.Thread(target=writer)
+        with self.store.read_lease():
+            thread.start()
+            self.assertFalse(entered.wait(0.2), 'the writer entered during the lease')
+        self.assertTrue(entered.wait(10), 'the writer never entered')
+        thread.join()
+
+    def test_a_dolt_call_under_the_lease_holds_it_too(self):
+        """A stub `dolt` lists its own descriptors: the lease must reach the child, so
+        it outlives a reader killed mid-read, and must not reach a later call."""
+        with self.store.locked():
+            pass
+        self.store.database.mkdir(mode=0o700)
+        stub = self.state / 'bin'
+        stub.mkdir()
+        (stub / 'dolt').write_text('#!/bin/sh\nfor f in /proc/$$/fd/*; do readlink "$f"; done\nexit 0\n')
+        (stub / 'dolt').chmod(0o755)
+        with mock.patch.dict(os.environ, {'PATH': f"{stub}{os.pathsep}{os.environ['PATH']}"}):
+            with self.store.read_lease():
+                inside = self.store._dolt('sql')
+            outside = self.store._dolt('sql')
+        self.assertIn('collector.lock', inside)
+        self.assertNotIn('collector.lock', outside)
+
+    def test_one_budget_caps_several_calls(self):
+        seen = []
+        def fake(*args, **kwargs):
+            seen.append(kwargs['timeout'])
+            return subprocess.CompletedProcess(args, 0, '{}', '')
+        left = iter((45.0, 12.5))
+        with mock.patch.object(token_usage_store.subprocess, 'run', fake):
+            self.store.query('SELECT 1', timeout=lambda: next(left))
+            self.store.query('SELECT 1', timeout=lambda: next(left))
+        self.assertEqual(seen, [45.0, 12.5])
 
 
 @unittest.skipUnless(shutil.which('dolt'), 'embedded Dolt not installed')

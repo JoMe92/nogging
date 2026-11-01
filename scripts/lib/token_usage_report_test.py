@@ -57,12 +57,12 @@ class Facts:
         return self
 
     def usage(self, seg, event, when, model='luna', input=100, output=10, cache_write=5, semantics=None,
-              runtime='claude', duration=1000, cache_read=0):
+              runtime='claude', duration=1000, cache_read=0, completeness='complete'):
         self.tables['usage_events'].append(row('usage_events', source_id=f'{runtime}:conv-{seg}', event_id=event,
             source_timestamp=when, segment_id=seg, runtime=runtime, provider='p', model=model,
             input_tokens=input, output_tokens=output, cache_read_tokens=cache_read, cache_write_tokens=cache_write,
-            thinking_tokens=0, inference_duration_ms=duration, completeness='complete',
-            semantics=semantics or [], raw_usage={'input_tokens': input}))
+            thinking_tokens=0, inference_duration_ms=duration, completeness=completeness,
+            semantics=semantics or [], raw_usage={} if input is None else {'input_tokens': input}))
         return self
 
 
@@ -397,6 +397,69 @@ class BeadViewTests(unittest.TestCase):
 
 
 @unittest.skipUnless(shutil.which('git'), 'git not installed')
+class UsageViewTests(unittest.TestCase):
+    """The additive day and model view reconciled with report() over one set of facts."""
+
+    def views(self, facts):
+        return tr.usage_views(facts.tables, *tr.WHOLE_HISTORY)
+
+    def bead_rows(self, facts):
+        return tr.report(facts.tables, META, *tr.WHOLE_HISTORY, 'bead', {}, NOW)['rows']
+
+    def test_the_views_add_up_to_the_report_totals(self):
+        facts = bead_facts()
+        facts.segment('old', 'old-sess', start=at(1, day=9), end=at(2, day=9))
+        facts.usage('old', 'd1', at(1, 30, day=9), input=70, cache_read=0, cache_write=0, output=7)
+        views = self.views(facts)
+        days = tr.report(facts.tables, META, *tr.WHOLE_HISTORY, 'day', {}, NOW)['rows']
+        for key in ('output_tokens', 'cache_read_tokens'):
+            for bucket in days:
+                self.assertEqual(sum(work['tokens'][key] for work in views['by_day'][bucket['bucket'][:10]].values()),
+                                 bucket['tokens'][key], bucket['bucket'])
+        for key in tr.WORK_COUNTERS:
+            for part in ('tokens', 'unknown_counters'):
+                by_bead = sum(row['work'][part][key] for row in self.bead_rows(facts))
+                self.assertEqual(sum(work[part][key] for work in views['by_model'].values()), by_bead, key)
+                self.assertEqual(sum(work[part][key] for runtimes in views['by_day'].values()
+                                     for work in runtimes.values()), by_bead, key)
+        self.assertEqual(views['floors'], {'claude': at(1, 30, day=9), 'codex': at(1, 10)})
+
+    def test_a_partial_runtime_is_named_and_its_known_sum_stays_known(self):
+        facts = Facts().segment('p', 'pi-sess', runtime='pi')
+        facts.usage('p', 'known', at(1), runtime='pi', input=10, cache_read=0, cache_write=0, output=5)
+        facts.usage('p', 'blind', at(2), runtime='pi', input=None, cache_read=None, output=None)
+        facts.segment('c', 'claude-sess').usage('c', 'whole', at(3), input=4, cache_read=0, cache_write=0, output=1)
+        views = self.views(facts)
+        self.assertEqual(views['partial'], ['pi'])
+        work = views['by_day'][at(0)[:10]]['pi']
+        self.assertEqual(work['tokens']['output_tokens'], 5)
+        self.assertEqual(work['unknown_counters']['output_tokens'], 1)
+
+    def test_an_incomplete_fact_names_its_runtime(self):
+        facts = Facts().segment('c', 'claude-sess')
+        facts.usage('c', 'gap', at(1), input=4, cache_read=0, cache_write=0, output=1, completeness='partial')
+        self.assertEqual(self.views(facts)['partial'], ['claude'])
+
+    def test_consumption_across_a_day_stays_out_of_the_days(self):
+        facts = Facts().segment('a', 'agy-sess', runtime='antigravity')
+        facts.usage('a', 'run', at(1, day=11), runtime='antigravity', input=30, cache_read=0, cache_write=0, output=3,
+                    semantics=['coarse_from:' + at(23, day=10)])
+        views = self.views(facts)
+        self.assertEqual(views['by_day'], {})
+        self.assertEqual(views['partial'], ['antigravity'])
+        self.assertEqual(views['by_model']['luna']['tokens']['output_tokens'], 3)
+
+    def test_an_untimed_fact_counts_nowhere_and_names_its_runtime(self):
+        facts = Facts().segment('c', 'claude-sess').usage('c', 'lost', None, input=4, output=1)
+        self.assertEqual(self.views(facts), {'by_day': {}, 'by_model': {}, 'floors': {}, 'partial': ['claude']})
+
+    def test_a_window_narrows_the_work_but_not_the_floor(self):
+        facts = bead_facts()
+        views = tr.usage_views(facts.tables, *tr.window(at(2), at(3), NOW))
+        self.assertEqual(sum(work['tokens']['output_tokens'] for work in views['by_model'].values()), 20)
+        self.assertEqual(views['floors']['claude'], at(1, 30))
+
+
 class GitAttributionTests(unittest.TestCase):
     def setUp(self):
         self.repo = Path(tempfile.mkdtemp())
@@ -451,6 +514,35 @@ class GitAttributionTests(unittest.TestCase):
         self.assertEqual([(r['bead'], r['commits'], r['production_lines']) for r in doc['rows']],
                          [('SPEC-a', 2, 14), ('SPEC-a', 2, 14), ('SPEC-b', 1, 0), (None, None, None)])
         self.assertEqual(doc['rows'][2]['per_production_line']['total_tokens'], None)   # zero production lines
+
+    def test_bead_commits_lists_rebased_copies_once(self):
+        side_branch = self.git('rev-parse', '--abbrev-ref', 'HEAD')
+        self.git('checkout', '-q', '-b', 'topic')
+        side = self.commit('feat: side [SPEC-c]', {'src/side.py': 3})
+        self.git('checkout', '-q', side_branch)
+        self.commit('chore: no token', {'notes.txt': 1})
+        self.git('cherry-pick', side)                 # a copy: same author time and subject
+        found = tr.bead_commits(self.repo, {'SPEC-c'})
+        self.assertEqual([(c['subject'], c['beads'], c['production_lines'], c['test_lines'])
+                          for c in found['commits']], [('feat: side [SPEC-c]', ['SPEC-c'], 3, 0)])
+        self.assertEqual(found['tokenless'], 2)       # the seed commit and `no token`
+        self.assertIsInstance(found['commits'][0]['at'], int)
+
+    def test_bead_commits_asks_git_only_for_unseen_commits(self):
+        first = self.commit('feat: one [SPEC-a]', {'src/one.py': 2})
+        calls, cache = [], {}
+        def run(argv, **kwargs):
+            calls.append(kwargs.get('input'))
+            return subprocess.run(argv, **kwargs)
+        tr.bead_commits(self.repo, {'SPEC-a'}, run=run, numstat=cache)
+        self.assertEqual(calls[-1], first + '\n')
+        second = self.commit('feat: two [SPEC-a]', {'src/two.py': 4})
+        found = tr.bead_commits(self.repo, {'SPEC-a'}, run=run, numstat=cache)
+        self.assertEqual(calls[-1], second + '\n')
+        self.assertEqual(sorted(c['production_lines'] for c in found['commits']), [2, 4])
+        calls.clear()
+        tr.bead_commits(self.repo, {'SPEC-a'}, run=run, numstat=cache)
+        self.assertEqual(calls, [None], 'nothing new, so only the log runs')
 
     def test_git_unavailable(self):
         outside = Path(tempfile.mkdtemp())

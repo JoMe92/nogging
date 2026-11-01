@@ -5173,11 +5173,14 @@ def dashboard_readers():
             "git": lambda: slow.read_git(home),
             "tokens": lambda: slow.read_tokens(collect_store, usage_report_module)}
 def dashboard_gates():
-    """Change gates of the sources that read files: a token that moves when the files do,
-    so the refresher skips a reload that would read the same bytes. They only stat."""
-    import dashboard_sources as sources
+    """Change gates: a token that moves when the data does, so the refresher skips a
+    reload that would read the same bytes. They only stat, read a status file or list
+    the refs, and each runs on the refresher thread."""
+    import dashboard_slow_sources as slow, dashboard_sources as sources
     return {"sessions": sources.directory_gate(orchestrator_sessions_dir()),
-            "tests": sources.files_gate(TEST_STATE / "runs.jsonl", TEST_STATE / "runs.jsonl.1")}
+            "tests": sources.files_gate(TEST_STATE / "runs.jsonl", TEST_STATE / "runs.jsonl.1"),
+            "git": slow.git_gate(ORCHESTRATOR_HOME),
+            "tokens": slow.tokens_gate(collect_store)}
 def dashboard_command(args):
     """`nogg dashboard`: the foreground read-only web server."""
     # Set before any reader runs: a plain `bd` call could otherwise start Dolt, and

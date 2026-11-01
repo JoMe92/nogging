@@ -81,6 +81,17 @@ def stop(process):
     return code
 
 
+def children(pid):
+    """The children of every thread of `pid`. A thread may end while this walks them."""
+    found = []
+    for task in Path(f"/proc/{pid}/task").iterdir():
+        try:
+            found += (task / "children").read_text().split()
+        except OSError:
+            pass
+    return found
+
+
 def state_files(repo):
     base = repo / ".nogging/state"
     return sorted(str(p.relative_to(base)) for p in base.rglob("*") if p.is_file()) if base.exists() else []
@@ -111,10 +122,12 @@ with tempfile.TemporaryDirectory(prefix="nogg data ") as tmp:
     subprocess.run(["git", "-C", str(repo), "worktree", "add", "-q", "-b", "linked", str(linked)], check=True)
     before = state_files(repo)
 
-    # It runs from a linked worktree: records and Beads of the canonical checkout.
+    # It runs from a linked worktree: records and Beads of the canonical checkout. Wait for
+    # all five sources: the refresher runs Git in the background, and the child check below
+    # asks whether a request left a process, not whether the refresher is busy.
     process, port = start(linked, stub_dir)
     check("a linked worktree starts it", port is not None)
-    doc = settled(port, ["beads", "sessions", "tests"])
+    doc = settled(port, ["beads", "sessions", "tests", "git", "tokens"])
     states = {name: item["state"] for name, item in doc["data"].items()}
     check("a linked worktree reads the sessions, tests and Beads of the main checkout",
           states.get("beads") == states.get("sessions") == states.get("tests") == "fresh", str(states))
@@ -127,8 +140,7 @@ with tempfile.TemporaryDirectory(prefix="nogg data ") as tmp:
     check("the list is served from the stub", [item["id"] for item in beads["data"]["beads"]] == ["SPEC-aaaa"])
     raw = json.dumps(beads) + json.dumps(api(port, "/api/v1/changes")) + json.dumps(doc)
     check("no owner address reaches a response", "example.com" not in raw and "someone" not in raw, raw[:200])
-    check("no child process lingers after a request", not [
-        child for task in Path(f"/proc/{process.pid}/task").iterdir() for child in (task / "children").read_text().split()])
+    check("no child process lingers after a request", children(process.pid) == [])
     check("SIGTERM ends it cleanly", stop(process) == 0)
     check("it created no file in the main checkout", state_files(repo) == before, str(state_files(repo)))
 

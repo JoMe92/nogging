@@ -3,6 +3,7 @@
 Callers supply canonical_repository_state from nogg; source adapters supply
 stable runtime identities and source ordinals, never importer time or paths.
 All writers (including future sync) must hold Store.locked().
+A periodic reader holds Store.read_lease() for its whole read instead.
 """
 from contextlib import contextmanager
 import fcntl
@@ -48,6 +49,14 @@ class StoreTimeout(StoreUnavailable):
     def __init__(self, message, seconds):
         super().__init__(message)
         self.seconds = seconds
+
+
+class LeaseBusy(StoreError):
+    """A writer holds the collector lock; keep what you have and retry later."""
+
+
+class LeaseAbsent(StoreError):
+    """No collector lock exists, so no collection ever ran here."""
 
 
 def canonical_json(value):
@@ -128,6 +137,7 @@ class Store:
     def __init__(self, checkout, resolve_repository):
         self.root = Path(resolve_repository(checkout)['state_dir']) / 'token-usage'
         self.database = self.root / 'database'
+        self._lease_fds = ()
 
     @contextmanager
     def locked(self):
@@ -142,11 +152,44 @@ class Store:
             finally:
                 os.umask(old)
 
-    def _dolt(self, *args, sql=None, timeout=None):
-        bound = self.TIMEOUT if timeout is None else timeout
+    @contextmanager
+    def read_lease(self):
+        """A shared, non-blocking lease on the collector lock for one whole read.
+
+        A running SELECT makes a concurrent Dolt write fail at once ("database is
+        read only"), which costs the collector an import attempt. Store.locked()
+        blocks, so a writer waits for this lease; a writer that is already inside
+        raises LeaseBusy here before any Dolt call. Taking the lease creates and
+        changes nothing, and a missing lock file raises LeaseAbsent.
+
+        Every Dolt call made under the lease inherits its descriptor. flock belongs
+        to the open file, so the lease then outlives this process: a reader killed
+        mid-read leaves a Dolt child running, and the writer still has to wait for it.
+        """
         try:
-            result = subprocess.run(['dolt', *args], cwd=self.database, input=sql,
-                                    text=True, capture_output=True, timeout=bound)
+            fd = os.open(self.root / 'collector.lock', os.O_RDONLY)
+        except FileNotFoundError:
+            raise LeaseAbsent('no usage collection has run in this repository') from None
+        try:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise LeaseBusy('a usage collection holds the store') from None
+            held, self._lease_fds = self._lease_fds, (*self._lease_fds, fd)
+            try:
+                yield
+            finally:
+                self._lease_fds = held
+        finally:
+            os.close(fd)
+
+    def _dolt(self, *args, sql=None, timeout=None):
+        """Run one Dolt call. `timeout` is seconds, or a callable giving the seconds
+        left, so one budget can cap the several calls of a whole read."""
+        bound = self.TIMEOUT if timeout is None else timeout() if callable(timeout) else timeout
+        try:
+            result = subprocess.run(['dolt', *args], cwd=self.database, input=sql, text=True,
+                                    capture_output=True, timeout=bound, pass_fds=self._lease_fds)
         except subprocess.TimeoutExpired as exc:
             # Never echo SQL payloads; the bound alone tells the caller what to tune.
             raise StoreTimeout(f'local Dolt timed out after {bound:g}s; usage evidence must remain pending',
