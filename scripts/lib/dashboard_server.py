@@ -16,6 +16,7 @@ from pathlib import Path
 
 import dashboard_cache as cache
 import dashboard_graph as graph
+import dashboard_metrics as metrics
 import dashboard_model as model
 import dashboard_security as sec
 
@@ -138,14 +139,17 @@ def route_auth(server, request):
     return api_response(server, "auth", {}, headers=[("Set-Cookie", cookie)])
 
 
-def render_api(server, name, sources, build, memo=None):
+def render_api(server, name, sources, build, memo=None, expect=()):
     """A cached API response built from the named sources. It is built and compressed
     once per change of those sources, so a request only looks it up. `memo` tells apart
-    the responses of a route that takes parameters. Every API request is demand: it keeps
-    the refresher awake."""
+    the responses of a route that takes parameters. `expect` names sources the response is
+    about even when this process reads none of them: they are reported `absent`. Every API
+    request is demand: it keeps the refresher awake."""
     server.refresher.touch()
 
     def make(snapshots, statuses):
+        statuses = {**{name: {"state": "absent", "as_of": None, "generation": 0}
+                       for name in expect if name not in statuses}, **statuses}
         as_of = max((item["as_of"] for item in statuses.values() if item["as_of"]), default=None)
         doc = {"schema": f"nogg.dashboard.{name}/v1", "as_of": as_of or iso(server.wall_clock()),
                "sources": statuses, "data": build(snapshots, statuses)}
@@ -173,7 +177,20 @@ def route_bead_detail(server, request):
 
 
 def route_summary(server, request):
-    return api_error(server, 501)
+    """Panels 1 to 6 of the start page for the range in the query (`range=7d|30d|90d|all`,
+    default 30d). Every source is named in the envelope; one this process does not read is
+    `absent`, and its blocks say so and show no zero."""
+    try:
+        range_name = metrics.parse_range(request.query)
+    except ValueError:
+        return api_error(server, 400)
+    names = ("beads", "sessions", "tests", "git", "tokens")
+    now = datetime.fromtimestamp(server.wall_clock(), timezone.utc)
+    # The UTC day is part of the memo key, so the window and the age move on at midnight
+    # even when no source changed.
+    return render_api(server, "summary", [name for name in names if name in server.refresher.cells],
+                      lambda snapshots, statuses: metrics.summary_view(snapshots, now, range_name),
+                      memo=f"summary?{range_name}&{now.date().isoformat()}", expect=names)
 
 
 def route_graph(server, request):

@@ -151,7 +151,7 @@ class Access(Harness):
         cookie = self.login()
         for _ in range(11):
             self.call("/api/v1/auth", headers=["Authorization: Bearer no"])
-        self.assertEqual(self.call("/api/v1/summary", headers=[f"Cookie: {cookie}"])[0], 501)
+        self.assertEqual(self.call("/api/v1/freshness", headers=[f"Cookie: {cookie}"])[0], 200)
 
     def test_a_bad_cookie_counts_as_a_failure(self):
         self.start(NETWORK)
@@ -195,13 +195,13 @@ class Access(Harness):
         self.assertNotIn(self.token, cookie)
         pair = cookie.split(";")[0]
         self.assertEqual(self.call("/api/v1/auth", headers=[f"Cookie: {pair}"])[0], 200)
-        self.assertEqual(self.call("/api/v1/summary", headers=[f"Cookie: {pair}"])[0], 501)
+        self.assertEqual(self.call("/api/v1/freshness", headers=[f"Cookie: {pair}"])[0], 200)
 
     def test_the_phone_comes_back_within_thirty_days_and_not_after(self):
         self.start(NETWORK)
         cookie = self.login()
         self.wall.now += 2592000 - 1
-        self.assertEqual(self.call("/api/v1/summary", headers=[f"Cookie: {cookie}"])[0], 501)
+        self.assertEqual(self.call("/api/v1/freshness", headers=[f"Cookie: {cookie}"])[0], 200)
         self.wall.now += 2
         self.assertEqual(self.call("/api/v1/summary", headers=[f"Cookie: {cookie}"])[0], 401)
 
@@ -223,7 +223,7 @@ class Access(Harness):
 
     def test_a_loopback_client(self):
         self.start(LOOPBACK)
-        self.assertEqual(self.call("/api/v1/summary")[0], 501)
+        self.assertEqual(self.call("/api/v1/freshness")[0], 200)
         status, headers, body = self.call("/api/v1/auth")
         self.assertEqual(status, 200)
         self.assertNotIn("set-cookie", headers)
@@ -310,8 +310,8 @@ class Requests(Harness):
         self.start()
         self.assertEqual(self.call("/api/v1/beads", headers=["Origin: http://attacker.example"])[0], 403)
         self.assertEqual(self.call("/api/v1/beads", headers=["Sec-Fetch-Site: cross-site"])[0], 403)
-        self.assertEqual(self.call("/api/v1/summary", headers=[f"Origin: http://{self.host}"])[0], 501)
-        self.assertEqual(self.call("/api/v1/summary", headers=["Sec-Fetch-Site: same-origin"])[0], 501)
+        self.assertEqual(self.call("/api/v1/freshness", headers=[f"Origin: http://{self.host}"])[0], 200)
+        self.assertEqual(self.call("/api/v1/freshness", headers=["Sec-Fetch-Site: same-origin"])[0], 200)
 
     def test_path_traversal(self):
         (self.root / "state").mkdir()

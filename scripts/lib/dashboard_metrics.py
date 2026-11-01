@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import math
 from datetime import datetime, timedelta, timezone
+from urllib.parse import parse_qs
 
 STATUSES = ("open", "in_progress", "blocked", "closed", "deferred")
 RANGES = {"7d": 7, "30d": 30, "90d": 90, "all": None}
@@ -272,6 +273,18 @@ def window_start(range_name, now):
     days = RANGES[range_name]
     return None if days is None else datetime.combine(day_of(now) - timedelta(days=days - 1),
                                                       datetime.min.time(), timezone.utc)
+
+
+def parse_range(query):
+    """The range of a /api/v1/summary query: absent means the default, anything else that is
+    not one of the four ranges, or a repeated or extra field, is a ValueError."""
+    fields = parse_qs(query, keep_blank_values=True, max_num_fields=4)
+    if set(fields) - {"range"} or any(len(values) > 1 for values in fields.values()):
+        raise ValueError("unknown or repeated field")
+    name = fields.get("range", [DEFAULT_RANGE])[0]
+    if name not in RANGES:
+        raise ValueError("unknown range")
+    return name
 
 
 def summary_view(snapshots, now=None, range_name=DEFAULT_RANGE):
