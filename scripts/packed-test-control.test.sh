@@ -74,7 +74,9 @@ run node "$work/new/bin/cli.js" update "${flags[@]}"
 check "update succeeds" test "$rc" -eq 0
 check "the notice appears once" test "$(grep -c 'runs on its defaults here' <<<"$out")" -eq 1
 check "and points at the stages and the page" has "$out" "testing.stages"
-check "the config is byte-identical" cmp -s "$c/.nogging/config.json" "$work/config.before"
+# update records the installed version (nogging_version); every other byte must stay.
+without_version() { grep -v '"nogging_version"' "$1"; }
+check "the config is byte-identical" cmp -s <(without_version "$c/.nogging/config.json") <(without_version "$work/config.before")
 doctor_after=0; in_c ./scripts/nogg doctor >"$work/doctor.out" 2>&1 || doctor_after=$?
 check "doctor keeps its exit code" test "$doctor_after" -eq "$doctor_before"
 check "and gains no FAIL line" test "$(grep -c '^FAIL' "$work/doctor.out")" -le "$(grep -c '^FAIL' "$work/doctor.before")"

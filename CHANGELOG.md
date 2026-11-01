@@ -9,29 +9,46 @@ and GitHub Releases for that history.
 
 ## [Unreleased]
 
+## [3.6.0] - 2026-11-01
+
+The headline is the test policy and test control: a repository that uses Nogging no
+longer ends up with an agent-written suite that takes an hour and blocks development.
+See `docs/testing-policy.md` and `docs/test-control.md`; an existing repository
+with no `testing` block keeps working and gets one notice.
+
 ### Added
 
-- A nightly fallback for repositories whose CI runs no tests. `init` and `update` render
-  `systemd/nogg-nightly-<slug>.service` and `.timer` and enable nothing; `doctor` says
-  when to. `nogg test nightly` skips where CI runs the tests or the commit was already
-  tested, defers on a busy host except at the 05:17 firing, and runs
-  `testing.nightly.setup` and the full stage at low priority in a retained
-  `<main>-nightly` worktree, leaving the shared checkout untouched. It writes
-  `.nogging/state/testing/nightly-last.json`. A failed run is a `doctor` WARN and one
-  non-urgent `nightly_failed` digest item that clears when a later run passes, and a
-  fresh record locks `nogg test full` under `auto`. Run records also gain up to five
-  `failed_names` from JUnit. `remove` names the worktree. (SPEC-kps8)
-- Agents now work on the test stages. `AGENTS.md` and its installed block, the Claude
-  block, `CLAUDE.md`, the autonomous and orchestrator launch prompts, the
-  `backend-engineer` and `test-runner` specialists and the operating model name
-  `nogg test changed` while working, `nogg test commit` before a commit and
-  `nogg test bead` once per Bead, link the test policy, and keep `nogg test full` for a
-  release, the nightly run or a recorded reason. Weakening a test takes a
-  `Test-Integrity: <reason>` trailer and a discovery note. `nogg doctor` also checks,
-  through `gh`, that CI really runs tests: a WARN when CI is configured and no test job
-  is found, a NOTE for an old test job or for no CI, nothing when `gh` is unreachable,
-  cached in `.nogging/state/testing/ci-check.json`, never changing the exit code.
-  (SPEC-4598)
+- A short, framework-neutral test policy ships as `docs/nogging/testing-policy.md`
+  (what to always test, what not to test, the level per change, mocks only at
+  process boundaries, expensive setup once per run, no real sleeps). The
+  `code-reviewer` specialist gains a test-value checklist. A `tasks.md` task now
+  carries a `Tests:` field with sizes (`small`, `medium`, `large`) in every
+  runtime's planning prompt; `nogg validate` and `materialize` refuse a new task
+  whose `Check:` demands the full suite (bare `scripts/test`, a whole suite,
+  `nogg test full`) before any Bead is created, and only print a NOTE for a task
+  that already has a Bead. A missing or sizeless `Tests:` field is a NOTE.
+  `task_sizing.bead_test_lines` (default `[1, 1500]`) adds a per-Bead test-line
+  budget to `nogg task-sizing`. (SPEC-s8ev)
+
+- `nogg test changed|commit|bead|full` is one entry point per testing moment. Each
+  stage runs through `run-quiet` under the session's deny rules, reports a budget
+  and never kills a run. `full` is refused wherever CI runs it, unless `--release`,
+  `--nightly` or `--allow-full "<reason>"` permits it. `bead` and `full` share two
+  host-wide `flock` slots, and every run appends one record to
+  `.nogging/state/testing/runs.jsonl` in the main checkout. Existing repositories
+  keep working with no `testing` block; `update` prints one line saying so, and a
+  malformed value is only a `doctor` WARN. `scripts/test` gains `--only <path>...`
+  and `--timings <file>`, and behaves as before without arguments.
+
+- `scripts/check-test-integrity <base> [--enforce]` flags, over the whole range
+  `<base>...HEAD`, a deleted test or test file, a newly added skip or
+  expected-failure marker and a modified test file whose assertion count falls
+  (pytest, unittest, Jest/Vitest, Go, Rust, JUnit and shell). A move or rename
+  inside the range is not a finding; a `Test-Integrity: <reason>` trailer on a
+  commit in the range clears the rest. The analysis is the pure
+  `scripts/lib/testing_diff.py`; both ship in the package. See
+  `docs/operating-model.md` *Test integrity*.
+
 - Test cost is visible. `nogg test report [--days N] [--json]` prints a daily row
   per stage (runs, failures, median seconds, over-budget runs), the week-over-week
   change, the slowest tests, explicit full runs and the Beads outside
@@ -44,25 +61,23 @@ and GitHub Releases for that history.
   integrity [--base <ref>]` runs it alone; `testing.integrity` sets `report` or
   `enforce`, and a `Test-Integrity:` trailer also needs a `discovery` label on its
   Bead where `bd` is reachable. This repository sets `enforce`. (SPEC-sxk7)
-- A short, framework-neutral test policy ships as `docs/nogging/testing-policy.md`
-  (what to always test, what not to test, the level per change, mocks only at
-  process boundaries, expensive setup once per run, no real sleeps). The
-  `code-reviewer` specialist gains a test-value checklist. A `tasks.md` task now
-  carries a `Tests:` field with sizes (`small`, `medium`, `large`) in every
-  runtime's planning prompt; `nogg validate` and `materialize` refuse a new task
-  whose `Check:` demands the full suite (bare `scripts/test`, a whole suite,
-  `nogg test full`) before any Bead is created, and only print a NOTE for a task
-  that already has a Bead. A missing or sizeless `Tests:` field is a NOTE.
-  `task_sizing.bead_test_lines` (default `[1, 1500]`) adds a per-Bead test-line
-  budget to `nogg task-sizing`. (SPEC-s8ev)
-- `scripts/check-test-integrity <base> [--enforce]` flags, over the whole range
-  `<base>...HEAD`, a deleted test or test file, a newly added skip or
-  expected-failure marker and a modified test file whose assertion count falls
-  (pytest, unittest, Jest/Vitest, Go, Rust, JUnit and shell). A move or rename
-  inside the range is not a finding; a `Test-Integrity: <reason>` trailer on a
-  commit in the range clears the rest. The analysis is the pure
-  `scripts/lib/testing_diff.py`; both ship in the package. See
-  `docs/operating-model.md` *Test integrity*.
+
+- A nightly fallback for repositories whose CI runs no tests. `init` and `update` render
+  `systemd/nogg-nightly-<slug>.service` and `.timer` and enable nothing; `doctor` says
+  when to. `nogg test nightly` skips where CI runs the tests or the commit was already
+  tested, defers on a busy host except at the 05:17 firing, and runs
+  `testing.nightly.setup` and the full stage at low priority in a retained
+  `<main>-nightly` worktree, leaving the shared checkout untouched. It writes
+  `.nogging/state/testing/nightly-last.json`. A failed run is a `doctor` WARN and one
+  non-urgent `nightly_failed` digest item that clears when a later run passes, and a
+  fresh record locks `nogg test full` under `auto`. Run records also gain up to five
+  `failed_names` from JUnit. `remove` names the worktree. (SPEC-kps8)
+
+- `nogg doctor` checks, through `gh`, that CI really runs tests: a WARN when CI is
+  configured and no test job is found, a NOTE for an old test job or for no CI, nothing
+  when `gh` is unreachable. The result is cached in `.nogging/state/testing/ci-check.json`
+  and never changes the exit code. (SPEC-4598)
+
 - `nogg usage install-statusline --dry-run` previews the wrapper, the composed
   command and a diff of the Claude `settings.json` and writes nothing. A real
   install now backs up `settings.json` (`.nogging-install.bak`) and records
@@ -72,15 +87,15 @@ and GitHub Releases for that history.
   The Claude `unknown` hint now states the effect in one line and links the
   docs section. (#280)
 
-- `nogg test changed|commit|bead|full` is one entry point per testing moment. Each
-  stage runs through `run-quiet` under the session's deny rules, reports a budget
-  and never kills a run. `full` is refused wherever CI runs it, unless `--release`,
-  `--nightly` or `--allow-full "<reason>"` permits it. `bead` and `full` share two
-  host-wide `flock` slots, and every run appends one record to
-  `.nogging/state/testing/runs.jsonl` in the main checkout. Existing repositories
-  keep working with no `testing` block; `update` prints one line saying so, and a
-  malformed value is only a `doctor` WARN. `scripts/test` gains `--only <path>...`
-  and `--timings <file>`, and behaves as before without arguments.
+### Changed
+
+- Agents work on the test stages, not on `scripts/test` once per Bead. `AGENTS.md` and its
+  installed block, the Claude block, `CLAUDE.md`, the autonomous and orchestrator launch
+  prompts, the `backend-engineer` and `test-runner` specialists and the operating model
+  name `nogg test changed` while working, `nogg test commit` before a commit and
+  `nogg test bead` once per Bead, link the test policy, and keep `nogg test full` for a
+  release, the nightly run or a recorded reason. Weakening a test takes a
+  `Test-Integrity: <reason>` trailer and a discovery note. (SPEC-4598)
 
 ### Fixed
 
