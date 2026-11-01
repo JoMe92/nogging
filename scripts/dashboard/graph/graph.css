@@ -35,3 +35,38 @@
 
 .graph-changes { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
 .graph-changes li { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); min-height: var(--target); }
+
+/* Scope, input and the text alternative (TASK-DSH-010). */
+.graph-scope { display: grid; gap: var(--space-2); margin-bottom: var(--space-3); }
+.graph-scope-links, .graph-depths, .graph-bead-form, .graph-tools, .graph-zoomtools, .graph-stepper {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.graph-scope-link[aria-current="page"] { border-color: var(--accent); font-weight: 600; }
+.graph-bead-form .field { min-width: 0; flex: 1 1 10rem; max-width: 16rem; }
+
+.graph-tools { justify-content: space-between; }
+.graph-tool { min-width: var(--target); }
+.graph-stepper[hidden] { display: none; }
+.graph-stepper { display: none; }
+.graph-stepper-label { min-width: 8ch; text-align: center; color: var(--text-2); font-size: var(--type-1); }
+@media (max-width: 599px) { .graph-stepper:not([hidden]) { display: flex; } }
+
+.graph-stage { position: relative; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none;
+  cursor: grab; height: clamp(320px, 70vh, 900px); }
+.graph-stage:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.graph-stage.graph-panning { cursor: grabbing; }
+.graph-stage .graph-canvas { width: 100%; height: 100%; }
+@media (max-width: 599px) { .graph-stage { height: clamp(320px, calc(100dvh - 280px), 900px); } }
+
+.graph-centre .graph-box { stroke-width: 4; }
+.graph-node[role="button"] { cursor: pointer; outline: none; }
+.graph-node[role="button"]:hover .graph-box { fill: var(--hover); }
+
+.graph-list-mode .graph-stage, .graph-list-mode .graph-zoomtools, .graph-list-mode .graph-stepper { display: none; }
+.graph-list { display: grid; gap: var(--space-2); margin: 0; padding-left: var(--space-5); }
+.graph-list[hidden] { display: none; }
+.graph-list-item { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3); min-height: var(--target); }
+.graph-list-closed .graph-list-title { color: var(--text-2); }
+.graph-list-id { font-family: var(--font-mono); min-height: var(--target); padding: 0 var(--space-1); background: none; border: 0;
+  color: var(--link); font-size: inherit; text-decoration: underline; cursor: pointer; }
+span.graph-list-id { text-decoration: none; cursor: default; color: var(--text); }
+.graph-list-blocked { flex-basis: 100%; color: var(--text-2); font-size: var(--type-1); }
