@@ -79,6 +79,94 @@ this does not protect against.
 
 ## Data
 
+Every number on the dashboard comes from memory. One background thread, the
+*refresher*, reads the sources one at a time and keeps one snapshot per source. A
+request only reads a snapshot, so a request never starts a program, and ten phones
+asking at once cause no more reads than one.
+
+| Source | What it reads | Every | Skipped when |
+|---|---|---|---|
+| `beads` | `bd list`, `bd ready` and `bd dep cycles` | 30 s | never |
+| `sessions` | the session records of the main checkout | 30 s | the directory did not change |
+| `tests` | the `nogg test` run records | 2 min | the record files did not change |
+| `git` | Git commits that carry a Bead token | 10 min | the refs did not change |
+| `tokens` | the usage store | 15 min | the collector has not succeeded again |
+
+The socket opens before any source has loaded, so the page shows each panel as
+`loading` until its source arrives. After five minutes without a request the
+refresher idles and starts no source until the next request, so a dashboard nobody
+watches costs nothing. Idle data reads `stale`, not `fresh`.
+
+### States
+
+Every response names the state and `as_of` time of each source it used, and
+`/api/v1/freshness` holds that block alone, with a `generation` counter that moves
+only when a source's data really changed. The client polls it every 10 seconds and
+refetches a view when its sources' generation moved.
+
+| State | Meaning |
+|---|---|
+| `loading` | the first read has not finished |
+| `fresh` | read, or checked and unchanged, within two intervals |
+| `refreshing` | a read is running and the previous snapshot is still served |
+| `stale` | the last read failed, was skipped, or is older than two intervals; the last good data stays |
+| `unavailable` | the read failed and there is no earlier data |
+| `absent` | the source does not exist here: no test records, no session records |
+
+A failed source keeps its last good snapshot and tries again after 30 s, then 1, 2,
+4 and 8 minutes, at most every 10 minutes. It never affects another source. A stale or
+unavailable source also carries a `reason`: `dolt_unreachable` (the Dolt server is not
+running; on the host, run `bd dolt start`), `bd_absent` (`bd` is not installed),
+`bd_error`, `busy` (a collector holds the usage lock, so the read waits) or `error`.
+Nothing but this class reaches a client: the text `bd` printed on stderr is read to pick
+the class and then dropped. The dashboard never starts Dolt and shows no control for it.
+
+### What it adds
+
+Nothing. Every `bd` call is `bd --readonly --sandbox …` with a 30 second timeout, with
+`BEADS_DOLT_AUTO_START=0` in its environment, so a call cannot start Dolt. It runs no
+`doctor` and no usage collection, adds no Bead, fact, commit or configuration, and writes
+no snapshot to disk. The access secret is its only file. "Read-only" does not promise that
+no file is touched: a `SELECT` on an embedded Dolt store may update its own manifest.
+
+### What is served
+
+The API serves allow-listed fields only. A field that is not in the list does not exist
+for the API.
+
+- **Bead:** `id, title, status, priority, issue_type, labels, description, notes,
+  close_reason, parent, created_at, started_at, closed_at, updated_at, dependency_count,
+  dependent_count, dependencies`, with each dependency reduced to `issue_id, depends_on_id,
+  type, created_at`. The list at `/api/v1/beads` leaves out `description`, `notes` and
+  `close_reason` and adds `change` (the `openspec:change:` label, or null) and `ready`.
+  Never `owner`, `created_by` or `assignee`: `assignee` says who claimed a Bead, not who
+  worked on it.
+- **Session:** `name, agent, requested_model, reasoning_effort, selection_tier, role,
+  bead_id, planning_id, state, started_at, ended_at, exit_reason`. Never the command, the
+  prompt, the working directory, the log path, the host, the owner, process or thread
+  identifiers or the grants. The `exit_reason` is its first line, scrubbed, at most 200
+  characters.
+- **Test run:** `bead, stage, at, seconds, status`.
+
+`/api/v1/changes` lists the Beads of each change by status, with the Beads that carry no
+change label under `change: null`, so they stay reachable.
+
+### The scrubber is best effort
+
+Free text (titles, descriptions, notes, close reasons, labels and exit reasons) passes a
+scrubber that replaces e-mail-like strings with `[address]`, token-like strings with
+`[secret]` and home-directory paths with `~`. It catches the common shapes: addresses,
+well-known token prefixes, JSON web tokens, `token=…` and `Bearer …` values and long
+random strings. Git object names and hyphenated names such as session names stay readable.
+It cannot know what a secret looks like in free text, so it will miss some and may hide a
+harmless string. On this repository's own history it would match a handful of notes. Treat
+the dashboard as a view for people who may already read the Beads, and do not write
+credentials into Beads or notes.
+
+Records of sessions are local to the host that ran them. A panel built from them says so
+and shows the earliest record it holds as its floor, rather than a zero for the time
+before.
+
 ## Usage data
 
 ## Beads
