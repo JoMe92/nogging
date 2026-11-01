@@ -381,6 +381,57 @@ refetches the page without rebuilding it.
 
 ## Usage
 
+Five more panels sit under the first six on the start page. They read the same
+`/api/v1/summary?range=…` response, follow the same range and Day or Week controls, and have the
+same **Table** button. Their sources are Sessions, Tokens, Git and Tests, so on a host or in a
+repository that lacks one, that panel reads "Not available here" and shows no number.
+
+| Panel | Shows | Source |
+|---|---|---|
+| Agent-hours | Hours of finished sessions per UTC day or week, how many are running, planning sessions, and the orchestrator's hours on their own line. | Sessions |
+| Agents, models and tiers | Per agent: sessions, running, hours, the models **requested** at launch and the selection tiers. Apart, the models **observed** in usage with their known tokens. | Sessions, Tokens |
+| Token usage | "Known: N" (fresh input plus output) with a per-runtime chart, and each runtime's own first record. | Tokens |
+| Commits and changed lines | Commits that carry a Bead token and their production and test lines, plus a count of commits that carry none. | Git |
+| Test cost | Runs, failures, total and median time per `nogg test` stage, and the seconds per day. | Tests |
+
+### What the numbers mean here
+
+- **Agent-hours** are `ended_at - started_at` of finished sessions, counted on the UTC day a session
+  started. Parallel sessions add up, so the figure is *never* elapsed time. A session with no
+  `ended_at` is **running**: it is counted ("N running", whatever the range, since it describes the
+  present) and adds nothing to the hours. A session that ends before it starts, or has no start, is
+  left out and counted. Planning sessions count in the hours but have no Bead, so they appear in no
+  Bead's detail.
+- **Orchestrator hours** are reported on their own line and are not in the headline: an always-on
+  session would otherwise swamp every other figure.
+- **Session records are local to this host.** The panel says so and names the date its records start.
+- **Requested versus observed models.** A session record says which model was *asked for* and its
+  selection tier; the usage store says which model *ran*. They are two lists on purpose. A missing
+  tier reads "Not recorded" and is not guessed. The observed list covers the whole history, not the
+  range.
+- **Tokens** are `fresh_input + output` of the counters the records prove, and read "Known: N". A
+  counter nobody could prove marks the sum with "+?" and the day with "(unknown counters)", and is
+  never counted as zero. The provider's own total is not used. There is no cost and no quota
+  percentage anywhere. Runtimes with partial data (Pi and Antigravity today) are named under the
+  chart. Batches that wait in the spool are counted and say they are not in the numbers.
+- **Commits** are those whose subject carries a token shaped like a Bead ID, on all branches,
+  remotes and tags, so they may include unmerged work. A rebased copy counts once. Commits with no
+  token are one count for the whole history. A commit whose line counts are missing is counted and
+  adds no lines.
+- **Test cost** sums the seconds of runs that finished (passed or failed). A stage with no run in the
+  range reads "No run", never "0 s". Old records rotate away, so the panel says *Records kept from*
+  the date of the earliest one: earlier days are missing, not free.
+
+### Gaps
+
+The rules of the first six panels hold here. Each series starts at its own floor, computed from the
+records: the earliest session start, token fact per runtime, retained test record, or Bead-token
+commit. When the chosen range opens before the floor, the early days are a hatched band that reads
+"No data before {date}", never a bar of height zero. From the floor on, a day with no record is a
+real zero because the source covers it. Stale tokens (the collector was busy, or a read failed) keep
+their last values, and the panel's freshness line reads "data may be stale" with the time of the last
+update. A source that is loading shows a loading panel, not empty numbers.
+
 ## Graph
 
 The graph tab shows the dependencies of one change as a flow from left to right. Choose a change

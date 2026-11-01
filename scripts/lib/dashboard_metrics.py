@@ -1,5 +1,7 @@
 """Pure start-page statistics of `nogg dashboard` (design Decision 10): Bead counts by status,
-closed Beads over time and by change, cycle and lead time, project age and the activity series.
+closed Beads over time and by change, cycle and lead time, project age and the activity series
+(panels 1 to 6), then agent-hours, agents with models and tiers, tokens, commits and lines, and
+test cost (panels 7 to 11).
 
 Every function takes plain snapshots, the reader snapshots of the data contract, and returns
 plain data. A missing snapshot (`None`: the source is absent, loading or unavailable) is read
@@ -16,12 +18,22 @@ Definitions the docs repeat:
   nearest rank: the value at position ceil(0.9 * n) of the sorted values.
 * Days are UTC days, the unit the chart buckets use.
 * Reopened Beads are not visible: the list holds the latest close only.
+* Agent-hours are the sum of `ended_at - started_at` of finished sessions, counted on the UTC
+  day a session started. Parallel sessions add up, so the sum is never elapsed time. The
+  orchestrator's hours are reported apart, a session with no `ended_at` is "running" and adds
+  nothing, and a session that ends before it starts is excluded and counted.
+* Tokens are `fresh_input + output` of the known counters only. A sum with an unknown counter
+  is flagged (`unknown`), never completed; no cost, no quota share and no provider total.
+* Commits are those whose subject carries a Bead token; the others are one count.
+* Test cost sums the seconds of the `nogg test` runs that ran (passed or failed) per stage.
 """
 from __future__ import annotations
 
 import math
 from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs
+
+import dashboard_model as model
 
 STATUSES = ("open", "in_progress", "blocked", "closed", "deferred")
 RANGES = {"7d": 7, "30d": 30, "90d": 90, "all": None}
@@ -32,6 +44,8 @@ TOP_CHANGES = 10
 BINS = ((3600, "< 1 h"), (4 * 3600, "1-4 h"), (12 * 3600, "4-12 h"), (86400, "12-24 h"),
         (3 * 86400, "1-3 d"), (7 * 86400, "3-7 d"), (14 * 86400, "7-14 d"), (None, "14 d +"))
 ACTIVITY = ("created", "closed", "commits", "sessions", "tests")
+ORCHESTRATOR = "orchestrator"
+TOP_MODELS = 10
 
 
 def parse(value):
@@ -266,6 +280,252 @@ def activity_block(snapshots, window_start, now):
     return {"state": "ready", "days": days, "series": series}
 
 
+# --- panels 7 to 11: usage ------------------------------------------------------------
+
+def _rounded(value, places=2):
+    return None if value is None else round(value, places)
+
+
+def _span(floor, window, now):
+    """(first, last) day of a series: the window's first day, or the series' floor for the whole
+    history, to today. A window that opens before the floor keeps its early days, whose values
+    are gaps, so the chart says where the records begin instead of starting late."""
+    last = day_of(now)
+    first = day_of(window) if window else floor
+    return min(first or last, last), last
+
+
+def agent_hours_block(sessions, window, now):
+    """Panel 7. Agent-hours of finished sessions per UTC start day, the orchestrator's hours
+    and the running sessions apart. Sessions are records of this host only."""
+    if sessions is None:
+        return {"state": "absent"}
+    records = sessions["sessions"]
+    floor = _floor_of([parse(item.get("started_at")) for item in records], sessions.get("floor"))
+    hours, orchestrator_hours, per_day = 0.0, 0.0, {}
+    counted = {"agents": 0, "orchestrator": 0}
+    planning, untimed, backwards = 0, 0, 0
+    running = {"agents": 0, "orchestrator": 0}
+    for item in records:
+        kind = "orchestrator" if item.get("role") == ORCHESTRATOR else "agents"
+        started, ended = parse(item.get("started_at")), parse(item.get("ended_at"))
+        if started is None:
+            untimed += 1
+            continue
+        if ended is None:
+            running[kind] += 1                      # present tense: a running session is not in the window
+            continue
+        if window and started < window:
+            continue
+        if ended < started:
+            backwards += 1
+            continue
+        seconds = (ended - started).total_seconds()
+        counted[kind] += 1
+        if kind == "orchestrator":
+            orchestrator_hours += seconds / 3600
+            continue
+        hours += seconds / 3600
+        key = day_of(started).isoformat()
+        per_day[key] = per_day.get(key, 0.0) + seconds / 3600
+        if item.get("bead_id") is None and (item.get("planning_id") or item.get("role") == "planning"):
+            planning += 1
+    first, last = _span(floor, window, now)
+    rows = daily(per_day, floor, first, last) if floor else []
+    return {"state": "ready" if records else "empty", "floor": floor.isoformat() if floor else None,
+            "hours": _rounded(hours), "sessions": counted["agents"], "planning_sessions": planning,
+            "orchestrator": {"hours": _rounded(orchestrator_hours), "sessions": counted["orchestrator"],
+                             "running": running["orchestrator"]},
+            "running": running["agents"], "excluded": {"untimed": untimed, "backwards": backwards},
+            "days": [row["day"] for row in rows], "values": [_rounded(row["value"]) for row in rows]}
+
+
+def agents_block(sessions, tokens, window):
+    """Panel 8. Per agent: sessions, hours, the models that were REQUESTED (from the session
+    records) and the selection tiers; apart, the models that were OBSERVED (from usage), whole
+    history, with their known tokens. The two are never merged into one list."""
+    requested = {"state": "absent"}
+    if sessions is not None:
+        agents = {}
+        for item in sessions["sessions"]:
+            started, ended = parse(item.get("started_at")), parse(item.get("ended_at"))
+            if started is None or (window and started < window and ended is not None):
+                continue
+            row = agents.setdefault(item.get("agent"), {"agent": item.get("agent"), "sessions": 0, "running": 0,
+                                                       "hours": 0.0, "orchestrator_sessions": 0,
+                                                       "models": {}, "tiers": {}})
+            row["sessions"] += 1
+            orchestrator = item.get("role") == ORCHESTRATOR
+            row["orchestrator_sessions"] += orchestrator
+            if ended is None:
+                row["running"] += 1
+            elif ended >= started and not orchestrator:
+                row["hours"] += (ended - started).total_seconds() / 3600
+            for field, bucket in (("requested_model", "models"), ("selection_tier", "tiers")):
+                row[bucket][item.get(field)] = row[bucket].get(item.get(field), 0) + 1
+        rows = [{**row, "hours": _rounded(row["hours"]),
+                 "models": _counted(row["models"], "model"), "tiers": _counted(row["tiers"], "tier")}
+                for row in sorted(agents.values(), key=lambda r: (-r["sessions"], str(r["agent"])))]
+        requested = {"state": "ready" if rows else "empty", "rows": rows}
+    observed = {"state": "absent"}
+    if tokens is not None:
+        rows = []
+        for name, work in (tokens.get("by_model") or {}).items():
+            known, unknown = _known(work)
+            rows.append({"model": name, "known": known, "unknown": unknown})
+        rows.sort(key=lambda r: (-r["known"], r["model"]))
+        observed = {"state": "ready" if rows else "empty", "rows": rows[:TOP_MODELS],
+                    "other": {"models": len(rows) - TOP_MODELS, "known": sum(r["known"] for r in rows[TOP_MODELS:])}
+                    if len(rows) > TOP_MODELS else None, "scope": "all"}
+    states = (requested["state"], observed["state"])
+    return {"state": "absent" if states == ("absent", "absent") else "ready", "requested": requested,
+            "observed": observed}
+
+
+def _counted(counts, name):
+    return [{name: key, "sessions": count}
+            for key, count in sorted(counts.items(), key=lambda item: (-item[1], str(item[0])))]
+
+
+def _known(work):
+    """(known tokens, has unknown) of a `work`: fresh input plus output, never the provider
+    total. A counter nobody could prove marks the sum, it is not counted as zero."""
+    tokens, unknown = work.get("tokens") or {}, work.get("unknown_counters") or {}
+    known = (tokens.get("fresh_input_tokens") or 0) + (tokens.get("output_tokens") or 0)
+    return known, bool(unknown.get("fresh_input_tokens") or unknown.get("output_tokens"))
+
+
+def tokens_block(tokens, window, now):
+    """Panel 9. Known tokens (`fresh_input + output`) per UTC day and runtime. Each runtime
+    starts at its own floor, so an earlier day is a gap; an unknown counter flags the day and
+    the sums; runtimes with partial data are named. No cost and no quota share."""
+    if tokens is None:
+        return {"state": "absent"}
+    floors = {name: parse(value) for name, value in (tokens.get("floors") or {}).items()}
+    floors = {name: day_of(moment) for name, moment in floors.items() if moment}
+    by_day = tokens.get("by_day") or {}
+    partial = sorted(set(tokens.get("partial") or ()))
+    names = sorted(set(floors) | set(partial) | {name for day in by_day.values() for name in day})
+    result = {"partial": partial, "pending_batches": tokens.get("pending_batches") or 0}
+    if not floors:
+        return {"state": "empty", "runtimes": [], "days": [], **result, "headline": None, "floor": None}
+    earliest = min(floors.values())
+    first, last = _span(earliest, window, now)
+    start_text, runtimes = first.isoformat(), []
+    total_known = total_fresh = total_output = 0
+    total_unknown, covered = False, False
+    for name in names:
+        floor, counts, flagged, fresh, output = floors.get(name), {}, [], 0, 0
+        for day, per_runtime in by_day.items():
+            work = per_runtime.get(name)
+            if work is None or day < start_text:
+                continue
+            known, unknown = _known(work)
+            counts[day] = known
+            fresh += work["tokens"].get("fresh_input_tokens") or 0
+            output += work["tokens"].get("output_tokens") or 0
+            if unknown:
+                flagged.append(day)
+        rows = daily(counts, floor, first, last) if floor else [
+            {"day": day, "value": None} for day in (d["day"] for d in daily({}, None, first, last))]
+        has_days = bool(floor and floor <= last)
+        known_sum = sum(counts.values())
+        covered = covered or has_days
+        total_known += known_sum
+        total_fresh += fresh
+        total_output += output
+        total_unknown = total_unknown or bool(flagged)
+        runtimes.append({"runtime": name, "floor": floor.isoformat() if floor else None,
+                         "known": known_sum if has_days else None, "fresh_input": fresh, "output": output,
+                         "unknown": bool(flagged), "unknown_days": sorted(flagged), "partial": name in partial,
+                         "values": [row["value"] for row in rows]})
+    return {"state": "ready", "floor": earliest.isoformat(), "days": [row["day"] for row in daily({}, None, first, last)],
+            "runtimes": runtimes, **result,
+            "headline": {"known": total_known if covered else None, "unknown": total_unknown,
+                         "fresh_input": total_fresh, "output": total_output}}
+
+
+def commits_block(git, window, now):
+    """Panel 10. Commits carrying a Bead token with their production and test lines per UTC
+    day; the commits with no token are one count. Commits may include unmerged work."""
+    if git is None:
+        return {"state": "absent"}
+    commits = git.get("commits") or ()
+    moments = [parse(commit.get("at")) for commit in commits]
+    floor = _floor_of(moments, git.get("floor"))
+    base = {"tokenless_commits": git.get("tokenless_commits") or 0}
+    if floor is None:
+        return {"state": "empty", **base, "floor": None, "days": [], "commits": [], "production": [], "test": [],
+                "totals": None}
+    commits_by, production, test, totals, unknown = {}, {}, {}, {"commits": 0, "production_lines": 0, "test_lines": 0}, 0
+    for commit, moment in zip(commits, moments):
+        if moment is None or (window and moment < window):
+            continue
+        day = day_of(moment).isoformat()
+        commits_by[day] = commits_by.get(day, 0) + 1
+        totals["commits"] += 1
+        lines = (commit.get("production_lines"), commit.get("test_lines"))
+        if not all(type(value) is int and value >= 0 for value in lines):
+            unknown += 1
+            continue
+        production[day] = production.get(day, 0) + lines[0]
+        test[day] = test.get(day, 0) + lines[1]
+        totals["production_lines"] += lines[0]
+        totals["test_lines"] += lines[1]
+    first, last = _span(floor, window, now)
+    series = {name: [row["value"] for row in daily(counts, floor, first, last)]
+              for name, counts in (("commits", commits_by), ("production", production), ("test", test))}
+    return {"state": "ready", **base, "floor": floor.isoformat(), "totals": {**totals, "lines_unknown": unknown},
+            "days": [row["day"] for row in daily({}, floor, first, last)], **series}
+
+
+def test_cost_block(tests, window, now):
+    """Panel 11. Seconds spent in `nogg test` runs per stage and per UTC day, from the
+    retained run records. Rotation moves the floor, so it reads "records kept from"."""
+    if tests is None:
+        return {"state": "absent"}
+    records = tests["records"]
+    floor = _floor_of([parse(item.get("at")) for item in records], tests.get("floor"))
+    stages = {name: {"runs": 0, "failed": 0, "seconds": 0.0, "durations": [], "per_day": {}} for name in model.TEST_STAGES}
+    untimed = not_run = 0
+    for item in records:
+        moment = parse(item.get("at"))
+        if moment is None:
+            untimed += 1
+            continue
+        if window and moment < window:
+            continue
+        seconds = item.get("seconds")
+        if item.get("status") not in model.TEST_RAN or seconds is None:
+            not_run += 1
+            continue
+        stage = stages[item["stage"]]
+        stage["runs"] += 1
+        stage["failed"] += item["status"] == "failed"
+        stage["seconds"] += seconds
+        stage["durations"].append(seconds)
+        key = day_of(moment).isoformat()
+        stage["per_day"][key] = stage["per_day"].get(key, 0.0) + seconds
+    first, last = _span(floor, window, now)
+    rows = {name: [_rounded(row["value"], 1) for row in daily(stage["per_day"], floor, first, last)]
+            for name, stage in stages.items()}
+    return {"state": "ready" if floor else "empty", "floor": floor.isoformat() if floor else None,
+            "excluded": {"not_run": not_run, "untimed": untimed},
+            "days": [row["day"] for row in daily({}, floor, first, last)] if floor else [],
+            "stages": [{"stage": name, "runs": stage["runs"], "failed": stage["failed"],
+                        "seconds": _rounded(stage["seconds"], 1) if stage["runs"] else None,
+                        "median_seconds": _rounded(median(stage["durations"]), 1), "values": rows[name]}
+                       for name, stage in stages.items()]}
+
+
+def usage_view(snapshots, window, now):
+    return {"agent_hours": agent_hours_block(snapshots["sessions"], window, now),
+            "agents": agents_block(snapshots["sessions"], snapshots["tokens"], window),
+            "tokens": tokens_block(snapshots["tokens"], window, now),
+            "commits": commits_block(snapshots["git"], window, now),
+            "test_cost": test_cost_block(snapshots["tests"], window, now)}
+
+
 # --- the view -----------------------------------------------------------------------
 
 def window_start(range_name, now):
@@ -288,7 +548,7 @@ def parse_range(query):
 
 
 def summary_view(snapshots, now=None, range_name=DEFAULT_RANGE):
-    """`data` of /api/v1/summary: panels 1 to 6 of the start page. `snapshots` maps a source
+    """`data` of /api/v1/summary: panels 1 to 11 of the start page. `snapshots` maps a source
     name to its reader snapshot; a name that is missing or None is an absent source."""
     if range_name not in RANGES:
         raise ValueError(f"unknown range: {range_name}")
@@ -305,4 +565,4 @@ def summary_view(snapshots, now=None, range_name=DEFAULT_RANGE):
             "by_change": by_change_block(closed.get("events", []), beads is not None),
             "cycle": duration_block(beads["beads"], "started_at", start) if beads else absent,
             "lead": duration_block(beads["beads"], "created_at", start) if beads else absent,
-            "activity": activity_block(snapshots, start, now)}
+            "activity": activity_block(snapshots, start, now), **usage_view(snapshots, start, now)}

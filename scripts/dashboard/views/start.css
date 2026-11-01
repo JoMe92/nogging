@@ -71,3 +71,14 @@
   .rows li { grid-template-columns: 1fr auto; }
   .rows-bar { grid-column: 1 / -1; grid-row: 2; }
 }
+
+/* Panels 7 to 11 (start-usage.js). A runtime is told apart by its legend, its readout and its table,
+   never by colour alone. */
+.agent-claude { fill: var(--agent-claude); background: var(--agent-claude); }
+.agent-codex { fill: var(--agent-codex); background: var(--agent-codex); }
+.agent-pi { fill: var(--agent-pi); background: var(--agent-pi); }
+.agent-agy { fill: var(--agent-agy); background: var(--agent-agy); }
+.agent-unknown { fill: var(--agent-unknown); background: var(--agent-unknown); }
+.headline { margin: 0 0 var(--space-1); font: 600 var(--type-5)/1.2 var(--font-head); }
+.usage-section + .usage-section { margin-top: var(--space-4); }
+.usage-section .data-table { margin-top: var(--space-2); }
