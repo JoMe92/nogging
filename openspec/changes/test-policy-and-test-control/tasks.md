@@ -109,7 +109,7 @@ runs the whole suite: name the suites in the task, and leave the rest to CI.
 
 ## 3. Fallback and visibility
 
-- [ ] TASK-TPC-005 [complex] [~650 loc] Where no CI runs tests, a nightly run on an idle host tests the integration branch, and a failure reaches the orchestrator.
+- [x] TASK-TPC-005 [complex] [~650 loc] Where no CI runs tests, a nightly run on an idle host tests the integration branch, and a failure reaches the orchestrator.
   Per design Decision 12 and the requirements on the nightly run, the digest and the nightly
   units. Add templates/systemd/nogg-nightly.service.tmpl (`Type=oneshot`, `Nice=15`,
   `IOSchedulingClass=idle`, a start timeout that covers the full budget) and nogg-nightly.timer.tmpl

@@ -105,6 +105,11 @@ Each condition is judged after a settle of 60 seconds.
 | Session gone with its Bead in progress | Nothing | `crashed`, with the exit reason |
 | Pull request merged, Bead closed, tree clean | With `retire_merged`, stops and cleans up the session | No item. The next digest lists it under `Retired:` |
 | Planning session idle after its kickoff | Nothing | `planner_finished`, with the excerpt |
+| The last [nightly test run](test-control.md#the-nightly-run) failed | Nothing | `nightly_failed`, with the commit and the log path, until a later run passes |
+
+`nightly_failed` belongs to no session, so it is read from the run's record on every pass.
+It is not urgent, so it waits for the usual quiet period and breaks no limit, and it gets
+no reminder: `doctor` keeps a WARN for it until a later run passes.
 
 A Codex usage limit is read from the session's rollout (its last turn ended in
 `usage_limit_exceeded`), with the pane as a fallback, and is `limit` until a new turn

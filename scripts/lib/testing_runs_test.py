@@ -43,6 +43,14 @@ class Junit(Base):
         self.assertEqual(detail["slowest"][0], {"name": "a.slow", "seconds": 3.5})
         self.assertEqual(detail["slowest"][-1], {"name": "ignored", "seconds": 0.0})
 
+    def test_failed_names(self):
+        self.assertEqual(r.parse_junit(self.write("j.xml", JUNIT))["failed_names"], ["a.broken", "b.crash"])
+
+    def test_failed_names_are_bounded(self):
+        cases = "".join(f'<testcase name="t{i}"><failure/></testcase>' for i in range(9))
+        detail = r.parse_junit(self.write("j.xml", f"<testsuite>{cases}</testsuite>"))
+        self.assertEqual((detail["failed_tests"], len(detail["failed_names"])), (9, r.FAILED_NAMES_KEPT))
+
     def test_a_single_testsuite_root(self):
         path = self.write("j.xml", '<testsuite><testcase name="x" time="1"/></testsuite>')
         self.assertEqual(r.parse_junit(path)["tests"], 1)
@@ -115,7 +123,7 @@ class Detail(Base):
     def test_no_result_file_is_an_empty_detail(self):
         step = {"junit": str(self.dir / "a"), "timings": str(self.dir / "b")}
         self.assertEqual(r.read_detail([step]), {"tests": None, "failed_tests": None, "skipped_tests": None,
-                                                 "slowest": []})
+                                                 "slowest": [], "failed_names": []})
 
     def test_steps_add_up(self):
         first = {"junit": self.write("1.xml", JUNIT), "timings": str(self.dir / "a")}
@@ -133,7 +141,7 @@ class Records(Base):
         self.assertEqual(set(line), {
             "schema", "id", "at", "stage", "trigger", "reason", "status", "exit", "seconds", "wait_seconds",
             "budget_seconds", "over_budget", "bead", "session", "role", "branch", "head", "tests", "failed_tests",
-            "skipped_tests", "slowest"})
+            "skipped_tests", "slowest", "failed_names"})
         self.assertEqual((line["schema"], line["seconds"], line["tests"]), (1, 1.235, 3))
 
     def test_a_reason_is_one_bounded_line(self):
@@ -178,6 +186,7 @@ class Records(Base):
             json.dumps({**good, "id": ""}), json.dumps({**good, "over_budget": 1}),
             json.dumps({**good, "slowest": "x"}), json.dumps({**good, "slowest": [{"name": 1, "seconds": 1}]}),
             json.dumps({**good, "slowest": [{"name": "a", "seconds": 1}] * 11}),
+            json.dumps({**good, "failed_names": "x"}), json.dumps({**good, "failed_names": [1]}),
         ]
         (self.dir / "runs.jsonl").write_text("\n".join(bad + [json.dumps(good)]) + "\n")
         self.assertEqual([rec["id"] for rec in r.read_records(self.dir)], [good["id"]])
@@ -188,6 +197,11 @@ class Records(Base):
         read = r.read_records(self.dir)[0]
         self.assertNotIn("\x1b", read["bead"])
         self.assertEqual(read["slowest"], [{"name": "a b", "seconds": 1}])
+
+    def test_a_record_from_before_failed_names_reads_as_none(self):
+        line = {key: value for key, value in record().items() if key != "failed_names"}
+        (self.dir / "runs.jsonl").write_text(json.dumps(line) + "\n")
+        self.assertEqual(r.read_records(self.dir)[0]["failed_names"], [])
 
     def test_no_record_yet(self):
         self.assertEqual(r.read_records(self.dir / "absent"), [])

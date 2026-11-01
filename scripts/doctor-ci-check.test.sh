@@ -94,6 +94,39 @@ with tempfile.TemporaryDirectory(prefix="doctor-ci-") as temp:
     assert gh_calls() == [], gh_calls()
     assert res.returncode == base_code
 
+    # The same gap names the timer to enable, with its service, until a run is recorded.
+    def enable_notes(res):
+        return [l for l in res.stdout.splitlines() if l.startswith("NOTE") and "enable the timer" in l]
+
+    def nightly_warnings(res):
+        return [l for l in res.stdout.splitlines() if l.startswith("WARN") and "nightly:" in l]
+
+    timer = enable_notes(res)
+    assert len(timer) == 1 and "systemctl --user link" in timer[0] and "systemd/nogg-nightly-" in timer[0], res.stdout
+
+    nightly_last = repo / ".nogging/state/testing/nightly-last.json"
+    nightly_last.parent.mkdir(parents=True, exist_ok=True)
+
+    def nightly_record(status):
+        nightly_last.write_text(json.dumps(
+            {"schema": 1, "run_id": "r1", "at": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()),
+             "status": status, "head": "0123456789abcdef0123", "seconds": 1, "failed": ["tests/a"],
+             "log": ".nogging/state/testing/nightly-last.log"}))
+
+    # A failed last run is a WARN with the commit and the log, and no exit code.
+    nightly_record("failed")
+    res = doctor()
+    warned = nightly_warnings(res)
+    assert len(warned) == 1 and "0123456789ab" in warned[0] and "nightly-last.log" in warned[0], res.stdout
+    assert not enable_notes(res) and res.returncode == base_code, res.stdout
+
+    # A passing last run is quiet: the fallback works.
+    nightly_record("passed")
+    res = doctor()
+    assert not nightly_warnings(res) and not enable_notes(res), res.stdout
+    assert res.returncode == base_code
+    nightly_last.unlink()
+
     # A workflow exists but the checkout has no GitHub remote: nothing printed, no gh call.
     (repo / ".github/workflows").mkdir(parents=True)
     (repo / ".github/workflows/ci.yml").write_text("name: ci\non: push\n")

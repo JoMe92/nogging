@@ -343,6 +343,7 @@ daily cost and trend of the run records. The `doctor` NOTEs read the same record
 ./scripts/nogg test full --release
 ./scripts/nogg test integrity [--base <ref>]
 ./scripts/nogg test report [--days N] [--json]
+./scripts/nogg test nightly
 ```
 
 **Used by.** A Lead Agent or specialist at each testing moment, the operator

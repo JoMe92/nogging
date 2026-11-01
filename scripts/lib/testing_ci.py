@@ -130,15 +130,22 @@ def doctor_line(result, ci, now, *, nightly_recorded=False, cached_at=None):
     return None
 
 
+def current(ci, configured, run_gh, now, *, cache=None):
+    """(result, new cache entry or None): the CI result, refreshed through `run_gh` only
+    when the cache is older than `cache_seconds`. Never raises on a gh problem."""
+    if not configured:
+        return {"result": ABSENT}, None
+    if cache_usable(cache, ci, now):
+        return cache, None
+    result = refresh(ci, run_gh, now)
+    return result, None if result["result"] == UNKNOWN else entry(result, ci, now)
+
+
 def check(ci, configured, run_gh, now, *, cache=None, nightly_recorded=False):
     """(line, new cache entry or None) for one doctor run. Never raises on a gh problem."""
-    if not configured:
-        return doctor_line({"result": ABSENT}, ci, now, nightly_recorded=nightly_recorded), None
-    if cache_usable(cache, ci, now):
-        return doctor_line(cache, ci, now), None
-    result = refresh(ci, run_gh, now)
+    result, fresh = current(ci, configured, run_gh, now, cache=cache)
     if result["result"] != UNKNOWN:
-        return doctor_line(result, ci, now), entry(result, ci, now)
+        return doctor_line(result, ci, now, nightly_recorded=nightly_recorded), fresh
     older = cache if isinstance(cache, dict) and cache.get("result") in (RAN, NONE, STALE) \
         and isinstance(cache.get("checked_at"), (int, float)) \
         and cache.get("branch") == ci["branch"] and cache.get("job_pattern") == ci["job_pattern"] else None

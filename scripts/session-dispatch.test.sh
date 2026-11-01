@@ -448,6 +448,37 @@ print(','.join(a['type'] + ':' + a['outcome'] for a in json.loads(sys.argv[1])['
   dispatch --once >/dev/null; dispatch --once >/dev/null
   expect "throttle: gh ran once across three passes" "1" "$(wc -l <"$work/gh.calls" | tr -d ' ')"
   expect "throttle: bd ran once across three passes" "1" "$(wc -l <"$work/bd.calls" | tr -d ' ')"
+
+  # A failed nightly run is read from its record on every pass (TASK-TPC-005).
+  nightly_items() { # <field>: one line per nightly_failed item pending in queue.json
+    python3 - "$root/.nogging/state/dispatch/queue.json" "$1" <<'PY'
+import json, sys
+for item in json.load(open(sys.argv[1])).get("items", []):
+    if item["kind"] == "nightly_failed":
+        print(item[sys.argv[2]])
+PY
+  }
+  nightly_record() { # <status> <run id>
+    mkdir -p "$root/.nogging/state/testing"
+    python3 - "$root/.nogging/state/testing/nightly-last.json" "$1" "$2" <<'PY'
+import json, sys
+json.dump({"schema": 1, "run_id": sys.argv[3], "at": "2026-10-31T02:17:00+00:00", "status": sys.argv[2],
+           "head": "0123456789abcdef0123456789abcdef01234567", "seconds": 5, "failed": ["tests/a"],
+           "log": ".nogging/state/testing/nightly-last.log"}, open(sys.argv[1], "w"))
+PY
+  }
+  nightly_record failed aaaa1111
+  dispatch --once >/dev/null; dispatch --once >/dev/null
+  expect "nightly: repeated passes hold one item" "1" "$(nightly_items key | wc -l | tr -d ' ')"
+  expect "nightly: the item names the commit" "0123456789ab" "$(nightly_items head)"
+  case "$(nightly_items reason)" in *.nogging/state/testing/nightly-last.log*) ok "nightly: the item names the log" ;;
+    *) bad "nightly: no log in $(nightly_items reason)" ;; esac
+  printf 'not json' >"$root/.nogging/state/testing/nightly-last.json"
+  dispatch --once >/dev/null
+  expect "nightly: an unreadable record clears nothing" "1" "$(nightly_items key | wc -l | tr -d ' ')"
+  nightly_record passed bbbb2222
+  dispatch --once >/dev/null
+  expect "nightly: a later pass clears the item" "" "$(nightly_items key)"
 fi
 
 # --- shipped files ----------------------------------------------------------

@@ -35,6 +35,7 @@ module.exports = {
     'scripts/lib/session_wake.py',
     'scripts/lib/session_warm.py',
     'scripts/lib/testing_ci.py',
+    'scripts/lib/testing_nightly.py',
     'scripts/lib/testing_report.py',
     'scripts/lib/testing_runs.py',
     'scripts/lib/testing_slots.py',
@@ -202,6 +203,14 @@ module.exports = {
     {
       from: 'templates/systemd/nogg-loops.timer.tmpl',
       to: 'systemd/nogg-loops-{slug}.timer',
+    },
+    {
+      from: 'templates/systemd/nogg-nightly.service.tmpl',
+      to: 'systemd/nogg-nightly-{slug}.service',
+    },
+    {
+      from: 'templates/systemd/nogg-nightly.timer.tmpl',
+      to: 'systemd/nogg-nightly-{slug}.timer',
     },
   ],
 };
