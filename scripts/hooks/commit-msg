@@ -44,11 +44,12 @@ trailer='(^|'$'\n'')[Nn]ogging-[Ww]riter:[[:space:]]*(planning|sync)[[:space:]]*
 legacy_trailer='(^|'$'\n'')[Ss]pec[Ff]orge-[Ww]riter:[[:space:]]*(planning|sync)[[:space:]]*($|'$'\n'')'
 if [[ "$writer" != "planning" && "$writer" != "sync" ]] \
     && ! [[ "$body" =~ $trailer ]] && ! [[ "$body" =~ $legacy_trailer ]]; then
-  bead_token='\[[A-Z][A-Z0-9]*-[0-9a-z]+\]'
+  bead_token='\[[A-Za-z][A-Za-z0-9]*-[0-9a-z]+\]'
   if ! [[ "$message" =~ $bead_token ]]; then
     {
       echo "Nogging: execution commits must name a real Beads issue ID in the subject, e.g. [SPEC-1cu]."
-      echo "Rule: the subject must contain a token [<PREFIX>-<id>] with a lower-case/digit id;"
+      echo "Rule: the subject must contain a token [<PREFIX>-<id>] whose prefix may be of either case"
+      echo "and whose id is lower-case or digits;"
       echo "a placeholder such as [BEAD-XXX] or an empty [] does not count."
       echo "Exemption: set NOGGING_WRITER=planning or NOGGING_WRITER=sync, or add a"
       echo "Nogging-Writer: planning (or sync) trailer, and only for approved planning"
