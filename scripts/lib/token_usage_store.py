@@ -175,11 +175,11 @@ class Store:
                 fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
             except BlockingIOError:
                 raise LeaseBusy('a usage collection holds the store') from None
-            self._lease_fds = (fd,)
+            held, self._lease_fds = self._lease_fds, (*self._lease_fds, fd)
             try:
                 yield
             finally:
-                self._lease_fds = ()
+                self._lease_fds = held
         finally:
             os.close(fd)
 

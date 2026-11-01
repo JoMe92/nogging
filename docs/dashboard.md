@@ -270,7 +270,7 @@ read would make that far more likely, so the source holds a read lease:
 - It reloads only when `last_success_at` in `collector/status.json` moves.
 
 A waiting collector delays `session stop` by the length of the read, about 9 seconds on a
-store of 1.4 GB, and at most by the cap. The lease does not cover a manual `nogg token-usage
+store of 1.4 GB by the planning estimate, and at most by the cap. The lease does not cover a manual `nogg token-usage
 report`: run during a collection, it can still cost the collector an import attempt, which
 the next pass retries.
 
