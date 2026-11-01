@@ -79,8 +79,10 @@ add `--full-access`, and see
 
 The Lead claims the Bead, allocates its own worktree from `origin/develop` (see
 the [worktree workflow](worktree-workflow.md)), implements the task there in
-several commits, running the tests of the files it changes as it goes and the
-affected suite once before it hands off; the full suite runs in CI.
+several commits. It tests in stages, following the [testing policy](testing-policy.md):
+`./scripts/nogg test changed` while it works, `./scripts/nogg test commit` before each
+commit and `./scripts/nogg test bead` once before it hands off. It does not run the
+full suite; that is CI's job (see [Test control](test-control.md)).
 
 ## 5. Watch it work
 
