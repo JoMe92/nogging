@@ -19,7 +19,7 @@ chmod +x "$repo/nogg"
 printf '%s\n' '# Tasks' '' '- [ ] TASK-DEMO-001 Implement demo' >"$repo/openspec/changes/demo/tasks.md"
 printf '%s\n' '.nogging/locks/' '.nogging/state/' >"$repo/.gitignore"
 git -C "$repo" init -q
-git -C "$repo" config user.email workflow@example.invalid
+git -C "$repo" config user.email agent@nogging.bot
 git -C "$repo" config user.name 'Workflow Test'
 git -C "$repo" add -A
 git -C "$repo" commit -q -m 'chore: seed workflow [SPEC-seed]'
@@ -52,7 +52,7 @@ chmod +x "$scratch/bin/bd" "$scratch/bin/gh" "$scratch/bin/dolt"
 export PATH="$scratch/bin:$PATH" NOGGING_ROOT="$repo"
 
 "$repo/nogg" worktree plan demo auth-flow --path "$plan_tree" >/dev/null
-git -C "$plan_tree" config user.email workflow@example.invalid
+git -C "$plan_tree" config user.email agent@nogging.bot
 git -C "$plan_tree" config user.name 'Workflow Test'
 printf '%s\n' 'planned' >"$plan_tree/plan-evidence.txt"
 git -C "$plan_tree" add plan-evidence.txt
@@ -65,7 +65,7 @@ git -C "$repo" push -q origin develop
 "$repo/nogg" worktree cleanup plan--demo--auth-flow.json >/dev/null
 
 "$repo/nogg" worktree implement SPEC-e2e feat/demo --path "$impl_tree" >/dev/null
-git -C "$impl_tree" config user.email workflow@example.invalid
+git -C "$impl_tree" config user.email agent@nogging.bot
 git -C "$impl_tree" config user.name 'Workflow Test'
 printf '%s\n' 'implemented' >"$impl_tree/implementation.txt"
 git -C "$impl_tree" add implementation.txt

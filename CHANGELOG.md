@@ -29,6 +29,14 @@ and GitHub Releases for that history.
   real phone, by touch and over a network bind are still open in its acceptance
   report. See `docs/dashboard.md`.
 
+### Changed
+
+- Shipped files carry neutral placeholders only: the usage author is now
+  `Nogging Usage <usage@nogging.bot>` (it was a `nogging.local` address), three test
+  suites use a `nogging.bot` fixture identity, and the orchestrator permissions
+  template no longer shows a concrete home directory. A release scan in a consumer
+  project no longer reports them.
+
 ## [3.6.0] - 2026-11-01
 
 The headline is the test policy and test control: a repository that uses Nogging no

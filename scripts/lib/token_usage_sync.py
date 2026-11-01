@@ -17,7 +17,7 @@ import urllib.parse
 
 from token_usage_store import IDENTITY_VERSION, SCHEMA_VERSION, StoreError
 
-AUTHOR = 'Nogging Usage <usage@nogging.local>'
+AUTHOR = 'Nogging Usage <usage@nogging.bot>'
 
 
 class SyncRefused(RuntimeError):
@@ -100,7 +100,7 @@ class Sync:
 
     def ensure_identity(self):
         """Merges need a committer; keep it local to the usage database."""
-        for key, value in (('user.name', 'Nogging Usage'), ('user.email', 'usage@nogging.local')):
+        for key, value in (('user.name', 'Nogging Usage'), ('user.email', 'usage@nogging.bot')):
             code, out, _ = self.dolt('config', '--local', '--get', key)
             if code or not out.strip():
                 if self.dolt('config', '--local', '--add', key, value)[0]:

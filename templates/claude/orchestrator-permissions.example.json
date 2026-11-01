@@ -2,7 +2,7 @@
   "//": [
     "Example permissions template for interactive Claude Code Orchestration Agent sessions.",
     "Copy or merge the permissions block into your user settings file (~/.claude/settings.json).",
-    "Replace HOME and <repo> with your system's paths (e.g. /home/alice and myrepo).",
+    "Replace HOME with your home directory and <repo> with your repository directory name.",
     "This template is never applied automatically by nogg init or nogg update."
   ],
   "permissions": {

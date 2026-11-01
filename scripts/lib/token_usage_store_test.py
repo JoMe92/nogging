@@ -236,6 +236,10 @@ class DoltTests(unittest.TestCase):
         self.assertEqual(os.stat(self.store.root).st_mode & 0o777, 0o700)
         self.assertEqual(os.stat(self.store.root / 'device-id').st_mode & 0o777, 0o600)
 
+    def test_the_recorded_author_is_the_neutral_usage_address(self):
+        authors = self.store.query('SELECT DISTINCT committer, email FROM dolt_log')
+        self.assertEqual(authors, [{'committer': 'Nogging Usage', 'email': 'usage@nogging.bot'}])
+
     def test_crash_replay_and_serialized_collectors(self):
         reached = threading.Event()
         finished = threading.Event()

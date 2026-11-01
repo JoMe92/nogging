@@ -31,7 +31,7 @@ refute() { # refute <description> <substring-that-must-be-absent>
 make_repo() { # make_repo <dir>
   local dir="$1" tool
   git init -q -b main "$dir"
-  git -C "$dir" config user.email fixture@example.invalid
+  git -C "$dir" config user.email agent@nogging.bot
   git -C "$dir" config user.name Fixture
   cp "$repo_root/.nogging/config.json" "$work/host-config.json"
   copy_host_config "$work/host-config.json" "$dir/.nogging/config.json" tmux

@@ -89,6 +89,18 @@ class SyncTests(unittest.TestCase):
     def test_offline_clones_converge_b_then_a(self):
         self.converge([self.b, self.a])
 
+    def test_sync_commits_use_the_neutral_usage_author(self):
+        self.a.append([usage('claude:a', 'a1')])
+        self.b.append([usage('claude:b', 'b1')])
+        for store in (self.a, self.b):
+            self.assertEqual(self.sync(store)['state'], 'synchronized')
+        self.sync(self.a)
+        merged = self.b.query("SELECT DISTINCT committer, email FROM dolt_log WHERE message LIKE 'Merge%'")
+        self.assertEqual(merged, [{'committer': 'Nogging Usage', 'email': 'usage@nogging.bot'}])
+        email = subprocess.run(['dolt', 'config', '--local', '--get', 'user.email'], cwd=self.b.database,
+                               check=True, capture_output=True, text=True).stdout.strip()
+        self.assertEqual(email, 'usage@nogging.bot')
+
     def test_replay_is_noop(self):
         self.b.append([usage('claude:b', 'b1')])
         self.assertEqual(self.sync(self.b)['state'], 'synchronized')
