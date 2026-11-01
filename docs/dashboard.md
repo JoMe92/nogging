@@ -29,7 +29,8 @@ open a link-local IPv6 address, so prefer another address for a phone.
 range is also used for carrier NAT.
 
 `--allow-host <host[:port]>` adds one exact `Host` value, for example a Tailscale
-MagicDNS name. Repeat it for more names. It accepts no wildcard.
+MagicDNS name such as `pi.tailnet.ts.net:8742`. Include the port: a value without
+one matches only port 80. Repeat it for more names. It accepts no wildcard.
 
 ## Access
 
@@ -45,14 +46,17 @@ Open once on each device: http://100.101.102.103:8742/#token=<token>
 ```
 
 The token travels in the URL fragment, which no request, server log or `Referer`
-carries. The page trades it for a signed cookie valid for 30 days, then removes it
-from the address bar and the history entry. The cookie is not the token, and the
-token itself is never stored in the browser.
+carries. The page removes it from the address bar and the current history entry at
+once, then trades it for a signed cookie valid for 30 days. The cookie is not the
+token. The link stays valid until the token is rotated, and a browser's global
+history may keep the visited address with its fragment, so rotate the token if a
+device with that history leaves your hands.
 
 When output is not a terminal, no link is printed. A network bind is refused inside
 a supervised session, because the link would reach the session log. Any network bind
 outside `100.64.0.0/10` also prints a warning: the traffic is plain HTTP, so prefer a
-Tailscale address for a phone.
+Tailscale address for a phone. An address inside that range prints a note, because
+carrier NAT uses the same range and only Tailscale encrypts the traffic.
 
 ```bash
 ./scripts/nogg dashboard --rotate-token
@@ -62,13 +66,14 @@ This replaces the secret and exits. Every browser session ends at once, in a
 running dashboard too. Start a network bind on a terminal to print a new link.
 
 A secret file wider than `0600` or a directory wider than `0700` refuses a network
-start, and `nogg doctor` warns about it. A running server that finds its secret
-gone or too open refuses every session until the file is fixed.
+start, and `nogg doctor` warns about such a file. A running server that finds its
+secret gone or too open refuses every session until the file is fixed.
 
-Ten failed authentications in a minute are answered with 429 and `Retry-After`. A
-request with no credential at all is a plain 401, and a valid session is never
-limited. See the [security model](security-model.md#the-dashboard) for what this
-does not protect against.
+After ten failed authentications in a minute, further failures get 429 and
+`Retry-After`. A correct token or a valid session is never limited, so a flood of
+guesses cannot lock you out, and a request with no credential or an expired cookie
+does not count. See the [security model](security-model.md#the-dashboard) for what
+this does not protect against.
 
 ## Interface
 

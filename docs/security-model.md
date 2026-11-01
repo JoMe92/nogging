@@ -298,13 +298,24 @@ The residual risks are these:
   rotated. `Secure` cannot be set on a cookie over plain HTTP. Prefer a Tailscale
   address, whose traffic is encrypted, and treat a LAN bind on a network you do not
   control as a disclosure of everything the dashboard shows.
+- **The link is reusable.** A browser's global history may keep the visited address
+  with its fragment, and a synced history carries it further. The token works until
+  it is rotated, and it can mint new 30-day cookies, so rotate it if such a history
+  leaves your hands.
+- **Other services on the host address.** Cookies ignore ports, so any other HTTP
+  service on the same address receives the dashboard cookie and can replay it for
+  up to 30 days. `HttpOnly` and `SameSite` do not stop this.
 - **Loopback has no token.** Another user account on the same host can read a
   loopback dashboard. Nogging's supported hosts are single-operator.
 - **Forwarding.** The peer check catches a forward that keeps a public source
-  address. It cannot see SNAT, `ssh -R` or a reverse proxy, where the peer looks
-  local. A forward to a network bind leaves the `Host` check and the token as the
-  remaining defences; a forward to a loopback bind leaves only `Host`, so do not
-  add such a name with `--allow-host`.
+  address, and a loopback bind also refuses a forwarded private one. It cannot see
+  SNAT, `ssh -R` or a reverse proxy, where the peer looks local. A forward to a
+  network bind leaves the `Host` check and the token as the remaining defences; a
+  forward to a loopback bind leaves only `Host`, so do not add such a name with
+  `--allow-host`.
+- **Exhausting the server.** A device on the private network can hold all 16 request
+  slots without a token, for up to about 16 seconds at a time per slot, and others
+  get 503 meanwhile. It sees no data and the server recovers by itself.
 - **What is on the page.** Bead text is scrubbed best effort, not guaranteed. Treat
   an open dashboard like the Beads data behind it.
 - **The secret file.** Any process running as the operator can read it, including
