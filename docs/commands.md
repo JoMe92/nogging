@@ -61,6 +61,26 @@ operator or orchestrator only.
 
 **Read more.** [Token usage](token-usage.md).
 
+## dashboard
+
+**Purpose.** Serve the optional read-only web dashboard in the foreground, on
+`127.0.0.1` by default. It adds no Beads, facts, commits or configuration.
+
+**Common forms.**
+
+```bash
+./scripts/nogg dashboard
+./scripts/nogg dashboard --port 9000
+./scripts/nogg dashboard --list-binds
+./scripts/nogg dashboard --bind <private-address> [--allow-host <host[:port]>]
+./scripts/nogg dashboard --rotate-token
+```
+
+**Used by.** The operator. A supervised session may use loopback only: a network
+bind is refused there.
+
+**Read more.** [Dashboard](dashboard.md).
+
 ## usage
 
 **Purpose.** Inspect read-only quota observations for an agent, and optionally

@@ -20,6 +20,14 @@ module.exports = {
     'scripts/nogg_usage_zai.py',
     'scripts/lib/session_backend.py',
     'scripts/lib/agent_routing.py',
+    'scripts/lib/dashboard_cache.py',
+    'scripts/lib/dashboard_graph.py',
+    'scripts/lib/dashboard_metrics.py',
+    'scripts/lib/dashboard_model.py',
+    'scripts/lib/dashboard_security.py',
+    'scripts/lib/dashboard_server.py',
+    'scripts/lib/dashboard_slow_sources.py',
+    'scripts/lib/dashboard_sources.py',
     'scripts/lib/loop_schedule.py',
     'scripts/lib/loop_config.py',
     'scripts/lib/loop_state.py',
@@ -104,6 +112,9 @@ module.exports = {
     // glm-usage, enabled per repository through `pi_extensions`. Shipping the
     // tree enables nothing; templates/nogging-config.json scaffolds [].
     { from: '.pi/nogging', to: '.pi/nogging' },
+    // The dashboard's shell and assets. They are copied as bytes, so the fonts stay
+    // intact, and the fonts and logo are copies because docs/assets is not packaged.
+    { from: 'scripts/dashboard', to: 'scripts/dashboard' },
     // launch-profiles ships both the Claude settings files (<level>.json) and
     // the Codex launch specs (<level>.codex.toml); the whole directory rides
     // along, and package.json "files" lists it.
@@ -126,6 +137,7 @@ module.exports = {
     { from: 'docs/worktree-workflow.md', to: 'docs/nogging/worktree-workflow.md' },
     { from: 'docs/model-selection.md', to: 'docs/nogging/model-selection.md' },
     { from: 'docs/token-usage.md', to: 'docs/nogging/token-usage.md' },
+    { from: 'docs/dashboard.md', to: 'docs/nogging/dashboard.md' },
     { from: 'docs/scheduled-loops.md', to: 'docs/nogging/scheduled-loops.md' },
     { from: 'docs/session-wake.md', to: 'docs/nogging/session-wake.md' },
     { from: 'docs/test-control.md', to: 'docs/nogging/test-control.md' },

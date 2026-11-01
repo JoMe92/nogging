@@ -233,6 +233,12 @@ defaults:
       nav_order: 11
       description: Run tests through nogg test - one stage per testing moment, with budgets, the full-suite lock, host-wide heavy slots and a record of every run.
   - scope:
+      path: "dashboard.md"
+    values:
+      parent: Guides
+      nav_order: 12
+      description: An optional read-only web view of Beads, sessions and tests, on a private address, with a token for every network bind.
+  - scope:
       path: "pi-extensions.md"
     values:
       parent: Guides
