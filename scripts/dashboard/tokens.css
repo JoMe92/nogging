@@ -1,0 +1,136 @@
+/* Dashboard design tokens (design Decision 15), from docs/_sass/color_schemes/nogging*.scss.
+   Every colour is a literal #RRGGBB line: scripts/lib/dashboard_tokens_test.py parses this file
+   and recomputes contrast for each text, status and control pair in both themes.
+   Light is the default. Dark applies to the system preference unless the user chose Light, and
+   to an explicit Dark choice (theme.js sets data-theme on the root element). The two dark
+   blocks must stay identical; the test checks that too. */
+
+:root {
+  color-scheme: light dark;
+  --bg: #F6F6F4;
+  --surface: #EEF2EC;
+  --surface-2: #E9EDE6;
+  --hover: #E1E7DD;
+  --text: #22301F;
+  --text-2: #4A5B4C;
+  --link: #3D5C3A;
+  --accent: #5E7D5E;
+  --focus: #5E7D5E;
+  --control-border: #5E7D5E;
+  --border: #CCD6C8;
+  --btn: #3D5C3A;
+  --on-btn: #FFFFFF;
+  --selection: #97B190;
+  --warn-bg: #FAF3E6;
+  --warn-border: #E3CB98;
+  --warn-text: #8C5A00;
+  --note-bg: #EEF2EC;
+  --note-border: #B9C9B4;
+  --error-bg: #FBEDEE;
+  --status-open: #1F5FA8;
+  --status-ready: #3D5C3A;
+  --status-in_progress: #8C5A00;
+  --status-blocked: #A40E26;
+  --status-deferred: #6A4A78;
+  --status-closed: #4A5B4C;
+  --agent-claude: #B85C00;
+  --agent-codex: #1F5FA8;
+  --agent-pi: #00796B;
+  --agent-agy: #8E3F8E;
+  --agent-unknown: #4A5B4C;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --type-1: 12px;
+  --type-2: 14px;
+  --type-3: 16px;
+  --type-4: 20px;
+  --type-5: 24px;
+  --type-6: 32px;
+  --font-body: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-head: "Poppins", var(--font-body);
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  --radius: 8px;
+  --target: 44px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141B13;
+    --surface: #1D261C;
+    --surface-2: #283527;
+    --hover: #313F2F;
+    --text: #E6EBE3;
+    --text-2: #B8C9B3;
+    --link: #A9C3A2;
+    --accent: #97B190;
+    --focus: #97B190;
+    --control-border: #7E9C7E;
+    --border: #33402F;
+    --btn: #3D5C3A;
+    --on-btn: #FFFFFF;
+    --selection: #3D5C3A;
+    --warn-bg: #2A2215;
+    --warn-border: #5A4520;
+    --warn-text: #E8B45A;
+    --note-bg: #1C2A1B;
+    --note-border: #3A4A37;
+    --error-bg: #2C1A1A;
+    --status-open: #8DBBEA;
+    --status-ready: #A9C3A2;
+    --status-in_progress: #E8B45A;
+    --status-blocked: #FFA198;
+    --status-deferred: #C9A8D6;
+    --status-closed: #B8C9B3;
+    --agent-claude: #F0A45D;
+    --agent-codex: #8DBBEA;
+    --agent-pi: #5CCFBC;
+    --agent-agy: #D9A0D9;
+    --agent-unknown: #B8C9B3;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #141B13;
+  --surface: #1D261C;
+  --surface-2: #283527;
+  --hover: #313F2F;
+  --text: #E6EBE3;
+  --text-2: #B8C9B3;
+  --link: #A9C3A2;
+  --accent: #97B190;
+  --focus: #97B190;
+  --control-border: #7E9C7E;
+  --border: #33402F;
+  --btn: #3D5C3A;
+  --on-btn: #FFFFFF;
+  --selection: #3D5C3A;
+  --warn-bg: #2A2215;
+  --warn-border: #5A4520;
+  --warn-text: #E8B45A;
+  --note-bg: #1C2A1B;
+  --note-border: #3A4A37;
+  --error-bg: #2C1A1A;
+  --status-open: #8DBBEA;
+  --status-ready: #A9C3A2;
+  --status-in_progress: #E8B45A;
+  --status-blocked: #FFA198;
+  --status-deferred: #C9A8D6;
+  --status-closed: #B8C9B3;
+  --agent-claude: #F0A45D;
+  --agent-codex: #8DBBEA;
+  --agent-pi: #5CCFBC;
+  --agent-agy: #D9A0D9;
+  --agent-unknown: #B8C9B3;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
