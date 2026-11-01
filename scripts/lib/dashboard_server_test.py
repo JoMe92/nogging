@@ -539,7 +539,8 @@ class TheTokenNeverReachesALog(unittest.TestCase):
                 process.kill()
                 process.stdout.close()
             self.assertNotIn(token, first + rest)
-            self.assertEqual(len(rest.strip().splitlines()), 1, rest)   # only the not-a-terminal note
+            lines = rest.strip().splitlines()       # the start notes, and no line per request
+            self.assertEqual([line.split()[0] for line in lines], ["WARNING:", "The"], rest)
 
 
 if __name__ == "__main__":
