@@ -1862,7 +1862,7 @@ def acquire_orchestrator_lock(force=False):
 def release_orchestrator_lock():
     (ORCHESTRATOR_LOCKS / "orchestrator.lock").unlink(missing_ok=True)
 
-LIMBO_TOKEN_RE = re.compile(r"\[([A-Z][A-Z0-9]*-[0-9a-z]+)\]")
+LIMBO_TOKEN_RE = re.compile(r"\[([A-Za-z][A-Za-z0-9]*-[0-9a-z]+)\]")
 def token_commit_shas():
     """Bead ID token `[<id>]` -> every non-merge commit SHA on HEAD's history
     whose subject carries it, newest first (the `[SPEC-xxx]` token the

@@ -1275,6 +1275,22 @@ refute "rec-limbo: a single commit carries no commit count" "(newest of"
 check "rec-limbo: attention summary names it" "need attention"
 unset NOGGING_ROOT BD_FIXTURE BD_STUB_DIR
 
+# --- a lower-case Bead ID prefix is LIMBO too (TASK-CCF-001) -------------
+root="$work/rec-limbo-lc"; make_root "$root"
+git -C "$root" commit -q --allow-empty -m "feat(demo): lower-case limbo work [myproject-5nql]"
+export NOGGING_ROOT="$root"
+export BD_FIXTURE="$work/rec-limbo-lc-beads.json"
+export BD_STUB_DIR="$root"
+cat >"$BD_FIXTURE" <<'JSON'
+[
+  {"id": "myproject-5nql", "status": "open",
+   "labels": ["openspec:change:demo", "openspec:task:TASK-DEMO-001"]}
+]
+JSON
+"$nogg" recover >"$out" 2>&1 || true
+check "rec-limbo-lc: lists the lower-case LIMBO Bead" "LIMBO: myproject-5nql committed in"
+unset NOGGING_ROOT BD_FIXTURE BD_STUB_DIR
+
 # --- a Bead committed in several steps is one LIMBO line with its count ---
 # (a token repeated in one subject still counts that commit once)
 root="$work/rec-limbo-multi"; make_root "$root"
