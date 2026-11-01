@@ -335,6 +335,50 @@ live acceptance of the dashboard records that check.
 
 ## Overview
 
+The start page answers "how is the work going" from metadata, in six panels. It reads
+`/api/v1/summary?range=7d|30d|90d|all` (default 30 days). The range and the grouping (day or week)
+are in the URL, so a view can be bookmarked. Every panel has a title, a line saying how fresh its
+sources are, and a **Table** button that shows the same numbers as a real table.
+
+| Panel | Shows | Source |
+|---|---|---|
+| Beads by status | Open, in progress, blocked, closed and deferred counts. Each tile opens the Bead table filtered to that status. | Beads |
+| Project age | Root commit date, first Bead date and the age in days. Without Git the age counts from the first Bead and says so. | Beads, Git |
+| Closed over time | Closed Beads per UTC day or week. | Beads |
+| Closed by change | The ten changes with most closed Beads, the rest as "Other", and Beads without a change as "No change". | Beads |
+| Cycle and lead time | Median and p90 with a histogram, for cycle time (started to closed) and lead time (created to closed). | Beads |
+| Activity | Beads created, Beads closed, commits, sessions started and test runs per day or week. | Beads, Git, Sessions, Tests |
+
+### Gaps are shown, not zeroed
+
+A period before a source has any record is a hatched band that reads "No data before {date}", never
+a bar of height zero. Each activity row starts at its own first record (its *floor*, computed from
+the records and not hard-coded), so a source that began later than the Beads shows a gap for the
+earlier days. From its floor on, a day without a record is a real zero, because the source covers it.
+A source that does not exist in this repository reads "Not available here". Nothing is averaged over
+nothing: a statistic with no data has no value, and the page says so in words.
+
+### Definitions
+
+- **Cycle time** is `closed_at - started_at`; **lead time** is `closed_at - created_at`, so it
+  includes the time a Bead waited. Open Beads are excluded from both. A closed Bead with no
+  `started_at` is left out of the cycle time and counted ("N closed Beads have no start time"). A
+  close before the start is left out and counted too.
+- The **median** of an even number of values is the mean of the two middle ones. The **p90** is the
+  nearest rank: the value at position ceil(0.9 n) of the sorted values.
+- The range filters the closed Beads by their close time. Status counts and project age always
+  describe the present.
+- **Days are UTC days**, so a Bead closed at 01:00 local time may land on the previous chart day.
+  Timestamps elsewhere show in the browser's local time.
+- **Reopened Beads** are not visible: the Bead list holds the latest close only, so a reopened and
+  re-closed Bead counts once, on its last close day.
+- A closed Bead without a `closed_at` is counted apart ("have no close time") and left out of the
+  chart.
+- `assignee` is never shown as who worked on a Bead.
+
+Switching the range refetches one cached response; it starts no subprocess. A change in a source
+refetches the page without rebuilding it.
+
 ## Usage
 
 ## Graph
