@@ -114,6 +114,9 @@ function removeInstallation(ctx) {
     }
     removeFile(ctx, rel);
   }
+  // The nightly run's retained worktree is Git's to remove; the next steps name it.
+  const nightlyWorktree = `${ctx.targetRoot}-nightly`;
+  if (fs.existsSync(nightlyWorktree)) ctx.nightlyWorktree = nightlyWorktree;
   ctx.log.setClass('merge');
   removeMarkerBlock(ctx, 'CLAUDE.md');
   removeMarkerBlock(ctx, 'AGENTS.md');

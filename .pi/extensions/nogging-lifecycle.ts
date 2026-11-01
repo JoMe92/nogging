@@ -20,7 +20,7 @@ import { execFile } from "node:child_process";
 import { join } from "node:path";
 
 const LOADED = Symbol.for("nogging.lifecycle.loaded");
-const EMIT_TIMEOUT_MS = 3000;
+const EMIT_TIMEOUT_MS = 20000;
 const DRAIN_MS = 1000;
 const GUARD_TIMEOUT_MS = 8000;
 const STDIN_LIMIT = 60 * 1024;

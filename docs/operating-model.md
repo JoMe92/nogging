@@ -56,11 +56,12 @@ there. For each Bead the Lead Agent follows this path:
 10. Commit the Bead in several coherent steps within the configured commit
    range (`task_sizing.commit_lines`, default 100–600 changed lines;
    `./scripts/nogg task-sizing` prints it); every commit carries the `[<ID>]`
-   token and the tests for the code it changes. Test in stages: while
-   working, only the tests of the files you change; before each commit, those
-   tests plus lint of the changed files; once per Bead, before hand-off, the
-   affected suite. The full suite is CI's job (`scripts/test` once per Bead
-   only where the project has no CI). Run a long command as one blocking call
+   token and the tests for the code it changes. Test in stages
+   ([testing policy](testing-policy.md)): `nogg test changed` while working,
+   `nogg test commit` before each commit, `nogg test bead` once per Bead
+   before hand-off. The full suite is CI's job (`nogg test full` only for a
+   release, the nightly run or an explicit recorded reason), and weakening a
+   test takes a `Test-Integrity: <reason>` trailer and a discovery note. Run a long command as one blocking call
    with a timeout that covers it (`./scripts/nogg run-quiet -- <command>`) and
    never poll it: every poll re-sends the agent's whole context, so waiting
    costs tokens without doing work. Then write the
@@ -127,6 +128,20 @@ raising the maximum far above that costs more per line, not less (see
 [Configuration](https://jome92.github.io/nogging/configuration/#task_sizing)). The Lead Agent then commits such a Bead in several steps within the
 configured commit range (step 10 above). See
 [Configuration](https://jome92.github.io/nogging/configuration/#task_sizing).
+
+Each task also carries a `Tests:` field that names the scenarios to test and
+gives each a size: `small` (in-process, no subprocess, under a second each),
+`medium` (local processes and temporary repositories, stubs only at process
+boundaries, seconds each) or `large` (a packed install or a real multi-process
+flow, only where a scenario cannot be shown smaller). A documentation task says
+`Tests: none (<reason>)`. A task's `Check:` names the suites or test files it
+affects; it never demands the full suite (bare `scripts/test`, a whole suite,
+`nogg test full`), which is CI's job. `./scripts/nogg validate` and
+`materialize` refuse such a `Check:` on a task that has no Bead yet and only
+print a NOTE for one that does; a missing `Tests:` field is a NOTE too. A
+Bead also has a test budget, `task_sizing.bead_test_lines`, the added plus
+deleted lines in test files it should stay within. What to test, and at which
+level, is in the [testing policy](testing-policy.md).
 
 ## Orchestration
 
@@ -307,6 +322,41 @@ The timer makes local commits only when there is a tracked execution-log
 update; it never pushes. Its mirror commit is
 `chore(sync): mirror Beads execution evidence` with a `Nogging-Writer: sync`
 trailer.
+
+## Test integrity
+
+`scripts/check-test-integrity <base> [--enforce]` is the one rule that keeps a branch
+from weakening its tests. It diffs the whole range `<base>...HEAD`, never one commit
+at a time, and flags in test files (the `TEST_PATH_RE` of `scripts/lib/token_usage_report.py`):
+
+- a **deleted test**: a deleted test file, or a test name removed and added nowhere
+  else in the range, so a move or a rename passes;
+- a **new skip**: an added `skip`, `xfail`, `.skip`, `xit`, `t.Skip`, `#[ignore]` or
+  `@Disabled` form for pytest, unittest, Jest/Vitest, Go, Rust and JUnit;
+- **removed assertions**: a modified test file whose assertion count falls, a moved
+  assertion netting out. A shell test has no named cases, so it is flagged only when
+  the file is deleted or its `check`/`assert` count falls.
+
+Rust tests written inline in `src/` are outside `TEST_PATH_RE` and are not seen.
+
+Without `--enforce` the script prints its findings and exits 0. With it, the script
+exits 1 while a finding is uncleared. It runs in the `nogg test` bead stage. A base
+that does not resolve exits 2.
+
+CI enforcement is an opt-in a maintainer adds to the workflow: a step in a job that
+fetches the full history and the base ref (as the `invariants` job does), for example
+
+```yaml
+      - name: No test is deleted, skipped or weakened without a Test-Integrity trailer
+        run: scripts/check-test-integrity "origin/${GITHUB_BASE_REF}" --enforce
+```
+
+A removal that is intended is justified in history, as `Nogging-Writer:` is: put a
+`Test-Integrity: <reason>` trailer in the message of any commit in the range, and
+the findings print as justified. The Lead's written rule is both parts: the trailer
+and a `discovery` note on the Bead (`bd update <id> --add-label discovery
+--append-notes "<why the test went>"`). CI has no `bd`, so only the trailer is
+checked there; an empty trailer clears nothing.
 
 ## Keeping a Lead branch current
 

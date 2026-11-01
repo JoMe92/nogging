@@ -124,7 +124,13 @@ refused by name.
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `task_sizing` | object | `{"bead_prod_lines": [400, 1000], "commit_lines": [100, 600]}` | The size one Bead and one commit should have. Planning and Lead guidance read it; `validate` only reports a NOTE. See [the block below](#task_sizing). |
+| `task_sizing` | object | `{"bead_prod_lines": [400, 1000], "commit_lines": [100, 600], "bead_test_lines": [1, 1500]}` | The size one Bead and one commit should have. Planning and Lead guidance read it; `validate` only reports a NOTE. See [the block below](#task_sizing). |
+
+## Test control
+
+| Key | Type | Default | Effect |
+| --- | --- | --- | --- |
+| `testing` | object | see the block | What `nogg test` runs per stage, its budgets, the full-suite lock and the heavy slots. See [the block below](#testing). |
 
 ## Blocks
 
@@ -282,23 +288,27 @@ See [Security model](security-model.md).
 
 ### `task_sizing`
 
-An optional object with two optional keys, each a `[min, max]` pair of positive
+An optional object with three optional keys, each a `[min, max]` pair of positive
 integers. An absent key takes its default:
 
 ```json
-"task_sizing": {"bead_prod_lines": [400, 1000], "commit_lines": [100, 600]}
+"task_sizing": {"bead_prod_lines": [400, 1000], "commit_lines": [100, 600],
+                "bead_test_lines": [1, 1500]}
 ```
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
 | `bead_prod_lines` | `[min, max]` | `[400, 1000]` | Production lines (tests excluded) one task, and so one Bead, targets. The Planning Agent writes each task as a vertical slice in this range, splits one above the maximum, and tags it `[~N loc]`. A task outside the range states its reason in the tag, e.g. `[~80 loc: security fix]`. |
 | `commit_lines` | `[min, max]` | `[100, 600]` | Changed lines one commit targets. A Lead commits a Bead in several coherent steps in this range, each carrying the `[<bead-id>]` token, with tests in the same commit as the code they cover. |
+| `bead_test_lines` | `[min, max]` | `[1, 1500]` | Test lines (added plus deleted, in test files) one Bead should carry. The minimum makes a Bead with production code and no test line visible; the maximum flags a Bead that over-tests. Advisory, like the other keys. See the [testing policy](testing-policy.md). |
 
 `./scripts/nogg task-sizing` prints the ranges in effect and whether each one is
 configured or the default. `./scripts/nogg validate` adds a NOTE for an open
 task whose estimate is below the `bead_prod_lines` minimum or above its maximum
 without a reason, and for a live change most of whose open tasks carry no
-estimate. A malformed value is a WARN and keeps the default. Neither ever fails
+estimate. It also adds a NOTE for an open task whose `Tests:` field is missing or names no
+size, and for a task that already has a Bead and whose `Check:` demands the full
+suite; `validate` and `materialize` refuse that `Check:` on a task with no Bead yet. A malformed value is a WARN and keeps the default. Neither ever fails
 `validate`, so a change planned before estimates existed stays valid. See
 [Operating model](operating-model.md#task-sizing).
 
@@ -320,6 +330,54 @@ little output; far larger ones grow the context and the cached re-reads of
 every turn. Raising the maximum well above 1000 therefore costs more tokens per
 line, not fewer. `./scripts/nogg token-usage report --group-by bead` shows the
 figure for your own Beads (see [Token usage](token-usage.md)).
+### `testing`
+
+An optional object. Every key is optional, an absent key takes its default, and
+`update` never edits it. These are the defaults, with `stages` empty:
+
+```json
+"testing": {
+  "stages": {},
+  "budgets": {"changed": 300, "commit": 600, "bead": 1800, "full": 7200},
+  "max_parallel_heavy": 2,
+  "heavy_stages": ["bead", "full"],
+  "slot_wait_seconds": 3600,
+  "full_lock": "auto",
+  "integrity": "report",
+  "trend_threshold_percent": 30,
+  "ci": {"branch": "develop", "job_pattern": "test", "max_age_days": 7, "cache_seconds": 21600},
+  "nightly": {"enabled": true, "setup": []}
+}
+```
+
+| Key | Type | Default | Effect |
+| --- | --- | --- | --- |
+| `stages` | object | `{}` | `changed`, `commit`, `bead` and `full`, each a command string or a list run in order that stops at the first failure. A stage with no entry uses its fallback. |
+| `budgets` | object | as above | Seconds per stage. A run above its budget is reported and keeps its exit code. |
+| `max_parallel_heavy` | integer | `2` | Heavy runs at once on this host, for this user. |
+| `heavy_stages` | list | `["bead", "full"]` | The stages that take a slot. |
+| `slot_wait_seconds` | integer | `3600` | How long a heavy run waits for a slot before it exits 75. |
+| `full_lock` | string | `auto` | `auto` locks `nogg test full` where a CI configuration file exists or a nightly run is in use; `always` locks; `never` does not. |
+| `integrity` | string | `report` | `enforce` makes a test-integrity finding fail the stage. |
+| `trend_threshold_percent` | number | `30` | The week-over-week growth `doctor` reports. |
+| `ci` | object | as above | The integration branch, the job-name pattern that counts as a test job, how old a run may be, and how long a CI check is cached. `ci.branch` also sets the base of the `bead` stage. |
+| `nightly` | object | as above | Whether the nightly run may run, and the commands it runs first. |
+
+A command never goes through a shell: it is split into arguments, and it passes
+the deny rules of `run-quiet`. Four placeholders expand: `{files}` and
+`{test_files}` as a whole word, into one `./`-prefixed argument per path, and
+`{junit}` and `{timings}` into fresh result paths, also inside a word such as
+`--junitxml={junit}`. A malformed value is a `doctor` WARN naming the key, and
+that key keeps its default; an unknown key is a WARN too. Neither ever fails a
+command. See [Test control](test-control.md).
+
+`doctor` reads `ci` to check that CI really runs tests: it looks, through `gh`, for
+a job on `ci.branch` or a pull request whose name matches `ci.job_pattern` within
+`ci.max_age_days`, caches the answer for `ci.cache_seconds`, and prints a WARN when CI
+is configured and no test job is found. It prints nothing when `gh` cannot be
+reached, and it never changes the exit code. See
+[Does CI really run tests?](test-control.md#does-ci-really-run-tests).
+
 ### `agent_routing_file`
 
 A repository-relative path, `.nogging/agent-routing.json` by default. It is

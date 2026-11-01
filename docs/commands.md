@@ -72,8 +72,12 @@ install the statusline capture used by the launch usage gate.
 ./scripts/nogg usage --agent claude
 ./scripts/nogg usage --agent codex --model <model-name> --json
 ./scripts/nogg usage --agent pi
-./scripts/nogg usage install-statusline
+./scripts/nogg usage install-statusline [--dry-run] [--json]
+./scripts/nogg usage uninstall-statusline [--dry-run] [--json]
 ```
+
+`--dry-run` prints the intended `settings.json` diff and writes nothing;
+`uninstall-statusline` restores only the previous `statusLine` key.
 
 For `--agent pi` the command reads the shared Z.ai snapshot and, when it is
 stale, runs one bounded probe through Pi's own key resolver; set
@@ -307,6 +311,46 @@ blocking call, so the agent never polls the running command. A passing suite
 leaves one line in the context, not its whole output.
 
 **Read more.** [Operating model](operating-model.md).
+
+## test
+
+**Purpose.** Run one test stage through `run-quiet`, under its budget and the
+session's deny rules, and leave one record. `changed` and `commit` cover the
+tracked changes and untracked files, `bead` adds the branch's diff from its
+merge-base, and `full` runs everything. Commands come from `testing.stages`, or
+from fallbacks that keep an existing repository working. A stage that ran nothing
+prints `skipped: <stage> ran no tests (<reason>)` and exits 0. A run above its
+budget prints an `over budget:` line and keeps its exit code. `bead` and `full`
+hold one of the host-wide heavy slots and print their five slowest tests.
+
+`full` is refused with exit 77 wherever CI runs it, unless `--release` (an
+operator shell or the Orchestration Agent), `--nightly` (outside any supervised
+session) or `--allow-full "<reason>"` permits it. The exit code is the stage's
+own, 77 when refused and 75 when no heavy slot came free in time.
+
+`bead` also prints the Bead's test-line count against `task_sizing.bead_test_lines`
+and ends with the test-integrity rule; `integrity` runs that rule alone, and
+`testing.integrity: enforce` makes an uncleared finding exit 1. `report` prints the
+daily cost and trend of the run records. The `doctor` NOTEs read the same records.
+
+**Common forms.**
+
+```bash
+./scripts/nogg test changed
+./scripts/nogg test commit
+./scripts/nogg test bead [--base <ref>] [--bead <id>]
+./scripts/nogg test full --allow-full "migration touches every test"
+./scripts/nogg test full --release
+./scripts/nogg test integrity [--base <ref>]
+./scripts/nogg test report [--days N] [--json]
+./scripts/nogg test nightly
+```
+
+**Used by.** A Lead Agent or specialist at each testing moment, the operator
+before a release.
+
+**Read more.** [Test control](test-control.md) and
+[Configuration](configuration.md#testing).
 
 ## session-hooks
 

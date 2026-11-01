@@ -153,6 +153,15 @@ class Reminders(unittest.TestCase):
         self.assertEqual((queue["items"], queue["delivered"]), ([], {}))
 
 
+class TheNightlyItem(unittest.TestCase):
+    def test_its_label_is_not_urgent(self):
+        self.assertNotIn("nightly_failed", w.URGENT_KINDS)
+        line = w.render("w-1", [{"key": "k", "kind": "nightly_failed", "session": "nightly", "reason": "why",
+                                 "next": "./scripts/nogg doctor", "created_at": "2026-10-31T02:00:00+00:00"}], [])[0]
+        self.assertIn("· failed nightly", line)
+        self.assertIn("next: ./scripts/nogg doctor", line)
+
+
 class Plan(unittest.TestCase):
     def test_quiet_periods(self):
         queue = {}

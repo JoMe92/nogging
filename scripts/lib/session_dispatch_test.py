@@ -335,6 +335,68 @@ class Limit(unittest.TestCase):
         self.assertEqual(p.run(lead(state="limit", limit_source="event"), advance=3000), [])
         self.assertEqual(kinds(p.run(lead(state="limit", limit_source="event"), advance=700)), ["resume"])
 
+    def codex_limit(self, at="2026-10-31T07:46:19.094Z", until_in=3600, **fields):
+        until = (T0 + timedelta(seconds=until_in)).isoformat() if until_in is not None else None
+        fact = {"agent": "codex", "state": "limit", "limit_source": "rollout", "limit_at": at, "limit_until": until,
+                "checks": checks("no-pr"), "gaps": ["no-signal"], "excerpt": "You hit your usage limit"}
+        return lead(**{**fact, **fields})
+
+    def test_no_nudge_while_a_codex_session_is_at_its_limit(self):
+        p = Pass()
+        self.assertEqual(p.run(self.codex_limit()), [])
+        self.assertEqual(p.run(self.codex_limit(), advance=61), [])
+        self.assertEqual(p.run(self.codex_limit(), advance=61), [])
+
+    def test_a_rollout_limit_resumes_once_after_the_reset(self):
+        p = Pass()
+        self.assertEqual(p.run(self.codex_limit(until_in=600)), [])
+        self.assertEqual(p.run(self.codex_limit(until_in=600), advance=599), [])
+        resumed = p.run(self.codex_limit(until_in=600), advance=2)
+        self.assertEqual(kinds(resumed), ["resume"])
+        self.assertEqual(p.run(self.codex_limit(until_in=600), advance=61), [])
+        self.assertEqual(p.run(self.codex_limit(until_in=600), advance=61), [])
+
+    def test_a_codex_pane_limit_waits_for_its_reset_like_a_rollout_limit(self):
+        p = Pass()
+        fact = self.codex_limit(until_in=600, limit_source="pane", limit_at=None)
+        self.assertEqual(p.run(fact), [])
+        self.assertEqual(p.run(fact, advance=300), [])
+        self.assertEqual(kinds(p.run(fact, advance=301)), ["resume"])
+
+    def test_a_resume_that_hits_the_limit_again_waits_again(self):
+        p = Pass()
+        self.assertEqual(kinds(p.run(self.codex_limit(until_in=-1))), ["resume"])
+        again = self.codex_limit(at="2026-10-31T12:52:04.100Z", until_in=7200)
+        self.assertEqual(p.run(again, advance=61), [])
+        self.assertEqual(p.run(again, advance=3600), [])
+        later = p.run(again, advance=3600)
+        self.assertEqual(kinds(later), ["resume"])
+        self.assertIn("12:52:04.100Z", later[0]["key"])
+        self.assertEqual(p.run(again, advance=61), [])
+
+    def test_a_newer_error_before_the_resume_replaces_the_reset_time(self):
+        p = Pass()
+        self.assertEqual(p.run(self.codex_limit(until_in=600)), [])
+        newer = self.codex_limit(at="2026-10-31T12:00:30.000Z", until_in=7200)
+        self.assertEqual(p.run(newer, advance=700), [])
+        self.assertEqual(kinds(p.run(newer, advance=7200)), ["resume"])
+
+    def test_an_unreadable_reset_queues_one_stuck_item_and_sends_nothing(self):
+        p = Pass()
+        fact = self.codex_limit(until_in=None)
+        first, second = p.run(fact), p.run(fact, advance=61)
+        self.assertEqual((kinds(first), kinds(second)), (["stuck"], ["stuck"]))
+        self.assertEqual(keys(first), keys(second))
+        item = first[0]["item"]
+        self.assertTrue(item["reason"].startswith("usage limit, reset time unknown"))
+        self.assertIn("usage limit", item["reason"])
+
+    def test_the_unknown_reset_item_goes_once_the_state_leaves_limit(self):
+        p = Pass()
+        self.assertEqual(kinds(p.run(self.codex_limit(until_in=None))), ["stuck"])
+        self.assertEqual(p.run(lead(agent="codex", state="working"), advance=61), [])
+        self.assertEqual(p.run(lead(agent="codex"), advance=61), [])
+
     def test_someone_else_resumed_it(self):
         p = Pass()
         p.run(lead(state="limit", limit_source="pane"))

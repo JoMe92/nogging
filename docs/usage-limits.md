@@ -55,6 +55,7 @@ then read. This is opt-in.
 ### What `nogg usage install-statusline` changes
 
 ```bash
+./scripts/nogg usage install-statusline --dry-run   # preview, writes nothing
 ./scripts/nogg usage install-statusline
 ```
 
@@ -75,6 +76,11 @@ Composition and safety properties:
   wrapper captures the usage data and then invokes your previous statusline
   command with the same input, so your statusline keeps working.
 - Running it twice is a **no-op** (idempotent).
+- A real install first **backs up** an existing `settings.json` byte for byte
+  to `settings.json.nogging-install.bak` (mode 0600, overwritten by each real
+  install) and records your previous `statusLine` value, or its absence, in
+  `$XDG_DATA_HOME/nogging/claude-statusline.restore.json` next to the wrapper.
+  Those two files are what `uninstall-statusline` uses.
 - **Nothing is sent over the network**, and the cache lives in an
   owner-only directory.
 - A malformed `settings.json` or an unsupported `statusLine` configuration
@@ -83,7 +89,10 @@ Composition and safety properties:
 
 ### Verifying it
 
-1. Run `./scripts/nogg usage install-statusline` and check the printed
+1. Preview it with `./scripts/nogg usage install-statusline --dry-run`: it
+   prints the wrapper path, the command it would compose with and a diff of
+   `settings.json`, and writes nothing (no file, no directory). Then run
+   `./scripts/nogg usage install-statusline` and check the printed
    message: it names the wrapper path, and mentions composition if you had a
    previous statusline.
 2. Restart a Claude Code session so the new statusline takes effect, and let
@@ -95,17 +104,34 @@ Composition and safety properties:
 
 ### Undoing it
 
-There is no uninstall command; revert manually:
+```bash
+./scripts/nogg usage uninstall-statusline --dry-run   # preview, writes nothing
+./scripts/nogg usage uninstall-statusline
+```
 
-1. Restore the previous value of `statusLine` in `~/.claude/settings.json`
-   (your previous statusline command, if you had one — the install message
-   printed it — or remove the key entirely). Restart Claude Code sessions
-   afterwards.
-2. Optionally delete the wrapper at
-   `$XDG_DATA_HOME/nogging/claude-statusline` and the cache at
-   `$XDG_CACHE_HOME/nogging/usage/claude.json`.
+`uninstall-statusline` restores **only** the `statusLine` key in
+`~/.claude/settings.json` from the restore record: your previous value comes
+back exactly, or the key is removed if you had none. Every other setting,
+including ones you changed after installing, is preserved. It then deletes the
+wrapper and the restore record. Restart Claude Code sessions afterwards.
 
-With the cache gone, `nogg usage --agent claude` reports unknown again.
+- It first copies the current settings to `settings.json.nogging-uninstall.bak`
+  (mode 0600). Together with `settings.json.nogging-install.bak` from the
+  install, you have a copy of the file before each change.
+- If the statusline does not reference the Nogging wrapper (never installed,
+  already uninstalled, or hand-edited since), it reports `not_installed`,
+  exits 0 and changes nothing.
+- For an install made before the restore record existed, it restores from the
+  command baked into the wrapper (your composed command, or no `statusLine`).
+- If neither the record nor the wrapper can tell it the previous value, or
+  `settings.json` is malformed, it refuses with manual steps and changes
+  nothing. Then restore the key yourself.
+- Both commands take `--json`, and `--settings` / `--wrapper-path` to target
+  other paths.
+
+The usage cache at `$XDG_CACHE_HOME/nogging/usage/claude.json` is left in
+place and stops counting once it is older than `usage_gate.stale_seconds`;
+delete it if you want `nogg usage --agent claude` to report unknown at once.
 
 ## Pi via Z.ai
 

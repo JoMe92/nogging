@@ -986,6 +986,10 @@ processes run. This ensures that direct test runs:
 - Always retain unrelated environment variables, custom quota fixtures, and npm cache settings.
 Fixtures explicitly configure any required session variables after sourcing `test-env.sh`.
 
+A session tests with the stages of [Test control](test-control.md) —
+`nogg test changed` while working, `nogg test commit` before a commit and
+`nogg test bead` once per Bead — and leaves the full suite to CI.
+
 `scripts/test` runs the suite the same way. In a repository Nogging was
 installed into, it runs only that repository's own `scripts/**/*.test.sh`;
 Nogging's shipped self-tests (the `*.test.sh` files

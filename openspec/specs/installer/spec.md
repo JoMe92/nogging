@@ -778,3 +778,130 @@ missing or not executable.
 
 - **WHEN** a v2.2.0-shaped install without `scripts/session-pty-recorder` is updated from the packed current distribution
 - **THEN** the doctor session-helper check for `scripts/session-pty-recorder` does not FAIL
+
+### Requirement: The installer renders and explains the loop scheduler timer
+
+`init` and `update` SHALL render `systemd/nogg-loops-<slug>.service` and
+`systemd/nogg-loops-<slug>.timer` with the same per-repository slug and
+absolute path as the other units. The service SHALL be `Type=oneshot` with
+`WorkingDirectory` set to the repository and an `ExecStart` of
+`<abs path>/scripts/nogg loop tick`. The timer SHALL fire every minute with
+`Persistent=false` and SHALL be `WantedBy=timers.target`. The next-steps output
+SHALL print the `systemctl --user enable --now` line for the timer, and enabling
+it SHALL remain the operator's explicit choice. `remove` SHALL print the matching
+disable line. `--no-systemd` SHALL skip both units, as it skips the others. The
+`loop` launch prompt SHALL be delivered by the existing verbatim
+`launch-prompts` copy. The loop modules SHALL be part of the payload, and the
+scheduled-loops guide SHALL be among the installed reference docs. The
+installer SHALL NOT write or overwrite `.nogging/loops.json` or `.nogging/loops/`.
+
+#### Scenario: The loop units target the installing repository
+
+- **WHEN** `init` runs in `/srv/project-a`
+- **THEN** `systemd/nogg-loops-project-a.service` runs `/srv/project-a/scripts/nogg loop tick` from `/srv/project-a`, and `systemd/nogg-loops-project-a.timer` fires every minute without catch-up
+
+#### Scenario: The enable line is printed
+
+- **WHEN** `init` finishes without `--no-systemd`
+- **THEN** its next steps contain `systemctl --user enable --now` for the loop timer
+
+#### Scenario: --no-systemd skips the loop units
+
+- **WHEN** `init --no-systemd` runs
+- **THEN** no loop unit is rendered and the loop prompt, modules and guide are still installed
+
+#### Scenario: Update preserves loop definitions
+
+- **WHEN** `update` runs in a repository that has `.nogging/loops.json` and `.nogging/loops/night-work.md`
+- **THEN** both files are byte-for-byte unchanged
+
+### Requirement: The session-wake payload ships with dispatch on
+
+`init` and `update` SHALL ship `scripts/lib/session_signals.py`,
+`scripts/lib/session_dispatch.py`, `scripts/lib/session_pause.py`,
+`scripts/lib/session_warm.py`, `.pi/extensions/nogging-lifecycle.ts` and
+`docs/session-wake.md`, and SHALL scaffold the `session_dispatch` block (with `enabled:
+true`, `retire_merged: false`, `wake.keep_warm`, `wake.keep_warm_after` and an empty
+`wake.quiet_hours`) and the `orchestrator_context` block. `update` SHALL preserve a
+repository's existing values for those keys, `enabled: false` and quiet hours included,
+and SHALL NOT write over an existing `enabled`. A repository whose `enabled` key is
+missing reads as on, and `update` SHALL print one line saying that dispatch is on, what
+it does and that `session_dispatch.enabled: false` switches it off. Neither SHALL edit
+`~/.codex`, install a hook into any personal configuration or enable a timer. `remove`
+SHALL delete the shipped files and SHALL leave `.nogging/state/dispatch/` and
+`.nogging/state/pause.json` in place. Neither `init` nor `update` SHALL create a pause.
+
+#### Scenario: A packed consumer has dispatch on by default
+
+- **WHEN** a packed consumer runs `init`
+- **THEN** the files exist, `session_dispatch.enabled` is `true` and `retire_merged` is `false`
+- **AND** `session dispatch --once` runs a pass that, with no orchestrator session and no timer, exits 0 and prints no error
+- **AND** `doctor` prints notes and no FAIL for the missing orchestrator and timer
+
+#### Scenario: A packed consumer with an orchestrator
+
+- **WHEN** a packed consumer with a stub orchestrator session runs `session dispatch --once` while a Lead idles with uncommitted work
+- **THEN** the Lead is nudged once and a queued decision reaches the orchestrator as one digest
+
+#### Scenario: Update keeps an explicit value
+
+- **WHEN** `update` runs in a repository with `session_dispatch.enabled` set to `false`
+- **THEN** the value stays `false`, `session dispatch --once` performs no action and no on-by-default line is printed
+- **AND** a repository with `enabled` set to `true` keeps `true`
+
+#### Scenario: Update of an older repository turns dispatch on and says so
+
+- **WHEN** `update` runs in a repository whose `session_dispatch` block has no `enabled` key
+- **THEN** its existing other values are kept, no `enabled` value is written over the repository's own choice, dispatch reads as on and one line says so and names the switch-off key
+
+#### Scenario: The release says dispatch is on
+
+- **WHEN** the CHANGELOG and `docs/session-wake.md` of the release are read
+- **THEN** the CHANGELOG has a line saying that session dispatch is on by default
+- **AND** the guide has a section stating plainly that dispatch is on, what it does (fixed nudges, CI tracking, a held digest, no model, no merging, no retirement by default), how to switch it off with `session_dispatch.enabled: false` and how to pause it with `nogg pause`
+
+#### Scenario: Personal configuration is untouched
+
+- **WHEN** `init`, `update` or `remove` runs
+- **THEN** `~/.codex/hooks.json` and `~/.codex/config.toml` are unchanged
+
+#### Scenario: A pause survives an update
+
+- **WHEN** `update` runs while `.nogging/state/pause.json` exists
+- **THEN** the file is unchanged and the host stays paused
+
+### Requirement: The installer renders a per-repository nightly test timer
+
+`init` and `update` SHALL render `systemd/nogg-nightly-<slug>.service` and
+`systemd/nogg-nightly-<slug>.timer` with the target's absolute path, unless `--no-systemd`
+is given, and SHALL NOT enable them. The service SHALL run `scripts/nogg test nightly` at low
+CPU and I/O priority, and the timer SHALL fire hourly between 01:17 and 05:17 local time. The
+next steps SHALL name how to enable the timer, `remove` SHALL name it among the units to
+disable, and `remove` SHALL name the nightly worktree when it exists.
+
+#### Scenario: A consumer gains the units on update
+
+- **WHEN** `update` runs in a repository installed before this change
+- **THEN** both units are rendered for its slug and neither is enabled
+
+#### Scenario: No systemd
+
+- **WHEN** `init --no-systemd` runs
+- **THEN** no nightly unit is written
+
+### Requirement: Update announces the testing defaults once
+
+When a target's `.nogging/config.json` has no `testing` block, `update` SHALL print one line
+saying the testing defaults apply and where to set stages, and SHALL leave the file unchanged.
+New installs SHALL scaffold a `testing` block with empty `stages`. Every new runtime module
+SHALL be listed in the manifest and the package files, and new test files SHALL NOT be shipped.
+
+#### Scenario: An upgrade with no block
+
+- **WHEN** `update` runs and the config has no `testing` block
+- **THEN** one notice names `docs/nogging/test-control.md` and the config is byte-identical
+
+#### Scenario: A configured repository
+
+- **WHEN** `update` runs and a `testing` block exists
+- **THEN** no notice prints and the block is unchanged

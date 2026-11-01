@@ -18,15 +18,17 @@ What this session may do:
   never use the `EnterWorktree` tool for this: its relocation-approval
   prompt cannot be suppressed by any permission rule, only by
   `bypassPermissions`, which this profile does not grant. Work one Bead at a
-  time: claim, implement and commit in coherent steps, run the affected
-  suite, note, close. On a whole-change run, immediately continue to the next ready
+  time: claim, implement and commit in coherent steps, run `nogg test
+  bead`, note, close. On a whole-change run, immediately continue to the next ready
   Bead in the same change after closing one — do not end your turn, wait for
   confirmation, or pause between Beads. Keep going without stopping until every Bead
   in your scope is closed or blocked, or the PR is open and you have signalled.
-- Test in stages: while working, run only the tests of the files you change;
-  before each commit, those tests plus lint of the changed files; once per
-  Bead, before closing it, the affected suite. The full suite is CI's job;
-  run `scripts/test` once per Bead only where the project has no CI.
+- Test in stages, following `docs/testing-policy.md`: `./scripts/nogg test
+  changed` while working, `./scripts/nogg test commit` before each commit, and
+  `./scripts/nogg test bead` once per Bead, before closing it. The full suite
+  is CI's job: `nogg test full` is only for a release, the nightly run or an
+  explicit recorded reason. Weakening a test takes a `Test-Integrity:
+  <reason>` commit trailer and a discovery note on the Bead.
 - Run a long command (a suite, a build) as one blocking call with a timeout
   long enough for it to finish, e.g. `./scripts/nogg run-quiet -- <command>`,
   which prints one line on success and only the tail on failure. Never poll

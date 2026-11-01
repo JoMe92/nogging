@@ -19,6 +19,12 @@ After kickoff:
    Bead range (`./scripts/nogg task-sizing`), tagged `[~N loc]` (production
    lines, tests excluded); split a task above the maximum, and a task outside
    the range needs a stated reason in the tag, e.g. `[~80 loc: security fix]`.
+   Give each task a `Tests:` field naming its scenarios and a size for each
+   (`small` in-process under a second, `medium` local processes and temporary
+   repositories, `large` a packed install or real multi-process flow), or
+   `Tests: none (<reason>)` for documentation, and a `Check:` that names the
+   suites it affects, never the full suite (`validate` and `materialize`
+   refuse it on a new task); see `docs/testing-policy.md`.
 4. Validate the planning artifacts with `./scripts/nogg validate` and
    `openspec validate <change> --strict --no-interactive`, naming the change;
    never a bare `openspec validate`. Commit as the planning writer with the

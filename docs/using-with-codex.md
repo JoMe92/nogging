@@ -346,6 +346,13 @@ with a different model as a workaround; wait it out, or run
 `resume-when-ready <name>`, which dismisses a residual "switch model?" prompt
 by keeping the current model rather than switching.
 
+Nogging reads the limit from the rollout's last turn (`usage_limit_exceeded`), so a
+session stopped by its limit is `limit`, never `idle`. With the pane as a fallback
+(the message counts only beside the idle composer and no `Working (` marker). With
+session dispatch on, the dispatcher sends no nudge while it lasts, waits for the
+reset time Codex printed, and sends one resume. If the message has no readable time it
+queues one `stuck` item, "usage limit, reset time unknown".
+
 ## How Nogging sees a Codex turn
 
 A Codex session needs no hook install for `session watch` to work. The end of

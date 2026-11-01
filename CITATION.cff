@@ -1,8 +1,8 @@
 cff-version: 1.2.0
 message: If you use Nogging, please cite it using these metadata.
 title: Nogging
-version: 3.5.0
-date-released: 2026-10-31
+version: 3.6.0
+date-released: 2026-11-01
 license: ISC
 repository-code: https://github.com/JoMe92/nogging
 authors:

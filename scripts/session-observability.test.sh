@@ -89,6 +89,22 @@ got=$(printf 'Working (12s · esc to interrupt)\n' | classify codex)
 [[ "$got" == "working" ]] && ok "codex: 'Working (' classifies working" \
   || bad "codex: expected working, got $got"
 
+got=$(printf "You've hit your usage limit. Try again at 12:51 PM.\n> Ask Codex to do anything\n" | classify codex)
+[[ "$got" == "limit" ]] && ok "codex: the usage-limit message with the idle composer classifies limit" \
+  || bad "codex: expected limit, got $got"
+
+got=$(printf 'You’ve hit your usage limit. Try again at 12:51 PM.\n> Ask Codex to do anything\n' | classify codex)
+[[ "$got" == "limit" ]] && ok "codex: the rollout's apostrophe matches too" \
+  || bad "codex: expected limit, got $got"
+
+got=$(printf "You've hit your usage limit.\nWorking (2s · esc to interrupt)\n> Ask Codex to do anything\n" | classify codex)
+[[ "$got" == "working" ]] && ok "codex: a stale limit message does not outrank a running turn" \
+  || bad "codex: expected working, got $got"
+
+got=$(printf "You've hit your usage limit.\n" | classify codex)
+[[ "$got" != "limit" ]] && ok "codex: the limit message without the idle composer is not counted" \
+  || bad "codex: limit counted without the idle composer"
+
 got=$(printf '> Ask Codex to do anything\n' | classify codex)
 [[ "$got" == "idle" ]] && ok "codex: idle prompt classifies idle" \
   || bad "codex: expected idle, got $got"

@@ -321,6 +321,27 @@ check "loop timer has no catch-up" grep -qx "Persistent=false" "$ltim"
 check "loop timer binds the slugged service" grep -qx "Unit=nogg-loops-fresh.service" "$ltim"
 check "loop timer is enable-able" grep -qx "WantedBy=timers.target" "$ltim"
 
+# The nightly pair: rendered with the repo's path, at low priority, never enabled here.
+nsvc="$repo/systemd/nogg-nightly-fresh.service"
+ntim="$repo/systemd/nogg-nightly-fresh.timer"
+check "nightly service rendered" test -f "$nsvc"
+check "nightly timer rendered" test -f "$ntim"
+check "nightly service runs nogg test nightly" grep -qx "ExecStart=$(cd "$repo" && pwd)/scripts/nogg test nightly" "$nsvc"
+check "nightly service is a oneshot" grep -qx "Type=oneshot" "$nsvc"
+check "nightly service runs at low CPU priority" grep -qx "Nice=15" "$nsvc"
+check "nightly service runs at idle I/O priority" grep -qx "IOSchedulingClass=idle" "$nsvc"
+check "nightly service outlasts the full budget" grep -qx "TimeoutStartSec=6h" "$nsvc"
+check "nightly timer fires hourly at :17 from 01 to 05" grep -qx "OnCalendar=\*-\*-\* 01..05:17:00" "$ntim"
+check "nightly timer has no catch-up" grep -qx "Persistent=false" "$ntim"
+check "nightly timer binds the slugged service" grep -qx "Unit=nogg-nightly-fresh.service" "$ntim"
+check "nightly timer is enable-able" grep -qx "WantedBy=timers.target" "$ntim"
+if command -v systemd-analyze >/dev/null 2>&1; then
+  # Parses the files where they lie; it installs and enables nothing.
+  verify_out=$(systemd-analyze --user verify "$nsvc" "$ntim" 2>&1) || true
+  check "the rendered nightly units pass systemd-analyze" test -z "$verify_out"
+  [[ -z "$verify_out" ]] || echo "$verify_out"
+fi
+
 # A repository named after a unit keeps its units' next steps apart.
 named="$work/orchestrator"
 mkdir -p "$named"; git -C "$named" init -q
@@ -333,6 +354,7 @@ nos="$work/nosystemd"
 mkdir -p "$nos"; git -C "$nos" init -q
 ( cd "$nos" && node "$cli" init --no-beads --no-systemd >/dev/null )
 check "--no-systemd skips the unit" [ ! -d "$nos/systemd" ]
+check "--no-systemd writes no nightly unit" [ -z "$(find "$nos" -name 'nogg-nightly-*' -print -quit)" ]
 check "--no-systemd still installs the loop prompt" test -f "$nos/.nogging/launch-prompts/loop.md"
 check "--no-systemd still installs the loop modules" test -f "$nos/scripts/lib/loop_runner.py"
 check "--no-systemd still installs the loop guide" test -f "$nos/docs/nogging/scheduled-loops.md"
@@ -638,6 +660,17 @@ PY
     update_out=$(update_wake)
     check "update of an older repository writes no enabled key" [ "$(wake_key enabled)" = "undefined" ]
     check "update of an older repository keeps its values" [ "$(wake_key max_nudges)" = "5" ]
+    check "a new install scaffolds the testing block with empty stages" \
+      [ "$(node -p "JSON.stringify(require('$wake/.nogging/config.json').testing.stages)")" = "{}" ]
+    check "update with a testing block prints no testing line" \
+      bash -c "! grep -q 'nogg test. runs on its defaults' <<<\"\$1\"" _ "$update_out"
+    wake_block 'del config["testing"]'
+    update_out=$(update_wake)
+    check "update of a repository with no testing block says so once" \
+      test "$(grep -c 'nogg test. runs on its defaults' <<<"$update_out")" -eq 1
+    check "and names where to set stages" grep -q 'testing.stages' <<<"$update_out"
+    check "and writes no testing block" \
+      [ "$(node -p "typeof require('$wake/.nogging/config.json').testing")" = "undefined" ]
     check "update of an older repository says so once" \
       test "$(grep -c 'Session dispatch is on' <<<"$update_out")" -eq 1
     check "and names the switch" grep -q 'session_dispatch.enabled: false' <<<"$update_out"

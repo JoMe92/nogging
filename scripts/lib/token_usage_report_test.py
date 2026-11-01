@@ -355,6 +355,31 @@ class BeadViewTests(unittest.TestCase):
         with self.assertRaises(ReportError):
             tr.report(f.tables, META, lo, hi, 'week', {}, NOW)
 
+    def test_test_cost_fields_are_additive_and_null_without_their_sources(self):
+        plain = self.doc(lines=True)
+        for item in plain['rows'] + plain['beads']:
+            self.assertEqual((item['tests_added'], item['tests_deleted'], item['skips_added'], item['stage_seconds']),
+                             (None, None, None, None))
+        lo, hi = tr.window(at(0), at(12), NOW)
+        tests = {'SPEC-a': {'tests_added': 4, 'tests_deleted': 1, 'skips_added': 2}}
+        seconds = {'SPEC-a': {'commit': 12.0, 'bead': 310.0}, 'SPEC-b': {'bead': 5.5}}
+        context = {'bead_lines': lambda beads: {b: GIT_LINES[b] for b in beads},
+                   'bead_tests': lambda beads: tests, 'stage_seconds': lambda beads: seconds}
+        doc = tr.report(bead_facts().tables, META, lo, hi, 'bead', {}, NOW, context)
+        for key in ('commits', 'production_lines', 'test_lines', 'per_production_line'):
+            self.assertEqual([r[key] for r in doc['rows']], [r[key] for r in plain['rows']])   # nothing existing moves
+        a_claude, _, b_claude, loose = doc['rows']
+        self.assertEqual((a_claude['tests_added'], a_claude['tests_deleted'], a_claude['skips_added']), (4, 1, 2))
+        self.assertEqual(a_claude['stage_seconds'], {'changed': None, 'commit': 12.0, 'bead': 310.0, 'full': None})
+        self.assertEqual((b_claude['tests_added'], b_claude['stage_seconds']['bead']), (None, 5.5))
+        self.assertEqual((loose['tests_added'], loose['stage_seconds']), (None, None))
+        total = {t['bead']: t for t in doc['beads']}['SPEC-a']
+        self.assertEqual((total['tests_added'], total['skips_added']), (4, 2))
+        lines = tr.render_bead_report(doc)
+        self.assertIn('TESTS+', lines[0])
+        self.assertEqual(lines[1].split()[-4:], ['4', '1', '2', '-/12/310/-'])
+        self.assertEqual(lines[4].split()[-4:], ['-', '-', '-', '-/-/6/-'])
+
     def test_text_render(self):
         lines = tr.render_bead_report(self.doc(lines=True))
         self.assertEqual(lines[0].split()[:4], ['BEAD', 'AGENT', 'EVENTS', 'FRESH_IN'])
@@ -362,10 +387,10 @@ class BeadViewTests(unittest.TestCase):
         self.assertEqual([l.split()[:2] for l in lines[1:]],
                          [['SPEC-a', 'claude'], ['SPEC-a', 'codex'], ['SPEC-a', 'all'], ['SPEC-b', 'claude'],
                           ['-', 'claude']])
-        self.assertEqual(lines[1].split()[-3:], ['1.0', '0.4', '10.4'])
+        self.assertEqual(lines[1].split()[-7:-4], ['1.0', '0.4', '10.4'])
         self.assertIn('0+?', lines[2])              # Codex cache write unknown
-        self.assertEqual(lines[4].split()[-5:], ['0', '-', '-', '-', '-'])
-        self.assertEqual(lines[5].split()[-5:], ['-'] * 5)
+        self.assertEqual(lines[4].split()[-9:], ['0'] + ['-'] * 8)
+        self.assertEqual(lines[5].split()[-9:], ['-'] * 9)
         long = self.doc(lines=True)
         long['rows'][0]['bead'] = 'loadcompass-03v'
         self.assertTrue(tr.render_bead_report(long)[1].startswith('loadcompass-03v '))   # never truncated

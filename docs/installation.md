@@ -12,7 +12,7 @@ branch and an `origin` remote: worktrees are allocated from a freshly fetched
 
 ```bash
 cd /path/to/your-repo
-npx github:JoMe92/nogging#v3.5.0 init --no-systemd
+npx github:JoMe92/nogging#v3.6.0 init --no-systemd
 ```
 
 `--no-systemd` skips the systemd units; leave it off only after reviewing the
@@ -28,7 +28,7 @@ provisions the whole stack — pinned to the versions in the
 [compatibility matrix](compatibility.md) — and then runs `init` for you:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/JoMe92/nogging/v3.5.0/scripts/bootstrap | bash
+curl -fsSL https://raw.githubusercontent.com/JoMe92/nogging/v3.6.0/scripts/bootstrap | bash
 ```
 
 Always pin a tagged release in that URL, never `main`/`develop`, for the same
@@ -44,7 +44,7 @@ Download the script first, then run it, to get a guided, Nogging-styled
 terminal wizard instead:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/JoMe92/nogging/v3.5.0/scripts/bootstrap -o bootstrap
+curl -fsSL https://raw.githubusercontent.com/JoMe92/nogging/v3.6.0/scripts/bootstrap -o bootstrap
 bash bootstrap
 ```
 
@@ -132,7 +132,7 @@ command above.
 | Codex payload | `.codex/rules/nogging.rules`, `.codex/prompts/{plan,discovery-review,sync-now}.md` | copied verbatim; tracked in manifest; locally modified files preserved as `<file>.nogging-new` (or overwritten with `--force`); only relevant if you run the loop from Codex — see [`docs/using-with-codex.md`](using-with-codex.md) |
 | Pi payload | `.pi/prompts/{plan,discovery-review,sync-now}.md`, `.pi/extensions/nogging-guard.ts`, `.pi/extensions/nogging-lifecycle.ts` | copied verbatim; tracked in manifest; locally modified files preserved as `<file>.nogging-new` (or overwritten with `--force`); only relevant if you run the loop from Pi — see [`docs/using-with-pi.md`](using-with-pi.md) |
 | Antigravity payload (experimental) | `.agents/skills/nogging-{plan,discovery-review,sync-now}/`, the `nogging-guard` and `nogging-observability` groups in `.agents/hooks.json`, `scripts/hooks/agy-guard` | skills and guard copied verbatim and tracked in manifest; `.agents/hooks.json` is merged by named group, so your other hooks are kept; only relevant if you run the loop from Antigravity — see [`docs/using-with-antigravity.md`](using-with-antigravity.md) |
-| Rendered | `systemd/nogg-sync-<slug>.service` and `.timer`, `systemd/nogg-orchestrator-<slug>.service`, `systemd/nogg-loops-<slug>.service` and `.timer` | generated with this repo's absolute path; `<slug>` is the sanitized repo directory name |
+| Rendered | `systemd/nogg-sync-<slug>.service` and `.timer`, `systemd/nogg-orchestrator-<slug>.service`, `systemd/nogg-loops-<slug>.service` and `.timer`, `systemd/nogg-nightly-<slug>.service` and `.timer` | generated with this repo's absolute path; `<slug>` is the sanitized repo directory name |
 
 `.nogging/config.json` records `name` (your repo's directory name) and
 `nogging_version`.
@@ -210,7 +210,10 @@ systemctl --user enable --now "$PWD/systemd/nogg-sync-<slug>.timer"
 `init` runs `bd init` automatically unless `--no-beads` was supplied. Replace
 `<slug>` with the filenames printed by the installer. Enabling the timer is an
 explicit opt-in (marked `(optional)` in the next steps); review the generated
-unit before doing so.
+unit before doing so. The nightly test timer is for a repository whose CI runs no
+tests: `doctor` says when to enable it, and
+[the nightly run](test-control.md#the-nightly-run) explains what it does. `remove` names
+its worktree at `<repository>-nightly` when one exists.
 
 If your repository is public, note that `bd init` points Beads' Dolt sync
 remote at the project's own Git remote, which publishes all Beads data —

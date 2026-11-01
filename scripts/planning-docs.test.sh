@@ -77,6 +77,22 @@ for rel in commands + [".nogging/launch-prompts/planning.md", "AGENTS.md", "temp
     if VALIDATE not in text(rel):
         bad.append(f"{rel}: does not name the change in '{VALIDATE}'")
 
+# Every runtime's planning prompt requires the `Tests:` field with the three
+# sizes, keeps a task's `Check:` off the full suite, and points at the policy.
+for rel in commands + [".nogging/launch-prompts/planning.md"]:
+    t = text(rel)
+    for phrase in ("`Tests:`", "`small`", "`medium`", "`large`", "Tests: none (<reason>)",
+                   "testing-policy.md"):
+        if phrase not in t:
+            bad.append(f"{rel}: planning prompt does not carry '{phrase}'")
+    if not re.search(r"`Check:`.{0,100}never the full suite", t):
+        bad.append(f"{rel}: planning prompt does not keep `Check:` off the full suite")
+for rel in ("docs/operating-model.md",):
+    t = text(rel)
+    for phrase in ("`Tests:`", "`small`", "`medium`", "`large`", "testing-policy.md"):
+        if phrase not in t:
+            bad.append(f"{rel}: task sizing does not carry '{phrase}'")
+
 # The supervised planning role and the session-owned canonical lock.
 for rel in ["AGENTS.md", "templates/agents-block.md", "docs/operating-model.md", "README.md",
             "docs/running-work-in-sessions.md", "docs/security-model.md"]:

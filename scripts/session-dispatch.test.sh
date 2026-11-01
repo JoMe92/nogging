@@ -32,6 +32,34 @@ else
   ok "session_dispatch_test.py skipped (installed consumer copy)"
 fi
 
+# --- the newest run of each check decides (TASK-SWF-003) -------------------------
+if [[ -d "$here/fixtures/check-rollups" ]]; then
+  python3 - "$nogg" "$here/fixtures/check-rollups" >"$work/rollup.out" 2>&1 <<'PY' && ok "latest check entries: superseded, newer, tie, pending, malformed" || { bad "latest check entries"; cat "$work/rollup.out"; }
+import json, pathlib, sys
+from importlib.machinery import SourceFileLoader
+m = SourceFileLoader("sf_swf003", sys.argv[1]).load_module()
+fx = lambda n: json.loads((pathlib.Path(sys.argv[2]) / (n + ".json")).read_text())
+def outcomes(n): return sorted((c.get("name") or c.get("context"), m._check_outcome(c)) for c in m._latest_check_entries(fx(n)))
+assert outcomes("superseded-failure") == [("lint", "pass"), ("test", "pass")]
+assert outcomes("newer-failure") == [("test", "fail")]
+assert outcomes("shared-commit") == [("test", "pass")]
+assert outcomes("tie") == [("test", "fail")]
+assert outcomes("pending-newer") == [("test", "pending")]
+assert outcomes("no-time") == [("test", "fail")]
+assert outcomes("status-context") == [("legacy", "pass")]
+assert outcomes("two-workflows") == [("test", "fail"), ("test", "pass")]
+# Pure: the input is untouched and an empty rollup stays empty.
+src = fx("superseded-failure"); m._latest_check_entries(src); assert src == fx("superseded-failure")
+assert m._latest_check_entries([]) == []
+for bad in ("malformed",):
+    try: m._latest_check_entries(fx(bad))
+    except (TypeError, AttributeError): pass
+    else: raise AssertionError("a malformed rollup was reduced")
+PY
+else
+  ok "latest check entries skipped (installed consumer copy)"
+fi
+
 # --- config refusal through doctor ----------------------------------------------
 diagnose() { # diagnose <json>: the config diagnostics for that config
   python3 - "$nogg" "$1" <<'PY'
@@ -420,6 +448,37 @@ print(','.join(a['type'] + ':' + a['outcome'] for a in json.loads(sys.argv[1])['
   dispatch --once >/dev/null; dispatch --once >/dev/null
   expect "throttle: gh ran once across three passes" "1" "$(wc -l <"$work/gh.calls" | tr -d ' ')"
   expect "throttle: bd ran once across three passes" "1" "$(wc -l <"$work/bd.calls" | tr -d ' ')"
+
+  # A failed nightly run is read from its record on every pass (TASK-TPC-005).
+  nightly_items() { # <field>: one line per nightly_failed item pending in queue.json
+    python3 - "$root/.nogging/state/dispatch/queue.json" "$1" <<'PY'
+import json, sys
+for item in json.load(open(sys.argv[1])).get("items", []):
+    if item["kind"] == "nightly_failed":
+        print(item[sys.argv[2]])
+PY
+  }
+  nightly_record() { # <status> <run id>
+    mkdir -p "$root/.nogging/state/testing"
+    python3 - "$root/.nogging/state/testing/nightly-last.json" "$1" "$2" <<'PY'
+import json, sys
+json.dump({"schema": 1, "run_id": sys.argv[3], "at": "2026-10-31T02:17:00+00:00", "status": sys.argv[2],
+           "head": "0123456789abcdef0123456789abcdef01234567", "seconds": 5, "failed": ["tests/a"],
+           "log": ".nogging/state/testing/nightly-last.log"}, open(sys.argv[1], "w"))
+PY
+  }
+  nightly_record failed aaaa1111
+  dispatch --once >/dev/null; dispatch --once >/dev/null
+  expect "nightly: repeated passes hold one item" "1" "$(nightly_items key | wc -l | tr -d ' ')"
+  expect "nightly: the item names the commit" "0123456789ab" "$(nightly_items head)"
+  case "$(nightly_items reason)" in *.nogging/state/testing/nightly-last.log*) ok "nightly: the item names the log" ;;
+    *) bad "nightly: no log in $(nightly_items reason)" ;; esac
+  printf 'not json' >"$root/.nogging/state/testing/nightly-last.json"
+  dispatch --once >/dev/null
+  expect "nightly: an unreadable record clears nothing" "1" "$(nightly_items key | wc -l | tr -d ' ')"
+  nightly_record passed bbbb2222
+  dispatch --once >/dev/null
+  expect "nightly: a later pass clears the item" "" "$(nightly_items key)"
 fi
 
 # --- shipped files ----------------------------------------------------------

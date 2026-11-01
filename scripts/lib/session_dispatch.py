@@ -15,7 +15,8 @@ which no action may depend:
     signal          {"kind", "reason", "at"}
     turn_error      {"at", "error"} when the last turn ended in a non-limit error
     turn, excerpt   the last event's timestamp and its excerpt
-    pane_excerpt, switch_prompt, limit_until, limit_source   from the pane
+    pane_excerpt, switch_prompt, limit_until, limit_source, limit_at   from the pane or
+                    the rollout; `limit_at` is a Codex limit error's own timestamp
     silent_seconds  age of the session log
     kicked_off, started_at, exit_reason, superseded, worktree_record
 """
@@ -256,26 +257,50 @@ def _nudge_or_escalate(fact: dict[str, Any], memory: dict[str, Any], budget: str
              "key": dedupe_key(fact["session"], reason, mark, used + 1)}]
 
 
+def _waits_for_reset(fact: dict[str, Any]) -> bool:
+    """A limit whose reset time ends it: from an event, from a Codex rollout, or from a
+    Codex pane, which does not clear on its own. Any other pane limit is resumed once
+    the pane leaves `limit`."""
+    source = fact.get("limit_source")
+    return source in ("event", "rollout") or (source == "pane" and fact.get("agent") == "codex")
+
+
 def _limit_step(fact: dict[str, Any], memory: dict[str, Any], now: datetime) -> list[dict[str, Any]] | None:
-    """Wait out `limit`, then resume: None when no limit is in play. A limit known
-    only from an event stays `limit` in `classify_session`, so its reset time is
-    what ends it."""
+    """Wait out `limit`, then resume once per limit error: None when no limit is in
+    play. Its reset time is what ends it. A newer error (`limit_at`) is a new limit
+    with its own reset time and resume key, so one that outlasts the reported reset
+    cannot loop; with no readable reset time nothing is sent and one `stuck` item
+    stands until the state leaves `limit`."""
     state, limit = fact["state"], memory.get("limit")
     if state == "limit":
-        limit = memory["limit"] = {"since": (limit or {}).get("since") or iso(now),
-                                   "until": (limit or {}).get("until") or fact.get("limit_until")}
+        at = fact.get("limit_at")
+        if not limit or (at and limit.get("at") != at):
+            limit = memory["limit"] = {"since": iso(now), "at": at, "until": fact.get("limit_until")}
+        else:
+            limit["until"] = limit.get("until") or fact.get("limit_until")
         remaining = seconds_since(limit["until"], now) if limit["until"] else None
-        if fact.get("limit_source") != "event" or remaining is None or remaining < 0:
+        if not _waits_for_reset(fact):
             return []
-    elif not limit:
+        if remaining is None:
+            reason = "usage limit, reset time unknown"
+            if fact.get("excerpt"):
+                reason += f": {fact['excerpt']}"
+            return [_queue(fact, "stuck", limit.get("at") or limit["since"], reason,
+                           f"./scripts/nogg session log {fact['session']}")]
+        return [] if remaining < 0 else [_resume(fact, limit)]
+    if not limit:
         return None
-    elif state == "working":
+    if state == "working":
         memory.pop("limit")
         return None
-    elif state != "idle" and not (state == "needs_input" and fact.get("switch_prompt")):
+    if state != "idle" and not (state == "needs_input" and fact.get("switch_prompt")):
         return []
-    return [{"type": "resume", "session": fact["session"], "reason": "limit-over",
-             "key": dedupe_key(fact["session"], "resume", limit["since"])}]
+    return [_resume(fact, limit)]
+
+
+def _resume(fact: dict[str, Any], limit: dict[str, Any]) -> dict[str, Any]:
+    return {"type": "resume", "session": fact["session"], "reason": "limit-over",
+            "key": dedupe_key(fact["session"], "resume", limit.get("at") or limit["since"])}
 
 
 def _stall_step(fact: dict[str, Any], memory: dict[str, Any], policy: dict[str, Any],

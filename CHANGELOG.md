@@ -9,6 +9,110 @@ and GitHub Releases for that history.
 
 ## [Unreleased]
 
+## [3.6.0] - 2026-11-01
+
+The headline is the test policy and test control: a repository that uses Nogging no
+longer ends up with an agent-written suite that takes an hour and blocks development.
+See `docs/testing-policy.md` and `docs/test-control.md`; an existing repository
+with no `testing` block keeps working and gets one notice.
+
+### Added
+
+- A short, framework-neutral test policy ships as `docs/nogging/testing-policy.md`
+  (what to always test, what not to test, the level per change, mocks only at
+  process boundaries, expensive setup once per run, no real sleeps). The
+  `code-reviewer` specialist gains a test-value checklist. A `tasks.md` task now
+  carries a `Tests:` field with sizes (`small`, `medium`, `large`) in every
+  runtime's planning prompt; `nogg validate` and `materialize` refuse a new task
+  whose `Check:` demands the full suite (bare `scripts/test`, a whole suite,
+  `nogg test full`) before any Bead is created, and only print a NOTE for a task
+  that already has a Bead. A missing or sizeless `Tests:` field is a NOTE.
+  `task_sizing.bead_test_lines` (default `[1, 1500]`) adds a per-Bead test-line
+  budget to `nogg task-sizing`. (SPEC-s8ev)
+
+- `nogg test changed|commit|bead|full` is one entry point per testing moment. Each
+  stage runs through `run-quiet` under the session's deny rules, reports a budget
+  and never kills a run. `full` is refused wherever CI runs it, unless `--release`,
+  `--nightly` or `--allow-full "<reason>"` permits it. `bead` and `full` share two
+  host-wide `flock` slots, and every run appends one record to
+  `.nogging/state/testing/runs.jsonl` in the main checkout. Existing repositories
+  keep working with no `testing` block; `update` prints one line saying so, and a
+  malformed value is only a `doctor` WARN. `scripts/test` gains `--only <path>...`
+  and `--timings <file>`, and behaves as before without arguments.
+
+- `scripts/check-test-integrity <base> [--enforce]` flags, over the whole range
+  `<base>...HEAD`, a deleted test or test file, a newly added skip or
+  expected-failure marker and a modified test file whose assertion count falls
+  (pytest, unittest, Jest/Vitest, Go, Rust, JUnit and shell). A move or rename
+  inside the range is not a finding; a `Test-Integrity: <reason>` trailer on a
+  commit in the range clears the rest. The analysis is the pure
+  `scripts/lib/testing_diff.py`; both ship in the package. See
+  `docs/operating-model.md` *Test integrity*.
+
+- Test cost is visible. `nogg test report [--days N] [--json]` prints a daily row
+  per stage (runs, failures, median seconds, over-budget runs), the week-over-week
+  change, the slowest tests, explicit full runs and the Beads outside
+  `task_sizing.bead_test_lines`. `token-usage report --group-by bead` adds tests
+  added, tests deleted, skips added and stage seconds per Bead, keeping every
+  existing JSON field. `doctor` prints a NOTE when a stage's median rises past
+  `testing.trend_threshold_percent` week over week, when its latest run was over
+  budget, or when a Lead session used `--allow-full`. `nogg test bead` prints the
+  Bead's test-line count and ends with the integrity rule, and `nogg test
+  integrity [--base <ref>]` runs it alone; `testing.integrity` sets `report` or
+  `enforce`, and a `Test-Integrity:` trailer also needs a `discovery` label on its
+  Bead where `bd` is reachable. This repository sets `enforce`. (SPEC-sxk7)
+
+- A nightly fallback for repositories whose CI runs no tests. `init` and `update` render
+  `systemd/nogg-nightly-<slug>.service` and `.timer` and enable nothing; `doctor` says
+  when to. `nogg test nightly` skips where CI runs the tests or the commit was already
+  tested, defers on a busy host except at the 05:17 firing, and runs
+  `testing.nightly.setup` and the full stage at low priority in a retained
+  `<main>-nightly` worktree, leaving the shared checkout untouched. It writes
+  `.nogging/state/testing/nightly-last.json`. A failed run is a `doctor` WARN and one
+  non-urgent `nightly_failed` digest item that clears when a later run passes, and a
+  fresh record locks `nogg test full` under `auto`. Run records also gain up to five
+  `failed_names` from JUnit. `remove` names the worktree. (SPEC-kps8)
+
+- `nogg doctor` checks, through `gh`, that CI really runs tests: a WARN when CI is
+  configured and no test job is found, a NOTE for an old test job or for no CI, nothing
+  when `gh` is unreachable. The result is cached in `.nogging/state/testing/ci-check.json`
+  and never changes the exit code. (SPEC-4598)
+
+- `nogg usage install-statusline --dry-run` previews the wrapper, the composed
+  command and a diff of the Claude `settings.json` and writes nothing. A real
+  install now backs up `settings.json` (`.nogging-install.bak`) and records
+  the previous `statusLine`. New `nogg usage uninstall-statusline [--dry-run]
+  [--json]` restores only that key, backs up first, removes the wrapper and the
+  record, and is a no-op reporting `not_installed` when the capture is absent.
+  The Claude `unknown` hint now states the effect in one line and links the
+  docs section. (#280)
+
+### Changed
+
+- Agents work on the test stages, not on `scripts/test` once per Bead. `AGENTS.md` and its
+  installed block, the Claude block, `CLAUDE.md`, the autonomous and orchestrator launch
+  prompts, the `backend-engineer` and `test-runner` specialists and the operating model
+  name `nogg test changed` while working, `nogg test commit` before a commit and
+  `nogg test bead` once per Bead, link the test policy, and keep `nogg test full` for a
+  release, the nightly run or a recorded reason. Weakening a test takes a
+  `Test-Integrity: <reason>` trailer and a discovery note. (SPEC-4598)
+
+### Fixed
+
+- The Pi lifecycle extension now waits 20 s (was 3 s) for each `scripts/nogg session emit`,
+  so a slow start under load no longer drops a Pi session's first `turn_start`/`turn_end`.
+  Pi is still never blocked, events keep Pi's order and a killed call is not retried.
+- Session wake and `session sweep --checks` judge a pull request's CI by the newest
+  run of each check, so a failure that a later re-run superseded no longer keeps the
+  pull request red (PR #350 and PR #355 stayed red after they passed). Ties and runs
+  without a readable time keep the worse outcome. See `docs/session-wake.md`.
+- A Codex session stopped by its usage limit is now `limit`, not `idle`. The state is
+  read from the rollout's last turn (`usage_limit_exceeded`), with the pane as a
+  fallback. The dispatcher no longer nudges it; it waits for the reset time (read
+  against the error's own timestamp), sends one resume per limit error, waits again
+  if the resume meets the limit again, and queues one `stuck` item when the message
+  has no readable reset time. `session watch` carries `until` on the `limit` event.
+
 ## [3.5.0] - 2026-10-31
 
 Session wake is the headline: finished or blocked sessions are noticed at once, and

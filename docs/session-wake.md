@@ -98,15 +98,35 @@ Each condition is judged after a settle of 60 seconds.
 | CI passing | Nothing | `ready_for_review` |
 | `blocked` signal, or the Bead is blocked | Nothing | `blocked`, at once, with the reason |
 | A prompt waiting for over 120 seconds | Nothing, and it is never answered | `needs_input`, with a redacted excerpt |
-| A usage limit with a reset time | Waits, then sends the resume | Only if the resume fails |
+| A usage limit with a reset time | Waits, then sends one resume per limit error, never a nudge | Only if the resume fails |
+| A usage limit with no readable reset time | Sends nothing | `stuck`, "usage limit, reset time unknown", until the state leaves `limit` |
 | A turn ended in a transient error | One retry nudge | `error`, if it recurs |
 | Working, with a silent log for `stall_after` | One nudge | `stalled`, after a second period |
 | Session gone with its Bead in progress | Nothing | `crashed`, with the exit reason |
 | Pull request merged, Bead closed, tree clean | With `retire_merged`, stops and cleans up the session | No item. The next digest lists it under `Retired:` |
 | Planning session idle after its kickoff | Nothing | `planner_finished`, with the excerpt |
+| The last [nightly test run](test-control.md#the-nightly-run) failed | Nothing | `nightly_failed`, with the commit and the log path, until a later run passes |
+
+`nightly_failed` belongs to no session, so it is read from the run's record on every pass.
+It is not urgent, so it waits for the usual quiet period and breaks no limit, and it gets
+no reminder: `doctor` keeps a WARN for it until a later run passes.
+
+A Codex usage limit is read from the session's rollout (its last turn ended in
+`usage_limit_exceeded`), with the pane as a fallback, and is `limit` until a new turn
+starts. The reset time is read against the error's own timestamp in local time, so a
+wake-up hours later sees it has passed. A resume whose turn meets the limit again is
+a new limit, with its own reset time, and is resumed at most once, so a weekly limit
+cannot loop.
 
 A new commit restores the nudge budget. The CI budget counts across fixes until CI is
 green, because every fix moves the head.
+
+The newest run of each check decides these CI rows. A check run is identified by its
+workflow and name, a status context by its context, and only the entry with the latest
+start time counts, so a failure that a later re-run superseded is no longer red. If two
+runs tie, or a run has no readable time, the worse outcome is kept, and a newer run that
+is still going makes the check pending. This also holds when two pull requests share a
+commit. A rollup that cannot be read is `unknown`, never passing.
 
 ## The digest format
 
