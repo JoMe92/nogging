@@ -169,13 +169,10 @@ file picks the agent for a launch ([configuration](docs/configuration.md)); Pi l
 ### Close out
 
 The Lead commits in coherent steps, each with the `[<ID>]` token in the
-subject, tests with the stages of `nogg test` (`changed` while working, `commit`
-before a commit, `bead` once at the end; the full suite is CI's job, see the
-[test policy](docs/testing-policy.md) and [test control](docs/test-control.md)),
-then `bd close <id>` and
+subject, tests with `nogg test changed|commit|bead` (the full suite is CI's job;
+[test policy](docs/testing-policy.md)), then `bd close <id>` and
 `./scripts/nogg task-done <id>`, and leaves the evidence note listing every
-commit on the Bead.
-You review the pull request, run `./scripts/nogg sync --now` (or rely on the
+commit on the Bead. You review the pull request, run `./scripts/nogg sync --now` (or rely on the
 timer, enabled with `systemctl --user enable --now nogg-sync.timer`), triage
 discoveries with `/discovery-review`, and archive the change when
 `./scripts/nogg doctor` reports it ready. Acceptance is a signed human report.
