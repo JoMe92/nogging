@@ -101,6 +101,18 @@ def parse(raw):
     return int(lines[0].split()[1]) if lines[0] else 0, headers, body
 
 
+def assert_policy(case, headers):
+    case.assertEqual(headers["content-security-policy"],
+                     "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; "
+                     "font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; "
+                     "frame-ancestors 'none'; require-trusted-types-for 'script'")
+    case.assertEqual(headers["x-frame-options"], "DENY")
+    case.assertEqual(headers["referrer-policy"], "no-referrer")
+    case.assertEqual(headers["x-content-type-options"], "nosniff")
+    case.assertEqual(headers["cross-origin-resource-policy"], "same-origin")
+    case.assertFalse([name for name in headers if name.startswith("access-control-")])
+
+
 class Access(Harness):
     def test_a_request_has_no_token_on_a_network_bind(self):
         self.start(NETWORK)
@@ -147,6 +159,22 @@ class Access(Harness):
         for _ in range(10):
             self.assertEqual(self.call("/api/v1/summary", headers=[f"Cookie: {name}=9.9"])[0], 401)
         self.assertEqual(self.call("/api/v1/summary", headers=[f"Cookie: {name}=9.9"])[0], 429)
+
+    def test_a_correct_token_passes_while_the_limit_is_full(self):
+        self.start(NETWORK)
+        for _ in range(11):
+            self.call("/api/v1/auth", headers=["Authorization: Bearer no"])
+        status, headers, _ = self.call("/api/v1/auth", headers=[f"Authorization: Bearer {self.token}"])
+        self.assertEqual(status, 200)
+        self.assertIn("set-cookie", headers)
+
+    def test_an_expired_cookie_is_no_failed_attempt(self):
+        self.start(NETWORK)
+        cookie = self.login()
+        self.wall.now += 2592000
+        for _ in range(12):
+            self.assertEqual(self.call("/api/v1/summary", headers=[f"Cookie: {cookie}"])[0], 401)
+        self.assertFalse(self.server.failures.blocked())
 
     def test_the_block_ends_with_the_window(self):
         self.start(NETWORK)
@@ -215,12 +243,38 @@ class Requests(Harness):
         self.start()
         raw = (f"POST /api/v1/beads HTTP/1.1\r\nHost: {self.host}\r\nContent-Length: 200000\r\n\r\n".encode()
                + b"x" * 200000)
-        self.assertEqual(parse(self.send(raw))[0], 405)
+        with self.connect() as sock:
+            sock.sendall(raw)
+            data = b""
+            while chunk := sock.recv(65536):       # a reset instead of an end fails here
+                data += chunk
+        self.assertEqual(parse(data)[0], 405)
+
+    def test_a_refused_client_gets_a_lingering_close(self):
+        server = self.start()
+        with self.connect() as sock:
+            sock.sendall(f"POST / HTTP/1.1\r\nHost: {self.host}\r\nContent-Length: 9\r\n\r\n".encode())
+            self.assertEqual(parse(self.read(sock))[0], 405)
+            self.assertFalse(server.wait_idle(0.1), "the server stopped reading a client still sending")
+        self.assertTrue(server.wait_idle(5))
 
     def test_a_request_body_is_rejected(self):
         self.start()
-        self.assertEqual(self.call("/", headers=["Content-Length: 5"])[0], 400)
-        self.assertEqual(self.call("/", headers=["Transfer-Encoding: chunked"])[0], 400)
+        for headers in (["Content-Length: 5"], ["Transfer-Encoding: chunked"], ["Transfer-Encoding:"],
+                        ["Content-Length: 0", "Content-Length: 5"], ["Content-Length: x"]):
+            self.assertEqual(self.call("/", headers=headers)[0], 400, headers)
+        self.assertEqual(self.call("/", headers=["Content-Length: 0"])[0], 200)
+
+    def test_bytes_after_the_head_are_a_body(self):
+        self.start()
+        raw = f"GET / HTTP/1.1\r\nHost: {self.host}\r\n\r\nsmuggled".encode()
+        self.assertEqual(parse(self.send(raw))[0], 400)
+
+    def test_a_malformed_header_cannot_hide_the_rest(self):
+        self.start()
+        raw = (f"GET /api/v1/beads HTTP/1.1\r\nHost: {self.host}\r\nno colon here\r\n"
+               "Origin: http://attacker.example\r\n\r\n").encode()
+        self.assertEqual(parse(self.send(raw))[0], 400)
 
     def test_head_has_headers_and_no_body(self):
         self.start()
@@ -282,17 +336,30 @@ class Requests(Harness):
                      "/api/v1/beads/a/b", "/api/v1/beads/"):
             self.assertEqual(self.call(path)[0], 404, path)
 
-    def test_a_forwarded_public_peer(self):
+    def forwarded(self, peer, bind):
         class Forwarded(ds.DashboardServer):
             def get_request(self):
                 sock, address = super().get_request()
-                return sock, ("8.8.8.8", address[1])
+                return sock, (peer, address[1])
 
-        server = self.start(server_class=Forwarded)
+        server = self.start(bind, server_class=Forwarded)
         with self.connect() as sock:
             sock.sendall(f"GET / HTTP/1.1\r\nHost: {self.host}\r\n\r\n".encode())
-            self.assertEqual(self.read(sock), b"")
+            answer = self.read(sock)
         self.assertTrue(server.wait_idle(5))
+        return answer
+
+    def test_a_forwarded_public_peer(self):
+        self.assertEqual(self.forwarded("8.8.8.8", LOOPBACK), b"")
+
+    def test_a_forwarded_public_peer_on_a_network_bind(self):
+        self.assertEqual(self.forwarded("8.8.8.8", NETWORK), b"")
+
+    def test_a_forwarded_private_peer_reaches_no_tokenless_bind(self):
+        self.assertEqual(self.forwarded("10.1.2.3", LOOPBACK), b"")
+
+    def test_a_private_peer_reaches_a_network_bind(self):
+        self.assertTrue(self.forwarded("10.1.2.3", NETWORK).startswith(b"HTTP/1.0 200"))
 
     def test_a_failing_route_is_a_fixed_500(self):
         def broken(server, request):
@@ -325,15 +392,7 @@ class Requests(Harness):
 
 class Responses(Harness):
     def assert_policy(self, headers):
-        self.assertEqual(headers["content-security-policy"],
-                         "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; "
-                         "font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; "
-                         "frame-ancestors 'none'; require-trusted-types-for 'script'")
-        self.assertEqual(headers["x-frame-options"], "DENY")
-        self.assertEqual(headers["referrer-policy"], "no-referrer")
-        self.assertEqual(headers["x-content-type-options"], "nosniff")
-        self.assertEqual(headers["cross-origin-resource-policy"], "same-origin")
-        self.assertFalse([name for name in headers if name.startswith("access-control-")])
+        assert_policy(self, headers)
 
     def test_headers_on_an_api_response(self):
         self.start()
@@ -371,9 +430,8 @@ class Responses(Harness):
         self.assertNotIn("content-encoding", headers)
         self.assertEqual(body, b"// app\n" * 50)
 
-    def test_the_gzip_body_is_stable(self):
-        self.assertEqual(self.assets["/assets/app.js"].gzipped,
-                         ds.load_assets(self.root / "static")["/assets/app.js"].gzipped)
+    def test_the_gzip_body_carries_no_timestamp(self):
+        self.assertEqual(self.assets["/assets/app.js"].gzipped[4:8], b"\0\0\0\0")
 
     def test_an_image_is_not_compressed_again(self):
         self.start()
@@ -428,6 +486,19 @@ class Limits(Harness):
         self.start()
         self.assertEqual(self.call("/" + "a" * (ds.MAX_REQUEST_LINE + 1))[0], 414)
 
+    def test_a_silent_client_cannot_stall_the_accept_loop(self):
+        self.start()
+        request = f"GET / HTTP/1.1\r\nHost: {self.host}\r\n\r\n".encode()
+        held = [self.connect() for _ in range(ds.MAX_THREADS)]
+        for sock in held:
+            self.addCleanup(sock.close)
+            sock.sendall(request[:5])
+        silent = self.connect()
+        self.addCleanup(silent.close)
+        self.assertEqual(parse(self.send(request))[0], 503)
+        for sock in held:
+            sock.sendall(request[5:])
+
     def test_many_clients_at_once(self):
         server = self.start()
         request = f"GET / HTTP/1.1\r\nHost: {self.host}\r\n\r\n".encode()
@@ -439,7 +510,7 @@ class Limits(Harness):
             status, headers, body = parse(self.send(request))
             self.assertEqual(status, 503)
             self.assertEqual(headers["cache-control"], "no-store")
-            self.assertIn("content-security-policy", headers)
+            assert_policy(self, headers)
             self.assertEqual(body, b'{"error":"busy"}')
         for sock in held:
             sock.sendall(request[5:])
@@ -447,6 +518,35 @@ class Limits(Harness):
             self.assertEqual(parse(self.read(sock))[0], 200)
         self.assertTrue(server.wait_idle(5))
         self.assertEqual(self.call("/")[0], 200)
+
+
+class Ipv6(unittest.TestCase):
+    def test_a_v6_bind_serves_v6_only(self):
+        try:
+            server = ds.DashboardServer(sec.check_bind("::1"), 0, assets={"/": ds.Response(200, b"shell", api=False)},
+                                        readers={})
+        except OSError as exc:
+            self.skipTest(f"no IPv6 loopback here: {exc}")
+        self.addCleanup(server.server_close)
+        self.assertEqual(server.socket.getsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY), 1)
+        self.assertIn(f"[::1]:{server.port}", server.hosts)
+        self.addCleanup(server.shutdown)
+        threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
+        with socket.create_connection(("::1", server.port), timeout=5) as sock:
+            sock.sendall(f"GET / HTTP/1.1\r\nHost: [::1]:{server.port}\r\n\r\n".encode())
+            self.assertEqual(parse(Harness.read(sock))[0], 200)
+
+    def test_a_zone_becomes_a_numeric_lookup_and_no_query(self):
+        seen = {}
+
+        def getaddrinfo(host, port, family, kind, proto, flags):
+            seen.update(host=host, family=family, flags=flags)
+            return [(family, kind, proto, "", (host, port, 0, 3))]
+
+        with mock.patch.object(ds.socket, "getaddrinfo", getaddrinfo):
+            address = ds.DashboardServer._socket_address(sec.check_bind("fe80::1%eth0"), 9)
+        self.assertEqual(address[3], 3)
+        self.assertEqual(seen, {"host": "fe80::1%eth0", "family": socket.AF_INET6, "flags": socket.AI_NUMERICHOST})
 
 
 class Announce(unittest.TestCase):
@@ -468,12 +568,16 @@ class Announce(unittest.TestCase):
         self.assertNotIn(self.secret, stream.getvalue())
         self.assertIn("terminal", stream.getvalue())
 
-    def test_a_lan_bind_warns_about_plain_http_and_tailscale_does_not(self):
-        lan, tailscale = self.stream(False), self.stream(False)
+    def test_a_lan_bind_warns_about_plain_http(self):
+        lan = self.stream(False)
         ds.announce(sec.check_bind("192.168.1.5"), 8742, self.secret, lan)
-        ds.announce(sec.check_bind("100.101.102.103"), 8742, self.secret, tailscale)
-        self.assertIn("plain HTTP", lan.getvalue())
-        self.assertNotIn("plain HTTP", tailscale.getvalue())
+        self.assertIn("WARNING: this bind is plain HTTP", lan.getvalue())
+
+    def test_the_shared_range_names_the_carrier_nat_caveat(self):
+        shared = self.stream(False)
+        ds.announce(sec.check_bind("100.101.102.103"), 8742, self.secret, shared)
+        self.assertIn("carrier NAT", shared.getvalue())
+        self.assertNotIn("WARNING", shared.getvalue())
 
     def test_loopback_prints_no_link(self):
         stream = self.stream(True)
@@ -496,7 +600,9 @@ class Announce(unittest.TestCase):
         def run(argv, **options):
             raise OSError("gone")
 
-        ds.announce(NETWORK, 8742, self.secret, self.stream(True), which=lambda name: "/bin/qrencode", run=run)
+        stream = self.stream(True)
+        ds.announce(NETWORK, 8742, self.secret, stream, which=lambda name: "/bin/qrencode", run=run)
+        self.assertIn(self.secret, stream.getvalue())
 
     def test_the_link_brackets_ipv6_and_encodes_a_zone(self):
         self.assertEqual(ds.link(sec.check_bind("fd00::1"), 9, "t"), "http://[fd00::1]:9/#token=t")

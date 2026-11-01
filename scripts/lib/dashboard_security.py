@@ -67,7 +67,7 @@ def check_bind(value):
         raise BindRefused(f"refusing IPv4-mapped bind address {text!r}: give the IPv4 address "
                           f"itself; {LIST_HINT}")
     if _in_any(addr, (_LINK_LOCAL_V6,)):
-        if not percent or not _ZONE.match(zone):
+        if not percent or not _ZONE.fullmatch(zone):
             raise BindRefused(f"refusing link-local bind address {text!r}: it needs a zone, "
                               f"as in fe80::1%eth0; {LIST_HINT}")
         return Bind(addr.compressed, zone, False)
@@ -84,24 +84,28 @@ def check_bind(value):
 
 def plain_http_warning(bind):
     """What to tell the operator about a bind whose traffic may be read on the way.
-    Loopback stays on the host, and Tailscale's range is encrypted by WireGuard; the
-    same range as carrier NAT is what `--list-binds` warns about."""
-    if bind.loopback or ipaddress.ip_address(bind.address) in _CGNAT:
+    Loopback stays on the host. Tailscale encrypts its traffic, but carrier NAT uses
+    the same range and no address alone tells them apart."""
+    if bind.loopback:
         return None
+    if ipaddress.ip_address(bind.address) in _CGNAT:
+        return ("NOTE: this is plain HTTP, which is safe only if the address is Tailscale's. "
+                "The same range is used for carrier NAT; see --list-binds.")
     return ("WARNING: this bind is plain HTTP, so anyone who can read this network can read "
             "the pages and replay the cookie. Prefer a Tailscale address.")
 
 
-def peer_allowed(peer):
-    """Whether a connecting peer lies in the bind allow-list. A zone a kernel adds
-    to a link-local peer is dropped; a mapped address is refused, as for a bind."""
+def peer_allowed(peer, loopback_only=False):
+    """Whether a connecting peer lies in the bind allow-list. A zone a kernel adds to a
+    link-local peer is dropped. A loopback bind has no token, so it trusts its peer to
+    be on this host and takes no forwarded private address."""
     try:
         addr = ipaddress.ip_address(str(peer).partition("%")[0])
     except ValueError:
         return False
-    if addr.version == 6 and addr.ipv4_mapped is not None:
-        return False
-    return _in_any(addr, _LOOPBACK) or _in_any(addr, _PRIVATE) or _in_any(addr, (_LINK_LOCAL_V6,))
+    if _in_any(addr, _LOOPBACK):
+        return True
+    return not loopback_only and (_in_any(addr, _PRIVATE) or _in_any(addr, (_LINK_LOCAL_V6,)))
 
 
 def eligible_binds(ip_addr_json):
@@ -143,7 +147,7 @@ def secret_acceptable(secret):
     """An empty or short secret would make every HMAC guessable. An unclean host
     stop can leave a zeroed file, so this is checked on every read."""
     return (isinstance(secret, str) and len(secret) >= MIN_SECRET_LENGTH
-            and bool(_SECRET_FORM.match(secret)))
+            and bool(_SECRET_FORM.fullmatch(secret)))
 
 
 def _bytes(value):
@@ -176,14 +180,16 @@ def sign_cookie(secret, expiry):
     return f"{expiry}.{_cookie_mac(secret, expiry)}"
 
 
-def verify_cookie(secret, value, now):
-    """Whether `value` is an unexpired cookie signed under this secret."""
-    match = _COOKIE_VALUE.match(value) if isinstance(value, str) else None
+def cookie_state(secret, value, now):
+    """"valid", "expired" for a genuine cookie past its date, or "bad". Only "bad" can be
+    a guess: an expired cookie is a phone coming back, not an attack."""
+    match = _COOKIE_VALUE.fullmatch(value) if isinstance(value, str) else None
     if match is None or not secret_acceptable(secret):
-        return False
+        return "bad"
     expiry = int(match.group(1))
-    good = hmac.compare_digest(_cookie_mac(secret, expiry).encode(), match.group(2).encode())
-    return good and now < expiry
+    if not hmac.compare_digest(_cookie_mac(secret, expiry).encode(), match.group(2).encode()):
+        return "bad"
+    return "valid" if now < expiry else "expired"
 
 
 def cookie_from_header(header, name):
@@ -245,7 +251,7 @@ BEAD_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 def check_allow_host(value):
     """Normalise one `--allow-host` literal. A wildcard, a scheme or a path is refused."""
     text = str(value).strip().lower()
-    if not _ALLOW_HOST_FORM.match(text):
+    if not _ALLOW_HOST_FORM.fullmatch(text):
         raise BindRefused(f"refusing --allow-host {value!r}: give a literal host or host:port")
     return text
 
@@ -364,6 +370,16 @@ def _write_new(path, secret):
         os.fsync(handle.fileno())
 
 
+def _sync_directory(directory):
+    """A rename or a new name reaches the disk only with its directory, and this host
+    can lose power: a stale secret after a rotation would bring old cookies back."""
+    fd = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 def _prepare_directory(path):
     directory = Path(path).parent
     directory.parent.mkdir(parents=True, exist_ok=True)
@@ -383,6 +399,7 @@ def ensure_secret(path):
         return found
     try:
         _write_new(path, new_secret())
+        _sync_directory(path.parent)
     except FileExistsError:
         pass                       # another start won the O_EXCL race; read its secret
     return read_secret(path)
@@ -401,6 +418,7 @@ def rotate_secret(path):
         pass
     _write_new(temporary, new_secret())
     os.replace(temporary, path)
+    _sync_directory(path.parent)
 
 
 class SecretWatch:

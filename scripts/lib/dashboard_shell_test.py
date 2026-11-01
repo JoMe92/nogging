@@ -19,7 +19,8 @@ class Shell(unittest.TestCase):
             text = path.read_text()
             if path.suffix == ".svg":          # a namespace name, which nothing fetches
                 text = text.replace('xmlns="http://www.w3.org/2000/svg"', "")
-            self.assertIsNone(re.search(r"(?i)\b(?:https?:)?//[a-z0-9]", re.sub(r"(?m)^\s*//.*$", "", text)), path)
+            code = re.sub(r"(?m)^\s*//.*$", "", text)
+            self.assertIsNone(re.search(r"(?i)https?://|(?<![\w:])//[a-z0-9]", code), path)
 
     def test_every_file_the_shell_names_is_served(self):
         assets = ds.load_assets(STATIC)

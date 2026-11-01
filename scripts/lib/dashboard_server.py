@@ -98,21 +98,27 @@ def too_many(server):
     return api_error(server, 429, [("Retry-After", str(server.failures.retry_after()))])
 
 
+def refuse_attempt(server):
+    """A failed authentication: 401, then 429 once the limit is reached. The limit only
+    ever applies after a mismatch, so no flood can refuse a correct token or session."""
+    if server.failures.blocked():
+        return too_many(server)
+    server.failures.record()
+    return api_error(server, 401)
+
+
 def check_session(server, request):
-    """None when the request may go on, otherwise the refusal. No credential at all is
-    not an attempt, so it is a plain 401; a bad one counts. A valid session is never
-    rate limited, so a flood of bad guesses cannot lock the phone out."""
+    """None when the request may go on, otherwise the refusal. A request with no cookie
+    or a genuine expired one is not an attempt at guessing, so it is a plain 401."""
     if not server.token_required:
         return None
     cookie = sec.cookie_from_header(request.cookie, sec.cookie_name(server.port))
     if cookie is None:
         return api_error(server, 401)
-    if sec.verify_cookie(server.secret.current(), cookie, server.wall_clock()):
+    state = sec.cookie_state(server.secret.current(), cookie, server.wall_clock())
+    if state == "valid":
         return None
-    if server.failures.blocked():
-        return too_many(server)
-    server.failures.record()
-    return api_error(server, 401)
+    return api_error(server, 401) if state == "expired" else refuse_attempt(server)
 
 
 def route_auth(server, request):
@@ -122,12 +128,9 @@ def route_auth(server, request):
     token = sec.bearer_token(request.authorization)
     if token is None:
         return check_session(server, request) or api_response(server, "auth", {})
-    if server.failures.blocked():
-        return too_many(server)
     secret = server.secret.current()
     if not sec.token_matches(secret, token):
-        server.failures.record()
-        return api_error(server, 401)
+        return refuse_attempt(server)
     cookie = sec.set_cookie_value(server.port, secret, server.wall_clock())
     return api_response(server, "auth", {}, headers=[("Set-Cookie", cookie)])
 
@@ -171,7 +174,7 @@ def find_route(path):
         match = pattern.fullmatch(path)
         if match is None:
             continue
-        if "id" in pattern.groupindex and not sec.BEAD_ID.match(match.group("id")):
+        if "id" in pattern.groupindex and not sec.BEAD_ID.fullmatch(match.group("id")):
             return None, None
         return route, match
     return None, None
@@ -186,6 +189,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
     sys_version = ""
     timeout = SOCKET_TIMEOUT
     drain = False
+    trailing = False
 
     def handle(self):
         """One request per connection. The head is read here, not through `rfile`: the
@@ -233,6 +237,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             if (end.end() if end else len(buffer)) - line_end - 1 > MAX_HEADERS:
                 return self._refuse_oversize(431)
             if end:
+                self.trailing = end.end() < len(buffer)
                 return bytes(buffer[:end.end()])
 
     def _refuse_oversize(self, status):
@@ -248,10 +253,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
         status = sec.host_status(self.headers.get_all("Host") or [], server.hosts)
         if status:
             return api_error(server, status)
+        if self.headers.defects:
+            return api_error(server, 400)    # parsing stopped early: later headers went unseen
         if not sec.origin_allowed(self.headers.get_all("Origin") or [],
                                   self.headers.get_all("Sec-Fetch-Site") or [], server.hosts):
             return api_error(server, 403)
-        if self.headers.get("Transfer-Encoding") or self.headers.get("Content-Length", "0").strip() != "0":
+        if self._has_body():
             self.drain = True
             return api_error(server, 400)
         path, _, query = self.path.partition("?")
@@ -264,6 +271,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
         request = Request(path, query, match, self.headers.get("Authorization"), self.headers.get("Cookie"))
         refused = None if route is route_auth else check_session(server, request)
         return refused or route(server, request)
+
+    def _has_body(self):
+        lengths = self.headers.get_all("Content-Length") or []
+        return self.trailing or "Transfer-Encoding" in self.headers or any(
+            value.strip() != "0" for value in lengths)
 
     def _write(self, response):
         self.connection.settimeout(SOCKET_TIMEOUT)
@@ -372,7 +384,7 @@ class DashboardServer(ThreadingHTTPServer):
     def verify_request(self, request, client_address):
         """Runs in the accept loop, before a thread starts. It catches a DNAT forward
         that keeps a public source; SNAT and proxies are for Host and the token."""
-        return sec.peer_allowed(client_address[0])
+        return sec.peer_allowed(client_address[0], loopback_only=self.bind_address.loopback)
 
     def process_request(self, request, client_address):
         with self._idle:

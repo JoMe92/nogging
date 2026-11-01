@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import os, stat, sys, tempfile, unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import dashboard_security as sec
+
+
+def verified(*args):
+    return sec.cookie_state(*args) == "valid"
 
 
 class FakeClock:
@@ -79,6 +84,22 @@ class BindPolicy(unittest.TestCase):
         for peer in ("8.8.8.8", "::ffff:10.0.0.1", "2606:4700::1", "not-an-address", "", None):
             self.assertFalse(sec.peer_allowed(peer), peer)
 
+    def test_a_loopback_bind_takes_loopback_peers_only(self):
+        for peer in ("127.0.0.1", "127.0.0.9", "::1"):
+            self.assertTrue(sec.peer_allowed(peer, loopback_only=True), peer)
+        for peer in ("10.1.2.3", "100.100.1.1", "192.168.0.1", "fd00::1", "fe80::1%eth0", "8.8.8.8"):
+            self.assertFalse(sec.peer_allowed(peer, loopback_only=True), peer)
+
+    def test_a_trailing_newline_is_not_part_of_a_value(self):
+        for value in ("fe80::1%eth0\n", "fe80::1%eth\n0"):
+            self.refused(value)
+        with self.assertRaises(sec.BindRefused):
+            sec.check_allow_host("dash\nexample")
+        self.assertIsNone(sec.BEAD_ID.fullmatch("SPEC-x\n"))
+        secret = sec.new_secret()
+        self.assertFalse(sec.secret_acceptable(secret + "\n"))
+        self.assertEqual(sec.cookie_state(secret, sec.sign_cookie(secret, 2000) + "\n", 1000), "bad")
+
     def test_list_binds_is_a_hint_with_a_carrier_nat_warning(self):
         links = [{"ifname": "lo", "addr_info": [{"local": "127.0.0.1"}, {"local": "::1"}]},
                  {"ifname": "eth0", "addr_info": [{"local": "192.168.1.5"}, {"local": "8.8.4.4"},
@@ -104,7 +125,7 @@ class TokenAndCookie(unittest.TestCase):
         for bad in ("", " ", "\x00" * 64, "short", None, "é" * 64):
             self.assertFalse(sec.secret_acceptable(bad), repr(bad))
             self.assertFalse(sec.token_matches(bad, bad if isinstance(bad, str) else ""))
-            self.assertFalse(sec.verify_cookie(bad, sec.sign_cookie("", 2000), 1000))
+            self.assertFalse(verified(bad, sec.sign_cookie("", 2000), 1000))
 
     def test_constant_time_compare_on_non_ascii(self):
         self.assertTrue(sec.token_matches(self.secret, self.secret))
@@ -121,22 +142,22 @@ class TokenAndCookie(unittest.TestCase):
         value = sec.sign_cookie(self.secret, 2000)
         self.assertNotIn(self.secret, value)
         self.assertTrue(value.startswith("2000."))
-        self.assertTrue(sec.verify_cookie(self.secret, value, 1999))
+        self.assertTrue(verified(self.secret, value, 1999))
 
     def test_a_cookie_expires(self):
         value = sec.sign_cookie(self.secret, 2000)
-        self.assertFalse(sec.verify_cookie(self.secret, value, 2000))
-        self.assertFalse(sec.verify_cookie(self.secret, value, 2001))
+        self.assertEqual(sec.cookie_state(self.secret, value, 2000), "expired")
+        self.assertEqual(sec.cookie_state(self.secret, value, 2001), "expired")
 
     def test_a_cookie_under_another_secret_is_refused(self):
         value = sec.sign_cookie(sec.new_secret(), 2000)
-        self.assertFalse(sec.verify_cookie(self.secret, value, 1000))
+        self.assertFalse(verified(self.secret, value, 1000))
 
     def test_a_tampered_cookie_is_refused(self):
         expiry, mac = sec.sign_cookie(self.secret, 2000).split(".")
         for value in (f"9999.{mac}", f"{expiry}.{'0' * 64}", f"{expiry}.{mac[:-1]}", expiry, "",
                       f"{expiry}.{mac}.x", f"-1.{mac}", f"{expiry}.{mac.upper()}", None):
-            self.assertFalse(sec.verify_cookie(self.secret, value, 1000), repr(value))
+            self.assertFalse(verified(self.secret, value, 1000), repr(value))
 
     def test_set_cookie_attributes(self):
         header = sec.set_cookie_value(8742, self.secret, 1000)
@@ -145,8 +166,8 @@ class TokenAndCookie(unittest.TestCase):
             self.assertIn(attribute, header)
         self.assertNotIn(self.secret, header)
         value = header.split(";")[0].split("=", 1)[1]
-        self.assertTrue(sec.verify_cookie(self.secret, value, 1000 + 2592000 - 1))
-        self.assertFalse(sec.verify_cookie(self.secret, value, 1000 + 2592000))
+        self.assertTrue(verified(self.secret, value, 1000 + 2592000 - 1))
+        self.assertFalse(verified(self.secret, value, 1000 + 2592000))
 
     def test_cookie_header_parsing(self):
         self.assertEqual(sec.cookie_from_header("a=1; nogg-dash-1=x.y; b=2", "nogg-dash-1"), "x.y")
@@ -235,9 +256,9 @@ class HostAndOrigin(unittest.TestCase):
 
     def test_bead_id_form(self):
         for good in ("SPEC-bj7s", "SPEC-6puu.1", "my_repo-a1"):
-            self.assertTrue(sec.BEAD_ID.match(good))
+            self.assertTrue(sec.BEAD_ID.fullmatch(good))
         for bad in ("../secret", "a/b", "", "-a", "a" * 65, "a b", "a%2fb"):
-            self.assertIsNone(sec.BEAD_ID.match(bad), bad)
+            self.assertIsNone(sec.BEAD_ID.fullmatch(bad), bad)
 
 
 class SecretFile(unittest.TestCase):
@@ -293,6 +314,13 @@ class SecretFile(unittest.TestCase):
             with self.assertRaises(sec.SecretRefused) as caught:
                 sec.read_secret(self.path)
             self.assertIn("--rotate-token", str(caught.exception))
+
+    def test_a_secret_of_another_user_is_refused(self):
+        sec.ensure_secret(self.path)
+        with mock.patch.object(sec.os, "geteuid", return_value=os.geteuid() + 1):
+            with self.assertRaises(sec.SecretRefused) as caught:
+                sec.read_secret(self.path)
+        self.assertIn("another user", str(caught.exception))
 
     def test_a_missing_secret_reads_as_none_and_creates_nothing(self):
         self.assertIsNone(sec.read_secret(self.path))
