@@ -369,12 +369,130 @@ class Cap(Layout):
         self.assert_no_overlap(result)
 
 
+class Neighbourhood(Layout):
+    """The `bead:` scope: blockers up and unblocked Beads down, each to a depth."""
+
+    def around(self, beads, centre, depth, **extra):
+        return graph.graph_view({"beads": beads, "ready": list(extra.get("ready", ())), "cycles": []},
+                                f"bead:{centre}", extra.get("closed", "show"), depth)
+
+    def chain(self):
+        # A -> B -> C -> D -> E, plus a sibling S that shares the blocker B with C, and a stranger.
+        return [bead("A"), bead("B", "A"), bead("C", "B"), bead("D", "C"), bead("E", "D"),
+                bead("S", "B"), bead("X", change="other")]
+
+    def test_a_neighbourhood_at_depth_one(self):
+        result = self.around(self.chain(), "C", 1)
+        self.assertEqual(ids(result), {"B", "C", "D"})
+        self.assert_edges_go_right(result)
+
+    def test_a_neighbourhood_at_depth_two(self):
+        result = self.around(self.chain(), "C", 2)
+        self.assertEqual(ids(result), {"A", "B", "C", "D", "E"})
+        self.assertEqual({(item["from"], item["to"]) for item in result["edges"]},
+                         {("A", "B"), ("B", "C"), ("C", "D"), ("D", "E")})
+        self.assertEqual((result["total"], result["hidden"], result["scope"]), (5, 0, "bead:C"))
+        self.assert_no_overlap(result)
+
+    def test_a_sibling_is_not_a_neighbour(self):
+        # S shares the blocker B with C, but it is neither upstream nor downstream of C.
+        self.assertNotIn("S", ids(self.around(self.chain(), "C", 3)))
+
+    def test_the_depth_counts_blocks_steps_only(self):
+        beads = [bead("A"), bead("B", "A", kinds={"A": "related"}), bead("C", "B")]
+        self.assertEqual(ids(self.around(beads, "B", 2)), {"B", "C"})
+
+    def test_a_neighbourhood_has_no_ghosts_and_belongs_to_no_change(self):
+        beads = [bead("A", change="other"), bead("B", "A"), bead("C", change=None)]
+        result = self.around(beads, "B", 1)
+        self.assertEqual((ids(result, "bead"), ids(result, "ghost")), ({"A", "B"}, set()))
+
+    def test_a_bead_the_data_does_not_hold_is_an_empty_scope(self):
+        result = self.around(self.chain(), "NOPE", 2)
+        self.assertEqual((result["nodes"], result["edges"], result["total"]), ([], [], 0))
+
+    def test_the_ready_status_reaches_a_neighbour(self):
+        result = self.around(self.chain(), "B", 1, ready=["A"])
+        self.assertEqual(node(result, "A")["status"], "ready")
+
+    def test_a_cycle_through_the_neighbourhood_terminates(self):
+        result = self.around([bead("A", "B"), bead("B", "A")], "A", 3)
+        self.assertEqual(ids(result), {"A", "B"})
+        self.assertEqual(result["critical_path"], [])
+
+    def test_closed_neighbours_collapse_on_request_and_expand_again(self):
+        beads = [bead("A", status="closed"), bead("B", status="closed"), bead("C", "A", "B"), bead("D", "C")]
+        collapsed = self.around(beads, "C", 1, closed="collapse")
+        group = next(item for item in collapsed["nodes"] if item["kind"] == "group")
+        self.assertEqual((group["count"], ids(collapsed, "bead")), (2, {"C", "D"}))
+        expanded = self.around(beads, "C", 1, closed="show")
+        self.assertEqual((ids(expanded, "bead"), ids(expanded, "group")), ({"A", "B", "C", "D"}, set()))
+        self.assertEqual(expanded["hidden"], 0)
+
+    def test_a_deep_neighbourhood_stays_within_the_cap(self):
+        beads = [bead(f"N{index:03d}", *([f"N{index - 1:03d}"] if index else [])) for index in range(120)]
+        result = self.around(beads, "N060", graph.MAX_DEPTH)
+        self.assertEqual(len(ids(result)), 11)
+        beads = [bead("HUB")] + [bead(f"L{index:03d}", "HUB") for index in range(100)]
+        result = self.around(beads, "HUB", 1)
+        self.assertEqual((len(result["nodes"]), result["total"], result["hidden"]), (80, 101, 21))
+
+
+class ReadyFrontier(Layout):
+    def frontier(self, beads, ready, closed="show"):
+        return graph.graph_view({"beads": beads, "ready": list(ready), "cycles": []}, "ready", closed)
+
+    def test_the_ready_frontier_is_what_bd_ready_returns(self):
+        beads = [bead("A", status="closed"), bead("B", "A"), bead("C", "B"), bead("D", change="other"),
+                 bead("E", status="in_progress")]
+        result = self.frontier(beads, ["B", "D"])
+        self.assertEqual(ids(result), {"B", "D"})
+        self.assertEqual({node(result, name)["status"] for name in ids(result)}, {"ready"})
+        self.assertEqual((result["scope"], result["total"], result["hidden"], result["edges"]), ("ready", 2, 0, []))
+
+    def test_a_ready_id_the_data_does_not_hold_is_left_out(self):
+        self.assertEqual(ids(self.frontier([bead("A")], ["A", "GONE"])), {"A"})
+
+    def test_an_empty_frontier_is_an_empty_scope(self):
+        result = self.frontier([bead("A", status="in_progress")], [])
+        self.assertEqual((result["nodes"], result["total"], result["layers"]), ([], 0, 0))
+
+    def test_no_data_yet_is_an_empty_frontier(self):
+        self.assertEqual(graph.graph_view({}, "ready")["nodes"], [])
+
+    def test_a_ready_frontier_above_the_cap_reports_the_rest(self):
+        beads = [bead(f"R{index:03d}", priority=index % 5) for index in range(100)]
+        result = self.frontier(beads, [item["id"] for item in beads])
+        self.assertEqual((len(result["nodes"]), result["total"], result["hidden"]), (80, 100, 20))
+
+    def test_edges_among_ready_beads_are_drawn(self):
+        # bd calls both ready when the blocker is closed elsewhere; an edge between ready ids is kept.
+        result = self.frontier([bead("A"), bead("B", "A")], ["A", "B"])
+        self.assertEqual([(item["from"], item["to"]) for item in result["edges"]], [("A", "B")])
+        self.assert_edges_go_right(result)
+
+
 class Query(unittest.TestCase):
     def test_a_good_query(self):
         self.assertEqual(graph.parse_query("scope=change:beads-dashboard"), ("change:beads-dashboard", "show"))
         self.assertEqual(graph.parse_query("scope=change%3Ademo&closed=collapse"), ("change:demo", "collapse"))
         self.assertEqual(graph.parse_query("scope=ready"), ("ready", "show"))
         self.assertEqual(graph.parse_query("scope=bead:SPEC-abcd&depth=2"), ("bead:SPEC-abcd", "show"))
+
+    def test_the_depth_of_a_neighbourhood(self):
+        self.assertEqual(graph.parse_request("scope=bead:SPEC-abcd&depth=2"), ("bead:SPEC-abcd", "show", 2))
+        self.assertEqual(graph.parse_request("scope=bead:SPEC-abcd"), ("bead:SPEC-abcd", "show", 1))
+        self.assertEqual(graph.parse_request("scope=ready&depth=4"), ("ready", "show", None))
+        self.assertEqual(graph.parse_request("scope=change:demo&depth=3&closed=collapse"),
+                         ("change:demo", "collapse", None))
+
+    def test_an_unknown_bead_scope_or_depth_is_refused(self):
+        for query in ("scope=bead:", "scope=bead:a/b", "scope=bead:%2e%2e", "scope=bead:" + "a" * 65,
+                      "scope=bead:SPEC-abcd&depth=0", "scope=bead:SPEC-abcd&depth=6", "scope=bead:SPEC-abcd&depth=-1",
+                      "scope=bead:SPEC-abcd&depth=two", "scope=bead:SPEC-abcd&depth=", "scope=bead:SPEC-abcd&depth=1.5",
+                      "scope=bead:SPEC-abcd&depth=%EF%BC%92", "scope=bead:SPEC-abcd&depth=1&depth=2", "scope=ready&depth=99"):
+            with self.assertRaises(ValueError, msg=query):
+                graph.parse_request(query)
 
     def test_a_bad_query_is_refused(self):
         for query in ("", "scope=", "scope=change:", "scope=nothing", "scope=change:a/b", "scope=change:..%2f",

@@ -67,14 +67,40 @@ class Graph(data.Live):
         status, doc = self.get(PATH)
         self.assertEqual((status, doc["data"]["nodes"], doc["sources"]["beads"]["state"]), (200, [], "loading"))
 
-    def test_the_other_scopes_are_not_built_yet(self):
-        self.loaded([bead("SPEC-aaaa")])
-        self.assertEqual(self.get("/api/v1/graph?scope=ready")[0], 501)
-        self.assertEqual(self.get("/api/v1/graph?scope=bead:SPEC-aaaa&depth=2")[0], 501)
+    def test_a_neighbourhood_through_the_api(self):
+        self.loaded([bead("SPEC-aaaa"), bead("SPEC-bbbb", "SPEC-aaaa"), bead("SPEC-cccc", "SPEC-bbbb"),
+                     bead("SPEC-dddd", "SPEC-cccc"), bead("SPEC-eeee", labels=["openspec:change:other"])],
+                    ready=["SPEC-aaaa"])
+        one = self.get("/api/v1/graph?scope=bead:SPEC-bbbb")
+        two = self.get("/api/v1/graph?scope=bead:SPEC-bbbb&depth=2")
+        names = lambda doc: {node["id"] for node in doc[1]["data"]["nodes"]}
+        self.assertEqual((one[0], two[0]), (200, 200))
+        self.assertEqual(names(one), {"SPEC-aaaa", "SPEC-bbbb", "SPEC-cccc"})
+        self.assertEqual(names(two), {"SPEC-aaaa", "SPEC-bbbb", "SPEC-cccc", "SPEC-dddd"})
+        self.assertEqual((one[1]["data"]["scope"], one[1]["schema"]), ("bead:SPEC-bbbb", "nogg.dashboard.graph/v1"))
+        self.assertEqual(self.get("/api/v1/graph?scope=bead:SPEC-nope")[1]["data"]["nodes"], [])
+
+    def test_the_ready_frontier_through_the_api(self):
+        self.loaded([bead("SPEC-aaaa"), bead("SPEC-bbbb", "SPEC-aaaa"), bead("SPEC-cccc", status="in_progress"),
+                     bead("SPEC-dddd", labels=["openspec:change:other"])], ready=["SPEC-aaaa", "SPEC-dddd"])
+        status, doc = self.get("/api/v1/graph?scope=ready")
+        self.assertEqual(status, 200)
+        self.assertEqual({node["id"]: node["status"] for node in doc["data"]["nodes"]},
+                         {"SPEC-aaaa": "ready", "SPEC-dddd": "ready"})
+        self.assertEqual(doc["data"]["total"], 2)
+
+    def test_the_depth_is_part_of_the_cache_key_for_a_neighbourhood_only(self):
+        self.loaded([bead("SPEC-aaaa"), bead("SPEC-bbbb", "SPEC-aaaa"), bead("SPEC-cccc", "SPEC-bbbb")])
+        with mock.patch.object(graph, "graph_view", wraps=graph.graph_view) as view:
+            for path in ("scope=bead:SPEC-aaaa&depth=1", "scope=bead:SPEC-aaaa&depth=2", "scope=bead:SPEC-aaaa&depth=2",
+                         "scope=ready", "scope=ready&depth=3", PATH[len("/api/v1/graph?"):], PATH[len("/api/v1/graph?"):] + "&depth=4"):
+                self.assertEqual(self.get("/api/v1/graph?" + path)[0], 200)
+            self.assertEqual(view.call_count, 4)      # depth 1, depth 2, ready, the change
 
     def test_a_malformed_query_is_refused_and_says_nothing_back(self):
         self.loaded([bead("SPEC-aaaa")])
-        for query in ("", "?scope=", "?scope=change:%2e%2e%2fetc", "?scope=change:demo&closed=maybe"):
+        for query in ("", "?scope=", "?scope=change:%2e%2e%2fetc", "?scope=change:demo&closed=maybe",
+                      "?scope=bead:", "?scope=bead:a/b", "?scope=bead:SPEC-aaaa&depth=0", "?scope=bead:SPEC-aaaa&depth=x"):
             status, doc = self.get(f"/api/v1/graph{query}")
             self.assertEqual((status, doc["data"]), (400, {"error": "bad_request"}), query)
 
