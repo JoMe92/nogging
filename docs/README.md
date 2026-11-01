@@ -37,6 +37,7 @@ documentation site is available at <https://jome92.github.io/nogging/>.
 | [Testing policy](testing-policy.md) | What to test, at which level, and what not to test |
 | [Scheduled loops](scheduled-loops.md) | Recurring work as approved loop definitions |
 | [Test control](test-control.md) | One command per testing moment, with budgets, a full-suite lock and heavy slots |
+| [Dashboard](dashboard.md) | An optional read-only web view of Beads, their graph, sessions, tokens, commits and tests |
 | [Model selection](model-selection.md) | Choose a model and effort level for a session |
 | [Agent identities](agent-identities.md) | Configure GitHub identities for agent personas |
 

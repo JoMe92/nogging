@@ -269,8 +269,8 @@ read would make that far more likely, so the source holds a read lease:
   source backs off like any failed source.
 - It reloads only when `last_success_at` in `collector/status.json` moves.
 
-A waiting collector delays `session stop` by the length of the read, about 9 seconds on a
-store of 1.4 GB by the planning estimate, and at most by the cap. The lease does not cover a manual `nogg token-usage
+A waiting collector delays `session stop` by the length of the Dolt calls, about 2 seconds on a
+store of 1.4 GB, and at most by the cap. The lease does not cover a manual `nogg token-usage
 report`: run during a collection, it can still cost the collector an import attempt, which
 the next pass retries.
 
@@ -328,8 +328,8 @@ three lines); the change and when it was updated. The whole card opens the detai
 the filters as a bottom sheet that closes with Done, Escape or a tap outside, and returns focus to
 the button. From 960 px the same filters are a sidebar and the Beads form a table. Controls are at
 least 44 pixels high and the page does not scroll sideways at 360 pixels. The table, the cards and the
-sheet were written to these rules but have not been looked at in a real browser on a phone; the
-live acceptance of the dashboard records that check.
+sheet were written to these rules. The check in a real browser on a phone is a manual step of the
+dashboard's acceptance and is still open.
 
 ## Detail
 
@@ -379,7 +379,8 @@ known Bead ID, which opens that Bead's detail, and a SHA of this Bead's own comm
 that commit row. A URL is never turned into a link. The assignee is never shown.
 
 Not covered by an automated test: how the panel looks and behaves in a browser. The server side is
-tested; the rendering, the focus handling and the phone layout belong to the live acceptance.
+tested; the rendering, the focus handling and the phone layout are manual steps of the dashboard's
+acceptance, and those are still open.
 
 ## Overview
 
@@ -460,8 +461,9 @@ repository that lacks one, that panel reads "Not available here" and shows no nu
 - **Tokens** are `fresh_input + output` of the counters the records prove, and read "Known: N". A
   counter nobody could prove marks the sum with "+?" and the day with "(unknown counters)", and is
   never counted as zero. The provider's own total is not used. There is no cost and no quota
-  percentage anywhere. Runtimes with partial data (Pi and Antigravity today) are named under the
-  chart. Batches that wait in the spool are counted and say they are not in the numbers.
+  percentage anywhere. A runtime with partial data is named under the chart, and a runtime with no
+  record in the store has no row at all, which does not mean it ran nothing. Batches that wait in
+  the spool are counted and say they are not in the numbers.
 - **Commits** are those whose subject carries a token shaped like a Bead ID, on all branches,
   remotes and tags, so they may include unmerged work. A rebased copy counts once. Commits with no
   token are one count for the whole history. A commit whose line counts are missing is counted and
@@ -555,3 +557,41 @@ and `-` zoom, `0` fits the graph to the screen, and Enter opens the detail of th
 ordered list in dependency order, each Bead with its status and "Blocked by: …". It carries the same
 information for a screen reader. With `prefers-reduced-motion` set, zooming and panning jump instead
 of gliding.
+
+The client has no automated test, since Nogging ships no JavaScript runner. Pinch, drag and tap on a
+real phone are manual steps of the dashboard's acceptance, and those are still open.
+
+## Install, update and remove
+
+`init` and `update` install the dashboard with everything else: the modules under `scripts/lib/`
+and the static files under `scripts/dashboard/`, the fonts copied byte for byte. `remove` deletes
+those files and keeps your configuration. No test ships.
+
+The dashboard needs no configuration key and nothing in `.nogging/config.json`. It needs Python, and
+it needs `bd` only for the Bead panels: without `bd` the server still starts, the Bead panels say
+`bd` is missing and the Git panels work. `doctor` says nothing about it unless a secret exists, and
+then warns only if the file is wider than `0600`.
+
+The fonts, their licence and the logo are copies of files under `docs/assets/`, because that
+directory is not packaged. A test fails when the copies drift.
+
+## What it costs
+
+Measured on one host over loopback, as a guide: a Raspberry Pi 5 with 16 GB of memory, 687 Beads and
+a usage store of 1.4 GB, three runs with the host's load at about 2.5. The disk cache was not
+dropped, so a first read after a reboot may take longer.
+
+| What | Measured |
+|---|---|
+| Socket open after the start | 0.4 s |
+| All five sources loaded after the start | about 7 s |
+| One read of the usage store | 3.2 to 3.5 s, of which about 2 s are Dolt calls |
+| Peak memory of the server and its child processes | about 310 MB |
+| Peak memory of the server alone | about 140 MB |
+| Memory of the server once loaded | about 100 MB |
+| Start page, 28 requests one after another, data loaded | 0.07 to 0.12 s, 163 KB on the wire |
+| The same requests again | about 0.03 s |
+
+Memory is the resident size sampled five times a second, so a shorter peak can be missed and shared
+pages count more than once. These figures hold no browser, rendering or network time, so they say
+nothing about how fast a phone opens the page.

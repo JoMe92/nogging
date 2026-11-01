@@ -11,10 +11,16 @@ and GitHub Releases for that history.
 
 ### Added
 
-- `nogg dashboard`, an optional foreground read-only web dashboard. It binds to a
-  private address only, needs a token for every network bind, and answers GET and
-  HEAD with a strict response policy. The server and the shell land first; data and
-  views follow. See `docs/dashboard.md`.
+- `nogg dashboard`, an optional foreground read-only web dashboard for desktop and
+  phone. The start page shows Bead progress, project age, activity, agent-hours,
+  known tokens, commits and test cost, with gaps shown as gaps and never as zero. A
+  table filters, sorts and searches every Bead, one detail view holds a Bead's
+  evidence, and a dependency graph covers a change, a Bead's neighbourhood and the
+  ready frontier. It binds to a private address only, needs a token for every network
+  bind, answers GET and HEAD with a strict response policy, and adds no state: it
+  ships with `init` and `update`, and needs no configuration key. The checks on a
+  real phone, by touch and over a network bind are still open in its acceptance
+  report. See `docs/dashboard.md`.
 
 ## [3.6.0] - 2026-11-01
 
