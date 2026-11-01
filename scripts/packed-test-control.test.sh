@@ -13,8 +13,12 @@ set -euo pipefail
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 # shellcheck source=scripts/lib/test-env.sh
 source "$root/scripts/lib/test-env.sh"
-# The newest stable release tag: the install an existing consumer has today.
-previous=$(git -C "$root" tag -l 'v[0-9]*' 2>/dev/null | grep -v -- - | sort -V | tail -n1 || true)
+# The newest stable release tag older than the version under test: the install an
+# existing consumer has today. Once the release's own tag exists it must not be
+# picked, or the "upgrade" would start from the tree under test.
+current=$(node -e 'console.log(require(process.argv[1]).version)' "$root/package.json")
+previous=$(git -C "$root" tag -l 'v[0-9]*' 2>/dev/null | grep -v -- - | grep -vxF "v$current" \
+  | { cat; echo "v$current"; } | sort -V | grep -xF -B1 "v$current" | grep -vxF "v$current" || true)
 if [[ -z $previous ]]; then
   printf 'SKIP: packed test control (no release tag to upgrade from)\n'; exit 0
 fi
@@ -72,8 +76,13 @@ doctor_before=0; in_c ./scripts/nogg doctor >"$work/doctor.before" 2>&1 || docto
 # --- scenario 1: update from the previous release, no testing block ---------------
 run node "$work/new/bin/cli.js" update "${flags[@]}"
 check "update succeeds" test "$rc" -eq 0
-check "the notice appears once" test "$(grep -c 'runs on its defaults here' <<<"$out")" -eq 1
-check "and points at the stages and the page" has "$out" "testing.stages"
+# A previous release that already writes a testing block gets no notice: assert absence.
+if grep -q '"testing"' "$work/config.before"; then
+  check "no notice when the previous release already has a testing block" lacks "$out" "runs on its defaults here"
+else
+  check "the notice appears once" test "$(grep -c 'runs on its defaults here' <<<"$out")" -eq 1
+  check "and points at the stages and the page" has "$out" "testing.stages"
+fi
 # update records the installed version (nogging_version); every other byte must stay.
 without_version() { grep -v '"nogging_version"' "$1"; }
 check "the config is byte-identical" cmp -s <(without_version "$c/.nogging/config.json") <(without_version "$work/config.before")
