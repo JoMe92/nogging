@@ -389,7 +389,7 @@ and `git commit --no-verify` skips it.
 `scripts/hooks/commit-msg` checks the subject line: Conventional Commit shape
 (every commit, planning and sync included), and — unless the commit is a writer
 commit — a real Beads issue-ID token
-(`\[[A-Z][A-Z0-9]*-[0-9a-z]+\]`, e.g. `[SPEC-xxx]`; a bare `[]` or `[BEAD-XXX]`
+(`\[[A-Za-z][A-Za-z0-9]*-[0-9a-z]+\]`, e.g. `[SPEC-xxx]` or `[myproject-5nql]`; a bare `[]` or `[BEAD-XXX]`
 fails). A commit is a writer commit when `NOGGING_WRITER` is `planning` or
 `sync` **or** its message body carries a `Nogging-Writer: planning` /
 `Nogging-Writer: sync` trailer. The two forms are exact parity: the

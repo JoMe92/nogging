@@ -9,6 +9,13 @@ and GitHub Releases for that history.
 
 ## [Unreleased]
 
+### Fixed
+
+- The Beads issue ID token in a commit subject accepts a prefix of either case, so a
+  project whose Beads IDs use a lower-case prefix (`[myproject-5nql]`) can commit past
+  the `commit-msg` hook and is seen by the LIMBO check in `doctor` and `recover`.
+  Placeholders such as `[BEAD-XXX]` and an empty `[]` stay refused. (SPEC-3bne)
+
 ### Added
 
 - `nogg dashboard`, an optional foreground read-only web dashboard. It binds to a
