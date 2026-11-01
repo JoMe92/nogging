@@ -5143,6 +5143,69 @@ def render_usage_session(doc):
 def collect_store():
     collect = usage_collection_module()
     return collect.Store(ROOT, canonical_repository_state)
+def dashboard_secret_path():
+    return ORCHESTRATOR_HOME / ".nogging/state/dashboard/secret"
+def dashboard_secret_diagnostics():
+    """Silent on an install that never used the dashboard: no module, no port probe."""
+    path = dashboard_secret_path()
+    if not os.path.lexists(path):
+        return []
+    problem = dashboard_modules()[0].mode_problem(path)
+    return [f"dashboard secret: {problem}; fix it with `chmod 600 {path}` or `nogg dashboard --rotate-token`"] if problem else []
+def dashboard_modules():
+    """The dashboard's own modules, from scripts/lib beside this script."""
+    sys.dont_write_bytecode = True
+    lib = str(Path(__file__).resolve().parent / "lib")
+    if lib not in sys.path:
+        sys.path.insert(0, lib)
+    import dashboard_security, dashboard_server
+    return dashboard_security, dashboard_server
+def dashboard_readers():
+    """Every reader of the dashboard's data contract, resolved against the canonical
+    checkout. Each one is a call for the refresher, so a request never runs one, and
+    the loaders are looked up late: their modules fill in as the change lands."""
+    import dashboard_slow_sources as slow, dashboard_sources as sources
+    home = ORCHESTRATOR_HOME
+    return {"beads": lambda: sources.read_beads(CFG["beads_command"], home),
+            "sessions": lambda: sources.read_sessions(
+                [rec for _, rec in session_records(orchestrator_sessions_dir())]),
+            "tests": lambda: sources.read_tests(testing_modules()[1].read_records(TEST_STATE)),
+            "git": lambda: slow.read_git(home),
+            "tokens": lambda: slow.read_tokens(collect_store, usage_report_module)}
+def dashboard_command(args):
+    """`nogg dashboard`: the foreground read-only web server."""
+    # Set before any reader runs: a plain `bd` call could otherwise start Dolt, and
+    # Git and the Dolt CLI write lock and event files on a read.
+    os.environ.update(BEADS_DOLT_AUTO_START="0", GIT_OPTIONAL_LOCKS="0", DOLT_DISABLE_EVENT_FLUSH="1")
+    security, server = dashboard_modules()
+    if args.list_binds:
+        return dashboard_list_binds(security)
+    if args.rotate_token:
+        security.rotate_secret(dashboard_secret_path())
+        print(f"rotated the dashboard secret in {dashboard_secret_path()}: every browser session has ended, "
+              "and a running dashboard uses the new secret at once. Run `nogg dashboard --bind <address>` "
+              "on a terminal to print a new link.")
+        return
+    bind = security.check_bind(args.bind)
+    hosts = [security.check_allow_host(value) for value in args.allow_host]
+    if not bind.loopback and calling_session_record(
+            [rec for _, rec in session_records(orchestrator_sessions_dir())],
+            purpose="a network dashboard bind") is not None:
+        raise RuntimeError(f"refusing --bind {args.bind} inside a supervised session: the token would "
+                           "reach the session log, and network exposure stays an operator act")
+    server.serve(bind, server.DEFAULT_PORT if args.port is None else args.port, dashboard_readers(),
+                 static_dir=Path(__file__).resolve().parent / "dashboard",
+                 secret_path=dashboard_secret_path(), allow_hosts=hosts)
+def dashboard_list_binds(security):
+    """A hint for the operator: its output never feeds the bind decision."""
+    try:
+        listed = subprocess.run(["ip", "-j", "addr"], text=True, capture_output=True, timeout=5)
+        links = json.loads(listed.stdout)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        print("cannot list addresses here: `ip -j addr` is unavailable. Pass a literal private address to --bind.")
+        return
+    for address, warning in security.eligible_binds(links):
+        print(f"{address}  (WARNING: {warning})" if warning else address)
 COMPLEXITY_VOCABULARY_VERSION = "1"   # routine/standard/complex + unknown, Product Owner confirmed
 def complexity_snapshot(tier, explicit):
     """(complexity, source) for usage attribution. An explicit --complexity that
@@ -11071,6 +11134,7 @@ def doctor(audit=False, with_recover=False, with_sandbox=False, refuse_task_form
     except Exception as exc:
         dispatch_warnings, dispatch_notes = [], [f"dispatcher: health unavailable: {exc}"]
     warnings.extend(dispatch_warnings)
+    warnings.extend(dashboard_secret_diagnostics())
     if FAILURE_RECORD.exists():
         try: rec = json.loads(FAILURE_RECORD.read_text())
         except (ValueError, OSError): rec = {}
@@ -12104,6 +12168,15 @@ def main():
     tusy.add_argument("--json", action="store_true")
     tust = tusub.add_parser("status", help="usage store, collection and sync freshness")
     tust.add_argument("--json", action="store_true")
+    dash = sub.add_parser("dashboard", help="serve the read-only web dashboard in the foreground")
+    dash.add_argument("--bind", default="127.0.0.1",
+                      help="literal private address to listen on (default: 127.0.0.1); see --list-binds")
+    dash.add_argument("--port", type=int, default=None, help="TCP port (default: 8742); never chosen silently")
+    dash.add_argument("--allow-host", action="append", default=[], metavar="HOST[:PORT]",
+                      help="also answer this exact Host value (repeatable)")
+    dash.add_argument("--list-binds", action="store_true", help="print this host's eligible addresses and exit")
+    dash.add_argument("--rotate-token", action="store_true",
+                      help="replace the access secret, ending every browser session, and exit")
     usage = sub.add_parser("usage", help="inspect read-only local quota observations")
     usage.add_argument("action", nargs="?", choices=("install-statusline", "uninstall-statusline"), default=None,
                        help="opt-in usage helpers (install-statusline, uninstall-statusline)")
@@ -12391,6 +12464,8 @@ def main():
                 raise RuntimeError(f"invalid usage_gate in .nogging/config.json: {exc}") from exc
     elif args.command == "repo-state":
         print(json.dumps(canonical_repository_state(args.cwd), sort_keys=True))
+    elif args.command == "dashboard":
+        dashboard_command(args)
     elif args.command == "loop":
         lib = str(ROOT / "scripts/lib")
         if lib not in sys.path:

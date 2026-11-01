@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nogging dashboard</title>
+  <link rel="icon" href="/assets/images/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/assets/images/apple-touch-icon.png">
+  <link rel="stylesheet" href="/assets/tokens.css">
+  <link rel="stylesheet" href="/assets/base.css">
+  <link rel="stylesheet" href="/assets/views/start.css">
+  <link rel="stylesheet" href="/assets/views/beads.css">
+  <link rel="stylesheet" href="/assets/views/detail.css">
+  <link rel="stylesheet" href="/assets/graph/graph.css">
+  <script src="/assets/auth.js" defer></script>
+  <script src="/assets/theme.js" defer></script>
+  <script src="/assets/dom.js" defer></script>
+  <script src="/assets/format.js" defer></script>
+  <script src="/assets/app.js" defer></script>
+  <script src="/assets/table.js" defer></script>
+  <script src="/assets/charts.js" defer></script>
+  <script src="/assets/views/start.js" defer></script>
+  <script src="/assets/views/start-usage.js" defer></script>
+  <script src="/assets/views/beads.js" defer></script>
+  <script src="/assets/views/detail.js" defer></script>
+  <script src="/assets/graph/render.js" defer></script>
+  <script src="/assets/graph/interact.js" defer></script>
+  <script src="/assets/graph/scope.js" defer></script>
+  <script src="/assets/graph/list.js" defer></script>
+</head>
+<body>
+  <main id="app"></main>
+  <section id="auth-denied" hidden>
+    <img src="/assets/images/nogging-mark.svg" alt="Nogging" width="48" height="48">
+    <h1>This browser is not signed in</h1>
+    <p>Open the link printed by <code>nogg dashboard</code> on the host. It works until the token is rotated.</p>
+  </section>
+  <noscript>The dashboard needs JavaScript.</noscript>
+</body>
+</html>
