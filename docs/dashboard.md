@@ -231,6 +231,47 @@ before.
 
 ## Beads
 
+The Beads tab (`#/beads`) lists every Bead from `/api/v1/beads`. The list carries no description and
+no notes, only the fields a row needs, and the server adds the `change`, a `ready` flag and `facets`:
+for status, type, priority, change and label class, each choice with the number of Beads behind it,
+counted over all Beads. A Bead with no `openspec:change:` label counts under no change and stays
+reachable through the Change filter ("No change", `change=(none)` in the address).
+
+**Columns.** ID, status, priority, type, title (two lines, then cut), change, updated and age. Every
+column sorts by its header button, and the header carries `aria-sort`. The default is priority, then
+the most recently updated. A missing value sorts last in either direction. The Updated and Age
+columns sort by what they show, so ascending means the shortest time first. A Bead that `bd ready`
+lists also shows a Ready badge beside its status.
+
+**Filters.** Status, type, priority, change and label class (OpenSpec task, Discovery) are
+multi-select: a Bead matches a filter when its value is any of the ticked ones, and it must match
+every filter that has a tick. The search takes words that must all occur in the ID or the title, and
+waits 250 ms after typing. Closed Beads are hidden until "Include closed" is ticked or the status
+filter names Closed. The list shows 50 rows a page.
+
+**The address.** Everything lives in the URL, so a link reproduces the view, and only what differs
+from the default is written:
+
+| Parameter | Meaning |
+|---|---|
+| `status`, `type`, `priority`, `change`, `label` | comma list of choices, e.g. `status=open,blocked` |
+| `q` | search words |
+| `closed=1` | include closed Beads |
+| `sort`, `dir` | a column key (`id`, `status`, `priority`, `type`, `title`, `change`, `updated`, `age`) and `asc` or `desc` |
+| `page` | page number, from 1 |
+
+The Overview tiles link here with `status=`. A change of filter, sort or page replaces the history
+entry instead of adding one, so Back leaves the table and does not step through clicks. Typing
+rewrites the address in place and does not rebuild the page.
+
+**Phone.** Under 960 px a Bead is a card of three lines: ID, priority and status; the title (up to
+three lines); the change and when it was updated. The whole card opens the detail. "Filters (n)" opens
+the filters as a bottom sheet that closes with Done, Escape or a tap outside, and returns focus to
+the button. From 960 px the same filters are a sidebar and the Beads form a table. Controls are at
+least 44 pixels high and the page does not scroll sideways at 360 pixels. The table, the cards and the
+sheet were written to these rules but have not been looked at in a real browser on a phone; the
+live acceptance of the dashboard records that check.
+
 ## Detail
 
 ## Overview

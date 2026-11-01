@@ -32,6 +32,7 @@ answer = "list" if "list" in words else "ready" if "ready" in words else "cycles
 print(open(os.path.join(stub, answer + ".json")).read())
 """
 LOOPBACK = sec.check_bind("127.0.0.1")
+NO_FACETS = {name: [] for name in ("status", "type", "priority", "change", "label")}
 
 
 def bead(identifier, **extra):
@@ -110,7 +111,7 @@ class FirstLoad(Live):
         status, doc = self.get("/api/v1/freshness")
         self.assertEqual((status, doc["data"]["beads"]["state"]), (200, "loading"))
         status, doc = self.get("/api/v1/beads")
-        self.assertEqual((status, doc["data"], doc["sources"]["beads"]["state"]), (200, {"beads": []}, "loading"))
+        self.assertEqual((status, doc["data"], doc["sources"]["beads"]["state"]), (200, {"beads": [], "facets": NO_FACETS}, "loading"))
         self.load(refresher)
         status, doc = self.get("/api/v1/beads")
         self.assertEqual(doc["sources"]["beads"]["state"], "fresh")
@@ -196,7 +197,7 @@ class Failures(Live):
         _, doc = self.get("/api/v1/beads")
         self.assertEqual(doc["sources"]["beads"], {"state": "unavailable", "as_of": None, "generation": 0,
                                                    "reason": "dolt_unreachable"})
-        self.assertEqual(doc["data"], {"beads": []})
+        self.assertEqual(doc["data"], {"beads": [], "facets": NO_FACETS})
         self.assertEqual([call["argv"][2] for call in self.calls()], ["list"])     # the first failure stops the pass
 
     def test_a_source_error_shows_the_class_and_never_the_stderr(self):

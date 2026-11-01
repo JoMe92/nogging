@@ -217,15 +217,52 @@ def change_of(bead):
     return None
 
 
+# The label classes of the table filter: a Bead carries a class when one of its labels is
+# exactly the name (`discovery`) or starts with it and a colon (`openspec:task:TASK-1`).
+LABEL_CLASSES = ("openspec:task", "discovery")
+
+
+def label_classes(bead):
+    """The label classes of the Bead, in `LABEL_CLASSES` order."""
+    labels = bead.get("labels") or ()
+    return [name for name in LABEL_CLASSES
+            if any(label == name or label.startswith(name + ":") for label in labels)]
+
+
+def _facet(counts, order=None):
+    """[{value, count}] of a counter: `order` first, then the rest sorted, None last."""
+    known = [value for value in (order or ()) if value in counts]
+    rest = sorted((value for value in counts if value not in known and value is not None),
+                  key=lambda value: (str(type(value)), value))
+    return [{"value": value, "count": counts[value]} for value in known + rest + ([None] if None in counts else [])]
+
+
+def bead_facets(beads):
+    """The filter choices of the table with the number of Beads behind each, over all Beads:
+    `status`, `type`, `priority`, `change` and `label`. A Bead without a change counts under
+    the value None, so it stays reachable through the filter."""
+    counts = {name: {} for name in ("status", "type", "priority", "change", "label")}
+    for bead in beads:
+        for name, value in (("status", bead.get("status")), ("type", bead.get("issue_type")),
+                            ("priority", bead.get("priority")), ("change", change_of(bead))):
+            counts[name][value] = counts[name].get(value, 0) + 1
+        for name in label_classes(bead):
+            counts["label"][name] = counts["label"].get(name, 0) + 1
+    return {"status": _facet(counts["status"], STATUS_ORDER), "type": _facet(counts["type"]),
+            "priority": _facet(counts["priority"]), "change": _facet(counts["change"]),
+            "label": _facet(counts["label"], LABEL_CLASSES)}
+
+
 def bead_list(snapshot):
-    """`data` of /api/v1/beads: every Bead without its long texts, with `change` and `ready`."""
+    """`data` of /api/v1/beads: every Bead without its long texts, with `change` and `ready`,
+    and the `facets` the table filters offer, counted over all Beads."""
     ready = set(snapshot.get("ready") or ())
     rows = []
     for bead in snapshot.get("beads") or ():
         row = {name: bead.get(name) for name in LIST_FIELDS if name not in ("change", "ready")}
         row["change"], row["ready"] = change_of(bead), bead["id"] in ready
         rows.append(row)
-    return {"beads": rows}
+    return {"beads": rows, "facets": bead_facets(snapshot.get("beads") or ())}
 
 
 def change_list(snapshot):
