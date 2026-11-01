@@ -239,4 +239,41 @@ before.
 
 ## Graph
 
+The graph tab shows the dependencies of one change as a flow from left to right. Choose a change
+from the list, or open `#/graph?scope=change&id=<change>`. Other scopes follow under
+[Graph navigation](#graph-navigation).
+
+The server computes the layout and the page only draws it, so the same data always gives the same
+picture, on a desktop and on a phone alike.
+
+**What you see.** Each Bead is a box with its ID, its title and the shape of its status. Only
+`blocks` dependencies count: a blocker sits to the left of what it blocks, and other dependency
+types appear in the detail panel only. Work that can run side by side falls into parallel lanes.
+A Bead outside the change appears as a dashed ghost one step out, and only when it blocks or is
+blocked by a Bead of the change. Unconnected parts stack from top to bottom, the largest first, with
+Beads that have no dependency in a compact block at the end. Selecting a Bead opens its detail.
+
+**The longest dependency chain.** The thick line is the chain with the most Beads, counted over
+Beads that are not closed, or over all Beads once the change is finished. It sits on the top lane
+of its part of the graph. A tie goes to the higher sum of `[~N loc]` estimates in the titles, then to
+the lower ID. It is a count of steps in the dependencies and not a time estimate.
+
+**Closed Beads** are faded, with an unfaded label. *Collapse closed Beads* folds them into one
+group per layer, with at most 20 groups; a dependency that would run backwards after folding is left
+out of the picture, so a group cannot look like a cycle.
+
+**At most 80 nodes.** A larger scope collapses its closed Beads first. If it is still too large, the
+longest chain stays, then the groups, then active work before waiting work, and ghosts leave first.
+The page states how many of the nodes are hidden.
+
+**Cycles.** A warning shows whatever `bd dep cycles` reports, also for a cycle outside the change.
+When the change itself contains a cycle or a self-loop, the graph still renders: the layout turns
+one edge around and draws it dashed, and no longest chain is marked, because a cycle has no longest
+path. The page says so.
+
+The answer of `GET /api/v1/graph?scope=change:<id>&closed=show|collapse` holds positions in abstract
+units: `x` is the layer and `y` a row, and the client scales both to its node size. `scope=ready` and
+`scope=bead:<id>` answer 501 until their task lands, and a malformed query answers 400. Layouts are
+kept in memory, at most 32, and only until Beads change.
+
 ## Graph navigation

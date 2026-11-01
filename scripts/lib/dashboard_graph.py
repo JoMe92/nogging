@@ -351,9 +351,9 @@ def _coordinates(rows, up, down, pinned):
     return y
 
 
-def _lay_component(part, pairs, chain, nodes):
-    """One component with two or more nodes. Returns (place, routes, height, lane count)."""
-    inside = sorted((left, right) for left, right in pairs if left in part)
+def _lay_component(part, inside, chain, nodes):
+    """One component with two or more nodes and its sorted edges. Returns (place, routes,
+    height, lane count)."""
     succ, pred = _adjacent(part, inside)
     order = _topological(part, succ)
     layer = _layers(order, succ, pred)
@@ -384,7 +384,7 @@ def _layout(nodes, pairs, chain):
     place, routes, top, lane = {}, {}, 0, 0
     for part in linked:
         members = set(part)
-        inside = {pair for pair in pairs if pair[0] in members}
+        inside = sorted(pair for pair in pairs if pair[0] in members)
         spot, drawn, height, count = _lay_component(part, inside, chain, nodes)
         for item in spot.values():
             item["y"] += top

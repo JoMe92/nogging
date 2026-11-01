@@ -81,6 +81,11 @@ class Geometry(Layout):
                 if item["x"] == x:
                     self.assertGreaterEqual(abs(item["y"] - y), 1)
 
+    def test_a_sweep_removes_an_avoidable_crossing(self):
+        # By ID alone A sits above B and X above Y, so A -> Y and B -> X would cross.
+        result = view([bead("S"), bead("A", "S"), bead("B", "S"), bead("X", "B"), bead("Y", "A")])
+        self.assertEqual(node(result, "A")["y"] < node(result, "B")["y"], node(result, "Y")["y"] < node(result, "X")["y"])
+
     def test_a_source_sits_next_to_its_nearest_successor(self):
         result = view([bead("A"), bead("B", "A"), bead("C", "B"), bead("D", "C"), bead("Z"), bead("E", "D", "Z")])
         self.assertEqual(node(result, "Z")["layer"], node(result, "E")["layer"] - 1)
