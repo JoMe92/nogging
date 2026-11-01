@@ -334,7 +334,7 @@ live acceptance of the dashboard records that check.
 ## Detail
 
 Clicking a Bead in any view opens its detail. The address gains `bead=<ID>` (for example
-`#/beads?status=open&bead=SPEC-abc1`), so a link opens the same detail and the browser's back
+`#/beads?status=open&bead=SPEC-abc123`), so a link opens the same detail and the browser's back
 button closes it. The data comes from `/api/v1/beads/<id>`, built from the snapshots the server
 already holds, so a request starts no `bd`, Git or Dolt call. An ID that no Bead has answers 404
 once the Bead list is loaded; before that the answer is a 200 with `bead: null` and the Beads
