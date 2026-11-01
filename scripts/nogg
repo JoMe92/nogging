@@ -5172,6 +5172,12 @@ def dashboard_readers():
             "tests": lambda: sources.read_tests(testing_modules()[1].read_records(TEST_STATE)),
             "git": lambda: slow.read_git(home),
             "tokens": lambda: slow.read_tokens(collect_store, usage_report_module)}
+def dashboard_gates():
+    """Change gates of the sources that read files: a token that moves when the files do,
+    so the refresher skips a reload that would read the same bytes. They only stat."""
+    import dashboard_sources as sources
+    return {"sessions": sources.directory_gate(orchestrator_sessions_dir()),
+            "tests": sources.files_gate(TEST_STATE / "runs.jsonl", TEST_STATE / "runs.jsonl.1")}
 def dashboard_command(args):
     """`nogg dashboard`: the foreground read-only web server."""
     # Set before any reader runs: a plain `bd` call could otherwise start Dolt, and
@@ -5195,7 +5201,7 @@ def dashboard_command(args):
                            "reach the session log, and network exposure stays an operator act")
     server.serve(bind, server.DEFAULT_PORT if args.port is None else args.port, dashboard_readers(),
                  static_dir=Path(__file__).resolve().parent / "dashboard",
-                 secret_path=dashboard_secret_path(), allow_hosts=hosts)
+                 secret_path=dashboard_secret_path(), allow_hosts=hosts, gates=dashboard_gates())
 def dashboard_list_binds(security):
     """A hint for the operator: its output never feeds the bind decision."""
     try:
