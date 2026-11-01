@@ -70,9 +70,9 @@ start, and `nogg doctor` warns about such a file. A running server that finds it
 secret gone or too open refuses every session until the file is fixed.
 
 After ten failed authentications in a minute, further failures get 429 and
-`Retry-After`. A correct token or a valid session is never limited, so a flood of
-guesses cannot lock you out, and a request with no credential or an expired cookie
-does not count. See the [security model](security-model.md#the-dashboard) for what
+`Retry-After`. A correct token or a valid session is never limited, so the limit
+cannot lock you out, and a request with no credential or an expired cookie does not
+count. See the [security model](security-model.md#the-dashboard) for what
 this does not protect against.
 
 ## Interface

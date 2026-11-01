@@ -310,9 +310,8 @@ The residual risks are these:
 - **Forwarding.** The peer check catches a forward that keeps a public source
   address, and a loopback bind also refuses a forwarded private one. It cannot see
   SNAT, `ssh -R` or a reverse proxy, where the peer looks local. A forward to a
-  network bind leaves the `Host` check and the token as the remaining defences; a
-  forward to a loopback bind leaves only `Host`, so do not add such a name with
-  `--allow-host`.
+  network bind leaves the `Host` check and the token as the remaining defences. Do
+  not forward a loopback bind: it has no token, and `Host` stops only browsers.
 - **Exhausting the server.** A device on the private network can hold all 16 request
   slots without a token, for up to about 16 seconds at a time per slot, and others
   get 503 meanwhile. It sees no data and the server recovers by itself.

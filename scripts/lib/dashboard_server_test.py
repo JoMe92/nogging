@@ -272,9 +272,10 @@ class Requests(Harness):
 
     def test_a_malformed_header_cannot_hide_the_rest(self):
         self.start()
-        raw = (f"GET /api/v1/beads HTTP/1.1\r\nHost: {self.host}\r\nno colon here\r\n"
-               "Origin: http://attacker.example\r\n\r\n").encode()
-        self.assertEqual(parse(self.send(raw))[0], 400)
+        for hiding in ("no colon here\r\n", "\r", "\r\r\n"):
+            raw = (f"GET /api/v1/beads HTTP/1.1\r\nHost: {self.host}\r\n{hiding}"
+                   "Origin: http://attacker.example\r\nContent-Length: 5\r\n\r\n").encode()
+            self.assertEqual(parse(self.send(raw))[0], 400, repr(hiding))
 
     def test_head_has_headers_and_no_body(self):
         self.start()

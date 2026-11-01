@@ -139,7 +139,7 @@ with tempfile.TemporaryDirectory(prefix="nogg fixture ") as tmp:
     check("--list-binds warns about carrier NAT", "carrier NAT" in result.stdout, result.stdout)
     seen = forced.read_text().splitlines()
     check("the read-only environment is forced for every child",
-          all(line in seen for line in ("BEADS_DOLT_AUTO_START=0", "GIT_OPTIONAL_LOCKS=0", "DOLT_DISABLE_EVENT_FLUSH=1")), seen)
+          all(line in seen for line in ("BEADS_DOLT_AUTO_START=0", "GIT_OPTIONAL_LOCKS=0", "DOLT_DISABLE_EVENT_FLUSH=1")))
 
     # Rotation.
     secret = repo / ".nogging/state/dashboard/secret"

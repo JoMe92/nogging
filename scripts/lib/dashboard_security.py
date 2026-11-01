@@ -372,12 +372,16 @@ def _write_new(path, secret):
 
 def _sync_directory(directory):
     """A rename or a new name reaches the disk only with its directory, and this host
-    can lose power: a stale secret after a rotation would bring old cookies back."""
-    fd = os.open(directory, os.O_RDONLY)
+    can lose power: a stale secret after a rotation would bring old cookies back. The
+    change has already happened here, so a filesystem that refuses this is no failure."""
     try:
-        os.fsync(fd)
-    finally:
-        os.close(fd)
+        fd = os.open(directory, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except OSError:
+        pass
 
 
 def _prepare_directory(path):

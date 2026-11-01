@@ -253,7 +253,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         status = sec.host_status(self.headers.get_all("Host") or [], server.hosts)
         if status:
             return api_error(server, status)
-        if self.headers.defects:
+        if self.headers.defects or self.headers.get_payload():
             return api_error(server, 400)    # parsing stopped early: later headers went unseen
         if not sec.origin_allowed(self.headers.get_all("Origin") or [],
                                   self.headers.get_all("Sec-Fetch-Site") or [], server.hosts):
@@ -382,8 +382,9 @@ class DashboardServer(ThreadingHTTPServer):
         return self.server_port
 
     def verify_request(self, request, client_address):
-        """Runs in the accept loop, before a thread starts. It catches a DNAT forward
-        that keeps a public source; SNAT and proxies are for Host and the token."""
+        """Runs in the accept loop, before a thread starts. It catches a DNAT forward that
+        keeps a public source, and a private one on a loopback bind, which has no token.
+        SNAT and proxies look local here, so they are for Host and the token."""
         return sec.peer_allowed(client_address[0], loopback_only=self.bind_address.loopback)
 
     def process_request(self, request, client_address):

@@ -153,6 +153,9 @@ class TokenAndCookie(unittest.TestCase):
         value = sec.sign_cookie(sec.new_secret(), 2000)
         self.assertFalse(verified(self.secret, value, 1000))
 
+    def test_a_forged_cookie_is_bad_even_when_past_its_date(self):
+        self.assertEqual(sec.cookie_state(self.secret, f"1.{'0' * 64}", 1000), "bad")
+
     def test_a_tampered_cookie_is_refused(self):
         expiry, mac = sec.sign_cookie(self.secret, 2000).split(".")
         for value in (f"9999.{mac}", f"{expiry}.{'0' * 64}", f"{expiry}.{mac[:-1]}", expiry, "",
