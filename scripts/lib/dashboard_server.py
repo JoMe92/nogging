@@ -194,20 +194,18 @@ def route_summary(server, request):
 
 
 def route_graph(server, request):
-    """One change as a flow. The other scopes answer 501 until their owner lands. A reload
+    """One change, the neighbourhood of one Bead or the ready frontier as a flow. A reload
     that changes nothing rebuilds the envelope, and the layout comes from the graph cache."""
     try:
-        scope, closed = graph.parse_query(request.query)
+        scope, closed, depth = graph.parse_request(request.query)
     except ValueError:
         return api_error(server, 400)
-    if not scope.startswith("change:"):
-        return api_error(server, 501)
 
     def build(snapshots, statuses):
         generation = statuses.get("beads", {}).get("generation")
-        return server.graph_cache.view(generation, (scope, closed),
-                                       lambda: graph.graph_view(snapshots.get("beads") or {}, scope, closed))
-    return render_api(server, "graph", ["beads"], build, memo=f"graph?{scope}&{closed}")
+        return server.graph_cache.view(generation, (scope, closed, depth),
+                                       lambda: graph.graph_view(snapshots.get("beads") or {}, scope, closed, depth))
+    return render_api(server, "graph", ["beads"], build, memo=f"graph?{scope}&{closed}&{depth}")
 
 
 ROUTES = ((re.compile(r"/api/v1/auth"), route_auth),

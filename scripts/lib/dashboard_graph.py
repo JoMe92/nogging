@@ -4,6 +4,7 @@ The server computes the layout, because a client-side one could not be tested he
 client only draws what `graph_view` returns: `x` is the layer and `y` a row, both in
 abstract units, so desktop and phone scale them to their own node sizes.
 
+Three scopes: one change, the neighbourhood of one Bead to a depth, and the ready frontier.
 Only `blocks` edges count, oriented blocker to blocked. The steps follow design Decision
 11: scope, cycle breaking by iterative DFS, longest-path layering, dummy nodes on long
 edges, barycenter sweeps, priority-median coordinates, components stacked largest first.
@@ -31,6 +32,8 @@ COORDINATE_SWEEPS = 4
 COMPONENT_GAP = 1
 CACHE_ENTRIES = 32
 MAX_QUERY_FIELDS = 8
+MAX_DEPTH = 5
+DEFAULT_DEPTH = 1
 CLOSED_MODES = ("show", "collapse")
 DUMMY = "~"                     # no Bead ID or group ID starts with it
 _CHANGE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
@@ -39,18 +42,28 @@ _LOC = re.compile(r"\[~\s*(\d+)\s*loc\b")
 _STATUS_RANK = {"in_progress": 0, "blocked": 1, "ready": 2, "open": 3, "deferred": 4}
 
 
-def parse_query(query):
-    """(scope, closed) of a /api/v1/graph query. Anything malformed is a ValueError."""
+def parse_request(query):
+    """(scope, closed, depth) of a /api/v1/graph query. Anything malformed is a ValueError.
+    `depth` counts `blocks` steps and only the `bead:` scope uses it; it is None elsewhere,
+    so one cache entry serves every depth a `change:` or `ready` request names."""
     fields = parse_qs(query, keep_blank_values=True, max_num_fields=MAX_QUERY_FIELDS)
     if any(len(values) > 1 for values in fields.values()):
         raise ValueError("repeated field")
     scope, closed = fields.get("scope", [""])[0], fields.get("closed", ["show"])[0]
+    text = fields.get("depth", [str(DEFAULT_DEPTH)])[0]
     kind, _, value = scope.partition(":")
     known = (scope == "ready" or (kind == "change" and _CHANGE.fullmatch(value))
              or (kind == "bead" and model.BEAD_ID.fullmatch(value)))
     if not known or closed not in CLOSED_MODES:
         raise ValueError("unknown scope or mode")
-    return scope, closed
+    if not (text.isascii() and text.isdigit() and 1 <= int(text) <= MAX_DEPTH):
+        raise ValueError("depth out of range")
+    return scope, closed, int(text) if kind == "bead" else None
+
+
+def parse_query(query):
+    """(scope, closed) of a /api/v1/graph query, as parse_request without the depth."""
+    return parse_request(query)[:2]
 
 
 # --- the subgraph -----------------------------------------------------------------
@@ -80,6 +93,59 @@ def _change_scope(snapshot, change):
     nodes = {identifier: _node(identifier, "bead", beads[identifier], ready) for identifier in sorted(members)}
     nodes.update((identifier, _node(identifier, "ghost", beads.get(identifier), ready)) for identifier in sorted(ghosts))
     return nodes, blocks
+
+
+def _blocks_of(beads):
+    """{(blocker, blocked)} over every Bead of the snapshot."""
+    return {(entry["depends_on_id"], entry["issue_id"]) for bead in beads.values()
+            for entry in bead.get("dependencies") or () if entry.get("type") == "blocks"}
+
+
+def _reach(start, steps, depth):
+    """The nodes within `depth` steps of `start` along `steps` ({node: neighbours})."""
+    seen, edge = {start}, [start]
+    for _ in range(depth):
+        edge = sorted({other for node in edge for other in steps.get(node, ()) if other not in seen})
+        seen.update(edge)
+    return seen
+
+
+def _bead_scope(snapshot, identifier, depth):
+    """({id: node}, {(blocker, blocked)}) around one Bead: its blockers up to `depth` steps
+    and the Beads it blocks down to `depth` steps, each direction followed on its own so a
+    sibling sharing a blocker does not drift in. A Bead the data does not hold is an empty
+    scope, the same answer as a change with no Beads."""
+    beads = {bead["id"]: bead for bead in snapshot.get("beads") or ()}
+    if identifier not in beads:
+        return {}, set()
+    pairs = _blocks_of(beads)
+    upstream, downstream = {}, {}
+    for blocker, blocked in sorted(pairs):
+        upstream.setdefault(blocked, []).append(blocker)
+        downstream.setdefault(blocker, []).append(blocked)
+    members = (_reach(identifier, upstream, depth) | _reach(identifier, downstream, depth)) & set(beads)
+    ready = set(snapshot.get("ready") or ())
+    return ({member: _node(member, "bead", beads[member], ready) for member in sorted(members)},
+            {pair for pair in pairs if pair[0] in members and pair[1] in members})
+
+
+def _ready_scope(snapshot):
+    """({id: node}, {(blocker, blocked)}) of the ready frontier: the Beads `bd ready`
+    returns, which the data holds, and the `blocks` edges among them."""
+    beads = {bead["id"]: bead for bead in snapshot.get("beads") or ()}
+    ready = set(snapshot.get("ready") or ())
+    members = sorted(identifier for identifier in ready if identifier in beads)
+    return ({member: _node(member, "bead", beads[member], ready) for member in members},
+            {pair for pair in _blocks_of(beads) if pair[0] in ready and pair[1] in ready})
+
+
+def _scope(snapshot, scope, depth):
+    kind, _, value = scope.partition(":")
+    if kind == "bead":
+        return _bead_scope(snapshot, value, depth or DEFAULT_DEPTH)
+    if scope == "ready":
+        return _ready_scope(snapshot)
+    return _change_scope(snapshot, value)
 
 
 # --- graph helpers ----------------------------------------------------------------
@@ -410,10 +476,10 @@ def _edge(left, right, turned, routes, place, on_chain):
             "critical": not turned and (left, right) in on_chain}
 
 
-def graph_view(snapshot, scope, closed="show"):
+def graph_view(snapshot, scope, closed="show", depth=None):
     """`data` of /api/v1/graph (design Decision 9). `total` counts the scope's Beads and
     ghosts, `hidden` those not drawn as their own node, whether grouped or left out."""
-    nodes, blocks = _change_scope(snapshot, scope.partition(":")[2])
+    nodes, blocks = _scope(snapshot, scope, depth)
     ids = sorted(nodes)
     edges = _orient(ids, blocks)
     cyclic = any(turned for _, _, turned in edges)

@@ -416,8 +416,43 @@ one edge around and draws it dashed, and no longest chain is marked, because a c
 path. The page says so.
 
 The answer of `GET /api/v1/graph?scope=change:<id>&closed=show|collapse` holds positions in abstract
-units: `x` is the layer and `y` a row, and the client scales both to its node size. `scope=ready` and
-`scope=bead:<id>` answer 501 until their task lands, and a malformed query answers 400. Layouts are
-kept in memory, at most 32, and only until Beads change.
+units: `x` is the layer and `y` a row, and the client scales both to its node size. A malformed query
+answers 400. Layouts are kept in memory, at most 32, and only until Beads change.
 
 ## Graph navigation
+
+The graph opens on the **ready frontier**: the Beads that `bd ready` returns, which is small and
+shows what can start now. Three scopes are one tap apart, and the route carries the scope, so a link
+or a reload keeps it.
+
+| Scope | Route | Shows |
+|---|---|---|
+| Ready frontier (default) | `#/graph` or `#/graph?scope=ready` | the Beads `bd ready` returns, and the `blocks` edges between them |
+| Neighbourhood of a Bead | `#/graph?scope=bead&id=<ID>&depth=<1 to 5>` | the Beads that block it, up to `depth` steps upstream, and the Beads it blocks, up to `depth` steps downstream |
+| One change | `#/graph?scope=change&id=<change>` | the flow described above; without an `id` it lists the changes |
+
+The neighbourhood follows the blockers and the blocked Beads on their own, so a Bead that merely
+shares a blocker with the centre does not appear. The centre has a thicker outline. "Open in graph"
+in a Bead's detail links to the neighbourhood at depth 2. A Bead ID the data does not hold shows an
+empty graph. Closed Beads collapse and expand as in a change: activate a *3 closed Beads* group, or
+use *Show closed Beads*, to see them. The 80-node cap still applies, so a very large scope keeps
+some Beads folded.
+
+The API is `GET /api/v1/graph?scope=ready`, `scope=bead:<id>&depth=<n>` or `scope=change:<id>`, each
+with `closed=show|collapse`. The depth counts only for `bead:` and defaults to 1, and a depth outside
+1 to 5 answers 400.
+
+**Mouse.** Drag pans, a click selects a Bead and opens its detail, and the wheel zooms at the cursor.
+
+**Touch.** One finger pans, two fingers pinch to zoom, a tap selects, and a double tap zooms in 2×.
+The graph area takes the touch, so the page does not scroll or zoom there. On a phone held upright the first view keeps the height of the
+flow and starts at the first layer with open work. *Layer 2 of 7* with the two arrows beside it moves
+one layer at a time.
+
+**Keyboard.** Focus the graph, then the arrow keys move between Beads, Shift with an arrow pans, `+`
+and `-` zoom, `0` fits the graph to the screen, and Enter opens the detail of the focused Bead.
+
+**Buttons.** *Zoom in*, *Zoom out* and *Fit* are 44 pixels high. *Show list* swaps the picture for an
+ordered list in dependency order, each Bead with its status and "Blocked by: …". It carries the same
+information for a screen reader. With `prefers-reduced-motion` set, zooming and panning jump instead
+of gliding.
