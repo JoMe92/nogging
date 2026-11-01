@@ -77,6 +77,64 @@ this does not protect against.
 
 ## Interface
 
+The page is a shell of static files that holds no data. It works on a desktop browser and on a
+phone at 360 CSS pixels, with touch targets of 44 by 44 pixels, and it has no control that writes.
+
+**Navigation.** Three views live behind hash routes, so the server needs no fallback:
+`#/` (Overview), `#/beads?…` (the table) and `#/graph?scope=&id=`. A `bead=<ID>` parameter on any
+route opens the one detail panel on top of that view. On a desktop the tabs sit in the header. On a
+phone they are a fixed bar at the bottom with safe-area padding. The search field sends `q` to the
+Bead table. A skip link, landmarks and a polite live region for freshness serve screen readers, and
+every control is reachable by keyboard. Focus returns to the control that opened a sheet.
+
+**Freshness.** The header chip shows when the data was last updated. It polls
+`/api/v1/freshness` every 10 seconds while the tab is visible, stops while it is hidden and polls at
+once when it returns. With data saving on (`prefers-reduced-data`) it does not poll by itself, and
+Poppins is replaced by the system font. Choosing the chip opens a sheet with each source's state and
+a "Refresh now" button, which is one more read and starts nothing on the server. The states:
+
+| Situation | What the page shows |
+|---|---|
+| Data older than 5 minutes | Banner: "Data may be stale, last update 12:04" |
+| The server does not answer | Banner: "Server not reachable. Showing data from 12:04." |
+| `bd` cannot be read | Full page "Beads are not reachable" with Retry |
+| No valid session | Full page: open the access link from the host again |
+| Plain HTTP on a non-loopback address | Banner: "Unencrypted connection" |
+
+**Themes.** System, Light or Dark, chosen in the header and remembered in this browser under
+`nogging-theme`. It applies at once. System follows `prefers-color-scheme`. The tokens are in
+`scripts/dashboard/tokens.css`, taken from the docs site colour scheme. Text keeps 4.5:1 contrast and
+controls and marks keep 3:1 in both themes, which `scripts/lib/dashboard_tokens_test.py` recomputes
+from that file. Breakpoints: phone under 600, tablet 600 to 959, desktop 960 to 1439, wide from 1440.
+
+**Status without colour.** Every status has its own shape as well as its colour: open is a hollow
+circle, ready a triangle, in progress a half-filled circle, blocked an octagon with a bar, deferred a
+dashed diamond and closed a check in a square. Priority is text, `P0` to `P4`.
+
+**Text is text.** The client builds every value from the API as a text node. No script uses
+`innerHTML` or an equivalent, and a test scans the scripts for one. The policy also forbids inline
+script and style.
+
+**For a view author.** A view registers itself and does not edit shared files:
+
+```js
+window.noggingApp.registerView("beads", {
+  mount(container, ctx) {          // ctx: params, store, panel, link, openDetail, format, dom
+    const panel = ctx.panel({ title: "Beads" });
+    container.appendChild(panel.element);
+    panel.load("beads", "/api/v1/beads", (envelope) => /* nodes */);
+  },
+  unmount() {},                    // optional
+});
+```
+
+`panel.set(state, info)` takes one of five states: `loading`; `ready` (a node or a list of nodes);
+`gap` (`{since}`, shown as "No data before {date}", never a zero); `empty` (text); `error`
+(`{message, retry}`). `store.get(name, path)` caches one response per name and
+`store.subscribe(fn)` reports the sources whose generation changed. `registerView("detail", {open(id),
+close()})` provides the detail panel. `dom.statusBadge(status)` and `dom.priorityChip(n)` give the
+shared look.
+
 ## Data
 
 ## Usage data
