@@ -1,0 +1,94 @@
+/* The Bead detail (TASK-DSH-006). From 600 px a 480 px panel on the right with a backdrop; below
+   that the whole screen. Every control is at least 44 px (--target) high, nothing makes the page
+   scroll sideways, and the panel scrolls inside itself. The notes clamp to 12 lines until
+   "Show all". Motion is not used, so prefers-reduced-motion needs no override. */
+.detail-root { position: fixed; inset: 0; z-index: 60; }
+.detail-backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.45); }
+.detail {
+  position: absolute; inset: 0; display: flex; flex-direction: column; min-width: 0;
+  background: var(--bg); color: var(--text);
+}
+@media (min-width: 600px) {
+  .detail { left: auto; width: min(480px, 100vw); border-left: 1px solid var(--border); }
+}
+.detail-head {
+  flex: none; display: flex; align-items: flex-start; gap: var(--space-3);
+  padding: var(--space-3) var(--space-4); padding-top: calc(var(--space-3) + env(safe-area-inset-top));
+  background: var(--surface); border-bottom: 1px solid var(--border);
+}
+.detail-head h2 { flex: 1 1 auto; min-width: 0; margin: 0; font-size: var(--type-4); overflow-wrap: anywhere; }
+.detail-head h2:focus { outline: none; }
+.detail-head h2:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.detail-close { flex: none; }
+.detail-body {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain;
+  padding: var(--space-4); padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom));
+  display: grid; gap: var(--space-4); align-content: start;
+}
+.detail-body > * { min-width: 0; }
+
+.detail-head-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); }
+.detail-ready { padding: 0 var(--space-2); border: 1px solid var(--status-ready); border-radius: 999px;
+  color: var(--status-ready); font-size: var(--type-1); font-weight: 600; }
+.detail-type { color: var(--text-2); }
+.detail-id { font-family: var(--font-mono); font-size: var(--type-2); overflow-wrap: anywhere; }
+.detail-times { flex: 1 1 100%; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px var(--space-3);
+  margin: var(--space-2) 0 0; color: var(--text-2); font-size: var(--type-2); }
+.detail-times dt { font-weight: 600; }
+.detail-times dd { margin: 0; }
+
+.detail-block { padding: var(--space-3) var(--space-4); background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); }
+.detail-block-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between;
+  gap: var(--space-1) var(--space-3); margin-bottom: var(--space-2); }
+.detail-block h3 { margin: 0; font-size: var(--type-3); }
+.detail-block h4 { margin: var(--space-2) 0 var(--space-1); font-size: var(--type-2); }
+.detail-fresh { color: var(--text-2); font-size: var(--type-1); }
+.detail-note { margin: 0; color: var(--text-2); }
+
+/* Bead text is text: line breaks stay, nothing is parsed, long words wrap. */
+.detail-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.detail-clamped { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 12; line-clamp: 12; overflow: hidden; }
+.detail-more { margin-top: var(--space-2); }
+.detail-ref { color: var(--link); text-decoration: underline; }
+.detail-sha { font-family: var(--font-mono); }
+
+.detail-deps ul, .detail-commits, .detail-labels, .detail-cards { margin: 0; padding: 0; list-style: none; }
+.detail-deps li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3); }
+.detail-dep { display: flex; flex: 1 1 14rem; min-width: 0; align-items: center; gap: var(--space-2); min-height: var(--target);
+  color: var(--text); text-decoration: none; }
+.detail-dep:hover .detail-dep-title { text-decoration: underline; }
+.detail-dep code { font-family: var(--font-mono); font-size: var(--type-1); flex: none; }
+.detail-dep-title { min-width: 0; overflow-wrap: anywhere; }
+.detail-graph { display: inline-flex; align-items: center; min-height: var(--target); color: var(--link); font-size: var(--type-2); }
+.detail-open-graph { margin-top: var(--space-3); }
+
+.detail-labels { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.detail-labels li { padding: 2px var(--space-2); border: 1px solid var(--border); border-radius: 999px;
+  background: var(--surface-2); font-size: var(--type-1); overflow-wrap: anywhere; }
+
+.detail-commits li { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px var(--space-3);
+  padding: var(--space-2) 0; border-bottom: 1px solid var(--border); }
+.detail-commits li:focus { outline: none; }
+.detail-commits li:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.detail-subject { overflow-wrap: anywhere; }
+.detail-lines, .detail-commits time { grid-column: 2; color: var(--text-2); font-size: var(--type-1); }
+.detail-total { margin: var(--space-2) 0 0; color: var(--text-2); font-size: var(--type-2); }
+
+/* Sessions: cards on a phone, a table from 600 px. The table scrolls inside its own region. */
+.detail-scroll { display: none; overflow-x: auto; }
+.detail-sessions { border-collapse: collapse; min-width: 44rem; font-size: var(--type-2); }
+.detail-sessions th, .detail-sessions td { padding: var(--space-1) var(--space-3) var(--space-1) 0; text-align: left;
+  vertical-align: top; border-bottom: 1px solid var(--border); }
+.detail-card { padding: var(--space-3) 0; border-bottom: 1px solid var(--border); }
+.detail-card dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px var(--space-3); margin: var(--space-2) 0 0; }
+.detail-card dt { color: var(--text-2); }
+.detail-card dd { margin: 0; overflow-wrap: anywhere; }
+@media (min-width: 600px) {
+  .detail-scroll { display: block; }
+  .detail-cards { display: none; }
+}
+
+.detail-kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--space-1) var(--space-4); margin: 0 0 var(--space-2); }
+.detail-kv dt { color: var(--text-2); }
+.detail-kv dd { margin: 0; font-variant-numeric: tabular-nums; }

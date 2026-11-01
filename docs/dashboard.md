@@ -333,6 +333,54 @@ live acceptance of the dashboard records that check.
 
 ## Detail
 
+Clicking a Bead in any view opens its detail. The address gains `bead=<ID>` (for example
+`#/beads?status=open&bead=SPEC-abc123`), so a link opens the same detail and the browser's back
+button closes it. The data comes from `/api/v1/beads/<id>`, built from the snapshots the server
+already holds, so a request starts no `bd`, Git or Dolt call. An ID that no Bead has answers 404
+once the Bead list is loaded; before that the answer is a 200 with `bead: null` and the Beads
+source state `loading`.
+
+**Layout.** On a screen of 600 px or more it is a 480 px panel on the right; below that it takes
+the whole screen. Focus moves into the panel, everything behind it is inert, Escape or the Close
+button ends it, and focus goes back to what opened it. Opening another Bead from inside the panel
+(a dependency or a Bead ID in a note) keeps that first trigger.
+
+**Order.** Header (status, priority, type, ID, a Ready badge, change and the four times), description,
+notes, close reason, dependencies, labels, commits, sessions, tokens, test cost. A field with no
+value reads "Not recorded". The notes are cut to 12 lines with a "Show all" button, which only
+appears when the text is longer.
+
+**Dependencies** are listed by direction, "Depends on" and "Blocks", each with the other Bead's
+status and an "Open in graph" link. A dependency on a Bead that is no longer in the list keeps its
+ID and shows no title or status.
+
+**Evidence blocks.** Commits, sessions, tokens and test cost each carry the state and time of the
+source behind them, so a stale token source marks the token block and nothing else. A block whose
+source gave no snapshot says so (still loading, could not be read, not available here) and shows
+no list, so an unread source is never read as "none".
+
+- **Commits** are the commits whose subject carries `[<id>]`, oldest first, with SHA, subject and
+  production and test lines and their totals. A rebased or cherry-picked copy (same author time and
+  subject) counts once.
+- **Sessions** are the records on this host that name the Bead. With none, the block says that
+  session records are host-local, not "none": work from another machine does not appear.
+  Fields are the allow-listed session fields; the duration is end minus start and shows "Running"
+  for a running session and "Not recorded" when a time is missing or runs backwards. From 600 px the
+  sessions are a table that scrolls inside its own region; below that they are cards.
+- **Tokens** are the known work counters of the Bead. A Bead with no usage event shows "No usage
+  event", never zero. Counters that some events lack, partial runtime history and batches waiting
+  for collection are named under the numbers.
+- **Test cost** is the seconds per test stage summed over the runs that ran, and the run count.
+
+**Text is text.** Every value enters the page as a text node. Descriptions, notes and close reasons
+keep their line breaks (`white-space: pre-wrap`); Markdown and HTML are shown literally, so a note
+holding a `<script>` tag shows those characters and runs nothing. The only links inside text are a
+known Bead ID, which opens that Bead's detail, and a SHA of this Bead's own commits, which jumps to
+that commit row. A URL is never turned into a link. The assignee is never shown.
+
+Not covered by an automated test: how the panel looks and behaves in a browser. The server side is
+tested; the rendering, the focus handling and the phone layout belong to the live acceptance.
+
 ## Overview
 
 The start page answers "how is the work going" from metadata, in six panels. It reads

@@ -151,8 +151,11 @@ def render_api(server, name, sources, build, memo=None, expect=()):
         statuses = {**{name: {"state": "absent", "as_of": None, "generation": 0}
                        for name in expect if name not in statuses}, **statuses}
         as_of = max((item["as_of"] for item in statuses.values() if item["as_of"]), default=None)
+        data = build(snapshots, statuses)
+        if data is None:                          # a builder's "no such thing": a plain 404
+            return api_error(server, 404)
         doc = {"schema": f"nogg.dashboard.{name}/v1", "as_of": as_of or iso(server.wall_clock()),
-               "sources": statuses, "data": build(snapshots, statuses)}
+               "sources": statuses, "data": data}
         body = json.dumps(doc, sort_keys=True).encode()
         return Response(200, body, gzipped=gzip.compress(body, mtime=0))
     return server.refresher.render(memo or name, sources, make)
@@ -173,7 +176,13 @@ def route_changes(server, request):
 
 
 def route_bead_detail(server, request):
-    return api_error(server, 501)
+    """One Bead with its evidence, built from the snapshots. An unknown ID is a 404 once the
+    Bead list is loaded; the response is memoised per Bead and per change of the sources."""
+    identifier = request.match.group("id")
+    names = model.DETAIL_SOURCES
+    return render_api(server, "bead", [name for name in names if name in server.refresher.cells],
+                      lambda snapshots, statuses: model.bead_detail(snapshots, identifier, statuses),
+                      memo=f"bead/{identifier}", expect=names)
 
 
 def route_summary(server, request):

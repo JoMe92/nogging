@@ -332,7 +332,7 @@ class Requests(Harness):
 
     def test_a_malformed_bead_id_has_no_route(self):
         self.start()
-        self.assertEqual(self.call("/api/v1/beads/SPEC-bj7s")[0], 501)
+        self.assertEqual(self.call("/api/v1/beads/SPEC-bj7s")[0], 200)      # routed; no Bead source here
         for path in ("/api/v1/beads/a%2fb", "/api/v1/beads/..", "/api/v1/beads/" + "a" * 65,
                      "/api/v1/beads/a/b", "/api/v1/beads/"):
             self.assertEqual(self.call(path)[0], 404, path)
