@@ -13,7 +13,8 @@ import re
 import subprocess
 
 # StoreTimeout/StoreUnavailable are re-exported for nogg's bounded readers.
-from token_usage_store import FIELDS, JSON_FIELDS, StoreError, StoreTimeout, StoreUnavailable, fact  # noqa: F401
+from token_usage_store import (FIELDS, JSON_FIELDS, LeaseAbsent, LeaseBusy, StoreError, StoreTimeout,  # noqa: F401
+                               StoreUnavailable, fact)
 
 REPORT_SCHEMA = 'nogg.token-usage.report/v1'
 SESSION_SCHEMA = 'nogg.token-usage.session/v1'
@@ -43,6 +44,8 @@ PER_LINE = ('fresh_input_tokens', 'output_tokens', 'total_tokens')
 BEAD_TOKEN_RE = re.compile(r'\[([^\[\]\s]+)\]')
 TEST_PATH_RE = re.compile(r'(^|/)(tests?|__tests__|fixtures|testdata)/|\.(test|spec)\.[^/]+$|_test\.(py|go)$'
                           r'|(^|/)test_[^/]*\.py$')
+# Every fact: report() defaults to the current UTC day, and its window is half-open.
+WHOLE_HISTORY = (dt.datetime(1970, 1, 1, tzinfo=dt.timezone.utc), dt.datetime(9999, 1, 1, tzinfo=dt.timezone.utc))
 GENERATED_PATH_RE = re.compile(r'(^|/)(openspec|\.beads)/|(^|/)(package-lock\.json|npm-shrinkwrap\.json|yarn\.lock'
                                r'|pnpm-lock\.yaml|bun\.lockb?|Cargo\.lock|poetry\.lock|uv\.lock|Pipfile\.lock'
                                r'|Gemfile\.lock|composer\.lock|go\.sum)$')
@@ -343,59 +346,102 @@ def _git_runner(repo, timeout, run):
     return git
 
 
-def bead_commit_map(git, beads):
-    """{sha: [bead, ...]} of the commits whose subject carries `[<bead>]`, or
-    None when git cannot answer.
+def commit_log(git):
+    """[(sha, author time, subject)], newest first, or None when git cannot answer.
 
     Commits come from every local and remote-tracking branch and tag (not
     stash, notes or Beads' refs/dolt/*), merges excluded; a rebased or
-    cherry-picked copy (same author time and subject) counts once, and a
-    commit naming several Beads counts for each."""
+    cherry-picked copy (same author time and subject) counts once."""
     log = git('log', '--branches', '--remotes', '--tags', '--no-merges', '--format=%H%x1f%at%x1f%s')
     if log is None:
         return None
-    wanted, seen = {}, set()
+    rows, seen = [], set()
     for line in log.splitlines():
         sha, _, rest = line.partition('\x1f')
         stamp, _, subject = rest.partition('\x1f')
-        tokens = [t for t in dict.fromkeys(BEAD_TOKEN_RE.findall(subject)) if t in beads]
-        if tokens and (stamp, subject) not in seen:
+        if (stamp, subject) not in seen:
             seen.add((stamp, subject))
-            wanted[sha] = tokens
-    return wanted
+            rows.append((sha, stamp, subject))
+    return rows
 
 
-def bead_git_lines(repo, beads, timeout=30, run=subprocess.run):
-    """{bead: {commits, production_lines, test_lines}} from the commits whose
-    subject carries `[<bead>]` (bead_commit_map), or None when git cannot
-    answer. Lines are numstat added + deleted per file, classified by
-    classify_path; binary files count 0."""
-    beads = {b for b in beads if b}
-    out = {b: {'commits': 0, 'production_lines': 0, 'test_lines': 0} for b in beads}
-    if not beads:
-        return out
-    git = _git_runner(repo, timeout, run)
-    wanted = bead_commit_map(git, beads)
-    if wanted is None:
+def subject_beads(subject, beads):
+    """The `[<bead>]` tokens of a subject that `beads` knows, each once."""
+    return [t for t in dict.fromkeys(BEAD_TOKEN_RE.findall(subject)) if t in beads]
+
+
+def bead_commit_map(git, beads):
+    """{sha: [bead, ...]} of the commits of commit_log whose subject carries
+    `[<bead>]`, or None when git cannot answer. A commit naming several Beads
+    counts for each."""
+    rows = commit_log(git)
+    if rows is None:
         return None
-    if not wanted:
-        return out
+    tagged = ((sha, subject_beads(subject, beads)) for sha, _, subject in rows)
+    return {sha: tokens for sha, tokens in tagged if tokens}
+
+
+def commit_numstat(git, shas, known):
+    """Fill `known` with {sha: {production, test, generated}} for `shas`, asking git
+    only for the commits not in it (a commit never changes); False when git cannot
+    answer. Lines are numstat added + deleted per file, classified by classify_path;
+    binary files count 0."""
+    missing = [sha for sha in shas if sha not in known]
+    if not missing:
+        return True
     stat = git('log', '--no-walk=unsorted', '--stdin', '-M', '--numstat', '--format=%x1e%H',
-               stdin='\n'.join(wanted) + '\n')
+               stdin='\n'.join(missing) + '\n')
     if stat is None:
-        return None
+        return False
     for chunk in stat.split('\x1e')[1:]:
         lines = chunk.splitlines()
-        tokens = wanted.get(lines[0].strip() if lines else None, [])
         counts = {'production': 0, 'test': 0, 'generated': 0}
         for entry in lines[1:]:
             parts = entry.split('\t', 2)
             if len(parts) == 3 and parts[0].isdigit() and parts[1].isdigit():
                 counts[classify_path(numstat_path(parts[2]))] += int(parts[0]) + int(parts[1])
-        for token in tokens:
+        if lines:
+            known[lines[0].strip()] = counts
+    return True
+
+
+def bead_commits(repo, beads, timeout=30, run=subprocess.run, numstat=None):
+    """{'commits': [...], 'tokenless': n}, or None when git cannot answer.
+
+    One entry per commit carrying a token `beads` knows: {sha, at, subject,
+    beads, production_lines, test_lines}, with `at` the author time in epoch
+    seconds. `tokenless` counts the other commits of commit_log. `numstat` is
+    an optional cache of commit_numstat that the caller keeps between calls."""
+    git = _git_runner(repo, timeout, run)
+    rows = commit_log(git)
+    if rows is None:
+        return None
+    tagged = [(sha, stamp, subject, subject_beads(subject, beads)) for sha, stamp, subject in rows]
+    found = [row for row in tagged if row[3]]
+    known = {} if numstat is None else numstat
+    if not commit_numstat(git, [row[0] for row in found], known):
+        return None
+    return {'commits': [{'sha': sha, 'at': int(stamp), 'subject': subject, 'beads': tokens,
+                         'production_lines': known[sha]['production'], 'test_lines': known[sha]['test']}
+                        for sha, stamp, subject, tokens in found if sha in known],
+            'tokenless': len(tagged) - len(found)}
+
+
+def bead_git_lines(repo, beads, timeout=30, run=subprocess.run):
+    """{bead: {commits, production_lines, test_lines}} from the commits whose
+    subject carries `[<bead>]` (bead_commits), or None when git cannot answer."""
+    beads = {b for b in beads if b}
+    out = {b: {'commits': 0, 'production_lines': 0, 'test_lines': 0} for b in beads}
+    if not beads:
+        return out
+    found = bead_commits(repo, beads, timeout, run)
+    if found is None:
+        return None
+    for commit in found['commits']:
+        for token in commit['beads']:
             out[token]['commits'] += 1
-            out[token]['production_lines'] += counts['production']
-            out[token]['test_lines'] += counts['test']
+            out[token]['production_lines'] += commit['production_lines']
+            out[token]['test_lines'] += commit['test_lines']
     return out
 
 
@@ -568,6 +614,39 @@ def report(facts, meta, start, end, group_by, filters, now, context=None):
     if group_by == 'bead':
         bead_view(doc, context.get('bead_lines'), context.get('bead_tests'), context.get('stage_seconds'))
     return doc
+
+
+def usage_views(facts, start, end):
+    """Known work by day and by model, additive to report().
+
+    {'by_day': {day: {runtime: work}}, 'by_model': {model: work}, 'floors':
+    {runtime: earliest fact}, 'partial': [runtime]}. Days are report()'s day
+    buckets: cumulative-only consumption across a day boundary is never split,
+    so it stays out of the days and names its runtime as partial, as does an
+    untimed fact, an unprovable fresh input or output, or a fact its adapter
+    calls incomplete. A floor spans every timed fact, whatever the window."""
+    by_day, by_model, floors, partial = {}, {}, {}, set()
+    for usage in Model(facts).usage:
+        runtime = usage.get('runtime') or 'unknown'
+        stamp = ts(usage.get('source_timestamp'))
+        if stamp is None:
+            partial.add(runtime)
+            continue
+        floors[runtime] = min(stamp, floors.get(runtime, stamp))
+        if not start <= stamp < end:
+            continue
+        add_work(by_model.setdefault(usage.get('model') or 'unknown', empty_work()), usage)
+        if fresh_input(usage) is None or usage.get('output_tokens') is None \
+                or usage.get('completeness') in ('partial', 'inconsistent'):
+            partial.add(runtime)
+        observed_from = coarse_interval(usage)
+        if observed_from is not None and bucket_start(observed_from, 'day') != bucket_start(stamp, 'day'):
+            partial.add(runtime)
+            continue
+        day = bucket_start(stamp, 'day').date().isoformat()
+        add_work(by_day.setdefault(day, {}).setdefault(runtime, empty_work()), usage)
+    return {'by_day': by_day, 'by_model': by_model, 'floors': {r: iso(s) for r, s in floors.items()},
+            'partial': sorted(partial)}
 
 
 TEST_COST_STAGES = ('changed', 'commit', 'bead', 'full')

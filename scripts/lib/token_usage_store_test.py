@@ -173,7 +173,7 @@ class ReadLeaseTests(unittest.TestCase):
         self.store.database.mkdir(mode=0o700)
         stub = self.state / 'bin'
         stub.mkdir()
-        (stub / 'dolt').write_text('#!/bin/sh\nfor f in /proc/$$/fd/*; do readlink "$f"; done\n')
+        (stub / 'dolt').write_text('#!/bin/sh\nfor f in /proc/$$/fd/*; do readlink "$f"; done\nexit 0\n')
         (stub / 'dolt').chmod(0o755)
         with mock.patch.dict(os.environ, {'PATH': f"{stub}{os.pathsep}{os.environ['PATH']}"}):
             with self.store.read_lease():
