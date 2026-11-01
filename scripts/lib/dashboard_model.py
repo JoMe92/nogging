@@ -281,3 +281,88 @@ def change_list(snapshot):
         rows.append({"change": change, "total": sum(groups[change].values()), "ready": ready_counts[change],
                      "by_status": groups[change]})
     return {"changes": rows}
+
+
+# --- the Bead detail ---------------------------------------------------------------
+
+DETAIL_SOURCES = ("beads", "sessions", "tests", "git", "tokens")
+DETAIL_FIELDS = tuple(name for name in BEAD_FIELDS if name not in ("dependencies",)) + ("change", "ready")
+
+
+def _block(statuses, name, snapshot, content):
+    """One evidence block: the source it came from, that source's state and time, and the
+    `content` built from its snapshot. A source with no snapshot (absent, loading or down)
+    leaves the content out, so a client says why and never shows an empty block as "none"."""
+    status = (statuses or {}).get(name) or {}
+    block = {"source": name, "state": status.get("state", "absent"), "as_of": status.get("as_of"),
+             "available": snapshot is not None}
+    if snapshot is not None:
+        block.update(content(snapshot))
+    return block
+
+
+def _neighbour(beads, identifier, kind):
+    """The dependency entry as the detail shows it: the other Bead's ID, title and status.
+    A Bead that is not in the list (a deleted one) keeps its ID and has no title or status."""
+    other = beads.get(identifier) or {}
+    return {"id": identifier, "title": other.get("title"), "status": other.get("status"), "type": kind}
+
+
+def dependency_blocks(snapshot, identifier):
+    """{depends_on, blocks}: what this Bead waits for, and what waits for it. The
+    entries of the Bead's own `dependencies` point away from it; the entries of the other
+    Beads that name it point toward it."""
+    beads = {bead["id"]: bead for bead in snapshot.get("beads") or ()}
+    mine = beads[identifier]
+    depends_on = [_neighbour(beads, entry["depends_on_id"], entry.get("type"))
+                  for entry in mine.get("dependencies") or () if entry["issue_id"] == identifier]
+    blocks = [_neighbour(beads, entry["issue_id"], entry.get("type"))
+              for other in beads.values() for entry in other.get("dependencies") or ()
+              if entry["depends_on_id"] == identifier and entry["issue_id"] != identifier]
+    order = lambda item: item["id"]
+    return {"depends_on": sorted(depends_on, key=order), "blocks": sorted(blocks, key=order)}
+
+
+def bead_detail(snapshots, identifier, statuses=None):
+    """`data` of /api/v1/beads/<id>, or None when the Bead snapshot has no such Bead.
+    Without a Bead snapshot (the source is loading or down) `bead` is null and the envelope's
+    source state says why. Each evidence block carries its own source state, so a stale token
+    source marks the token block and nothing else."""
+    beads = snapshots.get("beads")
+    if beads is None:
+        return {"bead": None, "dependencies": None}
+    bead = next((item for item in beads.get("beads") or () if item["id"] == identifier), None)
+    if bead is None:
+        return None
+    ready = identifier in set(beads.get("ready") or ())
+    shown = {name: bead.get(name) for name in DETAIL_FIELDS if name not in ("change", "ready")}
+    shown["change"], shown["ready"] = change_of(bead), ready
+
+    def commits(git):
+        found = sorted((commit for commit in git.get("commits") or () if identifier in (commit.get("beads") or ())),
+                       key=lambda commit: (commit["at"], commit["sha"]))
+        rows = [{name: commit.get(name) for name in ("sha", "at", "subject", "production_lines", "test_lines")}
+                for commit in found]
+        return {"commits": rows, "floor": git.get("floor"),
+                "production_lines": sum(row["production_lines"] or 0 for row in rows),
+                "test_lines": sum(row["test_lines"] or 0 for row in rows)}
+
+    def sessions(snapshot):
+        found = [item for item in snapshot.get("sessions") or () if item.get("bead_id") == identifier]
+        return {"sessions": sorted(found, key=lambda item: (item.get("started_at") or "", item["name"])),
+                "floor": snapshot.get("floor"), "scope": "host"}
+
+    def tokens(snapshot):
+        return {"work": (snapshot.get("by_bead") or {}).get(identifier), "floors": snapshot.get("floors"),
+                "partial": snapshot.get("partial"), "pending_batches": snapshot.get("pending_batches")}
+
+    def tests(snapshot):
+        records = [record for record in snapshot.get("records") or () if record.get("bead") == identifier]
+        stages = (snapshot.get("stage_seconds") or {}).get(identifier)
+        return {"runs": len(records), "stage_seconds": stages, "floor": snapshot.get("floor")}
+
+    return {"bead": shown, "dependencies": dependency_blocks(beads, identifier),
+            "commits": _block(statuses, "git", snapshots.get("git"), commits),
+            "sessions": _block(statuses, "sessions", snapshots.get("sessions"), sessions),
+            "tokens": _block(statuses, "tokens", snapshots.get("tokens"), tokens),
+            "tests": _block(statuses, "tests", snapshots.get("tests"), tests)}
