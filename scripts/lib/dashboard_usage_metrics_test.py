@@ -62,11 +62,13 @@ class AgentHours(unittest.TestCase):
     def test_days_before_the_first_session_are_a_gap_and_later_days_without_one_are_zero(self):
         block = usage(sessions=sessions(session("a", "2026-10-30T08:00:00Z", "2026-10-30T09:00:00Z"))
                       )["agent_hours"]
-        self.assertEqual(block["days"][0], "2026-10-30")
+        self.assertEqual(block["days"][0], "2026-10-30")             # the whole history starts at the floor
         self.assertEqual(block["values"], [1.0, 0.0, 0.0])           # from the floor on: covered
         ranged = metrics.summary_view({"sessions": sessions(session("a", "2026-10-30T08:00:00Z", "2026-10-30T09:00:00Z"))},
                                       NOW, "30d")["agent_hours"]
-        self.assertEqual(ranged["days"][0], "2026-10-30")             # nothing before the floor is drawn
+        self.assertEqual(ranged["days"][0], "2026-10-03")             # the window opens before the floor
+        self.assertEqual(ranged["values"][:27], [None] * 27)         # ... and those days are a gap
+        self.assertEqual(ranged["values"][27], 1.0)
 
     def test_a_backwards_or_untimed_session_is_excluded_and_counted(self):
         block = usage(sessions=sessions(
@@ -128,6 +130,13 @@ class Tokens(unittest.TestCase):
         block = usage(tokens={"by_bead": {}, "by_model": {}, "floors": {}, "by_day": {}, "partial": ["pi"]})["tokens"]
         self.assertEqual((block["state"], block["headline"]), ("empty", None))
 
+    def test_tokens_start_later_than_the_range_so_the_early_days_are_a_gap(self):
+        block = metrics.summary_view({"tokens": self.snapshot()}, NOW, "7d")["tokens"]
+        by_name = {row["runtime"]: row for row in block["runtimes"]}
+        self.assertEqual(block["days"][0], "2026-10-26")
+        self.assertEqual(by_name["claude"]["values"], [None, None, None, None, 120, 60, 0])
+        self.assertEqual(by_name["pi"]["values"], [None] * 5 + [6, 0])
+
     def test_a_range_before_every_floor_has_no_known_total(self):
         later = self.snapshot(floors={"claude": "2026-12-01T00:00:00Z"}, by_day={}, partial=[])
         block = usage(tokens=later)["tokens"]
@@ -161,7 +170,7 @@ class Commits(unittest.TestCase):
         git = self.git({"sha": "a", "at": "2026-08-01T09:00:00Z", "beads": ["SPEC-a"], "production_lines": 9, "test_lines": 1})
         block = metrics.summary_view({"git": git}, NOW, "7d")["commits"]
         self.assertEqual(block["totals"]["commits"], 0)
-        self.assertEqual(block["days"][0], "2026-10-26")
+        self.assertEqual((block["days"][0], block["commits"][:4]), ("2026-10-26", [0, 0, 0, 0]))   # floor in August: covered, so 0
 
 
 class TestCost(unittest.TestCase):

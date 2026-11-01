@@ -286,14 +286,13 @@ def _rounded(value, places=2):
     return None if value is None else round(value, places)
 
 
-def _span(first_day_floor, window, now):
-    """(first, last) day of a series: the window start, but never before the series' floor
-    (earlier days are not drawn at all, the page says where the records begin), to today."""
+def _span(floor, window, now):
+    """(first, last) day of a series: the window's first day, or the series' floor for the whole
+    history, to today. A window that opens before the floor keeps its early days, whose values
+    are gaps, so the chart says where the records begin instead of starting late."""
     last = day_of(now)
-    first = day_of(window) if window else first_day_floor
-    if first_day_floor and first_day_floor > first:
-        first = first_day_floor
-    return (min(first or last, last)), last
+    first = day_of(window) if window else floor
+    return min(first or last, last), last
 
 
 def agent_hours_block(sessions, window, now):
