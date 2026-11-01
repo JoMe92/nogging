@@ -237,7 +237,7 @@ defaults:
     values:
       parent: Guides
       nav_order: 12
-      description: An optional read-only web view of Beads, sessions and tests, on a private address, with a token for every network bind.
+      description: An optional read-only web view of Beads, their graph, sessions, tokens, commits and tests, on a private address, with a token for every network bind.
   - scope:
       path: "pi-extensions.md"
     values:
