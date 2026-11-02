@@ -13,7 +13,7 @@ fi
 PYTHONDONTWRITEBYTECODE=1 python3 - "$root" <<'PY'
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
-import json, os, select, signal, socket, stat, subprocess, sys, tempfile, threading, time, urllib.request
+import json, os, pty, select, signal, socket, stat, subprocess, sys, tempfile, threading, time, urllib.request
 
 source = Path(sys.argv[1])
 nogg = source / "scripts/nogg"
@@ -39,8 +39,59 @@ def repository(path):
 
 
 def run(repo, *args, env=None):
+    """No terminal: stdin is /dev/null, as for an agent's tool call or `ssh host cmd`."""
     return subprocess.run([sys.executable, str(nogg), *args], text=True, capture_output=True, timeout=120,
-                          env={**os.environ, "NOGGING_ROOT": str(repo), **(env or {})})
+                          stdin=subprocess.DEVNULL, env={**os.environ, "NOGGING_ROOT": str(repo), **(env or {})})
+
+
+LOGIN = "0::/user.slice/user-1000.slice/session-3.scope\n"
+APP_SLICE = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/run-u7.scope\n"
+# `nogg` in its own process, with the host facts of the operator-terminal test injected
+# there: no environment variable can stand in for them, so no test hook can lift the rule.
+DRIVER = """
+import json, sys
+from importlib.machinery import SourceFileLoader
+facts = json.loads(sys.argv[2])
+module = SourceFileLoader("nogg_on_terminal", sys.argv[1]).load_module()
+module.read_login_cgroup = lambda: facts["cgroup"]
+module.session_server_processes = lambda: [tuple(server) for server in facts["servers"]]
+sys.argv = ["nogg", *facts["args"]]
+try:
+    module.main()
+except Exception as exc:
+    print(f"nogg: {exc}", file=sys.stderr)
+    sys.exit(1)
+"""
+
+
+def on_terminal(repo, *args, cgroup=LOGIN, servers=(), piped=False, env=None):
+    """(exit code, terminal output, piped stdout) of `nogg` with a pseudo-terminal on stdin
+    and stderr, and on stdout unless `piped`. Only refusals run here: nothing stays bound."""
+    master, slave = pty.openpty()
+    facts = json.dumps({"args": list(args), "cgroup": cgroup, "servers": [list(s) for s in servers]})
+    environment = {key: value for key, value in os.environ.items() if key != "NOGG_SESSION_NAME"}
+    environment.update(NOGGING_ROOT=str(repo), **(env or {}))
+    process = subprocess.Popen([sys.executable, "-c", DRIVER, str(nogg), facts], stdin=slave, stderr=slave,
+                               stdout=subprocess.PIPE if piped else slave, env=environment)
+    os.close(slave)
+    output = b""
+    while True:
+        ready, _, _ = select.select([master], [], [], 60)
+        if not ready:
+            process.kill()
+            break
+        try:
+            chunk = os.read(master, 4096)
+        except OSError:            # EIO: the child has closed the terminal
+            break
+        if not chunk:
+            break
+        output += chunk
+    os.close(master)
+    piped_output = process.stdout.read().decode(errors="replace") if piped else ""
+    if piped:
+        process.stdout.close()
+    return process.wait(timeout=60), output.decode(errors="replace"), piped_output
 
 
 def start(repo, *args):
@@ -177,10 +228,16 @@ with tempfile.TemporaryDirectory(prefix="nogg fixture ") as tmp:
           secret.read_text() != before and not (linked / ".nogging/state/dashboard").exists())
 
     # The secret is too open: refused before any socket, on an address nobody owns.
+    # It runs on an operator terminal, so that the terminal rule is not what refuses it.
     secret.chmod(0o644)
-    result = run(repo, "dashboard", "--bind", "10.255.255.1", "--port", "0")
+    code, output, _ = on_terminal(repo, "dashboard", "--bind", "10.255.255.1", "--port", "0")
     check("an open secret refuses a network start",
-          result.returncode != 0 and str(secret) in result.stderr and "0600" in result.stderr, result.stderr)
+          code != 0 and str(secret) in output and "0600" in output and "operator terminal" not in output, output)
+    check("the refused start prints no token", secret.read_text().strip() not in output)
+    # A terminal with piped output passes the terminal rule: only stdin is tested.
+    code, output, piped = on_terminal(repo, "dashboard", "--bind", "10.255.255.1", "--port", "0", piped=True)
+    check("a terminal with piped output passes the terminal rule",
+          code != 0 and "0600" in output and "operator terminal" not in output and "http" not in piped, output)
     secret.chmod(0o600)
 
     # A supervised session asks for a network bind.
@@ -193,9 +250,14 @@ with tempfile.TemporaryDirectory(prefix="nogg fixture ") as tmp:
     (sessions / "lead.json").write_text(json.dumps(
         {"name": "lead", "bead_id": "SPEC-x", "role": "lead", "state": "running", "session_pid": os.getpid(),
          "session_pid_start": module.process_start(os.getpid())}))
+    unchanged = ("refusing --bind 10.255.255.1 inside a supervised session: the token would reach the "
+                 "session log, and network exposure stays an operator act")
     result = run(repo, "dashboard", "--bind", "10.255.255.1", "--port", "0")
     check("a supervised session cannot bind a network address",
-          result.returncode != 0 and "supervised session" in result.stderr, result.stderr)
+          result.returncode != 0 and unchanged in result.stderr, result.stderr)
+    code, output, _ = on_terminal(repo, "dashboard", "--bind", "10.255.255.1", "--port", "0")
+    check("a supervised session on a login terminal keeps the unchanged refusal",
+          code != 0 and unchanged in output.replace("\r\n", " ") and "operator terminal" not in output, output)
     process, line = start(repo, "--port", "0")
     check("a supervised session can still use loopback", "http://127.0.0.1:" in line, line)
     process.terminate()
@@ -205,6 +267,32 @@ with tempfile.TemporaryDirectory(prefix="nogg fixture ") as tmp:
     result = run(repo, "dashboard", "--bind", "10.255.255.1", "--port", "0", env={"NOGG_SESSION_NAME": "made-up"})
     check("an unproven session environment fails closed",
           result.returncode != 0 and "made-up" in result.stderr, result.stderr)
+    code, output, _ = on_terminal(repo, "dashboard", "--bind", "10.255.255.1", "--port", "0",
+                                  env={"NOGG_SESSION_NAME": "made-up"})
+    check("an unproven session name fails closed on a login terminal too", code != 0 and "made-up" in output, output)
+
+    # Outside a session, a network bind needs an operator terminal; each refusal comes
+    # before a socket and before a secret, so no token exists to be printed.
+    bare = repository(Path(tmp) / "bare")
+    bare_secret = bare / ".nogging/state/dashboard/secret"
+    result = run(bare, "dashboard", "--bind", "10.255.255.1", "--port", "0")
+    check("a network bind without a terminal is refused",
+          result.returncode != 0 and "outside an operator terminal" in result.stderr
+          and "stdin is not a terminal" in result.stderr and "nogg dashboard service enable" in result.stderr,
+          result.stderr)
+    check("a remote command without a terminal is told to use ssh -t", "ssh -t" in result.stderr, result.stderr)
+    code, output, _ = on_terminal(bare, "dashboard", "--bind", "10.255.255.1", "--port", "0", cgroup=APP_SLICE)
+    check("a pseudo-terminal outside a login session is refused",
+          code != 0 and "logind session scope" in output and "app.slice" in output, output)
+    check("a pseudo-terminal outside a login session prints no link", "http" not in output, output)
+    code, output, _ = on_terminal(bare, "dashboard", "--bind", "10.255.255.1", "--port", "0",
+                                  servers=[("tmux server -L nogging", os.getpid(), module.process_start(os.getpid()))])
+    check("a pane on the shared session server is refused",
+          code != 0 and "shared Nogging session server" in output and "http" not in output, output)
+    check("no refusal of the terminal rule creates a secret", not os.path.lexists(bare_secret))
+    code, output, _ = on_terminal(bare, "dashboard", "--bind", "8.8.8.8", "--port", "0")
+    check("the bind policy still comes first", code != 0 and "8.8.8.8" in output and "operator terminal" not in output,
+          output)
 
     # Doctor is silent when unused and warns on an open secret.
     fresh = repository(Path(tmp) / "unused")

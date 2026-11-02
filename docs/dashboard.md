@@ -17,6 +17,30 @@ It stops on Ctrl-C or SIGTERM and leaves no process behind. There is no service
 unit and no configuration key. It reads the state of the main checkout from any
 linked worktree.
 
+A network bind (any `--bind` that is not loopback) runs only on an operator terminal:
+a person at a console or SSH login. The command checks four things before it opens a
+socket or creates a secret:
+
+- it is not a supervised session, and carries no session name it cannot prove;
+- stdin is a terminal, which `nohup`, `systemd-run`, `setsid … </dev/null` and an
+  agent's tool call lack (stdout is not tested, so `… | tee out.txt` still works);
+- no ancestor process is the shared Nogging session server, the tmux server of
+  `session_tmux_socket` or the herdr server, so a pane opened there with
+  `tmux new-session -d` is refused;
+- where the host runs systemd, its cgroup is a logind session scope
+  (`session-<id>.scope`), which `systemd-run --user --pty` and a service are not.
+
+The refusal names the condition that failed. For a remote command, give it a
+terminal:
+
+```bash
+ssh -t pi ./scripts/nogg dashboard --bind 100.101.102.103
+```
+
+A tmux built with systemd support (as in Debian and Raspberry Pi OS) moves each pane
+into its own `tmux-spawn-*.scope`, which is not a login session scope. Start a
+network bind from the login shell itself, not from a pane of such a tmux.
+
 `--bind` takes one literal private address: `127.0.0.0/8`, `10.0.0.0/8`,
 `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`, `100.64.0.0/10`, `::1`,
 `fc00::/7`, or `fe80::/10` with a zone, as in `fe80::1%eth0`. Everything else is
@@ -53,7 +77,8 @@ history may keep the visited address with its fragment, so rotate the token if a
 device with that history leaves your hands.
 
 When output is not a terminal, no link is printed. A network bind is refused inside
-a supervised session, because the link would reach the session log. Any network bind
+a supervised session, because the link would reach the session log, and outside an
+operator terminal (see [Start](#start)), before any secret exists. Any network bind
 outside `100.64.0.0/10` also prints a warning: the traffic is plain HTTP, so prefer a
 Tailscale address for a phone. An address inside that range prints a note, because
 carrier NAT uses the same range and only Tailscale encrypts the traffic.

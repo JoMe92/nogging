@@ -200,6 +200,22 @@ class HerdrBackend:
             raise BackendError(f"herdr dedicated server is not owned by Nogging: {exc}; "
                                "choose an unused session_herdr_session") from exc
 
+    def server_process(self):
+        """`(pid, start)` of the dedicated server that runs now, or None. It reads only
+        the receipt and /proc: no CLI call, no lock, and never a start."""
+        try:
+            owned = json.loads((self.state / "server.json").read_text())
+        except FileNotFoundError:
+            return None
+        except (OSError, ValueError) as exc:
+            raise BackendError(f"herdr server receipt is unreadable: {exc}") from exc
+        pid, start = (owned.get("pid"), owned.get("start")) if isinstance(owned, dict) else (None, None)
+        if type(pid) is not int or pid <= 0 or not start:
+            raise BackendError("herdr server receipt has no usable process identity")
+        if not same_namespace(owned.get("pid_ns")):
+            raise BackendError("herdr server runs in another PID namespace")
+        return (pid, start) if process_start(pid) == start else None
+
     def _ensure_server(self):
         # A fenced caller must only inspect existing host state. Even mkdir or
         # taking a new launch lock would be an unwanted side effect on refusal.

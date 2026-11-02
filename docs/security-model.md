@@ -290,6 +290,27 @@ cookie. It answers GET and HEAD only, checks `Host`, `Origin` and the peer addre
 before serving, and sends a strict content security policy. See
 [Dashboard](dashboard.md).
 
+Who can expose it on the network:
+
+| Who | Network bind |
+|---|---|
+| The operator at a login terminal (console or SSH) | Allowed, and sees the token link |
+| A proven supervised session (Lead, planner, specialist, loop, orchestrator) | Refused, with the unchanged message |
+| A process that breaks its ancestry: `systemd-run`, `systemd-run --pty`, `nohup`, `setsid`, `tmux new-session -d` on the shared server, a dropped session variable after a failed proof | Refused by the operator-terminal test, before a socket or a secret exists, so no token is printed |
+| A process running as the operator's user that opens a new login session (`ssh -t localhost`), writes the state files directly, or reads the secret file | Can do anything the operator can. Nogging cannot stop this |
+
+The last row is the honest limit. Every agent runs as the operator's own user, and a
+login session looks the same to the kernel whoever opened it. The operator-terminal
+test closes every path a Nogging command offers; it does not stop a same-user process
+that logs in to its own host.
+
+The cgroup condition carries most of the weight. A process that detaches from its
+parents and brings its own pseudo-terminal, such as `setsid -f script -qc '…'
+/dev/null` with the session variable removed, passes the session, stdin and
+session-server conditions; only its cgroup, which is not a login session scope, then
+refuses it. On a host without cgroups or systemd that condition is skipped, and such
+a process passes, as in the last row.
+
 The residual risks are these:
 
 - **Plain HTTP.** There is no TLS. On a shared LAN or Wi-Fi anyone who can read the
