@@ -18,6 +18,17 @@ and GitHub Releases for that history.
 
 ### Added
 
+- `nogg dashboard service enable --bind <address>`: the operator enables the dashboard
+  once as a user service, at a login terminal, by typing the address. The consent is
+  recorded in `.nogging/state/dashboard/consent.json` (mode `0600`), the user unit
+  `nogg-dashboard-<slug>.service` serves exactly that address and never prints a token
+  or a link, and refuses to run outside its own cgroup or on a tampered consent.
+  `service disable` (operator or Orchestration Agent) ends it, and `nogg dashboard
+  status` shows the consent, the unit and the last events. Every consent, revocation,
+  network start and stop, and rotation is appended to `.nogging/state/dashboard/audit.jsonl`
+  and copied to the journal. `doctor` notes or warns about the service and stays silent
+  when the dashboard is unused; `remove` names `service disable` while the unit is
+  enabled. The installer never writes the unit. See `docs/dashboard.md`. (SPEC-c6p9)
 - `nogg dashboard`, an optional foreground read-only web dashboard for desktop and
   phone. The start page shows Bead progress, project age, activity, agent-hours,
   known tokens, commits and test cost, with gaps shown as gaps and never as zero. A

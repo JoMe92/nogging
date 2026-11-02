@@ -88,7 +88,9 @@ carrier NAT uses the same range and only Tailscale encrypts the traffic.
 ```
 
 This replaces the secret and exits. Every browser session ends at once, in a
-running dashboard too. Start a network bind on a terminal to print a new link.
+running dashboard too. Start a network bind on a terminal to print a new link. It
+works from anywhere, since it can only reduce access, and it appends `rotated` to the
+audit trail (see [Service](#service)).
 
 A secret file wider than `0600` or a directory wider than `0700` refuses a network
 start, and `nogg doctor` warns about such a file. A running server that finds its
@@ -99,6 +101,80 @@ After ten failed authentications in a minute, further failures get 429 and
 cannot lock you out, and a request with no credential or an expired cookie does not
 count. See the [security model](security-model.md#the-dashboard) for what
 this does not protect against.
+
+A network run on a terminal is recorded: it appends `started` with mode `terminal`
+once its socket is bound, and `stopped` when it ends. A run whose `started` event
+cannot be written closes its socket again and does not serve.
+
+## Service
+
+A network bind on a terminal stops when the terminal closes. To keep the dashboard
+reachable without one, enable it once as a user service, on a login terminal:
+
+```bash
+./scripts/nogg dashboard service enable --bind 100.86.79.27 [--port 8742] [--allow-host <host[:port]>]
+```
+
+`enable` runs only where a network bind on a terminal would: no supervised session,
+the Orchestration Agent's included, stdin a terminal and a logind session scope. Its
+stdout must be a terminal too. It applies the bind policy, refuses loopback (which
+needs no service) and prints the plain-HTTP and carrier-NAT notes for the address.
+Then it asks you to type the address. Any other line aborts, and nothing is written.
+
+On a match it:
+
+- writes the consent to `.nogging/state/dashboard/consent.json` (mode `0600`): the
+  address, port, allowed hosts, the time and the terminal's device name, and nothing
+  personal;
+- creates the secret if it is missing;
+- writes `~/.config/systemd/user/nogg-dashboard-<slug>.service` (or under
+  `$XDG_CONFIG_HOME`) for the canonical checkout, so a linked worktree writes the
+  same unit, then runs `systemctl --user daemon-reload` and `enable --now`;
+- appends `consent` to the audit trail.
+
+It notes when user lingering is off, because the service then stops at logout
+(`loginctl enable-linger <user>` keeps it running), and warns when the control-socket
+path would be longer than 107 bytes. A host without `systemctl` is refused, and the
+terminal run is the way that still works there. A second `enable` replaces the consent
+and restarts the service, with its own `consent` line. Nothing `enable` writes holds
+the secret.
+
+The unit runs `nogg dashboard service run`, which takes no bind option. It refuses
+inside a supervised session, outside the unit's own cgroup (a `systemd-run` or a
+pane cannot start it), and on a missing or tampered consent: not a regular `0600`
+file of yours, a different schema, or an address the bind policy refuses today. Those
+refusals exit 78, which the unit does not restart, and a missing `scripts/nogg` exits
+203, which it does not restart either. Otherwise it serves exactly the consented
+address, port and hosts, prints its address and `nogg dashboard pair`, and never a
+token or a link. An address that is not up yet, such as Tailscale at boot, fails and
+is tried again every 30 seconds. Core dumps are off.
+
+```bash
+./scripts/nogg dashboard service disable
+```
+
+This stops and disables the unit, deletes it and the consent, and appends `revoked`
+with the caller. It runs on an operator terminal or from the Orchestration Agent,
+since ending an exposure is always allowed to the session the Product Owner talks to.
+Every other session is refused. Disabling twice succeeds and changes nothing. A new
+exposure needs `enable` at a terminal again.
+
+```bash
+./scripts/nogg dashboard status
+```
+
+`status` works from anywhere and writes nothing. It prints the consent or "no
+exposure is consented", the unit's enabled and active state, whether the cgroup test
+applies on this host, whether the journal is persistent, and the last ten audit
+events.
+
+The audit trail is `.nogging/state/dashboard/audit.jsonl` (mode `0600`), one line per
+event written with a single append: `consent`, `revoked`, `started`, `stopped` and
+`rotated` so far. No line holds a token, a cookie or the secret. The service prints
+each line it appends, so its journal holds them too, and the CLI sends its own
+events through `systemd-cat -t nogg-dashboard` where that exists. Read them with
+`journalctl --user -t nogg-dashboard`, or `-u nogg-dashboard-<slug>.service` for the
+service's.
 
 ## Interface
 
@@ -594,8 +670,14 @@ those files and keeps your configuration. No test ships.
 
 The dashboard needs no configuration key and nothing in `.nogging/config.json`. It needs Python, and
 it needs `bd` only for the Bead panels: without `bd` the server still starts, the Bead panels say
-`bd` is missing and the Git panels work. `doctor` says nothing about it unless a secret exists, and
-then warns only if the file is wider than `0600`.
+`bd` is missing and the Git panels work. `doctor` says nothing about it unless a secret, a consent
+or the user unit exists. It then warns when the secret or the consent is wider than `0600`, and
+when the unit exists or runs without a valid consent, naming `nogg dashboard service disable`. It
+notes an enabled service with its consented address and port.
+
+The installer never writes the dashboard unit and never offers to enable it: only `nogg dashboard
+service enable` does. While the unit is enabled, `remove` lists `./scripts/nogg dashboard service
+disable` as the first next step.
 
 The fonts, their licence and the logo are copies of files under `docs/assets/`, because that
 directory is not packaged. A test fails when the copies drift.

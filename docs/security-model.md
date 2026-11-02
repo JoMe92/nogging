@@ -294,8 +294,8 @@ Who can expose it on the network:
 
 | Who | Network bind |
 |---|---|
-| The operator at a login terminal (console or SSH) | Allowed, and sees the token link |
-| A proven supervised session (Lead, planner, specialist, loop, orchestrator) | Refused, with the unchanged message |
+| The operator at a login terminal (console or SSH, also inside their own tmux) | Allowed, sees the token link, and the run is recorded. May also enable the service once, by typing the address |
+| A proven supervised session (Lead, planner, specialist, loop, orchestrator) | Refused, with the unchanged message, with or without a recorded consent. Cannot enable the service. Only the Orchestration Agent may disable it |
 | A process that breaks its ancestry: `systemd-run`, `systemd-run --pty`, `nohup`, `setsid`, `tmux new-session -d` on the shared server, a dropped session variable after a failed proof | Refused by the operator-terminal test, before a socket or a secret exists, so no token is printed |
 | A process running as the operator's user that opens a new login session (`ssh -t localhost`), writes the state files directly, or reads the secret file | Can do anything the operator can. Nogging cannot stop this |
 
@@ -303,6 +303,22 @@ The last row is the honest limit. Every agent runs as the operator's own user, a
 login session looks the same to the kernel whoever opened it. The operator-terminal
 test closes every path a Nogging command offers; it does not stop a same-user process
 that logs in to its own host.
+
+A `restricted` Claude or Codex session cannot write the main checkout's
+`.nogging/state/`, because its sandbox does not reach that path, so it cannot forge a
+consent either. A `restricted` Pi session has no sandbox and relies on the guard
+extension and the rules above.
+
+The consented service (`nogg dashboard service enable`, see
+[Dashboard](dashboard.md#service)) serves only what the operator typed at a login
+terminal. Its unit refuses to run outside its own cgroup or on a consent that is not
+a `0600` file of the operator's with a private address. A same-user process can still
+write that file or start the unit, as in the last row. What it cannot do is hide it:
+every consent, revocation, start, stop and rotation is appended to
+`.nogging/state/dashboard/audit.jsonl`, and the service and the CLI copy each line to
+the journal (`journalctl --user -t nogg-dashboard`). The operator's user can read the
+journal but not rewrite it. Whether it survives a reboot depends on the host's
+journald storage, which `nogg dashboard status` reports.
 
 The cgroup condition carries most of the weight. A process that detaches from its
 parents and brings its own pseudo-terminal, such as `setsid -f script -qc '…'
