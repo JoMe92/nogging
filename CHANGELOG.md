@@ -31,6 +31,14 @@ and GitHub Releases for that history.
 
 ### Changed
 
+- `nogg dashboard --bind <non-loopback>` now runs only on an operator terminal:
+  outside a supervised session it is refused, before any socket and before a secret,
+  unless stdin is a terminal, no ancestor is the shared Nogging session server, and,
+  where the host runs systemd, the cgroup is a logind session scope. This closes the
+  plain bypass through `nohup`, `systemd-run` (also with `--pty`), `setsid`, a
+  detached pane on the shared tmux server or a dropped session variable. The
+  refusal inside a supervised session and its message are unchanged. For a remote
+  command use `ssh -t`. See `docs/dashboard.md`. (SPEC-kjkk)
 - Shipped files carry neutral placeholders only: the usage author is now
   `Nogging Usage <usage@nogging.bot>` (it was a `nogging.local` address), three test
   suites use a `nogging.bot` fixture identity, and the orchestrator permissions
