@@ -268,10 +268,17 @@ def cookie_from_header(header, name):
     return None
 
 
+def new_cookie(secret, now):
+    """A fresh signed cookie value, valid for COOKIE_MAX_AGE from `now`."""
+    return sign_cookie(secret, int(now) + COOKIE_MAX_AGE)
+
+
+def cookie_header(port, value):
+    return f"{cookie_name(port)}={value}; HttpOnly; SameSite=Strict; Path=/; Max-Age={COOKIE_MAX_AGE}"
+
+
 def set_cookie_value(port, secret, now):
-    expiry = int(now) + COOKIE_MAX_AGE
-    return (f"{cookie_name(port)}={sign_cookie(secret, expiry)}; HttpOnly; SameSite=Strict; "
-            f"Path=/; Max-Age={COOKIE_MAX_AGE}")
+    return cookie_header(port, new_cookie(secret, now))
 
 
 class FailureLimit:
@@ -307,6 +314,173 @@ class FailureLimit:
             if not self._failures:
                 return 1
             return max(1, int(self._failures[0] + self.window - now + 0.999))
+
+
+# --- one-time pairing links ----------------------------------------------------------
+
+PAIRING_TTL = 300.0                 # five minutes
+PAIRING_OPEN_MAX = 3
+TOMBSTONE_TTL = 3600.0              # a late tap is answered as used or expired for an hour
+TOMBSTONE_MAX = 32
+_PAIRING_LABEL = b"nogg-dashboard-pairing\0"
+
+
+def new_pairing_code():
+    """128 bits as 32 lowercase hex digits: nothing a chat's Markdown can reformat."""
+    return secrets.token_hex(16)
+
+
+def _digest(value):
+    return hashlib.sha256(_bytes(value)).hexdigest()
+
+
+def pairing_id(code):
+    """The first 8 hex digits of the code's hash: all of it the audit trail ever names."""
+    return _digest(code)[:8]
+
+
+def pairing_code(header):
+    """The code of an `Authorization: Pairing <code>` value, or None."""
+    scheme, _, code = (header or "").strip().partition(" ")
+    return code.strip() or None if scheme.lower() == "pairing" else None
+
+
+def _secret_binding(secret):
+    return hashlib.sha256(_PAIRING_LABEL + _bytes(secret)).hexdigest()
+
+
+@dataclass(frozen=True)
+class Minted:
+    code: str
+    id: str
+    ttl: float
+    ended: int               # open links this mint ended to stay within PAIRING_OPEN_MAX
+
+
+@dataclass(frozen=True)
+class Redemption:
+    """What a redemption found. `outcome` is one of:
+
+    - `redeemed`: the code was open and is now used; issue the cookie offered;
+    - `again`: used, and the request carries the very cookie this redemption issued;
+    - `used_elsewhere`: used, and the request carries another valid cookie;
+    - `used`: used, and the request carries no valid cookie;
+    - `expired`: past its time, or ended by a rotation or a newer mint;
+    - `unknown`: never minted here (a guess, or a code from before a restart).
+
+    `same_peer` says, for both used answers, whether the peer is the redeeming one, and
+    `first_replay` whether this is the first replay of the code (recorded once)."""
+    outcome: str
+    id: str | None = None
+    same_peer: bool = False
+    first_replay: bool = False
+
+
+@dataclass
+class _Pairing:
+    expires: float
+    binding: str
+    order: int
+    state: str = "open"              # open, used or expired
+    done_at: float | None = None
+    cookie: str | None = None        # sha256 of the cookie the redemption issued
+    peer: str | None = None
+    replayed: bool = False
+
+
+class PairingStore:
+    """Open pairing codes of one running server, held in memory as SHA-256 hashes only.
+    A code is good for PAIRING_TTL seconds and one redemption, under the secret current
+    when it was minted. Every change happens under one lock, so of two concurrent
+    redemptions exactly one is `redeemed`. No I/O: the clock is injected, and the
+    caller writes the audit trail."""
+
+    def __init__(self, clock=time.monotonic, ttl=PAIRING_TTL, open_max=PAIRING_OPEN_MAX,
+                 tombstone_ttl=TOMBSTONE_TTL, tombstone_max=TOMBSTONE_MAX):
+        self.clock, self.ttl, self.open_max = clock, ttl, open_max
+        self.tombstone_ttl, self.tombstone_max = tombstone_ttl, tombstone_max
+        self._entries, self._order = {}, 0
+        self._lock = threading.Lock()
+
+    def _end(self, entry, at):
+        entry.state, entry.done_at = "expired", at
+
+    def _prune(self, now, binding=None):
+        """Expire what has run out or no longer matches the secret, then drop tombstones
+        older than an hour and keep at most `tombstone_max`."""
+        for entry in self._entries.values():
+            if entry.state == "open" and now >= entry.expires:
+                self._end(entry, entry.expires)
+            elif entry.state == "open" and binding is not None and entry.binding != binding:
+                self._end(entry, now)
+        dead = sorted((entry.done_at, entry.order, key) for key, entry in self._entries.items()
+                      if entry.state != "open")
+        for done_at, _, key in dead:
+            if now - done_at >= self.tombstone_ttl:
+                del self._entries[key]
+        dead = [key for _, _, key in dead if key in self._entries]
+        for key in dead[:max(0, len(dead) - self.tombstone_max)]:
+            del self._entries[key]
+
+    def mint(self, secret, code=None):
+        """A new open code bound to `secret`; the oldest open code ends when the limit is
+        reached. `code` comes from `new_pairing_code()` unless a caller made one first."""
+        if not secret_acceptable(secret):
+            raise ValueError("no usable secret: a pairing code needs one")
+        code = code or new_pairing_code()
+        binding = _secret_binding(secret)
+        with self._lock:
+            now = self.clock()
+            self._prune(now, binding)
+            opened = sorted((entry.order, entry) for entry in self._entries.values() if entry.state == "open")
+            ended = 0
+            for _, entry in opened[:max(0, len(opened) - self.open_max + 1)]:
+                self._end(entry, now)
+                ended += 1
+            self._order += 1
+            self._entries[_digest(code)] = _Pairing(now + self.ttl, binding, self._order)
+            self._prune(now)
+        return Minted(code, pairing_id(code), self.ttl, ended)
+
+    def forget(self, code):
+        """Drop a code whose mint could not be recorded: it never yields a cookie."""
+        with self._lock:
+            self._entries.pop(_digest(code), None)
+
+    def redeem(self, code, secret, *, issue, presented, peer):
+        """Use `code` once. `issue` is the cookie value this request would set, signed
+        with `secret`; `presented` is the request's own cookie when it is valid, else
+        None; `peer` is the client address."""
+        key, binding = _digest(code), _secret_binding(secret)
+        with self._lock:
+            now = self.clock()
+            self._prune(now, binding)
+            entry = self._entries.get(key)
+            if entry is None:
+                return Redemption("unknown")
+            ident = key[:8]
+            if entry.state == "expired":
+                return Redemption("expired", ident)
+            if entry.state == "open":
+                entry.state, entry.done_at = "used", now
+                entry.cookie, entry.peer = _digest(issue), peer
+                return Redemption("redeemed", ident)
+            same = peer == entry.peer
+            if presented is not None and hmac.compare_digest(_digest(presented), entry.cookie):
+                return Redemption("again", ident, same)
+            first, entry.replayed = not entry.replayed, True
+            return Redemption("used_elsewhere" if presented is not None else "used", ident, same, first)
+
+    def status(self, secret):
+        """`(open links, seconds until the earliest one expires or None)`; codes minted
+        under another secret count as ended. Without a usable secret none is open."""
+        if not secret_acceptable(secret):
+            return 0, None
+        with self._lock:
+            now = self.clock()
+            self._prune(now, _secret_binding(secret))
+            remaining = [entry.expires - now for entry in self._entries.values() if entry.state == "open"]
+        return len(remaining), (min(remaining) if remaining else None)
 
 
 # --- Host, Origin and the rest of a request ----------------------------------------

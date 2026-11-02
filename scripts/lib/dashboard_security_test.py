@@ -2,7 +2,7 @@
 """Small tests of the dashboard's security decisions: no socket, no sleep."""
 from __future__ import annotations
 
-import os, stat, subprocess, sys, tempfile, unittest
+import os, stat, subprocess, sys, tempfile, threading, unittest
 from pathlib import Path
 from unittest import mock
 
@@ -206,6 +206,116 @@ class TooManyFailures(unittest.TestCase):
             limit.record()
         clock.now += 60
         self.assertFalse(limit.blocked())
+
+
+SECRET, OTHER = "s" * 43, "o" * 43
+
+
+class PairingStore(unittest.TestCase):
+    """The store alone: injected clock, codes never printed by a test."""
+
+    def setUp(self):
+        self.clock = FakeClock()
+        self.store = sec.PairingStore(clock=self.clock)
+
+    def redeem(self, code, secret=SECRET, issue="cookie-a", presented=None, peer="100.64.0.2"):
+        return self.store.redeem(code, secret, issue=issue, presented=presented, peer=peer)
+
+    def test_a_code_is_128_bits_of_lowercase_hex(self):
+        minted = self.store.mint(SECRET)
+        self.assertRegex(minted.code, r"^[0-9a-f]{32}$")
+        self.assertEqual(minted.id, sec.pairing_id(minted.code))
+        self.assertEqual((minted.ttl, minted.ended), (300.0, 0))
+        self.assertNotEqual(minted.code, self.store.mint(SECRET).code)
+
+    def test_only_hashes_are_held(self):
+        minted = self.store.mint(SECRET)
+        held = repr(vars(self.store)) + "".join(repr(vars(entry)) for entry in self.store._entries.values())
+        self.assertNotIn(minted.code, held)
+        self.assertNotIn(SECRET, held)
+
+    def test_mint_and_redeem_once(self):
+        minted = self.store.mint(SECRET)
+        self.assertEqual(self.redeem(minted.code), sec.Redemption("redeemed", minted.id))
+        self.assertEqual(self.redeem(minted.code).outcome, "used")
+
+    def test_two_redemptions_race(self):
+        minted = self.store.mint(SECRET)
+        start, results = threading.Barrier(8), []
+
+        def tap(index):
+            start.wait(timeout=60)
+            results.append(self.redeem(minted.code, issue=f"cookie-{index}").outcome)
+        threads = [threading.Thread(target=tap, args=(index,)) for index in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=60)
+        self.assertEqual(sorted(results), ["redeemed"] + ["used"] * 7)
+
+    def test_the_link_has_expired(self):
+        minted = self.store.mint(SECRET)
+        self.clock.now += 299.9
+        self.assertEqual(self.store.status(SECRET)[0], 1)
+        self.clock.now += 0.1
+        self.assertEqual(self.redeem(minted.code), sec.Redemption("expired", minted.id))
+        self.assertEqual(self.store.status(SECRET), (0, None))
+
+    def test_a_rotation_ends_open_links(self):
+        minted = self.store.mint(SECRET)
+        self.assertEqual(self.redeem(minted.code, secret=OTHER).outcome, "expired")
+        self.assertEqual(self.redeem(minted.code).outcome, "expired")   # rotating back revives nothing
+
+    def test_a_fourth_link_ends_the_oldest(self):
+        codes = [self.store.mint(SECRET) for _ in range(3)]
+        self.clock.now += 1
+        fourth = self.store.mint(SECRET)
+        self.assertEqual([c.ended for c in codes + [fourth]], [0, 0, 0, 1])
+        self.assertEqual(self.redeem(codes[0].code).outcome, "expired")
+        self.assertEqual(self.store.status(SECRET), (3, 299.0))
+        for minted in codes[1:] + [fourth]:
+            self.assertEqual(self.redeem(minted.code, issue=minted.id).outcome, "redeemed")
+
+    def test_used_answers_tell_the_cookie_and_the_peer_apart(self):
+        minted = self.store.mint(SECRET)
+        self.redeem(minted.code, issue="phone-cookie", peer="100.64.0.2")
+        again = self.redeem(minted.code, presented="phone-cookie", peer="100.64.0.2")
+        self.assertEqual((again.outcome, again.same_peer, again.first_replay), ("again", True, False))
+        elsewhere = self.redeem(minted.code, presented="older-cookie", peer="192.168.1.9")
+        self.assertEqual((elsewhere.outcome, elsewhere.same_peer, elsewhere.first_replay),
+                         ("used_elsewhere", False, True))
+        used = self.redeem(minted.code, peer="100.64.0.2")
+        self.assertEqual((used.outcome, used.same_peer, used.first_replay), ("used", True, False))
+
+    def test_tombstones_last_an_hour_and_stay_bounded(self):
+        minted = self.store.mint(SECRET)
+        self.redeem(minted.code)
+        self.clock.now += 3599
+        self.assertEqual(self.redeem(minted.code).outcome, "used")
+        self.clock.now += 1
+        self.assertEqual(self.redeem(minted.code).outcome, "unknown")
+        many = [self.store.mint(SECRET) for _ in range(40)]
+        self.assertLessEqual(len(self.store._entries), 32 + 3)
+        self.assertEqual(self.redeem(many[0].code).outcome, "unknown")      # the oldest tombstone went first
+        self.assertEqual(self.redeem(many[-5].code).outcome, "expired")
+
+    def test_an_unknown_code_and_no_secret(self):
+        self.assertEqual(self.redeem("0" * 32).outcome, "unknown")
+        with self.assertRaises(ValueError):
+            self.store.mint(None)
+        self.assertEqual(self.store.status(None), (0, None))
+
+    def test_a_forgotten_mint_never_redeems(self):
+        minted = self.store.mint(SECRET)
+        self.store.forget(minted.code)
+        self.assertEqual(self.redeem(minted.code).outcome, "unknown")
+
+    def test_the_pairing_header(self):
+        self.assertEqual(sec.pairing_code("Pairing abc"), "abc")
+        self.assertEqual(sec.pairing_code("pairing  abc "), "abc")
+        self.assertIsNone(sec.pairing_code("Bearer abc"))
+        self.assertIsNone(sec.pairing_code("Pairing "))
+        self.assertIsNone(sec.pairing_code(None))
 
 
 class HostAndOrigin(unittest.TestCase):
