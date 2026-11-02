@@ -5181,6 +5181,62 @@ def dashboard_gates():
             "tests": sources.files_gate(TEST_STATE / "runs.jsonl", TEST_STATE / "runs.jsonl.1"),
             "git": slow.git_gate(ORCHESTRATOR_HOME),
             "tokens": slow.tokens_gate(collect_store)}
+def read_login_cgroup():
+    """This process's cgroup text, or None where the operator-terminal test skips the
+    cgroup condition: no /proc/self/cgroup, or a host that does not run systemd. An
+    unreadable file reads as empty, which fails the condition."""
+    path = Path("/proc/self/cgroup")
+    if not path.is_file() or not Path("/run/systemd/system").is_dir():
+        return None
+    try:
+        return path.read_text()
+    except OSError:
+        return ""
+def session_server_processes():
+    """`(label, pid, start)` of each shared Nogging session server that runs now, asked
+    without starting one: the tmux server behind the configured socket by the socket's
+    kernel peer credentials (which, like `tmux -N`, never start a server and give a pid
+    of this namespace), and the herdr server through its backend's receipt. A str says
+    why one cannot be identified."""
+    socket_name = scfg("session_tmux_socket", "nogging")
+    tmux_server = tmux_server_namespace()
+    servers = []
+    if tmux_server["class"] == "host":
+        servers.append((f"tmux server -L {socket_name}", tmux_server["pid"], process_start(tmux_server["pid"])))
+    elif tmux_server["class"] != "down":
+        return f"the tmux server -L {socket_name} is {tmux_server['class']} from this process"
+    try:
+        herdr = session_backend("herdr").server_process()
+    except Exception as exc:
+        return f"the herdr server cannot be identified: {exc}"
+    if herdr:
+        servers.append(("herdr server", *herdr))
+    return servers
+def operator_terminal_refusal(records=None, *, stdin_tty=None, read_cgroup=None, server_pids=None, ancestry=None):
+    """Why this process is not a person at a login terminal (design Decision 4), or None
+    when it is: no proven session and no unproven session name, stdin a terminal, no
+    ancestor that is the shared session server, and, where the host has cgroups and
+    systemd, a logind session scope. Every fact can be injected; the defaults read this
+    host, looked up at call time."""
+    records = [rec for _, rec in session_records(orchestrator_sessions_dir())] if records is None else records
+    try:
+        proven = calling_session_record(records, purpose="an operator-terminal act")
+        problem = f"it runs inside supervised session {proven.get('name')}" if proven is not None else None
+    except RuntimeError as exc:
+        problem = str(exc)
+    if stdin_tty is None:
+        try:
+            stdin_tty = os.isatty(0)
+        except OSError:
+            stdin_tty = False
+    return dashboard_modules()[0].terminal_refusal(
+        session_problem=problem, stdin_tty=stdin_tty,
+        servers=server_pids or (lambda: session_server_processes()),
+        ancestry=ancestry or (lambda: process_ancestors()),
+        cgroup=read_cgroup or (lambda: read_login_cgroup()))
+def operator_terminal(records=None, **facts):
+    """Whether a person at a login terminal runs this process; see operator_terminal_refusal."""
+    return operator_terminal_refusal(records, **facts) is None
 def dashboard_command(args):
     """`nogg dashboard`: the foreground read-only web server."""
     # Set before any reader runs: a plain `bd` call could otherwise start Dolt, and
@@ -5197,11 +5253,14 @@ def dashboard_command(args):
         return
     bind = security.check_bind(args.bind)
     hosts = [security.check_allow_host(value) for value in args.allow_host]
-    if not bind.loopback and calling_session_record(
-            [rec for _, rec in session_records(orchestrator_sessions_dir())],
-            purpose="a network dashboard bind") is not None:
-        raise RuntimeError(f"refusing --bind {args.bind} inside a supervised session: the token would "
-                           "reach the session log, and network exposure stays an operator act")
+    if not bind.loopback:
+        records = [rec for _, rec in session_records(orchestrator_sessions_dir())]
+        if calling_session_record(records, purpose="a network dashboard bind") is not None:
+            raise RuntimeError(f"refusing --bind {args.bind} inside a supervised session: the token would "
+                               "reach the session log, and network exposure stays an operator act")
+        refusal = operator_terminal_refusal(records)
+        if refusal:
+            raise RuntimeError(security.terminal_refusal_message(args.bind, refusal))
     server.serve(bind, server.DEFAULT_PORT if args.port is None else args.port, dashboard_readers(),
                  static_dir=Path(__file__).resolve().parent / "dashboard",
                  secret_path=dashboard_secret_path(), allow_hosts=hosts, gates=dashboard_gates())
