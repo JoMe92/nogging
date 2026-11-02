@@ -12,7 +12,7 @@ reads the secret file itself, and the consent names only the address the operato
 from __future__ import annotations
 
 import datetime as dt
-import getpass, json, os, re, shutil, stat, subprocess
+import getpass, json, os, re, shutil, socket, stat, struct, subprocess, sys, threading, time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -24,6 +24,12 @@ SOCKET_PATH_LIMIT = 107              # sun_path minus its terminating byte on Li
 CONSENT_KEYS = frozenset({"schema", "bind", "port", "allow_hosts", "at", "tty"})
 CONSENT_MAX_BYTES = 4096
 JOURNAL_TAG = "nogg-dashboard"
+CONTROL_MAX_BYTES = 1024             # one request line, read within CONTROL_DEADLINE
+CONTROL_DEADLINE = 2.0
+CONTROL_POLL = 0.2                   # how often the accept loop looks at its stop event
+CLIENT_TIMEOUT = 10.0                # a CLI waits behind at most a few slow clients
+_CALLER_LABEL = re.compile(r"operator|orchestrator:[A-Za-z0-9._-]{1,100}")
+_UCRED = struct.Struct("3i")         # struct ucred: pid, uid, gid, in this order
 _AT_FORM = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")
 _TTY_FORM = re.compile(r"^/dev/[A-Za-z0-9._/-]{1,64}$")
 _USER_MANAGER = re.compile(r"^user@[0-9]+\.service$")
@@ -457,20 +463,24 @@ def write_unit(paths, text):
     os.replace(temporary, paths.unit_path)
 
 
-def disable_caller(caller):
-    """The audit label of a caller allowed to end the exposure, or a refusal."""
+def acting_caller(caller, command, only):
+    """The audit label of a caller that is the operator at a terminal or the proven
+    Orchestration Agent (`operator`, `orchestrator:<name>`), or a refusal naming `only`."""
     if caller.session_error:
-        raise ServiceRefused(f"refusing `nogg dashboard service disable`: {caller.session_error}")
+        raise ServiceRefused(f"refusing {command}: {caller.session_error}")
     if caller.session is not None:
         if caller.session.get("role") == "orchestrator":
             return f"orchestrator:{caller.session.get('name')}"
-        raise ServiceRefused(f"refusing `nogg dashboard service disable` inside supervised session "
-                             f"{caller.session.get('name')}: only the operator at a terminal or the "
-                             "Orchestration Agent ends the dashboard exposure")
+        raise ServiceRefused(f"refusing {command} inside supervised session {caller.session.get('name')}: {only}")
     if caller.refusal:
-        raise ServiceRefused(f"refusing `nogg dashboard service disable` outside an operator terminal: "
-                             f"{caller.refusal}")
+        raise ServiceRefused(f"refusing {command} outside an operator terminal: {caller.refusal}")
     return "operator"
+
+
+def disable_caller(caller):
+    """The audit label of a caller allowed to end the exposure, or a refusal."""
+    return acting_caller(caller, "`nogg dashboard service disable`",
+                         "only the operator at a terminal or the Orchestration Agent ends the dashboard exposure")
 
 
 def disable(paths, host, caller, *, out, clock=None):
@@ -504,7 +514,8 @@ def disable(paths, host, caller, *, out, clock=None):
 
 def run(paths, caller, *, cgroup, serve, out, clock=None):
     """`service run`, what the unit starts: the session refusal, the unit's own cgroup,
-    a valid consent, then exactly the consented values. No token, no link."""
+    a valid consent, then exactly the consented values. No token, no link. After the TCP
+    bind it opens the control socket that `nogg dashboard pair` and `status` talk to."""
     if caller.session_error:
         raise ServiceRefused(f"refusing `nogg dashboard service run`: {caller.session_error}", EX_CONFIG)
     if caller.session is not None:
@@ -530,10 +541,11 @@ def run(paths, caller, *, cgroup, serve, out, clock=None):
         except OSError as exc:
             print(f"WARNING: cannot append to {paths.audit}: {exc.__class__.__name__}", file=out, flush=True)
 
-    serve(bind, consent["port"], consent["allow_hosts"], on_start=started, on_stop=stopped)
+    serve(bind, consent["port"], consent["allow_hosts"], on_start=started, on_stop=stopped,
+          audit=audit.append, control=control_opener(paths, out))
 
 
-def status(paths, host, *, out, cgroup_applies, journal_is_persistent):
+def status(paths, host, *, out, cgroup_applies, journal_is_persistent, request=None):
     """`nogg dashboard status`: what is consented, enabled and recorded. Writes nothing."""
     problem = consent_problem(paths.consent) if os.path.lexists(paths.consent) else None
     if not os.path.lexists(paths.consent):
@@ -548,6 +560,7 @@ def status(paths, host, *, out, cgroup_applies, journal_is_persistent):
     enabled, active = unit_state(paths, host)
     print(f"unit: {paths.unit_name} {'exists' if paths.unit_path.exists() else 'absent'}, "
           f"enabled={enabled}, active={active}", file=out)
+    print(f"service: {running_report(paths, request)}", file=out)
     print(f"cgroup test: {'applies' if cgroup_applies else 'does not apply on this host'}; "
           f"journal: {'persistent' if journal_is_persistent else 'volatile (lost at reboot)'}", file=out)
     lines = audit_tail(paths.audit)
@@ -581,3 +594,279 @@ def doctor_lines(paths, host):
         notes.append(f"dashboard: a consent is recorded but {paths.unit_name} is not installed; run "
                      "`nogg dashboard service enable` on a terminal or `nogg dashboard service disable`")
     return warnings, notes
+
+
+# --- the control socket (design Decision 8) ----------------------------------------
+
+class ControlUnreachable(RuntimeError):
+    """No running service answers on the control socket; the message says why."""
+
+
+def peer_credentials(connection):
+    """`(pid, uid, gid)` of a Unix socket peer, in the kernel's `struct ucred` order.
+    session_backend_tmux.py reads the same option with the fields swapped (discovery S1 on
+    SPEC-iohv); this reading must not copy that."""
+    return _UCRED.unpack(connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, _UCRED.size))
+
+
+def control_path_problem(path):
+    """Why the control socket cannot be opened at `path`, or None. A socket that refuses
+    connections is stale and removed; a non-socket or a live socket is never touched."""
+    length = len(os.fsencode(str(path)))
+    if length > SOCKET_PATH_LIMIT:
+        return (f"the control socket path {path} is {length} bytes, longer than the {SOCKET_PATH_LIMIT} this "
+                "platform allows")
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        return None
+    if not stat.S_ISSOCK(info.st_mode):
+        return f"{path} is not a socket, and it is left in place"
+    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    probe.settimeout(CONTROL_DEADLINE)
+    try:
+        probe.connect(str(path))
+    except (ConnectionRefusedError, FileNotFoundError):
+        pass                                    # nobody listens: a stale socket
+    except OSError as exc:
+        return f"{path} cannot be checked ({exc.__class__.__name__}), and it is left in place"
+    else:
+        return f"another dashboard answers on {path}, and its socket is left in place"
+    finally:
+        probe.close()
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+    return None
+
+
+class ControlServer:
+    """The service's Unix stream socket: mode `0600` in the `0700` state directory, one
+    connection at a time, a peer of the server's own uid only, one JSON line of at most
+    CONTROL_MAX_BYTES within CONTROL_DEADLINE in, one JSON line out, then close. The accept
+    loop wakes every CONTROL_POLL to look at its stop event, so a stop removes the socket."""
+
+    def __init__(self, path, answer, *, uid=None, credentials=peer_credentials, deadline=CONTROL_DEADLINE,
+                 poll=CONTROL_POLL, clock=time.monotonic):
+        self.path, self.answer = Path(path), answer
+        self.uid = os.geteuid() if uid is None else uid
+        self.credentials, self.deadline, self.poll, self.clock = credentials, deadline, poll, clock
+        self._stop, self._thread, self._socket, self._identity = threading.Event(), None, None, None
+
+    def open(self):
+        """Bind, listen and start the accept loop; returns `close`."""
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            listener.bind(str(self.path))
+            os.chmod(self.path, 0o600)
+            self._identity = os.lstat(self.path).st_ino
+            listener.listen(8)
+            listener.settimeout(self.poll)
+        except BaseException:
+            listener.close()
+            raise
+        self._socket = listener
+        self._thread = threading.Thread(target=self._loop, name="dashboard-control", daemon=True)
+        self._thread.start()
+        return self.close
+
+    def close(self):
+        """Stop the loop, close the socket and remove it, unless another file took its place."""
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=self.deadline + self.poll + 1)
+        if self._socket is not None:
+            self._socket.close()
+        try:
+            if os.lstat(self.path).st_ino == self._identity:
+                os.unlink(self.path)
+        except FileNotFoundError:
+            pass
+
+    def _loop(self):
+        while not self._stop.is_set():
+            try:
+                connection, _ = self._socket.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                if self._stop.is_set():
+                    return
+                continue
+            with connection:
+                try:
+                    self._serve(connection)
+                except OSError:
+                    pass                        # the client went away
+                except Exception as exc:        # one bad request must not end pairing
+                    print(f"nogg dashboard: control request failed: {exc.__class__.__name__}",
+                          file=sys.stderr, flush=True)
+
+    def _serve(self, connection):
+        pid, uid, _ = self.credentials(connection)
+        if uid != self.uid:
+            return                              # another user: closed without an answer
+        request = self._read(connection)
+        if request is None:
+            return
+        reply = self.answer(request, pid)
+        connection.settimeout(self.deadline)
+        connection.sendall(json.dumps(reply, sort_keys=True).encode() + b"\n")
+
+    def _read(self, connection):
+        """One JSON object line, or None for a client that is slow, sends too much or sends
+        anything else."""
+        end, data = self.clock() + self.deadline, b""
+        while b"\n" not in data:
+            left = end - self.clock()
+            if left <= 0:
+                return None
+            connection.settimeout(left)
+            try:
+                chunk = connection.recv(CONTROL_MAX_BYTES + 1 - len(data))
+            except socket.timeout:
+                return None
+            if not chunk:
+                break
+            data += chunk
+            if len(data) > CONTROL_MAX_BYTES:
+                return None
+        try:
+            request = json.loads(data.split(b"\n", 1)[0].decode("utf-8"))
+        except ValueError:
+            return None
+        return request if isinstance(request, dict) else None
+
+
+def control_answer(server):
+    """The two operations of the control socket, answered from the running `server`. A
+    reply holds the minted link or the status, never a code hash, the secret or a cookie."""
+    def answer(request, pid):
+        op = request.get("op")
+        if op == "status":
+            return {"ok": True, **server.pairing_status()}
+        if op != "pair":
+            return {"error": "unknown operation"}
+        caller = request.get("caller")
+        if not isinstance(caller, str) or not _CALLER_LABEL.fullmatch(caller):
+            return {"error": "the caller label is malformed"}
+        try:
+            return {"ok": True, **server.mint_link(caller, pid)}
+        except sec.PairingUnavailable as exc:
+            return {"error": str(exc)}
+        except (OSError, ValueError) as exc:
+            return {"error": f"link_minted cannot be written to the audit trail ({exc.__class__.__name__}); "
+                             "no link was minted"}
+    return answer
+
+
+def control_opener(paths, out):
+    """`control(server)` for `serve`: opens the socket after the TCP bind and returns the
+    call that closes it. A path that is taken or too long leaves the service serving
+    without pairing, and says why."""
+    def open_control(server):
+        try:
+            problem = control_path_problem(paths.control)
+            if problem is None:
+                return ControlServer(paths.control, control_answer(server)).open()
+        except OSError as exc:
+            problem = f"{paths.control} cannot be opened ({exc.__class__.__name__})"
+        print(f"WARNING: serving without pairing: {problem}", file=out, flush=True)
+        return None
+    return open_control
+
+
+def control_request(path, request, *, timeout=CLIENT_TIMEOUT):
+    """One request to the running service and its reply; ControlUnreachable when no
+    service answers."""
+    if len(os.fsencode(str(path))) > SOCKET_PATH_LIMIT:
+        raise ControlUnreachable(f"the control socket path {path} is longer than {SOCKET_PATH_LIMIT} bytes")
+    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    client.settimeout(timeout)
+    data = b""
+    try:
+        client.connect(str(path))
+        client.sendall(json.dumps(request).encode() + b"\n")
+        while b"\n" not in data and len(data) < 64 * 1024:
+            chunk = client.recv(4096)
+            if not chunk:
+                break
+            data += chunk
+    except (FileNotFoundError, ConnectionRefusedError):
+        raise ControlUnreachable(f"no dashboard service answers on {path}") from None
+    except OSError as exc:
+        raise ControlUnreachable(f"the dashboard service on {path} did not answer ({exc.__class__.__name__})") \
+            from None
+    finally:
+        client.close()
+    try:
+        reply = json.loads(data.split(b"\n", 1)[0].decode("utf-8"))
+    except ValueError:
+        reply = None
+    if not isinstance(reply, dict):
+        raise ControlUnreachable(f"the dashboard service on {path} closed the connection without an answer")
+    return reply
+
+
+def pair(paths, caller, *, out, request=control_request):
+    """`nogg dashboard pair` (design Decision 9): the caller rule first, so a refused caller
+    never connects; then one link and its expiry on stdout, terminal or not."""
+    label = acting_caller(caller, "`nogg dashboard pair`",
+                          "only the operator at a terminal or the Orchestration Agent mints a pairing link")
+    taken = not_a_socket(paths.control)
+    if taken:
+        raise ServiceRefused(f"no link can be minted: {taken}; move that file away and restart the service with "
+                             f"`systemctl --user restart {paths.unit_name}`")
+    try:
+        reply = request(paths.control, {"op": "pair", "caller": label})
+    except ControlUnreachable as exc:
+        raise ServiceRefused(f"no running dashboard service minted a link: {exc}. The operator enables it once "
+                             "with `nogg dashboard service enable --bind <address>` on a login terminal") from None
+    if not reply.get("ok") or not isinstance(reply.get("link"), str):
+        raise ServiceRefused(f"the dashboard service minted no link: {str(reply.get('error'))[:300]}")
+    print(reply["link"], file=out)
+    ended = reply.get("ended") if type(reply.get("ended")) is int else 0
+    note = f"; it ended {ended} older open link{'s' if ended != 1 else ''}" if ended else ""
+    print(f"expires at {reply.get('expires_at')} (one use, five minutes){note}", file=out, flush=True)
+    return reply
+
+
+def not_a_socket(path):
+    """Why `path` cannot be the service's control socket though something is there, or None."""
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        return f"{path} cannot be read ({exc.__class__.__name__})"
+    if not stat.S_ISSOCK(info.st_mode):
+        return f"{path} is not a socket, so a service, if one runs, serves without pairing"
+    return None
+
+
+def running_report(paths, request=None):
+    """What the running service says over the control socket, as one line; writes nothing."""
+    request = request or control_request
+    taken = not_a_socket(paths.control)
+    if taken:
+        return taken
+    try:
+        reply = request(paths.control, {"op": "status"})
+    except ControlUnreachable as exc:
+        return f"not reachable: {exc}"
+    if not reply.get("ok"):
+        return f"answered without a status: {str(reply.get('error'))[:300]}"
+    links = reply.get("open_links")
+    earliest = f", the earliest expires at {reply.get('earliest_expiry')}" if reply.get("earliest_expiry") else ""
+    pairing = f"{links} open pairing link{'s' if links != 1 else ''}{earliest}" if reply.get("pairing") \
+        else "no pairing"
+    return f"running on {reply.get('bind')} port {reply.get('port')} since {reply.get('started_at')}; {pairing}"
+
+
+def service_answers(paths, request=None):
+    """Whether a running service answers on the control socket."""
+    try:
+        return bool((request or control_request)(paths.control, {"op": "status"}).get("ok"))
+    except ControlUnreachable:
+        return False

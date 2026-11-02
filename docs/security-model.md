@@ -295,7 +295,7 @@ Who can expose it on the network:
 | Who | Network bind |
 |---|---|
 | The operator at a login terminal (console or SSH, also inside their own tmux) | Allowed, sees the token link, and the run is recorded. May also enable the service once, by typing the address |
-| A proven supervised session (Lead, planner, specialist, loop, orchestrator) | Refused, with the unchanged message, with or without a recorded consent. Cannot enable the service. Only the Orchestration Agent may disable it |
+| A proven supervised session (Lead, planner, specialist, loop, orchestrator) | Refused, with the unchanged message, with or without a recorded consent or an open pairing link. Cannot enable the service. Only the Orchestration Agent may disable it or mint a pairing link (`nogg dashboard pair`) |
 | A process that breaks its ancestry: `systemd-run`, `systemd-run --pty`, `nohup`, `setsid`, `tmux new-session -d` on the shared server, a dropped session variable after a failed proof | Refused by the operator-terminal test, before a socket or a secret exists, so no token is printed |
 | A process running as the operator's user that opens a new login session (`ssh -t localhost`), writes the state files directly, or reads the secret file | Can do anything the operator can. Nogging cannot stop this |
 
@@ -321,6 +321,35 @@ the journal (`journalctl --user -t nogg-dashboard`). The operator's user can rea
 journal but not rewrite it. Whether it survives a reboot depends on the host's
 journald storage, which `nogg dashboard status` reports.
 
+### Pairing links in a chat
+
+`nogg dashboard pair` prints a one-time link for the Orchestration Agent to send to the
+Product Owner's chat, so the link is meant to be read by whatever reads that
+transcript. What protects it is that a copy is nearly worthless: the code is good for
+one sign-in within five minutes, on the running service, under the current secret.
+The service keeps only its SHA-256 hash, and the audit trail names only the first 8
+hex digits. A used code never yields a cookie, even to two requests at the same
+moment; a HEAD or a preview never uses it up; a restart or a rotation ends it.
+
+Someone who reads the chat before the Product Owner taps needs the link *and* a route
+to the private address within those five minutes:
+
+- A same-user agent on the host already has the secret, so the link gives it nothing
+  new.
+- A reader of the Remote Control transcript elsewhere is not on the tailnet or the LAN.
+- A device on a shared LAN that also sees the chat can race the Product Owner. This is
+  the remaining case. The Product Owner's tap then shows *"already used from another
+  address"*, even on a phone that was signed in before. The audit trail shows both peer
+  addresses (`link_redeemed`, `link_replayed`), and `nogg dashboard --rotate-token`
+  ends the intruder's cookie. A device-code step would close this race, and it was left
+  out on purpose: such an intruder already sits on the private network and reads the
+  chat, and for them the plain HTTP traffic is the larger exposure.
+
+A same-user process can also talk to the control socket directly and mint links, or
+end the Product Owner's open link by minting three more. It cannot hide that: each
+mint is recorded with the caller's pid read by the kernel (`SO_PEERCRED`). The socket
+answers no other user.
+
 The cgroup condition carries most of the weight. A process that detaches from its
 parents and brings its own pseudo-terminal, such as `setsid -f script -qc '…'
 /dev/null` with the session variable removed, passes the session, stdin and
@@ -336,10 +365,10 @@ The residual risks are these:
   rotated. `Secure` cannot be set on a cookie over plain HTTP. Prefer a Tailscale
   address, whose traffic is encrypted, and treat a LAN bind on a network you do not
   control as a disclosure of everything the dashboard shows.
-- **The link is reusable.** A browser's global history may keep the visited address
-  with its fragment, and a synced history carries it further. The token works until
-  it is rotated, and it can mint new 30-day cookies, so rotate it if such a history
-  leaves your hands.
+- **The token link is reusable.** A browser's global history may keep the visited
+  address with its fragment, and a synced history carries it further. The token works
+  until it is rotated, and it can mint new 30-day cookies, so rotate it if such a
+  history leaves your hands. A pairing link in that history is already dead.
 - **Other services on the host address.** Cookies ignore ports, so any other HTTP
   service on the same address receives the dashboard cookie and can replay it for
   up to 30 days. `HttpOnly` and `SameSite` do not stop this.

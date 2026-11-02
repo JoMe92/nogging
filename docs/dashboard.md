@@ -88,10 +88,60 @@ carrier NAT uses the same range and only Tailscale encrypts the traffic.
 ./scripts/nogg dashboard --rotate-token
 ```
 
-This replaces the secret and exits. Every browser session ends at once, in a
-running dashboard too. Start a network bind on a terminal to print a new link. It
-works from anywhere, since it can only reduce access, and it appends `rotated` to the
-audit trail (see [Service](#service)).
+This replaces the secret and exits. Every browser session and every open pairing
+link ends at once, in a running dashboard too. While the consented service runs, sign
+the phone in again with `nogg dashboard pair`; otherwise start a network bind on a
+terminal to print a new link. It works from anywhere, since it can only reduce
+access, and it appends `rotated` to the audit trail (see [Service](#service)).
+
+### Pairing
+
+The consented service (see [Service](#service)) never prints the token. A phone signs
+in with a one-time pairing link instead:
+
+```bash
+./scripts/nogg dashboard pair
+```
+
+```text
+http://100.86.79.27:8742/#pair=<32 hex digits>
+expires at 2026-11-02T10:05:00Z (one use, five minutes)
+```
+
+The link is printed on its own line whether or not stdout is a terminal, because it
+may reach a chat: a copy is dead after one use or after five minutes. Only the
+operator at a terminal and the proven Orchestration Agent may run `pair`. Every other
+session, and any process that fails the operator-terminal test, is refused before it
+connects. When no service runs, `pair` says so and names the terminal command that
+enables it.
+
+`pair` asks the running service over its control socket
+(`.nogging/state/dashboard/control.sock`, mode `0600`), so the command that prints a
+link never reads the secret. The service keeps only a hash of each code in memory,
+bound to the secret of the moment. A code is good for one sign-in within five
+minutes, on that server process and under that secret: a restart or a rotation ends
+every open link. At most three links are open at once; a fourth ends the oldest, and
+`pair` says so. The page reads the code like the token, removes the fragment first,
+and receives the same 30-day cookie.
+
+Open the link in the browser you will use. An app's built-in browser that opens it
+first uses it up, and its cookie stays in that app. A link-preview robot runs no
+script, so it uses up nothing.
+
+A used link never signs a second browser in:
+
+- the browser that used it, tapping again with its cookie, just loads the dashboard;
+- a browser that was already signed in from before loads the dashboard and shows
+  a warning that the link was already used;
+- any other browser sees *"This link was already used from another address"*, or
+  *"… from this address, perhaps by another app on this device"*, and is not signed in.
+
+If the page says *"already used from another address"* and that was not you, someone
+else opened the link first. Ask for the token to be rotated
+(`nogg dashboard --rotate-token`), which signs every browser out, including theirs,
+then ask for a new link. *"This link has expired"* only means asking for a new one.
+Unknown codes count toward the ten-failures limit; used and expired ones do not, and
+a correct open code is never limited.
 
 A secret file wider than `0600` or a directory wider than `0700` refuses a network
 start, and `nogg doctor` warns about such a file. A running server that finds its
@@ -166,13 +216,25 @@ exposure needs `enable` at a terminal again.
 ```
 
 `status` works from anywhere and writes nothing. It prints the consent or "no
-exposure is consented", the unit's enabled and active state, whether the cgroup test
-applies on this host, whether the journal is persistent, and the last ten audit
-events.
+exposure is consented", the unit's enabled and active state, what the running service
+reports over its control socket (address, port, start time, open pairing links and the
+earliest expiry, never a code), whether the cgroup test applies on this host, whether
+the journal is persistent, and the last ten audit events.
+
+The service opens its control socket only after its TCP port is bound. A stale socket
+at that path, one that refuses connections, is removed; a regular file or a socket
+that another server answers on is left alone, and the service then serves without
+pairing and prints why. A path longer than 107 bytes does the same. The socket answers
+only processes of the operator's own user, one short request at a time, and closes a
+client that sends nothing or too much within two seconds. A stop, SIGTERM included,
+removes it.
 
 The audit trail is `.nogging/state/dashboard/audit.jsonl` (mode `0600`), one line per
-event written with a single append: `consent`, `revoked`, `started`, `stopped` and
-`rotated` so far. No line holds a token, a cookie or the secret. The service prints
+event written with a single append: `consent`, `revoked`, `started`, `stopped`,
+`link_minted` (the caller, the caller's pid and the first 8 hex digits of the code's
+hash), `link_redeemed` and `link_replayed` (that identifier and the peer address) and
+`rotated`. A mint whose line cannot be written returns no link. No line holds a code,
+a token, a cookie or the secret. The service prints
 each line it appends, so its journal holds them too, and the CLI sends its own
 events through `systemd-cat -t nogg-dashboard` where that exists. Read them with
 `journalctl --user -t nogg-dashboard`, or `-u nogg-dashboard-<slug>.service` for the

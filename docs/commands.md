@@ -75,18 +75,20 @@ operator or orchestrator only.
 ./scripts/nogg dashboard --bind <private-address> [--allow-host <host[:port]>]
 ./scripts/nogg dashboard --rotate-token
 ./scripts/nogg dashboard status
+./scripts/nogg dashboard pair
 ./scripts/nogg dashboard service enable --bind <private-address> [--port <n>] [--allow-host <host[:port]>]
 ./scripts/nogg dashboard service disable
 ```
 
 `service enable` records the operator's consent at a login terminal and enables the
 user unit `nogg-dashboard-<slug>.service`, which runs `nogg dashboard service run`.
-`status` prints the consent, the unit's state and the last audit events.
+`status` prints the consent, the unit's state, what the running service reports and
+the last audit events. `pair` prints a one-time pairing link from the running service.
 
 **Used by.** The operator. A supervised session may use loopback only: a network
 bind is refused there. `status` and `--rotate-token` work from anywhere, and
-`service disable` also from the Orchestration Agent; `service enable` is the
-operator's alone.
+`pair` and `service disable` also from the Orchestration Agent; `service enable` is
+the operator's alone.
 
 **Read more.** [Dashboard](dashboard.md).
 

@@ -29,11 +29,14 @@
   <script src="/assets/graph/list.js" defer></script>
 </head>
 <body>
+  <p id="auth-notice" class="banner" role="alert" hidden></p>
   <main id="app"></main>
   <section id="auth-denied" hidden>
     <img src="/assets/images/nogging-mark.svg" alt="Nogging" width="48" height="48">
     <h1>This browser is not signed in</h1>
-    <p>Open the link printed by <code>nogg dashboard</code> on the host. It works until the token is rotated.</p>
+    <p>Ask for a one-time pairing link (<code>nogg dashboard pair</code>) and open it in the browser you will
+      use, within five minutes. A link printed by <code>nogg dashboard</code> on a terminal works too, until the
+      token is rotated.</p>
   </section>
   <noscript>The dashboard needs JavaScript.</noscript>
 </body>

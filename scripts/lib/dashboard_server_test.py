@@ -550,6 +550,206 @@ class Ipv6(unittest.TestCase):
         self.assertEqual(seen, {"host": "fe80::1%eth0", "family": socket.AF_INET6, "flags": socket.AI_NUMERICHOST})
 
 
+class Secret:
+    """A secret source that counts its reads; `values` are handed out in turn."""
+
+    def __init__(self, *values):
+        self.values, self.reads = list(values), 0
+
+    def current(self):
+        self.reads += 1
+        return self.values[min(self.reads, len(self.values)) - 1]
+
+
+class RouteServer:
+    """Just what `route_auth` reads from a server: no socket, no thread."""
+    token_required, port = True, 8742
+
+    def __init__(self, secret=sec.new_secret(), pairing=True):
+        self.secret, self.clock, self.wall_clock = Secret(secret), Clock(), Clock(10_000.0)
+        self.failures = sec.FailureLimit(clock=self.clock)
+        self.pairing = sec.PairingStore(clock=self.clock) if pairing else None
+        self.events = []
+        self.audit = lambda event, **fields: self.events.append((event, fields))
+
+
+class PairingRoute(unittest.TestCase):
+    """Every row of design Decision 7, through `route_auth`. Codes stay inside the test."""
+
+    def setUp(self):
+        self.server = RouteServer()
+        self.key = self.server.secret.values[0]
+        self.code = self.server.pairing.mint(self.key).code
+
+    def auth(self, code=None, method="GET", cookie=None, peer="100.64.0.2"):
+        header = f"{sec.cookie_name(8742)}={cookie}" if cookie else None
+        request = ds.Request("/api/v1/auth", "", None, f"Pairing {code or self.code}", header, method, peer)
+        response = ds.route_auth(self.server, request)
+        return response.status, dict(response.headers), json.loads(response.body)["data"]
+
+    def cookie_of(self, headers):
+        return headers["Set-Cookie"].split(";")[0].split("=", 1)[1]
+
+    def failures(self):
+        return len(self.server.failures._failures)
+
+    def test_a_valid_open_code_sets_the_same_cookie_as_the_token(self):
+        status, headers, data = self.auth()
+        self.assertEqual((status, data), (200, {}))
+        self.assertEqual(sec.cookie_state(self.key, self.cookie_of(headers), 10_000.0), "valid")
+        self.assertEqual(headers["Set-Cookie"].split(";", 1)[1],
+                         sec.set_cookie_value(8742, self.key, 10_000.0).split(";", 1)[1])
+        self.assertEqual(self.server.events, [("link_redeemed", {"id": sec.pairing_id(self.code),
+                                                                  "peer": "100.64.0.2"})])
+        self.assertEqual(self.server.secret.reads, 1)
+
+    def test_a_head_request_or_a_preview(self):
+        self.assertEqual(self.auth(method="HEAD")[:1], (401,))
+        self.assertEqual((self.failures(), self.server.events), (0, []))
+        self.assertEqual(self.auth()[0], 200)
+
+    def test_a_terminal_run_has_no_pairing(self):
+        self.server = RouteServer(pairing=False)
+        status, headers, data = self.auth("0" * 32)
+        self.assertEqual((status, data, self.failures()), (401, {"error": "unauthorized"}, 1))
+        self.assertNotIn("Set-Cookie", headers)
+
+    def test_a_missing_or_refused_secret_burns_nothing(self):
+        self.server.secret.values = [None, self.key]
+        self.assertEqual(self.auth()[2], {"error": "unauthorized"})
+        self.assertEqual((self.failures(), self.server.events), (0, []))
+        self.assertEqual(self.auth()[0], 200)
+
+    def test_the_same_phone_taps_the_link_again(self):
+        cookie = self.cookie_of(self.auth()[1])
+        status, headers, data = self.auth(cookie=cookie)
+        self.assertEqual((status, data), (200, {}))
+        self.assertNotIn("Set-Cookie", headers)
+        self.assertEqual([event for event, _ in self.server.events], ["link_redeemed"])
+
+    def test_a_lost_race_on_a_phone_that_was_already_signed_in(self):
+        older = sec.new_cookie(self.key, 9_000.0)
+        self.auth(peer="192.168.1.9")
+        status, headers, data = self.auth(cookie=older, peer="100.64.0.2")
+        self.assertEqual((status, data), (200, {"pairing": "used_elsewhere", "same_peer": False}))
+        self.assertNotIn("Set-Cookie", headers)
+        self.assertEqual(self.server.events[-1], ("link_replayed", {"id": sec.pairing_id(self.code),
+                                                                    "peer": "100.64.0.2", "same_peer": False}))
+
+    def test_a_used_code_without_a_cookie(self):
+        self.auth()
+        for _ in range(3):
+            status, headers, data = self.auth()
+            self.assertEqual((status, data), (401, {"error": "pairing_used", "same_peer": True}))
+            self.assertNotIn("Set-Cookie", headers)
+        self.assertEqual([event for event, _ in self.server.events], ["link_redeemed", "link_replayed"])
+        self.assertEqual(self.failures(), 0)
+
+    def test_a_cookie_of_a_rotated_secret_is_no_cookie(self):
+        cookie = self.cookie_of(self.auth()[1])
+        self.server.secret.values = [sec.new_secret()]
+        self.server.secret.reads = 0
+        self.assertEqual(self.auth(cookie=cookie)[2], {"error": "pairing_used", "same_peer": True})
+
+    def test_the_link_has_expired(self):
+        self.server.clock.now += 300
+        status, headers, data = self.auth()
+        self.assertEqual((status, data, self.failures()), (401, {"error": "pairing_expired"}, 0))
+        self.assertNotIn("Set-Cookie", headers)
+
+    def test_a_rotation_during_a_redemption(self):
+        new = sec.new_secret()
+        self.server.secret.values = [new, self.key]     # rotated just before the one read
+        status, headers, data = self.auth()
+        self.assertEqual((status, data), (401, {"error": "pairing_expired"}))
+        self.assertNotIn("Set-Cookie", headers)
+        self.assertEqual(self.server.secret.reads, 1)
+
+    def test_guessing_under_the_limiter(self):
+        answers = [self.auth("%032x" % guess)[0] for guess in range(12)]
+        self.assertEqual(answers, [401] * 10 + [429] * 2)
+        status, headers, _ = self.auth()
+        self.assertEqual(status, 200)
+        self.assertIn("Set-Cookie", headers)
+
+    def test_used_and_expired_codes_are_no_failed_attempts(self):
+        self.auth()
+        self.auth()
+        other = self.server.pairing.mint(self.key).code
+        self.server.clock.now += 301
+        self.auth(other)
+        self.assertEqual(self.failures(), 0)
+
+    def test_a_refusal_holds_nothing_from_the_request(self):
+        status, _, data = self.auth("<script>")
+        self.assertEqual(data, {"error": "unauthorized"})
+
+
+class Pairing(Harness):
+    """A real server on loopback under the network rules, with a pairing store."""
+
+    def start_pairing(self):
+        self.events = []
+        self.start(NETWORK, pairing=sec.PairingStore(clock=self.clock),
+                   audit=lambda event, **fields: self.events.append((event, fields)))
+        minted = self.server.mint_link("operator", 4242)
+        self.assertTrue(minted["link"].startswith(f"http://127.0.0.1:{self.server.port}/#pair="))
+        return minted["link"].split("#pair=", 1)[1]
+
+    def pair(self, code, cookie=None):
+        headers = [f"Authorization: Pairing {code}"] + ([f"Cookie: {cookie}"] if cookie else [])
+        return self.call("/api/v1/auth", headers=headers)
+
+    def test_the_product_owner_opens_a_pairing_link(self):
+        code = self.start_pairing()
+        self.assertEqual(self.call("/api/v1/summary")[0], 401)
+        status, headers, _ = self.pair(code)
+        self.assertEqual(status, 200)
+        cookie = headers["set-cookie"].split(";")[0]
+        self.assertEqual(self.call("/api/v1/summary", headers=[f"Cookie: {cookie}"])[0], 200)
+        self.assertEqual([event for event, _ in self.events], ["link_minted", "link_redeemed"])
+        self.assertEqual(self.events[0][1]["id"], self.events[1][1]["id"])
+        self.assertEqual(self.events[1][1]["peer"], "127.0.0.1")
+        self.assertNotIn(code, repr(self.events))
+
+    def test_the_link_is_opened_twice_from_different_browsers(self):
+        code = self.start_pairing()
+        self.assertEqual(self.pair(code)[0], 200)
+        for _ in range(2):
+            status, headers, body = self.pair(code)
+            self.assertEqual((status, json.loads(body)["data"]), (401, {"error": "pairing_used", "same_peer": True}))
+            self.assertNotIn("set-cookie", headers)
+        self.assertEqual([event for event, _ in self.events].count("link_replayed"), 1)
+
+    def test_the_server_restarts(self):
+        code = self.start_pairing()
+        self.server.shutdown()
+        self.server.server_close()
+        self.start(NETWORK, pairing=sec.PairingStore(clock=self.clock))
+        status, headers, body = self.pair(code)
+        self.assertEqual((status, json.loads(body)["data"]), (401, {"error": "unauthorized"}))
+        self.assertNotIn("set-cookie", headers)
+
+    def test_a_head_through_the_handler_burns_nothing(self):
+        code = self.start_pairing()
+        status, headers, _ = self.call("/api/v1/auth", method="HEAD", headers=[f"Authorization: Pairing {code}"])
+        self.assertEqual(status, 401)
+        self.assertNotIn("set-cookie", headers)
+        self.assertEqual(self.pair(code)[0], 200)
+
+    def test_status_names_no_code(self):
+        code = self.start_pairing()
+        status = self.server.pairing_status()
+        self.assertEqual((status["open_links"], status["pairing"], status["port"]), (1, True, self.server.port))
+        self.assertNotIn(code, json.dumps(status))
+        self.assertNotIn(sec.pairing_id(code), json.dumps(status))
+
+    def test_a_terminal_run_mints_nothing(self):
+        self.start(NETWORK)
+        with self.assertRaises(sec.PairingUnavailable):
+            self.server.mint_link("operator", 4242)
+
+
 class Announce(unittest.TestCase):
     secret = "s" * 43
 
@@ -608,6 +808,7 @@ class Announce(unittest.TestCase):
     def test_the_link_brackets_ipv6_and_encodes_a_zone(self):
         self.assertEqual(ds.link(sec.check_bind("fd00::1"), 9, "t"), "http://[fd00::1]:9/#token=t")
         self.assertEqual(ds.link(sec.check_bind("fe80::1%eth0"), 9, "t"), "http://[fe80::1%25eth0]:9/#token=t")
+        self.assertEqual(ds.link(sec.check_bind("fe80::1%eth0"), 9, "c", "pair"), "http://[fe80::1%25eth0]:9/#pair=c")
 
 
 class TheTokenNeverReachesALog(unittest.TestCase):
