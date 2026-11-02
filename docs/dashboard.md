@@ -13,7 +13,8 @@ facts, commits or configuration, and nothing else in Nogging depends on it.
 ./scripts/nogg dashboard --bind 100.101.102.103   # a Tailscale address, for a phone
 ```
 
-It stops on Ctrl-C or SIGTERM and leaves no process behind. There is no service
+It stops on Ctrl-C or SIGTERM and leaves no process behind. A `bd`, `git` or `dolt` call that is
+still running is ended first, so the stop takes a few seconds at most, whatever a source is doing. There is no service
 unit and no configuration key. It reads the state of the main checkout from any
 linked worktree.
 

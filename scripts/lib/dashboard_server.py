@@ -7,7 +7,7 @@ allowed lives in `dashboard_security`.
 """
 from __future__ import annotations
 
-import errno, gzip, json, re, shutil, signal, socket, socketserver, subprocess, sys, threading, time
+import errno, gzip, json, os, re, shutil, signal, socket, socketserver, subprocess, sys, threading, time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -28,6 +28,9 @@ SOCKET_TIMEOUT = 5.0
 READ_DEADLINE = 10.0
 DRAIN_SECONDS = 1.0
 DRAIN_BYTES = 256 * 1024
+STOP_POLL = 0.25           # how often the main thread looks at the stop flag (see `serve`)
+STOP_GRACE = 1.0           # seconds a source's child gets after SIGTERM before SIGKILL
+STOP_JOIN = 3.0            # seconds the refresher thread gets to end after its children are gone
 _HEAD_END = re.compile(rb"\n\r?\n")
 
 CONTENT_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
@@ -617,6 +620,50 @@ def announce(bind, port, secret, stream=None, which=shutil.which, run=subprocess
             pass
 
 
+def descendants(pid=None, proc="/proc"):
+    """Every child, grandchild and so on of `pid` (default: this process). A source runs `bd`,
+    `git` and `dolt`, and a `bd` wrapper may start more. Empty where the kernel lists no
+    children (no /proc): the stop is then bounded by the join alone."""
+    pid = os.getpid() if pid is None else pid
+    found, todo = [], [pid]
+    while todo:
+        current = todo.pop()
+        try:
+            tasks = list(Path(f"{proc}/{current}/task").iterdir())
+        except OSError:
+            continue
+        for task in tasks:
+            try:
+                kids = [int(item) for item in (task / "children").read_text().split()]
+            except (OSError, ValueError):
+                continue                  # a thread may end while this walks it
+            found += [kid for kid in kids if kid not in found]
+            todo += kids
+    return found
+
+
+def _signal_all(pids, number):
+    for pid in pids:
+        try:
+            os.kill(pid, number)
+        except OSError:
+            pass
+
+
+def stop_refresher(refresher, *, grace=STOP_GRACE, join=STOP_JOIN, kill=descendants):
+    """End the refresher thread within about `grace + join` seconds, however slow its source.
+    A source blocks in a child (`bd`, `git`, `dolt`) for up to a minute; asking the thread to
+    stop does not end that wait, so the children end first: the thread then sees an ordinary
+    failed read, and no orphan keeps a Dolt lease or a lock after the dashboard has gone."""
+    refresher.stop(timeout=0)             # the flag first: no new source starts after the sweep
+    children = kill()
+    if children:
+        _signal_all(children, signal.SIGTERM)
+        refresher.stop(timeout=grace)
+        _signal_all(kill(), signal.SIGKILL)
+    refresher.stop(timeout=join)
+
+
 def serve(bind, port, readers, *, static_dir, secret_path, allow_hosts=(), stop=None, stream=None, gates=None,
           service=False, on_start=None, on_stop=None, audit=None, control=None):
     """Run in the foreground until SIGINT or SIGTERM, or until `stop` is set. `on_start`
@@ -657,11 +704,14 @@ def serve(bind, port, readers, *, static_dir, secret_path, allow_hosts=(), stop=
     server.refresher.start()           # the socket is open: the first load never delays it
     try:
         announce(bind, server.port, secret, stream, service=service)
-        stop.wait()
+        # A timed wait: a signal sent to the process may be delivered to another thread, and an
+        # untimed `Event.wait` in the main thread then never runs the handler.
+        while not stop.wait(STOP_POLL):
+            pass
     finally:
         if close_control is not None:
             close_control()
-        server.refresher.stop()
+        stop_refresher(server.refresher)
         server.shutdown()
         server.server_close()
         if on_stop is not None:

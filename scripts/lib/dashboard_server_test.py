@@ -7,7 +7,7 @@ wait is on an event with a bounded timeout.
 """
 from __future__ import annotations
 
-import contextlib, gzip, io, json, select, socket, subprocess, sys, tempfile, threading, unittest
+import contextlib, ctypes, gzip, io, json, os, select, signal, socket, subprocess, sys, tempfile, threading, time, unittest
 from pathlib import Path
 from unittest import mock
 from urllib.parse import quote
@@ -849,6 +849,81 @@ class TheTokenNeverReachesALog(unittest.TestCase):
             self.assertNotIn(token, first + rest)
             lines = rest.strip().splitlines()       # the start notes, and no line per request
             self.assertEqual([line.split()[0] for line in lines], ["WARNING:", "The"], rest)
+
+
+SERVE_SCRIPT = (
+    "import os, subprocess, sys; sys.dont_write_bytecode = True; sys.path.insert(0, sys.argv[1])\n"
+    "import dashboard_security as sec, dashboard_server as ds\n"
+    "marker = sys.argv[4]\n"
+    "def slow():\n"
+    "    # What `bd`, `git` or `dolt` is when it is slow: a child, and a grandchild holding the pipes.\n"
+    "    subprocess.run(['sh', '-c', 'sleep 60 & echo $! > \"$1\"; wait', 'sh', marker], capture_output=True)\n"
+    "    return {}\n"
+    "readers = {'beads': slow} if marker != '-' else {}\n"
+    "ds.serve(sec.Bind('127.0.0.1', None, False), 0, readers, static_dir=sys.argv[2], secret_path=sys.argv[3])\n")
+STOP_BOUND = 4.0       # seconds; the old stop waited out the whole 5 s join of a source stuck in a child
+
+
+class TheStopIsBounded(unittest.TestCase):
+    """SPEC-vq57: `nogg dashboard` after SIGTERM must end in bounded time, whatever a source is doing."""
+
+    def launch(self, slow):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        static = assets_dir(Path(tmp.name) / "static")
+        marker = Path(tmp.name) / "grandchild"
+        process = subprocess.Popen(
+            [sys.executable, "-c", SERVE_SCRIPT, str(Path(__file__).resolve().parent), str(static),
+             str(Path(tmp.name) / "secret"), str(marker) if slow else "-"],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        self.addCleanup(process.stdout.close)
+        self.addCleanup(process.kill)
+        self.assertIn("http://127.0.0.1:", process.stdout.readline())
+        return process, marker
+
+    @staticmethod
+    def alive(pid):
+        try:
+            with open(f"/proc/{pid}/stat") as stat:
+                return stat.read().rsplit(")", 1)[1].split()[0] != "Z"
+        except OSError:
+            return False
+
+    def test_a_slow_child_does_not_hold_the_stop_and_does_not_outlive_it(self):
+        process, marker = self.launch(slow=True)
+        deadline = time.monotonic() + 30
+        while not (marker.exists() and marker.read_text().strip()) and time.monotonic() < deadline:
+            time.sleep(0.02)
+        grandchild = int(marker.read_text())
+        self.assertTrue(self.alive(grandchild))
+        started = time.monotonic()
+        process.terminate()
+        self.assertEqual(process.wait(timeout=30), 0)
+        self.assertLess(time.monotonic() - started, STOP_BOUND)
+        deadline = time.monotonic() + 5
+        while self.alive(grandchild) and time.monotonic() < deadline:
+            time.sleep(0.02)
+        self.assertFalse(self.alive(grandchild), "the source's child outlived the dashboard")
+
+    def test_a_signal_delivered_to_another_thread_still_stops_it(self):
+        process, _ = self.launch(slow=False)
+        tids = sorted(int(name) for name in os.listdir(f"/proc/{process.pid}/task") if int(name) != process.pid)
+        self.assertTrue(tids, "the server has no second thread")
+        libc = ctypes.CDLL(None, use_errno=True)
+        self.assertEqual(libc.tgkill(process.pid, tids[0], signal.SIGTERM), 0)
+        self.assertEqual(process.wait(timeout=STOP_BOUND), 0)
+
+    def test_descendants_lists_every_generation(self):
+        child = subprocess.Popen(["sh", "-c", "sleep 60 & wait"])
+        self.addCleanup(child.kill)
+        deadline = time.monotonic() + 10
+        while len(ds.descendants(os.getpid())) < 2 and time.monotonic() < deadline:
+            time.sleep(0.02)
+        found = ds.descendants(os.getpid())
+        self.assertIn(child.pid, found)
+        self.assertEqual(len(found), 2)
+        child.kill()
+        child.wait()
 
 
 if __name__ == "__main__":
