@@ -500,10 +500,18 @@ def link(bind, port, secret):
     return f"http://{host}:{port}/#token={secret}"
 
 
-def announce(bind, port, secret, stream=None, which=shutil.which, run=subprocess.run):
+def announce(bind, port, secret, stream=None, which=shutil.which, run=subprocess.run, service=False):
     """Print the address and, on a terminal only, the link. Session logs and files must
-    not capture the token, and a QR tool gets it on stdin, never on its command line."""
+    not capture the token, and a QR tool gets it on stdin, never on its command line.
+    The consented service writes to the journal, so it never prints a token or a link."""
     stream = stream if stream is not None else sys.stdout
+    if service:
+        print(f"Nogging dashboard service on http://{bind.host}:{port}/ (read-only; consented). "
+              "Sign a phone in with `nogg dashboard pair`.", file=stream, flush=True)
+        warning = sec.plain_http_warning(bind)
+        if warning:
+            print(warning, file=stream, flush=True)
+        return
     print(f"Nogging dashboard on http://{bind.host}:{port}/ (read-only; Ctrl-C stops it)", file=stream, flush=True)
     if bind.loopback:
         return
@@ -523,8 +531,12 @@ def announce(bind, port, secret, stream=None, which=shutil.which, run=subprocess
             pass
 
 
-def serve(bind, port, readers, *, static_dir, secret_path, allow_hosts=(), stop=None, stream=None, gates=None):
-    """Run in the foreground until SIGINT or SIGTERM, or until `stop` is set."""
+def serve(bind, port, readers, *, static_dir, secret_path, allow_hosts=(), stop=None, stream=None, gates=None,
+          service=False, on_start=None, on_stop=None):
+    """Run in the foreground until SIGINT or SIGTERM, or until `stop` is set. `on_start`
+    gets the bound port before any request is served, and a failure there closes the
+    socket again (an exposure that cannot be recorded does not start); `on_stop` runs
+    once the socket is closed."""
     assets = load_assets(static_dir)
     secret = sec.ensure_secret(secret_path) if not bind.loopback else None
     watch = sec.SecretWatch(secret_path, secret) if secret else None
@@ -538,6 +550,12 @@ def serve(bind, port, readers, *, static_dir, secret_path, allow_hosts=(), stop=
         if exc.errno == errno.EADDRNOTAVAIL:
             raise RuntimeError(f"{bind.address} is not assigned to this host; {sec.LIST_HINT}") from None
         raise
+    if on_start is not None:
+        try:
+            on_start(server.port)
+        except BaseException:
+            server.server_close()
+            raise
     stop = stop if stop is not None else threading.Event()
     if threading.current_thread() is threading.main_thread():
         for number in (signal.SIGINT, signal.SIGTERM):
@@ -546,9 +564,11 @@ def serve(bind, port, readers, *, static_dir, secret_path, allow_hosts=(), stop=
     worker.start()
     server.refresher.start()           # the socket is open: the first load never delays it
     try:
-        announce(bind, server.port, secret, stream)
+        announce(bind, server.port, secret, stream, service=service)
         stop.wait()
     finally:
         server.refresher.stop()
         server.shutdown()
         server.server_close()
+        if on_stop is not None:
+            on_stop()
