@@ -363,6 +363,130 @@ class SecretFile(unittest.TestCase):
         self.assertIsNone(watch.current())
 
 
+LOGIN = "0::/user.slice/user-1000.slice/session-3.scope\n"
+SHARED = ("tmux server -L nogging", 500, "9001")
+
+
+def no_call():
+    raise AssertionError("a later fact was read after an earlier condition failed")
+
+
+class OperatorTerminal(unittest.TestCase):
+    """Each condition of the operator-terminal test, from injected facts only."""
+
+    def refusal(self, **facts):
+        given = {"session_problem": None, "stdin_tty": True, "servers": lambda: [SHARED],
+                 "ancestry": lambda: [(400, "7"), (300, "6")], "cgroup": lambda: LOGIN}
+        given.update(facts)
+        return sec.terminal_refusal(**given)
+
+    def test_the_operator_in_their_own_tmux(self):
+        # Their own tmux server (pid 400) is an ancestor, the shared one (500) is not.
+        self.assertIsNone(self.refusal())
+
+    def test_a_pane_on_the_shared_session_server(self):
+        reason = self.refusal(ancestry=lambda: [(510, "8"), (500, "9001"), (300, "6")])
+        self.assertIn("shared Nogging session server", reason)
+        self.assertIn("tmux server -L nogging", reason)
+
+    def test_a_reused_server_pid_is_not_the_server(self):
+        self.assertIsNone(self.refusal(ancestry=lambda: [(500, "1234")]))
+
+    def test_a_server_of_unknown_start_matches_by_pid(self):
+        self.assertIsNotNone(self.refusal(servers=lambda: [("herdr server", 500, None)],
+                                          ancestry=lambda: [(500, "1")]))
+
+    def test_a_server_that_cannot_be_identified_fails_closed(self):
+        reason = self.refusal(servers=lambda: "the tmux server -L nogging is unknown from this process")
+        self.assertIn("cannot tell", reason)
+
+    def test_a_proven_or_unproven_session_fails_first(self):
+        reason = self.refusal(session_problem="session made-up is not a known supervised session",
+                              stdin_tty=False, servers=no_call, ancestry=no_call, cgroup=no_call)
+        self.assertIn("made-up", reason)
+
+    def test_a_dropped_session_variable_after_a_failed_proof(self):
+        # No session name is left to prove, so the other conditions decide.
+        reason = self.refusal(stdin_tty=False, servers=no_call, ancestry=no_call, cgroup=no_call)
+        self.assertIn("stdin is not a terminal", reason)
+        reason = self.refusal(ancestry=lambda: [(500, "9001")])
+        self.assertIn("session server", reason)
+
+    def test_an_app_slice_cgroup(self):
+        path = "/user.slice/user-1000.slice/user@1000.service/app.slice/run-u12.scope"
+        reason = self.refusal(cgroup=lambda: f"0::{path}\n")
+        self.assertIn(path, reason)
+        self.assertIn("logind session scope", reason)
+        spawned = "/user.slice/user-1000.slice/user@1000.service/app.slice/tmux-spawn-1f.scope"
+        self.assertIn("tmux", self.refusal(cgroup=lambda: f"0::{spawned}\n"))
+
+    def test_an_unreadable_cgroup_fails(self):
+        self.assertIn("(none)", self.refusal(cgroup=lambda: ""))
+
+    def test_a_host_without_cgroups_skips_the_condition(self):
+        self.assertIsNone(self.refusal(cgroup=lambda: None))
+
+    def test_a_cgroup_v1_host_reads_the_systemd_line(self):
+        v1 = "12:cpu,cpuacct:/user.slice\n1:name=systemd:/user.slice/user-1000.slice/session-c2.scope\n0::/\n"
+        self.assertIsNone(self.refusal(cgroup=lambda: v1))
+        self.assertEqual(sec.systemd_cgroup(v1), "/user.slice/user-1000.slice/session-c2.scope")
+
+    def test_a_session_scope_must_be_the_last_part(self):
+        self.assertFalse(sec.login_scope("/user.slice/session-3.scope/app.slice/x.scope"))
+        self.assertFalse(sec.login_scope("/user.slice/xsession-3.scope"))
+        self.assertTrue(sec.login_scope("/user.slice/user-1000.slice/session-3.scope/"))
+
+    def test_the_message_names_the_way_forward(self):
+        message = sec.terminal_refusal_message("10.0.0.5", "stdin is not a terminal")
+        for part in ("refusing --bind 10.0.0.5 outside an operator terminal", "stdin is not a terminal",
+                     "nogg dashboard service enable", "ssh -t"):
+            self.assertIn(part, message)
+
+
+class SessionServerReceipt(unittest.TestCase):
+    """The herdr server's pid comes from its receipt, without a CLI call or a start."""
+
+    def setUp(self):
+        import json
+        from session_backend import BackendError
+        from session_backend_herdr import HerdrBackend, pid_namespace, process_start
+        self.json, self.error, self.process_start = json, BackendError, process_start
+        self.namespace = pid_namespace()
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.backend = HerdrBackend({"session_herdr_state_dir": temp.name, "session_repository_root": temp.name},
+                                    run=lambda *a, **k: self.fail("the receipt lookup ran a command"))
+        self.receipt = self.backend.state / "server.json"
+
+    def write(self, **receipt):
+        self.receipt.parent.mkdir(parents=True, exist_ok=True)
+        self.receipt.write_text(self.json.dumps(receipt))
+
+    def test_no_receipt_means_no_server_and_creates_nothing(self):
+        self.assertIsNone(self.backend.server_process())
+        self.assertFalse(self.backend.state.exists())
+
+    def test_a_live_receipt_gives_the_pid(self):
+        start = self.process_start(os.getpid())
+        self.write(pid=os.getpid(), start=start, pid_ns=self.namespace)
+        self.assertEqual(self.backend.server_process(), (os.getpid(), start))
+
+    def test_a_stale_receipt_is_no_server(self):
+        self.write(pid=os.getpid(), start="1", pid_ns=self.namespace)
+        self.assertIsNone(self.backend.server_process())
+
+    def test_a_broken_or_foreign_receipt_raises(self):
+        self.write(pid=os.getpid(), start=self.process_start(os.getpid()), pid_ns="pid:[1]")
+        with self.assertRaises(self.error):
+            self.backend.server_process()
+        self.write(pid="x", start="1", pid_ns=self.namespace)
+        with self.assertRaises(self.error):
+            self.backend.server_process()
+        self.receipt.write_text("{")
+        with self.assertRaises(self.error):
+            self.backend.server_process()
+
+
 class ResponseHeaders(unittest.TestCase):
     def test_api_and_asset_policies(self):
         api, asset = dict(sec.security_headers(True)), dict(sec.security_headers(False))

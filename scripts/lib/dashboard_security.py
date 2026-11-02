@@ -1,7 +1,7 @@
 """Pure security decisions of `nogg dashboard`.
 
-Everything here decides from values passed in: the bind policy, the token and
-cookie rules, the Host and Origin checks and the response headers. The only
+Everything here decides from values passed in: the bind policy, the operator-terminal
+test, the token and cookie rules, the Host and Origin checks and the response headers. The only
 effects are the secret-file helpers at the bottom, which touch one named file.
 Nothing here opens a socket, reads a request or starts a process.
 """
@@ -128,6 +128,73 @@ def eligible_binds(ip_addr_json):
                 warning = f"on {name}, not a tailscale interface: this may be carrier NAT"
             rows.append((scoped, warning))
     return rows
+
+
+# --- the operator-terminal test ---------------------------------------------------
+
+_SESSION_SCOPE = re.compile(r"^session-[A-Za-z0-9_.-]+\.scope$")
+
+
+def systemd_cgroup(text):
+    """The systemd cgroup path in `/proc/<pid>/cgroup` text: the `name=systemd` line of a
+    v1 or hybrid host, else the unified `0::` line; None when neither is there."""
+    unified = None
+    for line in (text or "").splitlines():
+        parts = line.split(":", 2)
+        if len(parts) != 3:
+            continue
+        if parts[1] == "name=systemd":
+            return parts[2]
+        if parts[0] == "0" and parts[1] == "":
+            unified = parts[2]
+    return unified
+
+
+def login_scope(path):
+    """Whether a cgroup path ends in a logind session scope (`session-<id>.scope`)."""
+    return bool(path) and _SESSION_SCOPE.match(path.rstrip("/").rsplit("/", 1)[-1]) is not None
+
+
+def terminal_refusal(*, session_problem, stdin_tty, servers, ancestry, cgroup):
+    """Which condition of the operator-terminal test fails, as a sentence, or None when
+    the caller is a person at a login terminal. The facts are passed in:
+
+    - `session_problem`: why the caller counts as a session (a proven one, or a session
+      name that ancestry does not prove), or None;
+    - `stdin_tty`: whether stdin is a terminal; stdout is never tested;
+    - `servers`: a call giving `(label, pid, start)` for each shared session server that
+      runs, or a str saying why one cannot be identified (which fails closed);
+    - `ancestry`: a call giving the `(pid, start)` pairs of the caller's ancestors;
+    - `cgroup`: a call giving the caller's cgroup text, or None where the host has no
+      cgroups or no systemd, which skips that condition.
+
+    The calls run only once the cheaper conditions hold, in this order."""
+    if session_problem:
+        return session_problem
+    if not stdin_tty:
+        return "stdin is not a terminal, as under nohup, systemd-run, setsid or an agent's tool call"
+    running = servers()
+    if isinstance(running, str):
+        return f"it cannot tell whether it runs under the shared Nogging session server: {running}"
+    parents = set(ancestry())
+    for label, pid, start in running:
+        if any(seen == pid and (start is None or born == start) for seen, born in parents):
+            return f"it runs under the shared Nogging session server ({label}, pid {pid})"
+    text = cgroup()
+    if text is not None:
+        path = systemd_cgroup(text)
+        if not login_scope(path):
+            return (f"its cgroup {path or '(none)'} is not a logind session scope (session-<id>.scope), "
+                    "as under `systemd-run --user --pty`, a service, or a tmux built with systemd support, "
+                    "which moves each pane into its own scope")
+    return None
+
+
+def terminal_refusal_message(address, reason):
+    """The refusal of a non-loopback `--bind` that fails the operator-terminal test."""
+    return (f"refusing --bind {address} outside an operator terminal: a network bind runs in the "
+            "foreground on a login terminal, or as the consented service (`nogg dashboard service "
+            f"enable` on a terminal); here {reason}. From another host, run it with `ssh -t`")
 
 
 # --- token and cookie -------------------------------------------------------------
