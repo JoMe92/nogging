@@ -26,6 +26,7 @@ module.exports = {
     'scripts/lib/dashboard_model.py',
     'scripts/lib/dashboard_security.py',
     'scripts/lib/dashboard_server.py',
+    'scripts/lib/dashboard_service.py',
     'scripts/lib/dashboard_slow_sources.py',
     'scripts/lib/dashboard_sources.py',
     'scripts/lib/loop_schedule.py',

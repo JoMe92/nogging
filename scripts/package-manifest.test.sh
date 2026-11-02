@@ -54,6 +54,15 @@ for (const dir of manifest.verbatimDirs) {
   walk(dir.from);
 }
 
+// The installer writes no dashboard unit: `nogg dashboard service enable` is its only writer.
+const dashboardUnits = manifest.systemd.filter(item => /dashboard/.test(item.from) || /dashboard/.test(item.to));
+if (dashboardUnits.length) {
+  throw new Error(`manifest.systemd must not render a dashboard unit: ${dashboardUnits.map(i => i.to).join(', ')}`);
+}
+if (!manifest.verbatim.includes('scripts/lib/dashboard_service.py')) {
+  throw new Error('scripts/lib/dashboard_service.py must ship with init and update');
+}
+
 const missing = [...new Set(required)].filter(path => !packed.has(path));
 if (missing.length) {
   console.error(missing.join('\n'));

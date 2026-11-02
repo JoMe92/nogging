@@ -178,6 +178,13 @@ function nextStepItems(ctx, command, gaps = [], env = process.env) {
       if (state !== 'enabled') optional.push(enableHint(unit, state));
     }
   } else {
+    // `service enable` writes this unit outside the manifest; only its own command
+    // removes it together with the consent, so `remove` names that command.
+    const dashboard = `nogg-dashboard-${ctx.slug}.service`;
+    if (ctx.slug && unitState(dashboard, env) === 'enabled') {
+      required.push(`Run \`./scripts/nogg dashboard service disable\` before removing: ${dashboard} is enabled ` +
+        'and serves this checkout.');
+    }
     for (const unit of ctx.units) {
       const linked = pairedLabel(unit) ? ` ${path.basename(pairedService(unit))}` : '';
       required.push(`Disable ${path.basename(unit.rel)} before the checkout is moved or deleted: ` +

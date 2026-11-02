@@ -119,6 +119,8 @@ check "update: no nightly hint when its timer is enabled" bash -c '! grep -Fq "n
 check "update: the disabled orchestrator is offered, without the qualifier" \
   grep -Eq '^  [0-9]\. Enable the always-on Orchestration Agent: ' <<<"$out"
 check "update: the verdict is unchanged" grep -Fxq "$verdict" <<<"$out"
+check "init and update: no dashboard unit is rendered or offered" \
+  bash -c 'test -d "$1/systemd" && ! ls "$1/systemd" | grep -Fq dashboard && ! grep -Fq nogg-dashboard <<<"$2"' _ "$repo" "$out"
 
 # --- update: an unavailable probe shows the hint with a qualifier -----------
 stub "$bin" systemctl 'exit 1'
@@ -162,6 +164,19 @@ check "remove: shared entries are left for review" grep -Eq '^  6\. Review the s
 check "remove: the last step commits the removal" grep -Eq '^  7\. Commit the removal\.' <<<"$out"
 run "$work/nosd/repo" remove
 check "remove, no units rendered: no disable step" bash -c '! grep -Fq "disable --now" <<<"$1"' _ "$out"
+check "remove, dashboard service not enabled: no dashboard step" bash -c '! grep -Fq "dashboard service disable" <<<"$1"' _ "$out"
+
+# --- remove: an enabled dashboard service is disabled through its own command -
+dash="$work/dash/repo"; new_repo "$dash"
+run "$dash" init --no-beads --no-hooks
+stub "$bin" systemctl 'case "$*" in
+  "--user is-enabled nogg-dashboard-repo.service") echo enabled ;;
+  *) exit 1 ;;
+esac'
+run "$dash" remove
+check "remove with the service enabled: it names service disable first" \
+  grep -Eq '^  1\. Run `\./scripts/nogg dashboard service disable` before removing: nogg-dashboard-repo\.service is enabled' <<<"$out"
+stub "$bin" systemctl "echo \"\$*\" >>'$work/systemctl.log'; exit 1"
 check "remove, no worktree: none is named" bash -c '! grep -Fq "nightly test worktree" <<<"$1"' _ "$out"
 
 # --- the installer's doctor -------------------------------------------------
