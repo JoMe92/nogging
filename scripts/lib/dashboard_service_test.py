@@ -7,7 +7,7 @@ is injected, no unit is installed and no sleep runs. The one real server binds l
 under a network-rules `Bind`, and closes before the test ends."""
 from __future__ import annotations
 
-import io, json, os, stat, subprocess, sys, tempfile, threading, unittest
+import io, json, os, socket, stat, subprocess, sys, tempfile, threading, unittest
 from pathlib import Path
 from unittest import mock
 
@@ -345,7 +345,7 @@ class Disable(Fixture):
 class Run(Fixture):
     def run_service(self, caller=svc.Caller(), cgroup=UNIT_CGROUP):
         served, out = [], io.StringIO()
-        def serve(bind, port, hosts, on_start, on_stop):
+        def serve(bind, port, hosts, on_start, on_stop, audit, control):
             served.append((bind, port, hosts))
             on_start(port)
             on_stop()
@@ -498,6 +498,187 @@ class Serving(Fixture):
         import socket
         with self.assertRaises(ConnectionRefusedError):
             socket.create_connection(("127.0.0.1", seen[0]), timeout=60).close()
+
+
+
+class Control(unittest.TestCase):
+    """The control socket and `pair`, with a short socket path under /tmp. A real server binds
+    loopback under the network rules; peer credentials are stubbed only at the socket boundary."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="ndc-", dir="/tmp")
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name)
+        self.paths = svc.Paths(state=root / "dashboard", unit_dir=root / "units", slug="repo", workdir=root, name="r")
+        sec.ensure_secret(self.paths.secret)
+        self.events, self.closers = [], []
+
+    def start(self, audit=None, **options):
+        static = Path(self.tmp.name) / "static"
+        static.mkdir(exist_ok=True)
+        (static / "index.html").write_text("<!doctype html>")
+        watch = sec.SecretWatch(self.paths.secret, sec.read_secret(self.paths.secret))
+        self.server = server.DashboardServer(sec.Bind("127.0.0.1", None, False), 0,
+                                             assets=server.load_assets(static), readers={}, secret=watch,
+                                             pairing=sec.PairingStore(),
+                                             audit=audit or (lambda event, **f: self.events.append((event, f))))
+        self.addCleanup(self.server.server_close)
+        control = svc.ControlServer(self.paths.control, svc.control_answer(self.server), **options)
+        self.addCleanup(control.open())
+        return control
+
+    def pair(self, caller=svc.Caller(), request=svc.control_request):
+        out = io.StringIO()
+        reply = svc.pair(self.paths, caller, out=out, request=request)
+        return reply, out.getvalue()
+
+    def test_the_operator_mints_a_link(self):
+        self.start()
+        reply, output = self.pair()
+        link, expiry = output.splitlines()
+        self.assertRegex(link, rf"^http://127\.0\.0\.1:{self.server.port}/#pair=[0-9a-f]{{32}}$")
+        self.assertIn("expires at", expiry)
+        event, fields = self.events[0]
+        self.assertEqual((event, fields["caller"], fields["peer_pid"]), ("link_minted", "operator", os.getpid()))
+        self.assertNotIn(link.split("=", 1)[1], repr(self.events))
+        self.assertEqual(stat.S_IMODE(self.paths.control.lstat().st_mode), 0o600)
+
+    def test_the_orchestration_agent_mints_a_link(self):
+        self.start()
+        orchestrator = svc.Caller(refusal="it runs inside supervised session nogg-orchestrator-r",
+                                  session={"name": "nogg-orchestrator-r", "role": "orchestrator"})
+        self.pair(orchestrator)
+        self.assertEqual(self.events[0][1]["caller"], "orchestrator:nogg-orchestrator-r")
+
+    def test_a_refused_caller_never_connects(self):
+        self.start()
+        connects = []
+        callers = (svc.Caller(session={"name": "lead-x", "role": "lead"}),
+                   svc.Caller(session={"name": "loop-x", "role": "loop"}),
+                   svc.Caller(session_error="NOGG_SESSION_NAME=made-up names no proven session"),
+                   svc.Caller(refusal="stdin is not a terminal"))
+        for caller in callers:
+            with self.assertRaises(svc.ServiceRefused):
+                self.pair(caller, request=lambda *args: connects.append(args))
+        self.assertEqual((connects, self.events), ([], []))
+
+    def test_no_service_runs(self):
+        with self.assertRaises(svc.ServiceRefused) as caught:
+            self.pair()
+        self.assertIn("nogg dashboard service enable --bind <address>", str(caught.exception))
+        self.assertIn("not reachable", svc.running_report(self.paths))
+        self.assertFalse(svc.service_answers(self.paths))
+
+    def test_a_fourth_link(self):
+        self.start()
+        outputs = [self.pair()[1] for _ in range(4)]
+        self.assertTrue(all("ended" not in output for output in outputs[:3]))
+        self.assertIn("it ended 1 older open link", outputs[3])
+        self.assertIn("3 open pairing links", svc.running_report(self.paths))
+
+    def test_the_audit_trail_cannot_be_written(self):
+        def broken(event, **fields):
+            raise OSError("read-only")
+        self.start(audit=broken)
+        with self.assertRaises(svc.ServiceRefused) as caught:
+            self.pair()
+        self.assertIn("no link was minted", str(caught.exception))
+        self.assertNotIn("#pair=", str(caught.exception))
+        self.assertEqual(self.server.pairing_status()["open_links"], 0)
+
+    def test_status_holds_no_code(self):
+        self.start()
+        reply, output = self.pair()
+        report = svc.running_report(self.paths)
+        self.assertIn(f"running on 127.0.0.1 port {self.server.port}", report)
+        self.assertIn("1 open pairing link,", report)
+        self.assertNotIn(output.splitlines()[0].split("=", 1)[1], report)
+        self.assertTrue(svc.service_answers(self.paths))
+
+    def test_a_failing_answer_keeps_the_socket_serving(self):
+        self.start()
+        self.server.pairing_status = lambda: 1 / 0
+        with self.assertRaises(svc.ControlUnreachable):
+            svc.control_request(self.paths.control, {"op": "status"})
+        self.assertRegex(self.pair()[1], r"#pair=[0-9a-f]{32}")
+
+    def test_another_user_connects(self):
+        self.start(credentials=lambda connection: (4242, os.geteuid() + 1, 0))
+        with self.assertRaises(svc.ServiceRefused) as caught:
+            self.pair()
+        self.assertRegex(str(caught.exception), "did not answer|without an answer")
+        self.assertEqual((self.events, self.server.pairing_status()["open_links"]), ([], 0))
+
+    def test_peer_credentials_are_read_in_kernel_order(self):
+        left, right = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
+        with left, right:
+            self.assertEqual(svc.peer_credentials(left), (os.getpid(), os.geteuid(), os.getegid()))
+
+    def test_a_slow_control_client(self):
+        self.start(deadline=0.2)
+        for payload in (b"", b"x" * 1100):
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                client.settimeout(60)
+                client.connect(str(self.paths.control))
+                if payload:
+                    client.sendall(payload)
+                try:
+                    answer = client.recv(64)
+                except ConnectionResetError:            # closed with bytes unread
+                    answer = b""
+                self.assertEqual(answer, b"")           # closed with no answer
+        self.assertRegex(self.pair()[1], r"#pair=[0-9a-f]{32}")
+
+    def test_a_malformed_request_is_closed_or_refused(self):
+        self.start()
+        self.assertEqual(svc.control_request(self.paths.control, {"op": "nope"}), {"error": "unknown operation"})
+        for label in ("lead:x", "operator\n"):
+            self.assertIn("malformed", svc.control_request(self.paths.control, {"op": "pair", "caller": label})["error"])
+        self.assertEqual(self.events, [])
+
+    def test_the_socket_path_is_taken(self):
+        self.paths.state.mkdir(exist_ok=True)
+        self.paths.control.write_text("not a socket")
+        self.assertIn("not a socket", svc.control_path_problem(self.paths.control))
+        self.assertIn("not a socket", svc.running_report(self.paths))
+        with self.assertRaises(svc.ServiceRefused) as caught:
+            self.pair()
+        self.assertIn("not a socket", str(caught.exception))
+        self.assertNotIn("service enable", str(caught.exception))
+        self.assertTrue(self.paths.control.is_file())
+        self.paths.control.unlink()
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as live:
+            live.bind(str(self.paths.control))
+            live.listen(1)
+            self.assertIn("another dashboard", svc.control_path_problem(self.paths.control))
+            self.assertTrue(self.paths.control.exists())
+        self.assertIsNone(svc.control_path_problem(self.paths.control))     # now stale: removed
+        self.assertFalse(os.path.lexists(self.paths.control))
+
+    def test_a_taken_path_serves_without_pairing(self):
+        self.paths.control.write_text("")
+        out = io.StringIO()
+        self.assertIsNone(svc.control_opener(self.paths, out)(object()))
+        self.assertIn("serving without pairing", out.getvalue())
+        self.assertEqual(self.paths.control.read_text(), "")
+
+    def test_a_long_socket_path(self):
+        deep = svc.Paths(state=Path("/tmp") / ("d" * 120), unit_dir=Path("/tmp"), slug="r", workdir=Path("/tmp"))
+        self.assertIn("longer than the 107", svc.control_path_problem(deep.control))
+        with self.assertRaises(svc.ServiceRefused) as caught:
+            svc.pair(deep, svc.Caller(), out=io.StringIO())
+        self.assertIn("longer than 107", str(caught.exception))
+
+    def test_a_stop_removes_the_socket_and_keeps_a_replacement(self):
+        control = svc.ControlServer(self.paths.control, lambda request, pid: {})
+        close = control.open()
+        close()
+        self.assertFalse(os.path.lexists(self.paths.control))
+        close = svc.ControlServer(self.paths.control, lambda request, pid: {}).open()
+        self.paths.control.unlink()
+        self.paths.control.write_text("someone else's")
+        close()
+        self.assertTrue(self.paths.control.is_file())
 
 
 if __name__ == "__main__":

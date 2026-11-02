@@ -38,7 +38,9 @@ COMPRESSIBLE = {".html", ".js", ".css", ".svg", ".txt"}
 REASONS = {400: "bad_request", 401: "unauthorized", 403: "forbidden", 404: "not_found",
            405: "method_not_allowed", 414: "uri_too_long", 421: "misdirected_request",
            429: "too_many_requests", 431: "headers_too_large", 500: "internal_error",
-           501: "not_built", 503: "busy"}
+           501: "not_built", 503: "busy",
+           # The two fixed refusals of a pairing code that is no guess (design Decision 7).
+           "pairing_used": "pairing_used", "pairing_expired": "pairing_expired"}
 
 
 def iso(timestamp):
@@ -63,6 +65,8 @@ class Request:
     match: re.Match | None
     authorization: str | None
     cookie: str | None
+    method: str | None = None            # None fails closed: only a GET redeems a pairing code
+    peer: str | None = None
 
 
 def load_assets(directory):
@@ -91,10 +95,12 @@ def api_response(server, name, data, sources=None, headers=()):
     return Response(200, json.dumps(doc, sort_keys=True).encode(), headers=tuple(headers))
 
 
-def api_error(server, status, headers=()):
-    """A refusal: the envelope with a fixed reason, and nothing from the request."""
+def api_error(server, status, headers=(), reason=None, **flags):
+    """A refusal: the envelope with a fixed reason, and nothing from the request. `reason`
+    names another entry of REASONS; `flags` are booleans only."""
+    assert all(type(value) is bool for value in flags.values())
     doc = {"schema": "nogg.dashboard.error/v1", "as_of": iso(server.wall_clock()),
-           "sources": {}, "data": {"error": REASONS[status]}}
+           "sources": {}, "data": {"error": REASONS[reason or status], **flags}}
     return Response(status, json.dumps(doc, sort_keys=True).encode(), headers=tuple(headers))
 
 
@@ -125,10 +131,58 @@ def check_session(server, request):
     return api_error(server, 401) if state == "expired" else refuse_attempt(server)
 
 
+def record(server, event, **fields):
+    """An audit event while a request is served. One that cannot be written does not fail
+    the request: the service's writer has already sent the line to stdout, the journal."""
+    if server.audit is None:
+        return
+    try:
+        server.audit(event, **fields)
+    except OSError:
+        pass
+
+
+def route_pairing(server, request, code):
+    """Redeem a one-time pairing code (design Decision 7). The secret is read once and the
+    same value checks the code and signs the cookie, so a rotation in between cannot turn
+    an old link into a new cookie. Only an unknown code counts as a failed attempt."""
+    if request.method != "GET":                 # a HEAD or a prefetch never burns a code
+        return api_error(server, 401)
+    if server.pairing is None:                   # a terminal run: a code is a wrong credential
+        return refuse_attempt(server)
+    secret = server.secret.current()
+    if not sec.secret_acceptable(secret):
+        return api_error(server, 401)
+    now = server.wall_clock()
+    presented = sec.cookie_from_header(request.cookie, sec.cookie_name(server.port))
+    if presented is not None and sec.cookie_state(secret, presented, now) != "valid":
+        presented = None
+    issue = sec.new_cookie(secret, now)
+    found = server.pairing.redeem(code, secret, issue=issue, presented=presented, peer=request.peer)
+    if found.outcome == "unknown":
+        return refuse_attempt(server)
+    if found.outcome == "expired":
+        return api_error(server, 401, reason="pairing_expired")
+    if found.outcome == "redeemed":
+        record(server, "link_redeemed", id=found.id, peer=request.peer)
+        return api_response(server, "auth", {}, headers=[("Set-Cookie", sec.cookie_header(server.port, issue))])
+    if found.outcome == "again":
+        return api_response(server, "auth", {})
+    if found.first_replay:
+        record(server, "link_replayed", id=found.id, peer=request.peer, same_peer=found.same_peer)
+    if found.outcome == "used_elsewhere":
+        return api_response(server, "auth", {"pairing": "used_elsewhere", "same_peer": found.same_peer})
+    return api_error(server, 401, reason="pairing_used", same_peer=found.same_peer)
+
+
 def route_auth(server, request):
-    """Trade the token for a cookie, or report whether the session is still good."""
+    """Trade the token or a pairing code for a cookie, or report whether the session is
+    still good."""
     if not server.token_required:
         return api_response(server, "auth", {})
+    code = sec.pairing_code(request.authorization)
+    if code is not None:
+        return route_pairing(server, request, code)
     token = sec.bearer_token(request.authorization)
     if token is None:
         return check_session(server, request) or api_response(server, "auth", {})
@@ -326,7 +380,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         route, match = find_route(path)
         if route is None:
             return api_error(server, 404)
-        request = Request(path, query, match, self.headers.get("Authorization"), self.headers.get("Cookie"))
+        request = Request(path, query, match, self.headers.get("Authorization"), self.headers.get("Cookie"),
+                          self.command, str(self.client_address[0]))
         refused = None if route is route_auth else check_session(server, request)
         return refused or route(server, request)
 
@@ -404,8 +459,12 @@ class DashboardServer(ThreadingHTTPServer):
 
     def __init__(self, bind, port, *, assets, readers, secret=None, allow_hosts=(),
                  clock=time.monotonic, wall_clock=time.time, read_deadline=READ_DEADLINE,
-                 gates=None, refresher=None):
+                 gates=None, refresher=None, pairing=None, audit=None):
         self.bind_address, self.assets, self.readers = bind, assets, readers
+        # `pairing` is the consented service's store of one-time codes (None on a terminal
+        # run); `audit(event, **fields)` appends to the audit trail.
+        self.pairing, self.audit = pairing, audit
+        self.started_at = iso(wall_clock())
         # The refresher is built here and started by `serve`: a request only reads it.
         self.refresher = refresher or cache.Refresher(readers, gates, clock=clock, wall_clock=wall_clock)
         self.graph_cache = graph.GraphCache()
@@ -494,10 +553,37 @@ class DashboardServer(ThreadingHTTPServer):
         """Only the exception class: a traceback could quote a request value."""
         print(f"nogg dashboard: request failed: {sys.exc_info()[0].__name__}", file=sys.stderr, flush=True)
 
+    def mint_link(self, caller, peer_pid):
+        """A one-time pairing link for the control socket. The mint is recorded before the
+        code becomes valid; if `link_minted` cannot be written, no link exists."""
+        if self.pairing is None:
+            raise sec.PairingUnavailable("this dashboard has no pairing (a terminal run)")
+        secret = self.secret.current() if self.secret else None
+        if not sec.secret_acceptable(secret):
+            raise sec.PairingUnavailable("the dashboard secret is missing or refused; run `nogg dashboard --rotate-token`")
+        code = sec.new_pairing_code()
+        expires_at = iso(self.wall_clock() + self.pairing.ttl)
+        if self.audit is not None:
+            self.audit("link_minted", caller=caller, peer_pid=peer_pid, expires_at=expires_at,
+                       id=sec.pairing_id(code))
+        minted = self.pairing.mint(secret, code)
+        return {"link": link(self.bind_address, self.port, minted.code, "pair"), "expires_at": expires_at,
+                "ended": minted.ended}
 
-def link(bind, port, secret):
+    def pairing_status(self):
+        """What `nogg dashboard status` may know: never a code, a hash or the secret."""
+        open_links, earliest = (0, None) if self.pairing is None else self.pairing.status(
+            self.secret.current() if self.secret else None)
+        return {"bind": self.bind_address.host, "port": self.port, "started_at": self.started_at,
+                "pairing": self.pairing is not None, "open_links": open_links,
+                "earliest_expiry": iso(self.wall_clock() + earliest) if earliest is not None else None}
+
+
+def link(bind, port, value, fragment="token"):
+    """The sign-in link: the token, or a pairing code, in the URL fragment, which no request,
+    log or Referer carries."""
     host = bind.host if bind.zone is None else f"[{bind.address}%25{bind.zone}]"
-    return f"http://{host}:{port}/#token={secret}"
+    return f"http://{host}:{port}/#{fragment}={value}"
 
 
 def announce(bind, port, secret, stream=None, which=shutil.which, run=subprocess.run, service=False):
@@ -532,17 +618,20 @@ def announce(bind, port, secret, stream=None, which=shutil.which, run=subprocess
 
 
 def serve(bind, port, readers, *, static_dir, secret_path, allow_hosts=(), stop=None, stream=None, gates=None,
-          service=False, on_start=None, on_stop=None):
+          service=False, on_start=None, on_stop=None, audit=None, control=None):
     """Run in the foreground until SIGINT or SIGTERM, or until `stop` is set. `on_start`
     gets the bound port before any request is served, and a failure there closes the
     socket again (an exposure that cannot be recorded does not start); `on_stop` runs
-    once the socket is closed."""
+    once the socket is closed. The consented service (`service`) keeps a pairing store,
+    and `control(server)` opens its control socket after the TCP bind and returns the
+    call that closes it; `audit(event, **fields)` records pairing events."""
     assets = load_assets(static_dir)
     secret = sec.ensure_secret(secret_path) if not bind.loopback else None
     watch = sec.SecretWatch(secret_path, secret) if secret else None
     try:
         server = DashboardServer(bind, port, assets=assets, readers=readers, secret=watch, allow_hosts=allow_hosts,
-                                 gates=gates)
+                                 gates=gates, pairing=sec.PairingStore() if service and secret else None,
+                                 audit=audit)
     except OSError as exc:
         if exc.errno == errno.EADDRINUSE:
             raise RuntimeError(f"port {port} is already in use on {bind.address}; "
@@ -550,12 +639,15 @@ def serve(bind, port, readers, *, static_dir, secret_path, allow_hosts=(), stop=
         if exc.errno == errno.EADDRNOTAVAIL:
             raise RuntimeError(f"{bind.address} is not assigned to this host; {sec.LIST_HINT}") from None
         raise
-    if on_start is not None:
-        try:
+    close_control = None
+    try:
+        if on_start is not None:
             on_start(server.port)
-        except BaseException:
-            server.server_close()
-            raise
+        if control is not None:
+            close_control = control(server)
+    except BaseException:
+        server.server_close()
+        raise
     stop = stop if stop is not None else threading.Event()
     if threading.current_thread() is threading.main_thread():
         for number in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):   # a closed SSH window too
@@ -567,6 +659,8 @@ def serve(bind, port, readers, *, static_dir, secret_path, allow_hosts=(), stop=
         announce(bind, server.port, secret, stream, service=service)
         stop.wait()
     finally:
+        if close_control is not None:
+            close_control()
         server.refresher.stop()
         server.shutdown()
         server.server_close()

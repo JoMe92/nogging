@@ -13,7 +13,8 @@ fi
 PYTHONDONTWRITEBYTECODE=1 python3 - "$root" <<'PY'
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
-import json, os, pty, select, signal, socket, stat, subprocess, sys, tempfile, threading, time, urllib.request
+import json, os, pty, re, select, signal, socket, stat, subprocess, sys, tempfile, threading, time, urllib.error
+import urllib.request
 
 source = Path(sys.argv[1])
 nogg = source / "scripts/nogg"
@@ -142,6 +143,26 @@ def served_run(repo, args, cgroup, env, address):
         process.kill()
         rest, _ = process.communicate()
     return process.returncode, (output + rest).decode(errors="replace")
+
+
+def service_process(repo, cgroup, env, address):
+    """`nogg dashboard service run` left running, serving `address` on loopback under the
+    network rules with no terminal (as under systemd), once it has printed its address."""
+    facts = json.dumps({"args": ["dashboard", "service", "run"], "cgroup": cgroup, "servers": [],
+                        "bind_map": {address: "127.0.0.1"}})
+    environment = {key: value for key, value in os.environ.items() if key != "NOGG_SESSION_NAME"}
+    environment.update(NOGGING_ROOT=str(repo), **env)
+    process = subprocess.Popen([sys.executable, "-c", DRIVER, str(nogg), facts], stdin=subprocess.DEVNULL,
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=environment,
+                               start_new_session=True)
+    output = b""
+    while b"Nogging dashboard service on" not in output:
+        ready, _, _ = select.select([process.stdout], [], [], 60)
+        chunk = os.read(process.stdout.fileno(), 4096) if ready else b""
+        if not chunk:
+            break
+        output += chunk
+    return process, output
 
 
 def terminal_run(repo, address, env):
@@ -490,7 +511,7 @@ with tempfile.TemporaryDirectory(prefix="nogg fixture ") as tmp:
     (unit_state / "active").write_text("active\n")
     result = driven(served, "dashboard", "--rotate-token", env=service_env)
     check("the token is rotated from the chat", result.returncode == 0 and events(served)[-1]["event"] == "rotated"
-          and "consented service" in result.stdout and "nogg dashboard pair" not in result.stdout, result.stdout)
+          and "consented service" in result.stdout and "nogg dashboard pair" in result.stdout, result.stdout)
     check("the rotation prints no secret",
           (served / ".nogging/state/dashboard/secret").read_text().strip() not in result.stdout + result.stderr)
     result = driven(served, "dashboard", "service", "disable", env=service_env)
@@ -607,6 +628,98 @@ with tempfile.TemporaryDirectory(prefix="nogg fixture ") as tmp:
     audit_text = (lone / ".nogging/state/dashboard/audit.jsonl").read_text()
     check("the terminal run's events hold no token", secret_now not in audit_text and "token" not in audit_text)
     check("the terminal run reaches the journal", '"mode":"terminal"' in journal.read_text())
+
+    # Pairing from the chat. A link is never printed by a check: details name only exit codes.
+    paired = repository(Path(tmp) / "paired")
+    paired_unit, paired_state = UNIT_OF.format("paired"), paired / ".nogging/state/dashboard"
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        pair_port = probe.getsockname()[1]
+    writer.write_consent(paired_state / "consent.json", writer.consent_record(
+        "10.255.255.1", pair_port, [], "2026-11-02T10:00:00Z", "/dev/pts/1"))
+    control = paired_state / "control.sock"
+    orchestrator = session_record(paired, "nogg-orchestrator-paired", "orchestrator")
+    result = driven(paired, "dashboard", "pair", env=service_env)
+    check("no service runs", result.returncode != 0 and "nogg dashboard service enable --bind <address>"
+          in result.stderr and "#pair=" not in result.stdout, result.stderr)
+    orchestrator.unlink()              # the record's pid is this runner's: an ancestor of the service too
+    service, served_output = service_process(paired, paired_unit, service_env, "10.255.255.1")
+    orchestrator = session_record(paired, "nogg-orchestrator-paired", "orchestrator")
+    check("the service opens its control socket 0600", os.path.lexists(control)
+          and stat.S_ISSOCK(control.lstat().st_mode) and mode(control) == 0o600)
+    result = driven(paired, "dashboard", "pair", env=service_env)
+    lines = result.stdout.splitlines()
+    minted = events(paired)[-1]
+    check("the Orchestration Agent mints a link", result.returncode == 0 and len(lines) == 2
+          and re.fullmatch(rf"http://127\.0\.0\.1:{pair_port}/#pair=[0-9a-f]{{32}}", lines[0]) is not None
+          and lines[1].startswith("expires at "), "exit %s" % result.returncode)
+    check("link_minted names the orchestrator and the peer pid", minted["event"] == "link_minted"
+          and minted["caller"] == "orchestrator:nogg-orchestrator-paired" and minted["peer_pid"] > 0,
+          minted.get("event"))
+    code = lines[0].split("#pair=", 1)[1] if lines else "missing"
+    auth = urllib.request.Request(f"http://127.0.0.1:{pair_port}/api/v1/auth",
+                                  headers={"Authorization": f"Pairing {code}"})
+    with urllib.request.urlopen(auth, timeout=60) as reply:
+        cookie = (reply.headers.get("Set-Cookie") or "").split(";")[0]
+    data = urllib.request.Request(f"http://127.0.0.1:{pair_port}/api/v1/summary", headers={"Cookie": cookie})
+    with urllib.request.urlopen(data, timeout=60) as reply:
+        check("the phone signs in with the link", cookie.startswith(f"nogg-dash-{pair_port}=") and reply.status == 200)
+    redeemed = events(paired)[-1]
+    audit_text = (paired_state / "audit.jsonl").read_text()
+    check("a full login is traceable", redeemed["event"] == "link_redeemed" and redeemed["id"] == minted["id"]
+          and redeemed["peer"] == "127.0.0.1" and code not in audit_text, redeemed.get("event"))
+    try:
+        urllib.request.urlopen(auth, timeout=60).close()
+        replay = 200
+    except urllib.error.HTTPError as refused:
+        replay = refused.code
+        refused.close()
+    check("a second browser gets no cookie from a used link", replay == 401
+          and [e["event"] for e in events(paired)].count("link_replayed") == 1)
+    orchestrator.unlink()
+    lead = session_record(paired, "lead-p", "lead")
+    count = len(events(paired))
+    result = driven(paired, "dashboard", "pair", env=service_env)
+    check("a Lead asks for a link", result.returncode != 0 and "lead-p" in result.stderr
+          and "#pair=" not in result.stdout and len(events(paired)) == count, result.stderr)
+    before = state_files(paired)
+    result = driven(paired, "dashboard", "status", env=service_env)
+    check("status from anywhere reads the running service", result.returncode == 0
+          and f"running on 127.0.0.1 port {pair_port}" in result.stdout and "0 open pairing links" in result.stdout
+          and '"event":"link_redeemed"' in result.stdout and code not in result.stdout
+          and state_files(paired) == before, result.stdout + result.stderr)
+    lead.unlink()
+    result = driven(paired, "dashboard", "pair", env=service_env)
+    check("an unproven process without a terminal", result.returncode != 0
+          and "stdin is not a terminal" in result.stderr and len(events(paired)) == count, result.stderr)
+    status, output, _ = on_terminal(paired, "dashboard", "pair", env=service_env)
+    check("the operator mints a link on a terminal", status == 0 and "#pair=" in output
+          and events(paired)[-1]["caller"] == "operator", "exit %s" % status)
+    orchestrator = session_record(paired, "nogg-orchestrator-paired", "orchestrator")
+    result = driven(paired, "dashboard", "--rotate-token", env=service_env)
+    check("a rotation from the chat names pair while the service runs", result.returncode == 0
+          and "nogg dashboard pair" in result.stdout and events(paired)[-1]["event"] == "rotated", result.stdout)
+    orchestrator.unlink()
+    try:
+        urllib.request.urlopen(data, timeout=60).close()
+        after = 200
+    except urllib.error.HTTPError as refused:
+        after = refused.code
+        refused.close()
+    check("the rotation signs the phone out", after == 401)
+    service.send_signal(signal.SIGTERM)
+    try:
+        rest, _ = service.communicate(timeout=60)
+    except subprocess.TimeoutExpired:
+        service.kill()
+        rest, _ = service.communicate()
+    served_output = (served_output + rest).decode(errors="replace")
+    check("SIGTERM removes the control socket", service.returncode == 0 and not os.path.lexists(control),
+          "exit %s" % service.returncode)
+    paired_secret = (paired_state / "secret").read_text().strip()
+    check("the service output holds no code and no token", code not in served_output
+          and paired_secret not in served_output and "#pair=" not in served_output
+          and '"event":"link_minted"' in served_output)
 
     # Doctor with a unit and no consent.
     orphan = repository(Path(tmp) / "orphan")
