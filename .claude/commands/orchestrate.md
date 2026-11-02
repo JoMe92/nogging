@@ -137,6 +137,21 @@ A takeover is scoped to that one task. The orchestrator never completes the
 `Signed-off-by:` line of an acceptance report — acceptance stays the Product
 Owner's.
 
+## Handing over the dashboard link
+
+The orchestrator runs `./scripts/nogg dashboard pair` only when the Product Owner asks for the
+dashboard link in the conversation. It sends the printed link once, to the Product Owner and
+to nobody else, and never writes it into a Bead, a commit, a file or another session. When
+`pair` says no service runs, it gives the Product Owner the one terminal command,
+`./scripts/nogg dashboard service enable --bind <tailscale address>`, and does not start a bind
+itself. It runs `./scripts/nogg dashboard service disable` when the Product Owner asks to switch
+the dashboard off, and `./scripts/nogg dashboard --rotate-token` when they report a link that was
+already used from another address. It never reads the dashboard secret, never builds or sends a
+`#token=` link, never runs `service enable` or `service run`, never runs `systemctl` on the
+dashboard unit, never writes its consent or unit file, and never starts a network bind. The
+orchestrator reads this from its launch prompt, so a change takes effect when the operator
+restarts it.
+
 ## Not in this version
 
 There is no Codex or Pi orchestrator pendant in v1 — the always-on,
