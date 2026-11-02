@@ -18,6 +18,16 @@ and GitHub Releases for that history.
 
 ### Added
 
+- `nogg dashboard pair`: the operator at a terminal, or the Orchestration Agent from
+  the chat, gets a one-time pairing link from the running consented service, which
+  signs a phone in with the same 30-day cookie as the token. A link is good for one
+  sign-in within five minutes, on that server process and under the current secret;
+  only a hash of its code is kept in memory, at most three are open at once, and a
+  used link never yields a second cookie. The page says when a link was already used
+  (from this address or another) or has expired. The service answers `pair` and
+  `status` over `.nogging/state/dashboard/control.sock` (mode `0600`, same user only),
+  every mint, sign-in and replay is appended to the audit trail, and `status` and
+  `--rotate-token` now read the running service. See `docs/dashboard.md`. (SPEC-4sl7)
 - `nogg dashboard service enable --bind <address>`: the operator enables the dashboard
   once as a user service, at a login terminal, by typing the address. The consent is
   recorded in `.nogging/state/dashboard/consent.json` (mode `0600`), the user unit
