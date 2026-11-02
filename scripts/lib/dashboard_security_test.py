@@ -466,7 +466,7 @@ class HostFacts(unittest.TestCase):
         environment.start()
         self.addCleanup(environment.stop)
 
-    def servers(self, tmux, herdr=None, ancestors=()):
+    def servers(self, tmux, herdr=None, ancestors=(), state=lambda root: {}):
         socket = lambda name, directory: dict(tmux) if not callable(tmux) else tmux(name, directory)
         backend = mock.Mock()
         if isinstance(herdr, Exception):
@@ -475,7 +475,7 @@ class HostFacts(unittest.TestCase):
             backend.server_process.return_value = herdr
         with mock.patch.object(self.nogg, "tmux_socket_server", socket), \
                 mock.patch.object(self.nogg, "tmux_server_ancestors", lambda name, chain: list(ancestors)), \
-                mock.patch.object(self.nogg, "canonical_repository_state", lambda root: {}), \
+                mock.patch.object(self.nogg, "canonical_repository_state", state), \
                 mock.patch.object(self.nogg, "session_backend", lambda name: backend):
             return self.nogg.session_server_processes()
 
@@ -497,6 +497,17 @@ class HostFacts(unittest.TestCase):
         found = self.servers(socket)
         self.assertEqual(probed, ["/nonexistent", "/tmp"])
         self.assertEqual([pid for _, pid, _ in found], [500])
+
+    def test_a_tmux_ancestor_counts_while_the_socket_reads_down(self):
+        found = self.servers({"class": "down", "pid": None}, ancestors=[("tmux -L nogging", 500, "9")])
+        self.assertEqual([pid for _, pid, _ in found], [500])
+
+    def test_an_unresolved_shared_state_fails_closed(self):
+        def unresolved(root):
+            raise RuntimeError("not a git checkout")
+        found = self.servers({"class": "down", "pid": None}, herdr=(700, "5"), state=unresolved)
+        self.assertIsInstance(found, str)
+        self.assertIn("herdr", found)
 
     def test_the_herdr_server_and_its_failure(self):
         down = {"class": "down", "pid": None}
