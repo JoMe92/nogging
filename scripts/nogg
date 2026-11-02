@@ -5390,14 +5390,18 @@ def dashboard_rotate(security):
         service.Audit(paths.audit, journal=service.journal_sender(host)).append("rotated")
     except OSError as exc:
         print(f"WARNING: cannot append `rotated` to {paths.audit}: {exc.__class__.__name__}", file=sys.stderr)
-    running = paths.unit_path.exists() and service.unit_state(paths, host)[1] == "active"
-    step = ("The consented service uses the new secret at once; every phone signs in again."
-            if running else "Run `nogg dashboard --bind <address>` on a terminal to print a new link.")
+    running = service.service_answers(paths) or (
+        paths.unit_path.exists() and service.unit_state(paths, host)[1] == "active")
+    step = ("The consented service uses the new secret at once; every phone signs in again with a new link "
+            "from `nogg dashboard pair`." if running
+            else "Run `nogg dashboard --bind <address>` on a terminal to print a new link.")
     print(f"rotated the dashboard secret in {dashboard_secret_path()}: every browser session has ended, "
           f"and a running dashboard uses the new secret at once. {step}")
 def dashboard_service_command(args, service):
-    """`nogg dashboard service {enable,disable,run}` and `nogg dashboard status`."""
+    """`nogg dashboard service {enable,disable,run}`, `nogg dashboard pair` and `nogg dashboard status`."""
     paths, host = dashboard_service_paths(), service.Host()
+    if args.dashboard_command == "pair":
+        return service.pair(paths, dashboard_caller("a dashboard pairing link"), out=sys.stdout)
     if args.dashboard_command == "status":
         return service.status(paths, host, out=sys.stdout, cgroup_applies=read_login_cgroup() is not None,
                               journal_is_persistent=service.journal_persistent())
@@ -5418,10 +5422,10 @@ def dashboard_service_command(args, service):
         return service.disable(paths, host, caller, out=sys.stdout)
     caller = dashboard_caller("the dashboard service", terminal=False)
     server = dashboard_modules()[1]
-    def serve(bind, port, allow_hosts, on_start, on_stop):
+    def serve(bind, port, allow_hosts, on_start, on_stop, audit, control):
         server.serve(bind, port, dashboard_readers(), static_dir=Path(__file__).resolve().parent / "dashboard",
                      secret_path=dashboard_secret_path(), allow_hosts=allow_hosts, gates=dashboard_gates(),
-                     service=True, on_start=on_start, on_stop=on_stop)
+                     service=True, on_start=on_start, on_stop=on_stop, audit=audit, control=control)
     return service.run(paths, caller, cgroup=read_login_cgroup, serve=serve, out=sys.stdout)
 def dashboard_eligible_binds(security):
     """`(address, warning)` rows from `ip -j addr`, or None where it is unavailable. A
@@ -12413,7 +12417,10 @@ def main():
     dash.add_argument("--rotate-token", action="store_true",
                       help="replace the access secret, ending every browser session, and exit")
     dash_sub = dash.add_subparsers(dest="dashboard_command")
-    dash_sub.add_parser("status", help="print the consent, the unit's state and the last audit events; writes nothing")
+    dash_sub.add_parser("status", help="print the consent, the unit's state, the running service and the last "
+                        "audit events; writes nothing")
+    dash_sub.add_parser("pair", help="print a one-time pairing link from the running service (the operator on a "
+                        "terminal, or the Orchestration Agent)")
     dsvc = dash_sub.add_parser("service", help="the consented user service (enable once on a login terminal)")
     dsvc_sub = dsvc.add_subparsers(dest="service_action", required=True)
     dse = dsvc_sub.add_parser("enable", help="record the operator's consent and enable the user unit")

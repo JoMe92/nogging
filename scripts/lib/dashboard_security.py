@@ -349,6 +349,10 @@ def _secret_binding(secret):
     return hashlib.sha256(_PAIRING_LABEL + _bytes(secret)).hexdigest()
 
 
+class PairingUnavailable(RuntimeError):
+    """No link can be minted by this server; the message says why."""
+
+
 @dataclass(frozen=True)
 class Minted:
     code: str

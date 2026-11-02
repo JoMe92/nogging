@@ -747,7 +747,7 @@ class Pairing(Harness):
 
     def test_a_terminal_run_mints_nothing(self):
         self.start(NETWORK)
-        with self.assertRaises(ds.PairingUnavailable):
+        with self.assertRaises(sec.PairingUnavailable):
             self.server.mint_link("operator", 4242)
 
 

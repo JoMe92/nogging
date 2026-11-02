@@ -557,10 +557,10 @@ class DashboardServer(ThreadingHTTPServer):
         """A one-time pairing link for the control socket. The mint is recorded before the
         code becomes valid; if `link_minted` cannot be written, no link exists."""
         if self.pairing is None:
-            raise PairingUnavailable("this dashboard has no pairing (a terminal run)")
+            raise sec.PairingUnavailable("this dashboard has no pairing (a terminal run)")
         secret = self.secret.current() if self.secret else None
         if not sec.secret_acceptable(secret):
-            raise PairingUnavailable("the dashboard secret is missing or refused; run `nogg dashboard --rotate-token`")
+            raise sec.PairingUnavailable("the dashboard secret is missing or refused; run `nogg dashboard --rotate-token`")
         code = sec.new_pairing_code()
         expires_at = iso(self.wall_clock() + self.pairing.ttl)
         if self.audit is not None:
@@ -577,10 +577,6 @@ class DashboardServer(ThreadingHTTPServer):
         return {"bind": self.bind_address.host, "port": self.port, "started_at": self.started_at,
                 "pairing": self.pairing is not None, "open_links": open_links,
                 "earliest_expiry": iso(self.wall_clock() + earliest) if earliest is not None else None}
-
-
-class PairingUnavailable(RuntimeError):
-    """No link can be minted here; the message says why."""
 
 
 def link(bind, port, value, fragment="token"):
