@@ -409,14 +409,13 @@ class PairingStore:
     def _end(self, entry, at):
         entry.state, entry.done_at = "expired", at
 
-    def _prune(self, now, binding=None):
-        """Expire what has run out or no longer matches the secret, then drop tombstones
-        older than an hour and keep at most `tombstone_max`."""
+    def _prune(self, now):
+        """Expire what has run out, then drop tombstones older than an hour and keep at most
+        `tombstone_max`. A code minted under another secret is ended only where it is looked
+        up: a caller holding an older secret must not end the links of a newer one."""
         for entry in self._entries.values():
             if entry.state == "open" and now >= entry.expires:
                 self._end(entry, entry.expires)
-            elif entry.state == "open" and binding is not None and entry.binding != binding:
-                self._end(entry, now)
         dead = sorted((entry.done_at, entry.order, key) for key, entry in self._entries.items()
                       if entry.state != "open")
         for done_at, _, key in dead:
@@ -436,8 +435,9 @@ class PairingStore:
         binding = _secret_binding(secret)
         with self._lock:
             now = self.clock()
-            self._prune(now, binding)
-            opened = sorted((entry.order, entry) for entry in self._entries.values() if entry.state == "open")
+            self._prune(now)
+            opened = sorted((entry.order, entry) for entry in self._entries.values()
+                            if entry.state == "open" and entry.binding == binding)
             ended = 0
             for _, entry in opened[:max(0, len(opened) - self.open_max + 1)]:
                 self._end(entry, now)
@@ -454,11 +454,13 @@ class PairingStore:
         key, binding = _digest(code), _secret_binding(secret)
         with self._lock:
             now = self.clock()
-            self._prune(now, binding)
+            self._prune(now)
             entry = self._entries.get(key)
             if entry is None:
                 return Redemption("unknown")
             ident = key[:8]
+            if entry.state == "open" and entry.binding != binding:
+                self._end(entry, now)               # minted under another secret: a rotation ended it
             if entry.state == "expired":
                 return Redemption("expired", ident)
             if entry.state == "open":
@@ -466,7 +468,9 @@ class PairingStore:
                 entry.cookie, entry.peer = _digest(issue), peer
                 return Redemption("redeemed", ident)
             same = peer == entry.peer
-            if presented is not None and hmac.compare_digest(_digest(presented), entry.cookie):
+            # Two redemptions in one second issue equal cookies, so the cookie alone does not
+            # prove that this browser redeemed this code: the peer must match as well.
+            if same and presented is not None and hmac.compare_digest(_digest(presented), entry.cookie):
                 return Redemption("again", ident, same)
             first, entry.replayed = not entry.replayed, True
             return Redemption("used_elsewhere" if presented is not None else "used", ident, same, first)
@@ -476,10 +480,12 @@ class PairingStore:
         under another secret count as ended. Without a usable secret none is open."""
         if not secret_acceptable(secret):
             return 0, None
+        binding = _secret_binding(secret)
         with self._lock:
             now = self.clock()
-            self._prune(now, _secret_binding(secret))
-            remaining = [entry.expires - now for entry in self._entries.values() if entry.state == "open"]
+            self._prune(now)
+            remaining = [entry.expires - now for entry in self._entries.values()
+                         if entry.state == "open" and entry.binding == binding]
         return len(remaining), (min(remaining) if remaining else None)
 
 

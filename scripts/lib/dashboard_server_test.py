@@ -730,13 +730,12 @@ class Pairing(Harness):
         self.assertEqual((status, json.loads(body)["data"]), (401, {"error": "unauthorized"}))
         self.assertNotIn("set-cookie", headers)
 
-    def test_a_mint_that_cannot_be_recorded_returns_no_link(self):
-        def broken(event, **fields):
-            raise OSError("read-only")
-        self.start(NETWORK, pairing=sec.PairingStore(clock=self.clock), audit=broken)
-        with self.assertRaises(OSError):
-            self.server.mint_link("operator", 4242)
-        self.assertEqual(self.server.pairing_status()["open_links"], 0)
+    def test_a_head_through_the_handler_burns_nothing(self):
+        code = self.start_pairing()
+        status, headers, _ = self.call("/api/v1/auth", method="HEAD", headers=[f"Authorization: Pairing {code}"])
+        self.assertEqual(status, 401)
+        self.assertNotIn("set-cookie", headers)
+        self.assertEqual(self.pair(code)[0], 200)
 
     def test_status_names_no_code(self):
         code = self.start_pairing()

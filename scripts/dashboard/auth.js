@@ -7,8 +7,11 @@
   "use strict";
   var found = /^#(token|pair)=([A-Za-z0-9_-]+)$/.exec(window.location.hash);
   var headers = {};
-  if (found) {
+  if (/^#(token|pair)=/.test(window.location.hash)) {
+    // Also a near miss, such as a chat's trailing punctuation: no credential stays in history.
     window.history.replaceState(null, "", window.location.pathname + window.location.search);
+  }
+  if (found) {
     headers.Authorization = (found[1] === "pair" ? "Pairing " : "Bearer ") + found[2];
   }
 

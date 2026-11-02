@@ -263,8 +263,16 @@ class PairingStore(unittest.TestCase):
 
     def test_a_rotation_ends_open_links(self):
         minted = self.store.mint(SECRET)
+        self.assertEqual(self.store.status(OTHER), (0, None))
         self.assertEqual(self.redeem(minted.code, secret=OTHER).outcome, "expired")
         self.assertEqual(self.redeem(minted.code).outcome, "expired")   # rotating back revives nothing
+
+    def test_a_caller_with_an_older_secret_ends_no_newer_link(self):
+        newer = self.store.mint(OTHER)
+        self.redeem("0" * 32, secret=SECRET)
+        self.store.mint(SECRET)
+        self.assertEqual(self.store.status(OTHER)[0], 1)
+        self.assertEqual(self.redeem(newer.code, secret=OTHER).outcome, "redeemed")
 
     def test_a_fourth_link_ends_the_oldest(self):
         codes = [self.store.mint(SECRET) for _ in range(3)]
@@ -281,9 +289,11 @@ class PairingStore(unittest.TestCase):
         self.redeem(minted.code, issue="phone-cookie", peer="100.64.0.2")
         again = self.redeem(minted.code, presented="phone-cookie", peer="100.64.0.2")
         self.assertEqual((again.outcome, again.same_peer, again.first_replay), ("again", True, False))
+        same_cookie = self.redeem(minted.code, presented="phone-cookie", peer="192.168.1.9")
+        self.assertEqual((same_cookie.outcome, same_cookie.same_peer), ("used_elsewhere", False))
         elsewhere = self.redeem(minted.code, presented="older-cookie", peer="192.168.1.9")
         self.assertEqual((elsewhere.outcome, elsewhere.same_peer, elsewhere.first_replay),
-                         ("used_elsewhere", False, True))
+                         ("used_elsewhere", False, False))
         used = self.redeem(minted.code, peer="100.64.0.2")
         self.assertEqual((used.outcome, used.same_peer, used.first_replay), ("used", True, False))
 

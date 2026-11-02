@@ -65,7 +65,7 @@ class Request:
     match: re.Match | None
     authorization: str | None
     cookie: str | None
-    method: str = "GET"
+    method: str | None = None            # None fails closed: only a GET redeems a pairing code
     peer: str | None = None
 
 

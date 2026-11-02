@@ -12,7 +12,7 @@ reads the secret file itself, and the consent names only the address the operato
 from __future__ import annotations
 
 import datetime as dt
-import getpass, json, os, re, shutil, socket, stat, struct, subprocess, threading, time
+import getpass, json, os, re, shutil, socket, stat, struct, subprocess, sys, threading, time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -28,7 +28,7 @@ CONTROL_MAX_BYTES = 1024             # one request line, read within CONTROL_DEA
 CONTROL_DEADLINE = 2.0
 CONTROL_POLL = 0.2                   # how often the accept loop looks at its stop event
 CLIENT_TIMEOUT = 10.0                # a CLI waits behind at most a few slow clients
-_CALLER_LABEL = re.compile(r"^(?:operator|orchestrator:[A-Za-z0-9._-]{1,100})$")
+_CALLER_LABEL = re.compile(r"operator|orchestrator:[A-Za-z0-9._-]{1,100}")
 _UCRED = struct.Struct("3i")         # struct ucred: pid, uid, gid, in this order
 _AT_FORM = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")
 _TTY_FORM = re.compile(r"^/dev/[A-Za-z0-9._/-]{1,64}$")
@@ -699,6 +699,9 @@ class ControlServer:
                     self._serve(connection)
                 except OSError:
                     pass                        # the client went away
+                except Exception as exc:        # one bad request must not end pairing
+                    print(f"nogg dashboard: control request failed: {exc.__class__.__name__}",
+                          file=sys.stderr, flush=True)
 
     def _serve(self, connection):
         pid, uid, _ = self.credentials(connection)
@@ -746,7 +749,7 @@ def control_answer(server):
         if op != "pair":
             return {"error": "unknown operation"}
         caller = request.get("caller")
-        if not isinstance(caller, str) or not _CALLER_LABEL.match(caller):
+        if not isinstance(caller, str) or not _CALLER_LABEL.fullmatch(caller):
             return {"error": "the caller label is malformed"}
         try:
             return {"ok": True, **server.mint_link(caller, pid)}
@@ -763,12 +766,12 @@ def control_opener(paths, out):
     call that closes it. A path that is taken or too long leaves the service serving
     without pairing, and says why."""
     def open_control(server):
-        problem = control_path_problem(paths.control)
-        if problem is None:
-            try:
+        try:
+            problem = control_path_problem(paths.control)
+            if problem is None:
                 return ControlServer(paths.control, control_answer(server)).open()
-            except OSError as exc:
-                problem = f"{paths.control} cannot be opened ({exc.__class__.__name__})"
+        except OSError as exc:
+            problem = f"{paths.control} cannot be opened ({exc.__class__.__name__})"
         print(f"WARNING: serving without pairing: {problem}", file=out, flush=True)
         return None
     return open_control
@@ -811,6 +814,10 @@ def pair(paths, caller, *, out, request=control_request):
     never connects; then one link and its expiry on stdout, terminal or not."""
     label = acting_caller(caller, "`nogg dashboard pair`",
                           "only the operator at a terminal or the Orchestration Agent mints a pairing link")
+    taken = not_a_socket(paths.control)
+    if taken:
+        raise ServiceRefused(f"no link can be minted: {taken}; move that file away and restart the service with "
+                             f"`systemctl --user restart {paths.unit_name}`")
     try:
         reply = request(paths.control, {"op": "pair", "caller": label})
     except ControlUnreachable as exc:
@@ -825,17 +832,25 @@ def pair(paths, caller, *, out, request=control_request):
     return reply
 
 
+def not_a_socket(path):
+    """Why `path` cannot be the service's control socket though something is there, or None."""
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        return f"{path} cannot be read ({exc.__class__.__name__})"
+    if not stat.S_ISSOCK(info.st_mode):
+        return f"{path} is not a socket, so a service, if one runs, serves without pairing"
+    return None
+
+
 def running_report(paths, request=None):
     """What the running service says over the control socket, as one line; writes nothing."""
     request = request or control_request
-    try:
-        info = os.lstat(paths.control)
-    except FileNotFoundError:
-        info = None
-    except OSError as exc:
-        return f"{paths.control} cannot be read ({exc.__class__.__name__})"
-    if info is not None and not stat.S_ISSOCK(info.st_mode):
-        return f"{paths.control} is not a socket, so a running service serves without pairing"
+    taken = not_a_socket(paths.control)
+    if taken:
+        return taken
     try:
         reply = request(paths.control, {"op": "status"})
     except ControlUnreachable as exc:

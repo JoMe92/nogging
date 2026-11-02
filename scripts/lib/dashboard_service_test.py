@@ -595,6 +595,13 @@ class Control(unittest.TestCase):
         self.assertNotIn(output.splitlines()[0].split("=", 1)[1], report)
         self.assertTrue(svc.service_answers(self.paths))
 
+    def test_a_failing_answer_keeps_the_socket_serving(self):
+        self.start()
+        self.server.pairing_status = lambda: 1 / 0
+        with self.assertRaises(svc.ControlUnreachable):
+            svc.control_request(self.paths.control, {"op": "status"})
+        self.assertRegex(self.pair()[1], r"#pair=[0-9a-f]{32}")
+
     def test_another_user_connects(self):
         self.start(credentials=lambda connection: (4242, os.geteuid() + 1, 0))
         with self.assertRaises(svc.ServiceRefused) as caught:
@@ -608,7 +615,7 @@ class Control(unittest.TestCase):
             self.assertEqual(svc.peer_credentials(left), (os.getpid(), os.geteuid(), os.getegid()))
 
     def test_a_slow_control_client(self):
-        self.start()
+        self.start(deadline=0.2)
         for payload in (b"", b"x" * 1100):
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
                 client.settimeout(60)
@@ -625,7 +632,8 @@ class Control(unittest.TestCase):
     def test_a_malformed_request_is_closed_or_refused(self):
         self.start()
         self.assertEqual(svc.control_request(self.paths.control, {"op": "nope"}), {"error": "unknown operation"})
-        self.assertIn("malformed", svc.control_request(self.paths.control, {"op": "pair", "caller": "lead:x"})["error"])
+        for label in ("lead:x", "operator\n"):
+            self.assertIn("malformed", svc.control_request(self.paths.control, {"op": "pair", "caller": label})["error"])
         self.assertEqual(self.events, [])
 
     def test_the_socket_path_is_taken(self):
@@ -633,6 +641,10 @@ class Control(unittest.TestCase):
         self.paths.control.write_text("not a socket")
         self.assertIn("not a socket", svc.control_path_problem(self.paths.control))
         self.assertIn("not a socket", svc.running_report(self.paths))
+        with self.assertRaises(svc.ServiceRefused) as caught:
+            self.pair()
+        self.assertIn("not a socket", str(caught.exception))
+        self.assertNotIn("service enable", str(caught.exception))
         self.assertTrue(self.paths.control.is_file())
         self.paths.control.unlink()
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as live:
