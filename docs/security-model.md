@@ -313,7 +313,8 @@ The consented service (`nogg dashboard service enable`, see
 [Dashboard](dashboard.md#service)) serves only what the operator typed at a login
 terminal. Its unit refuses to run outside its own cgroup or on a consent that is not
 a `0600` file of the operator's with a private address. A same-user process can still
-write that file or start the unit, as in the last row. What it cannot do is hide it:
+write that file, start the unit, or build a cgroup with the unit's name inside its
+own delegated user-manager subtree, as in the last row. What it cannot do is hide it:
 every consent, revocation, start, stop and rotation is appended to
 `.nogging/state/dashboard/audit.jsonl`, and the service and the CLI copy each line to
 the journal (`journalctl --user -t nogg-dashboard`). The operator's user can read the

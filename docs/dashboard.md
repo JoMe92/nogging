@@ -140,8 +140,9 @@ and restarts the service, with its own `consent` line. Nothing `enable` writes h
 the secret.
 
 The unit runs `nogg dashboard service run`, which takes no bind option. It refuses
-inside a supervised session, outside the unit's own cgroup (a `systemd-run` or a
-pane cannot start it), and on a missing or tampered consent: not a regular `0600`
+inside a supervised session, outside the unit's own cgroup under the user manager
+(a `systemd-run` or a pane cannot start it; a same-user process that builds such a
+cgroup itself can, see the [security model](security-model.md#the-dashboard)), and on a missing or tampered consent: not a regular `0600`
 file of yours, a different schema, or an address the bind policy refuses today. Those
 refusals exit 78, which the unit does not restart, and a missing `scripts/nogg` exits
 203, which it does not restart either. Otherwise it serves exactly the consented

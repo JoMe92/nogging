@@ -183,7 +183,9 @@ function nextStepItems(ctx, command, gaps = [], env = process.env) {
     const dashboard = `nogg-dashboard-${ctx.slug}.service`;
     if (ctx.slug && unitState(dashboard, env) === 'enabled') {
       required.push(`Run \`./scripts/nogg dashboard service disable\` before removing: ${dashboard} is enabled ` +
-        'and serves this checkout.');
+        'and serves this checkout. Once `scripts/nogg` is gone, end it with ' +
+        `\`systemctl --user disable --now ${dashboard}\`, then delete ~/.config/systemd/user/${dashboard} and ` +
+        '.nogging/state/dashboard/consent.json.');
     }
     for (const unit of ctx.units) {
       const linked = pairedLabel(unit) ? ` ${path.basename(pairedService(unit))}` : '';

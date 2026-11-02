@@ -165,6 +165,7 @@ check "remove: the last step commits the removal" grep -Eq '^  7\. Commit the re
 run "$work/nosd/repo" remove
 check "remove, no units rendered: no disable step" bash -c '! grep -Fq "disable --now" <<<"$1"' _ "$out"
 check "remove, dashboard service not enabled: no dashboard step" bash -c '! grep -Fq "dashboard service disable" <<<"$1"' _ "$out"
+check "remove, no worktree: none is named" bash -c '! grep -Fq "nightly test worktree" <<<"$1"' _ "$out"
 
 # --- remove: an enabled dashboard service is disabled through its own command -
 dash="$work/dash/repo"; new_repo "$dash"
@@ -176,8 +177,9 @@ esac'
 run "$dash" remove
 check "remove with the service enabled: it names service disable first" \
   grep -Eq '^  1\. Run `\./scripts/nogg dashboard service disable` before removing: nogg-dashboard-repo\.service is enabled' <<<"$out"
+check "remove with the service enabled: it names the systemctl fallback" \
+  grep -Fq 'end it with `systemctl --user disable --now nogg-dashboard-repo.service`' <<<"$out"
 stub "$bin" systemctl "echo \"\$*\" >>'$work/systemctl.log'; exit 1"
-check "remove, no worktree: none is named" bash -c '! grep -Fq "nightly test worktree" <<<"$1"' _ "$out"
 
 # --- the installer's doctor -------------------------------------------------
 doc="$work/doctor/repo"; new_repo "$doc"
