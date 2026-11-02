@@ -704,7 +704,6 @@ class TheStopIsBounded(unittest.TestCase):
             time.sleep(0.02)
         self.assertFalse(self.alive(grandchild), "the source's child outlived the dashboard")
 
-    @unittest.skipUnless(hasattr(ctypes.CDLL(None), "tgkill"), "tgkill is not available")
     def test_a_signal_delivered_to_another_thread_still_stops_it(self):
         process, _ = self.launch(slow=False)
         tids = sorted(int(name) for name in os.listdir(f"/proc/{process.pid}/task") if int(name) != process.pid)
