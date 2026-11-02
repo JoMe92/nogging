@@ -2,7 +2,7 @@
 """Small tests of the dashboard's security decisions: no socket, no sleep."""
 from __future__ import annotations
 
-import os, stat, sys, tempfile, unittest
+import os, stat, subprocess, sys, tempfile, unittest
 from pathlib import Path
 from unittest import mock
 
@@ -405,12 +405,9 @@ class OperatorTerminal(unittest.TestCase):
                               stdin_tty=False, servers=no_call, ancestry=no_call, cgroup=no_call)
         self.assertIn("made-up", reason)
 
-    def test_a_dropped_session_variable_after_a_failed_proof(self):
-        # No session name is left to prove, so the other conditions decide.
+    def test_stdin_without_a_terminal_reads_no_later_fact(self):
         reason = self.refusal(stdin_tty=False, servers=no_call, ancestry=no_call, cgroup=no_call)
         self.assertIn("stdin is not a terminal", reason)
-        reason = self.refusal(ancestry=lambda: [(500, "9001")])
-        self.assertIn("session server", reason)
 
     def test_an_app_slice_cgroup(self):
         path = "/user.slice/user-1000.slice/user@1000.service/app.slice/run-u12.scope"
@@ -441,6 +438,112 @@ class OperatorTerminal(unittest.TestCase):
         for part in ("refusing --bind 10.0.0.5 outside an operator terminal", "stdin is not a terminal",
                      "nogg dashboard service enable", "ssh -t"):
             self.assertIn(part, message)
+
+
+_NOGG = None
+
+
+def nogg():
+    """scripts/nogg as a module, loaded once, for the readers of the host facts."""
+    global _NOGG
+    if _NOGG is None:
+        import importlib.machinery, importlib.util
+        loader = importlib.machinery.SourceFileLoader(
+            "nogg_terminal_test", str(Path(__file__).resolve().parents[1] / "nogg"))
+        module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+        sys.modules[loader.name] = module
+        loader.exec_module(module)
+        _NOGG = module
+    return _NOGG
+
+
+class HostFacts(unittest.TestCase):
+    """The real readers behind operator_terminal(): each one fails closed."""
+
+    def setUp(self):
+        self.nogg = nogg()
+        environment = mock.patch.dict(os.environ)
+        environment.start()
+        self.addCleanup(environment.stop)
+
+    def servers(self, tmux, herdr=None, ancestors=()):
+        socket = lambda name, directory: dict(tmux) if not callable(tmux) else tmux(name, directory)
+        backend = mock.Mock()
+        if isinstance(herdr, Exception):
+            backend.server_process.side_effect = herdr
+        else:
+            backend.server_process.return_value = herdr
+        with mock.patch.object(self.nogg, "tmux_socket_server", socket), \
+                mock.patch.object(self.nogg, "tmux_server_ancestors", lambda name, chain: list(ancestors)), \
+                mock.patch.object(self.nogg, "canonical_repository_state", lambda root: {}), \
+                mock.patch.object(self.nogg, "session_backend", lambda name: backend):
+            return self.nogg.session_server_processes()
+
+    def test_each_tmux_socket_class(self):
+        os.environ.pop("TMUX_TMPDIR", None)          # restored by the patch in setUp
+        self.assertEqual(self.servers({"class": "down", "pid": None}), [])
+        for kind in ("host", "sandboxed"):
+            self.assertEqual([pid for _, pid, _ in self.servers({"class": kind, "pid": 500})], [500], kind)
+        for state in ({"class": "unknown", "pid": None}, {"class": "outside", "pid": 0},
+                      {"class": "sandboxed", "pid": 0}):
+            self.assertIsInstance(self.servers(state), str, state)
+
+    def test_a_changed_tmux_tmpdir_cannot_hide_the_server(self):
+        probed = []
+        def socket(name, directory):
+            probed.append(directory)
+            return {"class": "host", "pid": 500} if directory == "/tmp" else {"class": "down", "pid": None}
+        os.environ["TMUX_TMPDIR"] = "/nonexistent"
+        found = self.servers(socket)
+        self.assertEqual(probed, ["/nonexistent", "/tmp"])
+        self.assertEqual([pid for _, pid, _ in found], [500])
+
+    def test_the_herdr_server_and_its_failure(self):
+        down = {"class": "down", "pid": None}
+        self.assertEqual([label for label, *_ in self.servers(down, herdr=(700, "5"))], ["herdr server"])
+        self.assertIn("herdr", self.servers(down, herdr=RuntimeError("receipt is unreadable")))
+
+    def test_a_tmux_ancestor_is_found_by_its_command_line(self):
+        child = subprocess.Popen(["bash", "-c", 'exec -a tmux python3 -c "import sys, time; print(1, flush=True); '
+                                  'time.sleep(60)" -L nogging'], stdout=subprocess.PIPE, text=True)
+        self.addCleanup(child.wait)
+        self.addCleanup(child.kill)
+        child.stdout.readline()
+        child.stdout.close()
+        chain = [(child.pid, self.nogg.process_start(child.pid))]
+        self.assertEqual([pid for _, pid, _ in self.nogg.tmux_server_ancestors("nogging", chain)], [child.pid])
+        self.assertEqual(self.nogg.tmux_server_ancestors("other", chain), [])
+        self.assertEqual(self.nogg.tmux_server_ancestors("nogging", [(os.getpid(), "1")]), [])
+
+    def test_the_cgroup_reader(self):
+        with tempfile.TemporaryDirectory() as temp:
+            proc, systemd = Path(temp) / "cgroup", Path(temp) / "systemd"
+            read = lambda: self.nogg.read_login_cgroup(proc, systemd)
+            self.assertIsNone(read())                       # no /proc/self/cgroup
+            proc.write_text("0::/init.scope\n")
+            self.assertIsNone(read())                       # no systemd: skipped
+            systemd.mkdir()
+            self.assertEqual(read(), "0::/init.scope\n")
+            systemd.rmdir()
+            proc.write_text("0::/user.slice/user-1000.slice/user@1000.service/app.slice/x.scope\n")
+            self.assertIsNotNone(read())                    # a hidden /run/systemd skips nothing
+            if os.geteuid() != 0:
+                proc.chmod(0)
+                self.assertEqual(read(), "")                # unreadable: fails the condition
+
+    def test_a_dropped_session_variable_after_a_failed_proof(self):
+        # A live Lead's record that this process's ancestry does not prove, and no
+        # session name left: condition 1 passes, the shared server still refuses it.
+        record = {"name": "lead", "state": "running", "session_pid": 1, "session_pid_start": "1"}
+        server = ("tmux server -L nogging", 500, "9")
+        facts = dict(stdin_tty=True, read_cgroup=lambda: LOGIN, server_pids=lambda: [server],
+                     ancestry=lambda: [(500, "9")])
+        os.environ.pop("NOGG_SESSION_NAME", None)
+        reason = self.nogg.operator_terminal_refusal([record], **facts)
+        self.assertIn("shared Nogging session server", reason)
+        self.assertTrue(self.nogg.operator_terminal([record], **{**facts, "ancestry": lambda: [(400, "7")]}))
+        os.environ["NOGG_SESSION_NAME"] = "lead"
+        self.assertIn("lead", self.nogg.operator_terminal_refusal([record], **facts))
 
 
 class SessionServerReceipt(unittest.TestCase):

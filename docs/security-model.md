@@ -302,8 +302,14 @@ Who can expose it on the network:
 The last row is the honest limit. Every agent runs as the operator's own user, and a
 login session looks the same to the kernel whoever opened it. The operator-terminal
 test closes every path a Nogging command offers; it does not stop a same-user process
-that logs in to its own host. On a host without cgroups or systemd the cgroup
-condition is skipped, and the other three conditions still apply.
+that logs in to its own host.
+
+The cgroup condition carries most of the weight. A process that detaches from its
+parents and brings its own pseudo-terminal, such as `setsid -f script -qc '…'
+/dev/null` with the session variable removed, passes the session, stdin and
+session-server conditions; only its cgroup, which is not a login session scope, then
+refuses it. On a host without cgroups or systemd that condition is skipped, and such
+a process passes, as in the last row.
 
 The residual risks are these:
 

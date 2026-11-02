@@ -16,14 +16,15 @@ def _namespace_links(pid):
             os.readlink(f"/proc/{pid}/ns/mnt"))
 
 
-def server_namespace(config):
+def server_namespace(config, socket_dir=None):
     """Classify the process listening on Nogging's dedicated tmux socket.
 
     The PID comes from kernel peer credentials, never from tmux's namespace-
     local display-message output. Namespace reads are isolated for testing.
+    `socket_dir` replaces `TMUX_TMPDIR` for a caller that must not trust it.
     """
     socket_name = config.get("session_tmux_socket", "nogging")
-    socket_dir = os.environ.get("TMUX_TMPDIR", "/tmp")
+    socket_dir = socket_dir or os.environ.get("TMUX_TMPDIR", "/tmp")
     path = os.path.join(socket_dir, f"tmux-{os.getuid()}", socket_name)
     fenced = os.environ.get("NOGG_OPENSPEC_FENCED") == "1"
     try:

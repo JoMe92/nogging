@@ -5181,31 +5181,58 @@ def dashboard_gates():
             "tests": sources.files_gate(TEST_STATE / "runs.jsonl", TEST_STATE / "runs.jsonl.1"),
             "git": slow.git_gate(ORCHESTRATOR_HOME),
             "tokens": slow.tokens_gate(collect_store)}
-def read_login_cgroup():
+def read_login_cgroup(path=Path("/proc/self/cgroup"), systemd=Path("/run/systemd/system")):
     """This process's cgroup text, or None where the operator-terminal test skips the
-    cgroup condition: no /proc/self/cgroup, or a host that does not run systemd. An
-    unreadable file reads as empty, which fails the condition."""
-    path = Path("/proc/self/cgroup")
-    if not path.is_file() or not Path("/run/systemd/system").is_dir():
+    cgroup condition: no /proc/self/cgroup, or a host that does not run systemd. A
+    hidden /run/systemd does not skip it while the cgroup path itself shows systemd's
+    slices. An unreadable file reads as empty, which fails the condition."""
+    if not path.is_file():
         return None
     try:
-        return path.read_text()
+        text = path.read_text()
     except OSError:
         return ""
+    if systemd.is_dir() or ".slice/" in (dashboard_modules()[0].systemd_cgroup(text) or ""):
+        return text
+    return None
+def tmux_server_ancestors(socket_name, ancestry):
+    """`(label, pid, start)` for each ancestor whose command line is a tmux on `socket_name`
+    (`-L <socket>`): found from /proc alone, whatever socket directory the caller names."""
+    found = []
+    for pid, start in ancestry:
+        try:
+            comm = Path(f"/proc/{pid}/comm").read_text().strip()
+            argv = Path(f"/proc/{pid}/cmdline").read_bytes().decode(errors="replace").split("\0")
+        except OSError:
+            continue
+        if not comm.startswith("tmux") and not Path(argv[0]).name.startswith("tmux"):
+            continue
+        if any(arg == f"-L{socket_name}" or (arg == "-L" and nxt == socket_name)
+               for arg, nxt in zip(argv, argv[1:] + [""])):
+            found.append((f"tmux -L {socket_name}, by its command line", pid, start))
+    return found
+def tmux_socket_server(socket_name, directory):
+    """The class and pid of the process behind `<directory>/tmux-<uid>/<socket_name>`."""
+    session_backend_module()           # puts scripts/lib on sys.path
+    import session_backend_tmux
+    return session_backend_tmux.server_namespace({**CFG, "session_tmux_socket": socket_name}, socket_dir=directory)
 def session_server_processes():
-    """`(label, pid, start)` of each shared Nogging session server that runs now, asked
-    without starting one: the tmux server behind the configured socket by the socket's
-    kernel peer credentials (which, like `tmux -N`, never start a server and give a pid
-    of this namespace), and the herdr server through its backend's receipt. A str says
-    why one cannot be identified."""
+    """`(label, pid, start)` of each shared Nogging session server, asked without starting
+    one. The tmux server is read from the configured socket's kernel peer credentials
+    (which, like `tmux -N`, never start a server and give a pid of this namespace), at
+    `TMUX_TMPDIR` and at the default /tmp, so a changed variable cannot hide it, and from
+    any ancestor's command line; the herdr server comes from its backend's receipt in
+    the shared state. A str says why one cannot be identified."""
     socket_name = scfg("session_tmux_socket", "nogging")
-    tmux_server = tmux_server_namespace()
-    servers = []
-    if tmux_server["class"] == "host":
-        servers.append((f"tmux server -L {socket_name}", tmux_server["pid"], process_start(tmux_server["pid"])))
-    elif tmux_server["class"] != "down":
-        return f"the tmux server -L {socket_name} is {tmux_server['class']} from this process"
+    servers = list(tmux_server_ancestors(socket_name, process_ancestors()))
+    for directory in dict.fromkeys((os.environ.get("TMUX_TMPDIR") or "/tmp", "/tmp")):
+        found = tmux_socket_server(socket_name, directory)
+        if found["class"] in ("host", "sandboxed") and type(found["pid"]) is int and found["pid"] > 0:
+            servers.append((f"tmux server -L {socket_name}", found["pid"], process_start(found["pid"])))
+        elif found["class"] != "down":
+            return f"the tmux server -L {socket_name} in {directory} is {found['class']} from this process"
     try:
+        canonical_repository_state(ROOT)
         herdr = session_backend("herdr").server_process()
     except Exception as exc:
         return f"the herdr server cannot be identified: {exc}"
