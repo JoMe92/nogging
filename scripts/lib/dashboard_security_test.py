@@ -305,11 +305,6 @@ class PairingStore(unittest.TestCase):
             self.store.mint(None)
         self.assertEqual(self.store.status(None), (0, None))
 
-    def test_a_forgotten_mint_never_redeems(self):
-        minted = self.store.mint(SECRET)
-        self.store.forget(minted.code)
-        self.assertEqual(self.redeem(minted.code).outcome, "unknown")
-
     def test_the_pairing_header(self):
         self.assertEqual(sec.pairing_code("Pairing abc"), "abc")
         self.assertEqual(sec.pairing_code("pairing  abc "), "abc")

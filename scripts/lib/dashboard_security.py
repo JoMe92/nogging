@@ -424,7 +424,8 @@ class PairingStore:
 
     def mint(self, secret, code=None):
         """A new open code bound to `secret`; the oldest open code ends when the limit is
-        reached. `code` comes from `new_pairing_code()` unless a caller made one first."""
+        reached. `code` comes from `new_pairing_code()` unless the caller made one first, as
+        a server does to record the mint before the code is valid."""
         if not secret_acceptable(secret):
             raise ValueError("no usable secret: a pairing code needs one")
         code = code or new_pairing_code()
@@ -441,11 +442,6 @@ class PairingStore:
             self._entries[_digest(code)] = _Pairing(now + self.ttl, binding, self._order)
             self._prune(now)
         return Minted(code, pairing_id(code), self.ttl, ended)
-
-    def forget(self, code):
-        """Drop a code whose mint could not be recorded: it never yields a cookie."""
-        with self._lock:
-            self._entries.pop(_digest(code), None)
 
     def redeem(self, code, secret, *, issue, presented, peer):
         """Use `code` once. `issue` is the cookie value this request would set, signed
