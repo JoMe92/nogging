@@ -5160,6 +5160,69 @@ def dashboard_modules():
         sys.path.insert(0, lib)
     import dashboard_security, dashboard_server
     return dashboard_security, dashboard_server
+def dashboard_service_module():
+    dashboard_modules()                # puts scripts/lib on sys.path
+    import dashboard_service
+    return dashboard_service
+def dashboard_service_paths():
+    """The service's files, all from the canonical checkout, so a linked worktree names
+    the same consent, unit and audit trail."""
+    service = dashboard_service_module()
+    return service.Paths(state=dashboard_secret_path().parent, unit_dir=service.user_unit_dir(),
+                         slug=orchestrator_slug(), workdir=ORCHESTRATOR_HOME, name=ORCHESTRATOR_HOME.name)
+def dashboard_caller(purpose, *, terminal=True):
+    """What this process proves about itself for a dashboard service step. The
+    operator-terminal test runs only when no session claims the caller."""
+    service = dashboard_service_module()
+    records = [rec for _, rec in session_records(orchestrator_sessions_dir())]
+    try:
+        session, error = calling_session_record(records, purpose=purpose), None
+    except RuntimeError as exc:
+        session, error = None, str(exc)
+    refusal = None
+    if terminal and session is None and error is None:
+        refusal = operator_terminal_refusal(records)
+    try:
+        stdout_tty = os.isatty(1)
+    except OSError:
+        stdout_tty = False
+    return service.Caller(refusal=refusal or error or (f"it runs inside supervised session {session.get('name')}"
+                                                       if session else None),
+                          session=session, session_error=error, stdout_tty=stdout_tty)
+def dashboard_diagnostics():
+    """`(warnings, notes)` for doctor: the secret's mode and the consented service.
+    Silent on an install that never used the dashboard: no module, no port probe."""
+    warnings = dashboard_secret_diagnostics()
+    config = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+    used = (dashboard_secret_path(), dashboard_secret_path().parent / "consent.json",
+            Path(config) / f"systemd/user/nogg-dashboard-{orchestrator_slug()}.service")
+    if not any(os.path.lexists(path) for path in used):
+        return warnings, []
+    service = dashboard_service_module()
+    more, notes = service.doctor_lines(dashboard_service_paths(), service.Host())
+    return warnings + more, notes
+def read_terminal_line():
+    """One line typed at the controlling terminal, never from a pipe on stdin; and the
+    terminal's device name, from stdin, which the operator-terminal test has proven to
+    be a terminal (a descriptor opened through /dev/tty only names /dev/tty)."""
+    refused = dashboard_service_module().ServiceRefused
+    try:
+        name = os.ttyname(0)
+        fd = os.open("/dev/tty", os.O_RDWR | os.O_NOCTTY)
+    except OSError as exc:
+        raise refused(f"refusing `nogg dashboard service enable`: no controlling terminal to read the "
+                      f"confirmation from ({exc.strerror}); nothing was written") from None
+    line = b""
+    try:
+        with os.fdopen(fd, "r+b", buffering=0) as tty:
+            while not line.endswith(b"\n") and len(line) < 512:
+                chunk = tty.read(1)
+                if not chunk:
+                    break
+                line += chunk
+    except KeyboardInterrupt:
+        raise refused("aborted at the confirmation; nothing was written") from None
+    return line.decode("utf-8", "replace"), name
 def dashboard_readers():
     """Every reader of the dashboard's data contract, resolved against the canonical
     checkout. Each one is a call for the refresher, so a request never runs one, and
@@ -5270,14 +5333,21 @@ def dashboard_command(args):
     # Git and the Dolt CLI write lock and event files on a read.
     os.environ.update(BEADS_DOLT_AUTO_START="0", GIT_OPTIONAL_LOCKS="0", DOLT_DISABLE_EVENT_FLUSH="1")
     security, server = dashboard_modules()
+    if getattr(args, "dashboard_command", None):
+        if args.bind != "127.0.0.1" or args.port is not None or args.allow_host or args.list_binds or args.rotate_token:
+            raise RuntimeError(f"`nogg dashboard {args.dashboard_command}` takes none of --bind, --port, "
+                               "--allow-host, --list-binds or --rotate-token before it; pass `service enable` "
+                               "its own --bind")
+        service = dashboard_service_module()
+        try:
+            return dashboard_service_command(args, service)
+        except service.ServiceRefused as exc:
+            print(f"nogg: {exc}", file=sys.stderr)
+            sys.exit(exc.code)
     if args.list_binds:
         return dashboard_list_binds(security)
     if args.rotate_token:
-        security.rotate_secret(dashboard_secret_path())
-        print(f"rotated the dashboard secret in {dashboard_secret_path()}: every browser session has ended, "
-              "and a running dashboard uses the new secret at once. Run `nogg dashboard --bind <address>` "
-              "on a terminal to print a new link.")
-        return
+        return dashboard_rotate(security)
     bind = security.check_bind(args.bind)
     hosts = [security.check_allow_host(value) for value in args.allow_host]
     if not bind.loopback:
@@ -5288,18 +5358,86 @@ def dashboard_command(args):
         refusal = operator_terminal_refusal(records)
         if refusal:
             raise RuntimeError(security.terminal_refusal_message(args.bind, refusal))
+    hooks = {} if bind.loopback else dashboard_terminal_audit(bind)
     server.serve(bind, server.DEFAULT_PORT if args.port is None else args.port, dashboard_readers(),
                  static_dir=Path(__file__).resolve().parent / "dashboard",
-                 secret_path=dashboard_secret_path(), allow_hosts=hosts, gates=dashboard_gates())
-def dashboard_list_binds(security):
-    """A hint for the operator: its output never feeds the bind decision."""
+                 secret_path=dashboard_secret_path(), allow_hosts=hosts, gates=dashboard_gates(), **hooks)
+def dashboard_terminal_audit(bind):
+    """`started` (mode `terminal`) once the socket is bound, and `stopped` when it closes.
+    An exposure that cannot be recorded does not start."""
+    service = dashboard_service_module()
+    paths = dashboard_service_paths()
+    audit = service.Audit(paths.audit, journal=service.journal_sender(service.Host()))
+    def started(port):
+        try:
+            audit.append("started", mode="terminal", bind=service.bind_text(bind), port=port, pid=os.getpid())
+        except OSError as exc:
+            raise RuntimeError(f"refusing the network bind: the exposure cannot be recorded in {paths.audit} "
+                               f"({exc.__class__.__name__})") from None
+    def stopped():
+        try:
+            audit.append("stopped")
+        except OSError as exc:
+            print(f"WARNING: cannot append `stopped` to {paths.audit}: {exc.__class__.__name__}", file=sys.stderr)
+    return {"on_start": started, "on_stop": stopped}
+def dashboard_rotate(security):
+    """`--rotate-token`: from anywhere, since it can only reduce access. It appends
+    `rotated` and names the next step that fits."""
+    service = dashboard_service_module()
+    paths, host = dashboard_service_paths(), service.Host()
+    security.rotate_secret(dashboard_secret_path())
+    try:
+        service.Audit(paths.audit, journal=service.journal_sender(host)).append("rotated")
+    except OSError as exc:
+        print(f"WARNING: cannot append `rotated` to {paths.audit}: {exc.__class__.__name__}", file=sys.stderr)
+    running = paths.unit_path.exists() and service.unit_state(paths, host)[1] == "active"
+    step = ("The consented service uses the new secret at once; every phone signs in again."
+            if running else "Run `nogg dashboard --bind <address>` on a terminal to print a new link.")
+    print(f"rotated the dashboard secret in {dashboard_secret_path()}: every browser session has ended, "
+          f"and a running dashboard uses the new secret at once. {step}")
+def dashboard_service_command(args, service):
+    """`nogg dashboard service {enable,disable,run}` and `nogg dashboard status`."""
+    paths, host = dashboard_service_paths(), service.Host()
+    if args.dashboard_command == "status":
+        return service.status(paths, host, out=sys.stdout, cgroup_applies=read_login_cgroup() is not None,
+                              journal_is_persistent=service.journal_persistent())
+    action = args.service_action
+    if action == "enable":
+        security = dashboard_modules()[0]
+        caller = dashboard_caller("enabling the dashboard service")
+        nat = None
+        if caller.refusal is None:
+            nat = next((warning for address, warning in dashboard_eligible_binds(security) or ()
+                        if address == args.service_bind and warning), None)
+        port = dashboard_modules()[1].DEFAULT_PORT if args.service_port is None else args.service_port
+        return service.enable(paths, host, caller, address=args.service_bind, port=port,
+                              allow_hosts=args.service_allow_host, confirm=read_terminal_line,
+                              out=sys.stdout, nat_warning=f"WARNING: {nat}" if nat else None)
+    if action == "disable":
+        caller = dashboard_caller("disabling the dashboard service")
+        return service.disable(paths, host, caller, out=sys.stdout)
+    caller = dashboard_caller("the dashboard service", terminal=False)
+    server = dashboard_modules()[1]
+    def serve(bind, port, allow_hosts, on_start, on_stop):
+        server.serve(bind, port, dashboard_readers(), static_dir=Path(__file__).resolve().parent / "dashboard",
+                     secret_path=dashboard_secret_path(), allow_hosts=allow_hosts, gates=dashboard_gates(),
+                     service=True, on_start=on_start, on_stop=on_stop)
+    return service.run(paths, caller, cgroup=read_login_cgroup, serve=serve, out=sys.stdout)
+def dashboard_eligible_binds(security):
+    """`(address, warning)` rows from `ip -j addr`, or None where it is unavailable. A
+    hint for the operator: its output never feeds the bind decision."""
     try:
         listed = subprocess.run(["ip", "-j", "addr"], text=True, capture_output=True, timeout=5)
-        links = json.loads(listed.stdout)
+        return security.eligible_binds(json.loads(listed.stdout))
     except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+def dashboard_list_binds(security):
+    """A hint for the operator: its output never feeds the bind decision."""
+    rows = dashboard_eligible_binds(security)
+    if rows is None:
         print("cannot list addresses here: `ip -j addr` is unavailable. Pass a literal private address to --bind.")
         return
-    for address, warning in security.eligible_binds(links):
+    for address, warning in rows:
         print(f"{address}  (WARNING: {warning})" if warning else address)
 COMPLEXITY_VOCABULARY_VERSION = "1"   # routine/standard/complex + unknown, Product Owner confirmed
 def complexity_snapshot(tier, explicit):
@@ -11229,7 +11367,8 @@ def doctor(audit=False, with_recover=False, with_sandbox=False, refuse_task_form
     except Exception as exc:
         dispatch_warnings, dispatch_notes = [], [f"dispatcher: health unavailable: {exc}"]
     warnings.extend(dispatch_warnings)
-    warnings.extend(dashboard_secret_diagnostics())
+    dash_warnings, dash_notes = dashboard_diagnostics()
+    warnings.extend(dash_warnings)
     if FAILURE_RECORD.exists():
         try: rec = json.loads(FAILURE_RECORD.read_text())
         except (ValueError, OSError): rec = {}
@@ -11274,6 +11413,7 @@ def doctor(audit=False, with_recover=False, with_sandbox=False, refuse_task_form
     notes.extend(loop_notes)
     notes.extend(pause_notes)
     notes.extend(dispatch_notes)
+    notes.extend(dash_notes)
     notes.extend(warm_diagnostics())
     notes.extend(mapping_health_lines())
     try:
@@ -12272,6 +12412,17 @@ def main():
     dash.add_argument("--list-binds", action="store_true", help="print this host's eligible addresses and exit")
     dash.add_argument("--rotate-token", action="store_true",
                       help="replace the access secret, ending every browser session, and exit")
+    dash_sub = dash.add_subparsers(dest="dashboard_command")
+    dash_sub.add_parser("status", help="print the consent, the unit's state and the last audit events; writes nothing")
+    dsvc = dash_sub.add_parser("service", help="the consented user service (enable once on a login terminal)")
+    dsvc_sub = dsvc.add_subparsers(dest="service_action", required=True)
+    dse = dsvc_sub.add_parser("enable", help="record the operator's consent and enable the user unit")
+    dse.add_argument("--bind", dest="service_bind", required=True, help="literal private address to serve on")
+    dse.add_argument("--port", dest="service_port", type=int, default=None, help="TCP port (default: 8742)")
+    dse.add_argument("--allow-host", dest="service_allow_host", action="append", default=[], metavar="HOST[:PORT]",
+                     help="also answer this exact Host value (repeatable)")
+    dsvc_sub.add_parser("disable", help="stop, disable and remove the unit and the consent")
+    dsvc_sub.add_parser("run", help="what the unit runs; refused anywhere else")
     usage = sub.add_parser("usage", help="inspect read-only local quota observations")
     usage.add_argument("action", nargs="?", choices=("install-statusline", "uninstall-statusline"), default=None,
                        help="opt-in usage helpers (install-statusline, uninstall-statusline)")

@@ -49,12 +49,22 @@ APP_SLICE = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/run-u7.s
 # `nogg` in its own process, with the host facts of the operator-terminal test injected
 # there: no environment variable can stand in for them, so no test hook can lift the rule.
 DRIVER = """
-import json, sys
+import fcntl, json, os, sys, termios
 from importlib.machinery import SourceFileLoader
 facts = json.loads(sys.argv[2])
+if os.isatty(0):
+    fcntl.ioctl(0, termios.TIOCSCTTY, 0)       # /dev/tty is this pseudo-terminal, never the runner's
 module = SourceFileLoader("nogg_on_terminal", sys.argv[1]).load_module()
 module.read_login_cgroup = lambda: facts["cgroup"]
 module.session_server_processes = lambda: [tuple(server) for server in facts["servers"]]
+if facts.get("bind_map"):
+    # An address served under the network rules at another literal: 127.0.0.1, so the
+    # token, the terminal test and the audit trail all run while nothing listens beyond
+    # this host, or 192.0.2.1 (TEST-NET-1), which no host is assigned.
+    security = module.dashboard_modules()[0]
+    real = security.check_bind
+    security.check_bind = lambda value: (security.Bind(facts["bind_map"][value], None, False)
+                                         if value in facts["bind_map"] else real(value))
 sys.argv = ["nogg", *facts["args"]]
 try:
     module.main()
@@ -64,16 +74,20 @@ except Exception as exc:
 """
 
 
-def on_terminal(repo, *args, cgroup=LOGIN, servers=(), piped=False, env=None):
+def on_terminal(repo, *args, cgroup=LOGIN, servers=(), piped=False, env=None, typed=None):
     """(exit code, terminal output, piped stdout) of `nogg` with a pseudo-terminal on stdin
-    and stderr, and on stdout unless `piped`. Only refusals run here: nothing stays bound."""
+    and stderr, and on stdout unless `piped`; the terminal is the child's controlling one,
+    and `typed` is a line typed into it. Only refusals and one-shot steps run here."""
     master, slave = pty.openpty()
     facts = json.dumps({"args": list(args), "cgroup": cgroup, "servers": [list(s) for s in servers]})
     environment = {key: value for key, value in os.environ.items() if key != "NOGG_SESSION_NAME"}
     environment.update(NOGGING_ROOT=str(repo), **(env or {}))
     process = subprocess.Popen([sys.executable, "-c", DRIVER, str(nogg), facts], stdin=slave, stderr=slave,
-                               stdout=subprocess.PIPE if piped else slave, env=environment)
+                               stdout=subprocess.PIPE if piped else slave, env=environment,
+                               start_new_session=True)
     os.close(slave)
+    if typed is not None:
+        os.write(master, typed.encode() + b"\n")
     output = b""
     while True:
         ready, _, _ = select.select([master], [], [], 60)
@@ -92,6 +106,75 @@ def on_terminal(repo, *args, cgroup=LOGIN, servers=(), piped=False, env=None):
     if piped:
         process.stdout.close()
     return process.wait(timeout=60), output.decode(errors="replace"), piped_output
+
+
+def driven(repo, *args, cgroup=LOGIN, env=None, bind_map=None):
+    """`nogg` with injected host facts and no terminal: stdin /dev/null, output captured,
+    and a session of its own, so no /dev/tty of the runner is ever reachable."""
+    facts = json.dumps({"args": list(args), "cgroup": cgroup, "servers": [], "bind_map": bind_map or {}})
+    environment = {key: value for key, value in os.environ.items() if key != "NOGG_SESSION_NAME"}
+    environment.update(NOGGING_ROOT=str(repo), **(env or {}))
+    return subprocess.run([sys.executable, "-c", DRIVER, str(nogg), facts], text=True, capture_output=True,
+                          timeout=120, stdin=subprocess.DEVNULL, env=environment, start_new_session=True)
+
+
+def served_run(repo, args, cgroup, env, address):
+    """`nogg` serving `address` on loopback under the network rules, with no terminal (as
+    under systemd), stopped with SIGTERM once it has printed its address."""
+    facts = json.dumps({"args": list(args), "cgroup": cgroup, "servers": [], "bind_map": {address: "127.0.0.1"}})
+    environment = {key: value for key, value in os.environ.items() if key != "NOGG_SESSION_NAME"}
+    environment.update(NOGGING_ROOT=str(repo), **env)
+    process = subprocess.Popen([sys.executable, "-c", DRIVER, str(nogg), facts], stdin=subprocess.DEVNULL,
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=environment,
+                               start_new_session=True)
+    output = b""
+    while b"Nogging dashboard" not in output:
+        ready, _, _ = select.select([process.stdout], [], [], 60)
+        chunk = os.read(process.stdout.fileno(), 4096) if ready else b""
+        if not chunk:
+            break
+        output += chunk
+    if process.poll() is None:
+        process.send_signal(signal.SIGTERM)
+    try:
+        rest, _ = process.communicate(timeout=60)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        rest, _ = process.communicate()
+    return process.returncode, (output + rest).decode(errors="replace")
+
+
+def terminal_run(repo, address, env):
+    """A foreground network run on an operator terminal, bound to loopback under the
+    network rules, stopped with SIGTERM once it has printed its address. Its output holds
+    the token link, so a check never prints it."""
+    master, slave = pty.openpty()
+    facts = json.dumps({"args": ["dashboard", "--bind", address, "--port", "0"], "cgroup": LOGIN, "servers": [],
+                        "bind_map": {address: "127.0.0.1"}})
+    environment = {key: value for key, value in os.environ.items() if key != "NOGG_SESSION_NAME"}
+    environment.update(NOGGING_ROOT=str(repo), **env)
+    process = subprocess.Popen([sys.executable, "-c", DRIVER, str(nogg), facts], stdin=slave, stdout=slave,
+                               stderr=slave, env=environment, start_new_session=True)
+    os.close(slave)
+    output, stopped = b"", False
+    while True:
+        ready, _, _ = select.select([master], [], [], 60)
+        if not ready:
+            break
+        try:
+            chunk = os.read(master, 4096)
+        except OSError:
+            break
+        if not chunk:
+            break
+        output += chunk
+        if not stopped and b"Nogging dashboard on" in output:
+            process.send_signal(signal.SIGTERM)
+            stopped = True
+    os.close(master)
+    if process.poll() is None:
+        process.kill()
+    return process.wait(timeout=60), output.decode(errors="replace")
 
 
 def start(repo, *args):
@@ -296,7 +379,7 @@ with tempfile.TemporaryDirectory(prefix="nogg fixture ") as tmp:
 
     # Doctor is silent when unused and warns on an open secret.
     fresh = repository(Path(tmp) / "unused")
-    result = run(fresh, "doctor")
+    result = run(fresh, "doctor", env={"XDG_CONFIG_HOME": str(Path(tmp) / "xdg")})
     check("doctor on an unused install says nothing about the dashboard",
           "dashboard" not in (result.stdout + result.stderr).lower(), result.stdout)
     check("doctor creates no dashboard state", not (fresh / ".nogging/state/dashboard").exists())
@@ -309,6 +392,229 @@ with tempfile.TemporaryDirectory(prefix="nogg fixture ") as tmp:
     output = result.stdout + result.stderr
     check("doctor warns on an open secret", "dashboard secret" in output and str(target) in output and "0644" in output, output)
     check("doctor never prints the secret", target.read_text().strip() not in output)
+
+    # The consented service. Stubs stand in for systemctl, loginctl and systemd-cat; the
+    # user unit directory is a temporary XDG_CONFIG_HOME, so no real unit is written.
+    stubs = Path(tmp) / "service-bin"
+    stubs.mkdir()
+    calls, unit_state = Path(tmp) / "systemctl.log", Path(tmp) / "unit-state"
+    unit_state.mkdir()
+    (stubs / "systemctl").write_text(
+        f"#!/bin/sh\necho \"$*\" >> '{calls}'\n"
+        f"case \"$2\" in is-enabled) cat '{unit_state}/enabled' 2>/dev/null || echo disabled ;;\n"
+        f"  is-active) cat '{unit_state}/active' 2>/dev/null || echo inactive ;; esac\nexit 0\n")
+    (stubs / "loginctl").write_text("#!/bin/sh\necho Linger=no\n")
+    journal = Path(tmp) / "journal.log"
+    (stubs / "systemd-cat").write_text(f"#!/bin/sh\necho \"$*\" >> '{journal}'\ncat >> '{journal}'\n")
+    for name in ("systemctl", "loginctl", "systemd-cat"):
+        (stubs / name).chmod(0o755)
+    units = Path(tmp) / "xdg/systemd/user"
+    service_env = {"PATH": f"{stubs}:{os.environ['PATH']}", "XDG_CONFIG_HOME": str(Path(tmp) / "xdg")}
+
+    def systemctl_calls():
+        return calls.read_text().splitlines() if calls.exists() else []
+
+    def reset_calls():
+        if calls.exists():
+            calls.unlink()
+
+    def events(target):
+        path = target / ".nogging/state/dashboard/audit.jsonl"
+        return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+    def mode(path):
+        return stat.S_IMODE(path.stat().st_mode)
+
+    UNIT_OF = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/nogg-dashboard-{}.service\n"
+
+    def session_record(target, name, role):
+        directory = target / ".nogging/state/sessions"
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / f"{name}.json").write_text(json.dumps(
+            {"name": name, "bead_id": None if role == "orchestrator" else "SPEC-x", "role": role,
+             "state": "running", "session_pid": os.getpid(), "session_pid_start": module.process_start(os.getpid())}))
+        return directory / f"{name}.json"
+
+    # The operator enables the service, and the secret stays out of everything it writes.
+    served = repository(Path(tmp) / "served")
+    code, output, _ = on_terminal(served, "dashboard", "service", "enable", "--bind", "100.86.79.27",
+                                  env=service_env, typed="100.86.79.27")
+    consent = served / ".nogging/state/dashboard/consent.json"
+    unit = units / "nogg-dashboard-served.service"
+    check("the operator enables the service", code == 0 and consent.exists() and mode(consent) == 0o600, output)
+    check("the unit is written for the canonical checkout",
+          unit.exists() and f'ExecStart="{served}/scripts/nogg" dashboard service run' in unit.read_text())
+    check("the unit is reloaded, enabled and started",
+          "--user daemon-reload" in systemctl_calls()
+          and "--user enable --now nogg-dashboard-served.service" in systemctl_calls(), systemctl_calls())
+    check("the consent is recorded", [e["event"] for e in events(served)] == ["consent"]
+          and events(served)[0]["bind"] == "100.86.79.27")
+    check("the consent names the terminal's device", events(served)[0]["tty"].startswith("/dev/pts/")
+          and json.loads(consent.read_text())["tty"] == events(served)[0]["tty"], events(served)[0]["tty"])
+    check("the consent reaches the journal", "-t nogg-dashboard" in journal.read_text()
+          and '"event":"consent"' in journal.read_text())
+    check("a lingering-off note is printed", "lingering is off" in output, output)
+    served_secret = (served / ".nogging/state/dashboard/secret").read_text().strip()
+    check("the secret stays out of the unit", served_secret not in unit.read_text()
+          and served_secret not in consent.read_text() and served_secret not in "".join(systemctl_calls()))
+    check("enable prints no token", served_secret not in output and "#token=" not in output)
+    result = driven(served, "doctor", env=service_env)
+    check("doctor with a consented service notes it",
+          "100.86.79.27 port 8742" in result.stdout and "dashboard: nogg-dashboard-served.service exists or runs"
+          not in result.stdout, result.stdout[-2000:])
+
+    # A consent does not lift the session refusal; status reads from anywhere.
+    session_record(served, "lead-x", "lead")
+    before = state_files(served)
+    result = driven(served, "dashboard", "status", env=service_env)
+    check("status from anywhere", result.returncode == 0 and "100.86.79.27 port 8742" in result.stdout
+          and '"event":"consent"' in result.stdout and state_files(served) == before, result.stdout + result.stderr)
+    result = run(served, "dashboard", "--bind", "100.86.79.27", "--port", "0")
+    check("a consent does not lift the session refusal",
+          result.returncode != 0 and unchanged.replace("10.255.255.1", "100.86.79.27") in result.stderr, result.stderr)
+    (served / ".nogging/state/dashboard/secret").unlink()
+    result = run(served, "dashboard", "--bind", "100.86.79.27", "--port", "0")
+    check("the refused session creates no secret", not (served / ".nogging/state/dashboard/secret").exists())
+    result = driven(served, "dashboard", "service", "run", cgroup=UNIT_OF.format("served"), env=service_env)
+    check("the service inside a session is refused",
+          result.returncode == 78 and "inside a supervised session" in result.stderr, result.stderr)
+
+    # A Lead cannot switch it off; the Orchestration Agent can.
+    reset_calls()
+    before = state_files(served)
+    result = driven(served, "dashboard", "service", "disable", env=service_env)
+    check("a Lead tries to switch it off", result.returncode != 0 and unit.exists()
+          and state_files(served) == before and systemctl_calls() == [], result.stderr)
+    (served / ".nogging/state/sessions/lead-x.json").unlink()
+    orchestrator = session_record(served, "nogg-orchestrator-served", "orchestrator")
+    (unit_state / "active").write_text("active\n")
+    result = driven(served, "dashboard", "--rotate-token", env=service_env)
+    check("the token is rotated from the chat", result.returncode == 0 and events(served)[-1]["event"] == "rotated"
+          and "consented service" in result.stdout and "nogg dashboard pair" not in result.stdout, result.stdout)
+    check("the rotation prints no secret",
+          (served / ".nogging/state/dashboard/secret").read_text().strip() not in result.stdout + result.stderr)
+    result = driven(served, "dashboard", "service", "disable", env=service_env)
+    check("the orchestrator switches it off", result.returncode == 0 and not unit.exists() and not consent.exists()
+          and "--user disable --now nogg-dashboard-served.service" in systemctl_calls(), result.stderr)
+    check("the revocation names the orchestrator", events(served)[-1] == {
+        **events(served)[-1], "event": "revoked", "caller": "orchestrator:nogg-orchestrator-served"})
+    orchestrator.unlink()
+    (unit_state / "active").unlink()
+    count = len(events(served))
+    code, output, _ = on_terminal(served, "dashboard", "service", "disable", env=service_env)
+    check("disabled twice", code == 0 and "nothing to disable" in output and len(events(served)) == count, output)
+
+    # Refusals of enable write nothing and call no systemctl.
+    refused = repository(Path(tmp) / "refused")
+    def untouched(name):
+        check(name + ": nothing written", not (refused / ".nogging/state/dashboard").exists()
+              and not (units / "nogg-dashboard-refused.service").exists())
+        check(name + ": no systemctl call", systemctl_calls() == [], systemctl_calls())
+    reset_calls()
+    code, output, _ = on_terminal(refused, "dashboard", "service", "enable", "--bind", "100.86.79.27",
+                                  env=service_env, typed="100.86.79.28")
+    check("a mistyped confirmation is refused", code != 0 and "does not match" in output, output)
+    untouched("a mistyped confirmation")
+    for role, name in (("lead", "lead-y"), ("orchestrator", "nogg-orchestrator-refused")):
+        record = session_record(refused, name, role)
+        code, output, _ = on_terminal(refused, "dashboard", "service", "enable", "--bind", "100.86.79.27",
+                                      env=service_env, typed="100.86.79.27")
+        check(f"a session asks to enable ({role})", code != 0 and name in output, output)
+        record.unlink()
+    untouched("a session asks to enable")
+    result = driven(refused, "dashboard", "service", "enable", "--bind", "100.86.79.27", env=service_env)
+    check("no terminal: enable is refused", result.returncode != 0 and "stdin is not a terminal" in result.stderr,
+          result.stderr)
+    code, output, _ = on_terminal(refused, "dashboard", "service", "enable", "--bind", "100.86.79.27",
+                                  cgroup=APP_SLICE, env=service_env, typed="100.86.79.27")
+    check("outside a login session scope: enable is refused", code != 0 and "logind session scope" in output, output)
+    code, output, _ = on_terminal(refused, "dashboard", "service", "enable", "--bind", "100.86.79.27",
+                                  piped=True, env=service_env, typed="100.86.79.27")
+    check("piped stdout: enable is refused", code != 0 and "stdout is not a terminal" in output, output)
+    bare_bin = Path(tmp) / "no-systemctl"
+    bare_bin.mkdir()
+    for tool in ("git", "sh", "bash", "env"):
+        found = subprocess.run(["sh", "-c", f"command -v {tool}"], text=True, capture_output=True).stdout.strip()
+        if found:
+            (bare_bin / tool).symlink_to(found)
+    code, output, _ = on_terminal(refused, "dashboard", "service", "enable", "--bind", "100.86.79.27",
+                                  env={**service_env, "PATH": str(bare_bin)}, typed="100.86.79.27")
+    check("a host without systemctl", code != 0 and "no `systemctl`" in output
+          and "nogg dashboard --bind 100.86.79.27" in output, output)
+    untouched("a host without systemctl")
+
+    # `service run`: only the unit runs it, and only with a valid consent.
+    lone = repository(Path(tmp) / "lone")
+    lone_unit = UNIT_OF.format("lone")
+    result = driven(lone, "dashboard", "service", "run", cgroup=lone_unit, env=service_env)
+    check("no consent", result.returncode == 78 and "nogg dashboard service enable" in result.stderr, result.stderr)
+    check("no consent opens no socket", not (lone / ".nogging/state/dashboard/control.sock").exists())
+    writer = module.dashboard_service_module()
+    lone_consent = lone / ".nogging/state/dashboard/consent.json"
+    for address in ("8.8.8.8", "0.0.0.0"):
+        writer.write_consent(lone_consent, writer.consent_record(address, 8742, [], "2026-11-02T10:00:00Z", "/dev/pts/1"))
+        result = driven(lone, "dashboard", "service", "run", cgroup=lone_unit, env=service_env)
+        check(f"a tampered consent naming {address}", result.returncode == 78, result.stderr)
+    writer.write_consent(lone_consent, writer.consent_record("10.255.255.1", 8742, [], "2026-11-02T10:00:00Z",
+                                                             "/dev/pts/1"))
+    lone_consent.chmod(0o644)
+    result = driven(lone, "dashboard", "service", "run", cgroup=lone_unit, env=service_env)
+    check("a tampered consent with mode 0644", result.returncode == 78 and "0644" in result.stderr, result.stderr)
+    lone_consent.chmod(0o600)
+    control = lone / ".nogging/state/dashboard/control.sock"
+    live = None
+    if len(os.fsencode(str(control))) <= 107:
+        live = socket.socket(socket.AF_UNIX)
+        live.bind(str(control))
+    else:
+        control.write_text("")
+    identity = control.lstat().st_ino
+    result = driven(lone, "dashboard", "service", "run", cgroup=APP_SLICE, env=service_env)
+    check("a start beside the unit", result.returncode == 78 and "app.slice" in result.stderr, result.stderr)
+    check("a start beside the unit leaves the control socket", control.exists() and control.lstat().st_ino == identity)
+    if live is not None:
+        live.close()
+    control.unlink()
+    result = driven(lone, "dashboard", "service", "run", cgroup=lone_unit, env=service_env,
+                    bind_map={"10.255.255.1": "192.0.2.1"})
+    check("an address that is not up exits for a retry", result.returncode == 1
+          and "not assigned to this host" in result.stderr, result.stderr)
+    check("a failed start records no exposure", [e["event"] for e in events(lone)] == [])
+    with socket.socket() as probe:     # a consent names a real port: take one that is free now
+        probe.bind(("127.0.0.1", 0))
+        free_port = probe.getsockname()[1]
+    writer.write_consent(lone_consent, writer.consent_record("10.255.255.1", free_port, [], "2026-11-02T10:00:00Z",
+                                                             "/dev/pts/1"))
+    code, output = served_run(lone, ["dashboard", "service", "run"], lone_unit, service_env, "10.255.255.1")
+    lone_secret = (lone / ".nogging/state/dashboard/secret").read_text().strip()
+    rows = events(lone)
+    check("the service serves the consent and names pair", code == 0 and "Nogging dashboard service on" in output
+          and "nogg dashboard pair" in output, "exit %s" % code)
+    check("the service prints no token", lone_secret not in output and "#token=" not in output)
+    check("the service records its start and stop", [e["event"] for e in rows] == ["started", "stopped"]
+          and rows[0]["mode"] == "service" and rows[0]["consent_at"] == "2026-11-02T10:00:00Z"
+          and rows[0]["tty"] == "/dev/pts/1" and '"event":"started"' in output, [e.get("event") for e in rows])
+    for path in ((lone / ".nogging/state/dashboard/audit.jsonl"),):
+        path.unlink()
+
+    # A terminal run is recorded: `started` with mode `terminal`, then `stopped`.
+    code, output = terminal_run(lone, "10.255.255.1", service_env)
+    rows = events(lone)
+    check("a terminal run is recorded", code == 0 and [e["event"] for e in rows] == ["started", "stopped"]
+          and rows[0]["mode"] == "terminal" and rows[0]["pid"] > 0 and rows[0]["port"] > 0,
+          "exit %s, events %s" % (code, [e.get("event") for e in rows]))
+    secret_now = (lone / ".nogging/state/dashboard/secret").read_text().strip()
+    audit_text = (lone / ".nogging/state/dashboard/audit.jsonl").read_text()
+    check("the terminal run's events hold no token", secret_now not in audit_text and "token" not in audit_text)
+    check("the terminal run reaches the journal", '"mode":"terminal"' in journal.read_text())
+
+    # Doctor with a unit and no consent.
+    orphan = repository(Path(tmp) / "orphan")
+    (units / "nogg-dashboard-orphan.service").write_text("[Service]\n")
+    result = driven(orphan, "doctor", env=service_env)
+    check("doctor with a unit and no consent warns",
+          "nogg-dashboard-orphan.service exists or runs without a valid consent" in result.stdout
+          and "nogg dashboard service disable" in result.stdout, result.stdout[-2000:])
 
 sys.exit(1 if failures else 0)
 PY
