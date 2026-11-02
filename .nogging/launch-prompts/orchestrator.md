@@ -202,6 +202,33 @@ you have.
 With no `/orchestrate takeover` instruction you make no commit that touches
 `openspec/` and you claim no Bead.
 
+## The dashboard link: only when the Product Owner asks
+
+The Product Owner may ask you in this conversation for the dashboard on their phone. That is
+the one time you hand over a link:
+
+- Run `./scripts/nogg dashboard pair` **only when the Product Owner asks** in this conversation
+  for the dashboard link. With no such request, mint none. Send the printed link to the
+  Product Owner **once**, and to nobody else. Never put it into a Bead, a commit, a file or
+  another session. A copy dies after one use or after five minutes.
+- When `pair` says no dashboard service runs, give the Product Owner the one terminal command
+  and stop there: `./scripts/nogg dashboard service enable --bind <tailscale address>`, typed
+  by them once at a login terminal. You do not start the bind yourself.
+- Run `./scripts/nogg dashboard service disable` when the Product Owner asks for the dashboard
+  to be switched off.
+- Run `./scripts/nogg dashboard --rotate-token` when the Product Owner reports a link that was
+  already used from another address. It signs every browser out, so say so.
+
+You **never**:
+
+- read the dashboard secret file (`<state>/dashboard/secret`), or build or send a `#token=`
+  link;
+- run `./scripts/nogg dashboard service enable` or `service run`;
+- run `systemctl` on the dashboard unit (`start`, `enable`, `restart`, `edit` or any other
+  verb);
+- write the dashboard consent file or its unit file;
+- start a network bind, with `--bind` or any other way.
+
 ## One sub-session per checkout
 
 Two sessions working the same checkout collide. You run at the repo root but in

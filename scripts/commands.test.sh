@@ -243,6 +243,44 @@ else
   bad "orchestrator.md: missing the explicit 'never runs openspec archive itself' rule"
 fi
 
+# --- 4d. the Orchestrator hands over a dashboard link only on request ----
+#     (TASK-DPA-004): the prompt is the contract, so these are source-text checks.
+orch_flat="$(tr '\n' ' ' < .nogging/launch-prompts/orchestrator.md | tr -s ' ')"
+cmd_flat="$(tr '\n' ' ' < .claude/commands/orchestrate.md | tr -s ' ')"
+for want in \
+  'only when the Product Owner asks' \
+  './scripts/nogg dashboard pair' \
+  './scripts/nogg dashboard service enable --bind <tailscale address>' \
+  './scripts/nogg dashboard service disable' \
+  './scripts/nogg dashboard --rotate-token' \
+  'read the dashboard secret' \
+  '#token=' \
+  'service enable' \
+  'service run' \
+  '`systemctl` on the dashboard unit' \
+  'consent file or its unit file' \
+  'start a network bind'; do
+  case "$orch_flat" in
+    *"$want"*) ok "orchestrator.md dashboard link rule: $want" ;;
+    *) bad "orchestrator.md dashboard link rule missing: $want" ;;
+  esac
+done
+for want in \
+  'only when the Product Owner asks' \
+  './scripts/nogg dashboard service enable --bind <tailscale address>' \
+  'never reads the dashboard secret' \
+  '#token=' \
+  '`systemctl` on the dashboard unit' \
+  'starts a network bind'; do
+  case "$cmd_flat" in
+    *"$want"*) ok "orchestrate.md dashboard link paragraph: $want" ;;
+    *) bad "orchestrate.md dashboard link paragraph missing: $want" ;;
+  esac
+done
+grep -q 'Phone access is on request' docs/operating-model.md \
+  && ok "operating-model.md has the phone-access sentence" \
+  || bad "operating-model.md lacks the phone-access sentence"
+
 # --- 5. the resumption protocol + playbook exist (TASK-RIR-007) ----------
 if python3 - <<'PY'
 import re, sys

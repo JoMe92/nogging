@@ -179,6 +179,12 @@ planning session to run `/plan`'s archive step for that change — starting one
 if none is running, or naming the change to one already running — and never
 runs `openspec archive` itself.
 
+**Phone access is on request.** The Orchestration Agent mints a one-time dashboard link with
+`nogg dashboard pair` only when the Product Owner asks for it in the conversation, sends it to
+them alone, and never reads the dashboard secret or enables the service; switching the
+dashboard on stays a one-time step the Product Owner takes at a login terminal. See
+[Dashboard](dashboard.md).
+
 **Recurring work is a loop.** Durable recurring work lives in an approved
 `nogg loop` definition, never in a session-only schedule. One minutely tick in
 the main checkout runs each approved loop: a `send` loop delivers its prompt to
