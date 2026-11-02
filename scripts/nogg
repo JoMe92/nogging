@@ -5193,25 +5193,35 @@ def dashboard_diagnostics():
     """`(warnings, notes)` for doctor: the secret's mode and the consented service.
     Silent on an install that never used the dashboard: no module, no port probe."""
     warnings = dashboard_secret_diagnostics()
-    paths_used = [dashboard_secret_path(), dashboard_secret_path().parent / "consent.json"]
-    service = dashboard_service_module()
-    unit = service.user_unit_dir() / f"nogg-dashboard-{orchestrator_slug()}.service"
-    if not any(os.path.lexists(path) for path in (*paths_used, unit)):
+    config = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+    used = (dashboard_secret_path(), dashboard_secret_path().parent / "consent.json",
+            Path(config) / f"systemd/user/nogg-dashboard-{orchestrator_slug()}.service")
+    if not any(os.path.lexists(path) for path in used):
         return warnings, []
+    service = dashboard_service_module()
     more, notes = service.doctor_lines(dashboard_service_paths(), service.Host())
     return warnings + more, notes
 def read_terminal_line():
     """One line typed at the controlling terminal, never from a pipe on stdin; and the
-    terminal's device name."""
-    fd = os.open("/dev/tty", os.O_RDWR | os.O_NOCTTY)
-    with os.fdopen(fd, "r+b", buffering=0) as tty:
-        name = os.ttyname(tty.fileno())
-        line = b""
-        while not line.endswith(b"\n") and len(line) < 512:
-            chunk = tty.read(1)
-            if not chunk:
-                break
-            line += chunk
+    terminal's device name, from stdin, which the operator-terminal test has proven to
+    be a terminal (a descriptor opened through /dev/tty only names /dev/tty)."""
+    refused = dashboard_service_module().ServiceRefused
+    try:
+        name = os.ttyname(0)
+        fd = os.open("/dev/tty", os.O_RDWR | os.O_NOCTTY)
+    except OSError as exc:
+        raise refused(f"refusing `nogg dashboard service enable`: no controlling terminal to read the "
+                      f"confirmation from ({exc.strerror}); nothing was written") from None
+    line = b""
+    try:
+        with os.fdopen(fd, "r+b", buffering=0) as tty:
+            while not line.endswith(b"\n") and len(line) < 512:
+                chunk = tty.read(1)
+                if not chunk:
+                    break
+                line += chunk
+    except KeyboardInterrupt:
+        raise refused("aborted at the confirmation; nothing was written") from None
     return line.decode("utf-8", "replace"), name
 def dashboard_readers():
     """Every reader of the dashboard's data contract, resolved against the canonical
@@ -5324,6 +5334,10 @@ def dashboard_command(args):
     os.environ.update(BEADS_DOLT_AUTO_START="0", GIT_OPTIONAL_LOCKS="0", DOLT_DISABLE_EVENT_FLUSH="1")
     security, server = dashboard_modules()
     if getattr(args, "dashboard_command", None):
+        if args.bind != "127.0.0.1" or args.port is not None or args.allow_host or args.list_binds or args.rotate_token:
+            raise RuntimeError(f"`nogg dashboard {args.dashboard_command}` takes none of --bind, --port, "
+                               "--allow-host, --list-binds or --rotate-token before it; pass `service enable` "
+                               "its own --bind")
         service = dashboard_service_module()
         try:
             return dashboard_service_command(args, service)

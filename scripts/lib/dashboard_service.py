@@ -12,7 +12,7 @@ reads the secret file itself, and the consent names only the address the operato
 from __future__ import annotations
 
 import datetime as dt
-import getpass, json, os, shutil, stat, subprocess
+import getpass, json, os, re, shutil, stat, subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -24,6 +24,9 @@ SOCKET_PATH_LIMIT = 107              # sun_path minus its terminating byte on Li
 CONSENT_KEYS = frozenset({"schema", "bind", "port", "allow_hosts", "at", "tty"})
 CONSENT_MAX_BYTES = 4096
 JOURNAL_TAG = "nogg-dashboard"
+_AT_FORM = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")
+_TTY_FORM = re.compile(r"^/dev/[A-Za-z0-9._/-]{1,64}$")
+_USER_MANAGER = re.compile(r"^user@[0-9]+\.service$")
 # The only fields each audit event may hold (design Decision 10). A code, the secret, a
 # cookie or a full hash has no field here, so none can reach the trail by mistake.
 EVENT_FIELDS = {
@@ -141,12 +144,13 @@ def bind_text(bind):
 def _unit_value(text, what):
     """A value for the unit file: `%` escaped, and refused where systemd would read it
     differently. WorkingDirectory= takes its path verbatim (systemd refuses it quoted),
-    ExecStart= quotes it, so a quote, a backslash or a control character has no safe form."""
+    ExecStart= quotes it and expands `$`, so a quote, a backslash, a dollar sign or a
+    control character has no safe form."""
     text = str(text)
-    if any(ch in text for ch in '"\\') or any(ord(ch) < 32 or ord(ch) == 127 for ch in text) \
+    if any(ch in text for ch in '"\\$') or any(ord(ch) < 32 or ord(ch) == 127 for ch in text) \
             or text != text.strip():
         raise ServiceRefused(f"refusing to write the dashboard unit: the {what} {text!r} holds a quote, "
-                             "a backslash, a control character or edge whitespace, which a unit file "
+                             "a backslash, a dollar sign, a control character or edge whitespace, which a unit file "
                              "cannot carry safely; move the checkout to a plain path")
     return text.replace("%", "%%")
 
@@ -226,7 +230,8 @@ def read_consent(path):
     if type(port) is not int or not 1 <= port <= 65535:
         raise refused(f"{path} names no valid port")
     if not isinstance(hosts, list) or not all(isinstance(h, str) for h in hosts) \
-            or not all(isinstance(record[k], str) for k in ("bind", "at", "tty")):
+            or not all(isinstance(record[k], str) for k in ("bind", "at", "tty")) \
+            or not _AT_FORM.match(record["at"]) or not _TTY_FORM.match(record["tty"]):
         raise refused(f"{path} does not match the schema {SCHEMA}")
     try:
         bind = sec.check_bind(record["bind"])
@@ -338,9 +343,15 @@ def unit_state(paths, host):
 
 
 def in_unit_cgroup(text, unit_name):
-    """Whether cgroup text puts this process in the unit's own cgroup."""
-    path = sec.systemd_cgroup(text) or ""
-    return path.rstrip("/").rsplit("/", 1)[-1] == unit_name
+    """Whether cgroup text puts this process in the unit's own cgroup, directly under
+    the user manager (`user@<uid>.service/[app.slice/]<unit>`)."""
+    parts = (sec.systemd_cgroup(text) or "").rstrip("/").split("/")
+    if len(parts) < 2 or parts[-1] != unit_name:
+        return False
+    parent = parts[-2]
+    if parent == "app.slice" and len(parts) >= 3:
+        parent = parts[-3]
+    return _USER_MANAGER.match(parent) is not None
 
 
 def socket_path_warning(paths):
@@ -387,7 +398,10 @@ def enable(paths, host, caller, *, address, port, allow_hosts, confirm, out, nat
         raise ServiceRefused("refusing `nogg dashboard service enable`: this host has no `systemctl`, so no user "
                              f"service can run. Run `nogg dashboard --bind {address}` on a login terminal instead")
     unit_text = render_unit(paths.name or paths.workdir.name, paths.workdir)
-    replacing = os.path.lexists(paths.consent)
+    problem = sec.mode_problem(paths.secret)
+    if problem:
+        raise ServiceRefused(f"refusing `nogg dashboard service enable`: {problem}; replace it with "
+                             "`nogg dashboard --rotate-token` first")
     print(f"This lets {paths.unit_name} serve the dashboard on http://{bind.host}:{port}/ whenever you are "
           "logged in, without a terminal. Phones sign in with a one-time pairing link from "
           "`nogg dashboard pair`; `nogg dashboard service disable` ends it.", file=out)
@@ -398,16 +412,22 @@ def enable(paths, host, caller, *, address, port, allow_hosts, confirm, out, nat
     typed, tty = confirm()
     if (typed or "").strip() != address:
         raise ServiceRefused("the typed line does not match the address; nothing was written")
+    replacing = os.path.lexists(paths.consent) or unit_state(paths, host)[1] == "active"
     at = now_iso(clock)
     record = consent_record(bind_text(bind), port, hosts, at, tty)
+    try:
+        sec.ensure_secret(paths.secret)
+    except sec.SecretRefused as exc:
+        raise ServiceRefused(f"refusing `nogg dashboard service enable`: {exc}") from None
     write_consent(paths.consent, record)
-    sec.ensure_secret(paths.secret)
-    paths.unit_dir.mkdir(parents=True, exist_ok=True)
-    temporary = paths.unit_path.with_name(paths.unit_name + ".new")
-    temporary.write_text(unit_text)
-    os.replace(temporary, paths.unit_path)
-    Audit(paths.audit, clock=clock, journal=journal_sender(host)).append(
-        "consent", bind=record["bind"], port=port, tty=tty)
+    try:
+        Audit(paths.audit, clock=clock, journal=journal_sender(host)).append(
+            "consent", bind=record["bind"], port=port, tty=tty)
+    except OSError as exc:
+        os.unlink(paths.consent)
+        raise ServiceRefused(f"refusing `nogg dashboard service enable`: the consent cannot be recorded in "
+                             f"{paths.audit} ({exc.__class__.__name__}); nothing is enabled") from None
+    write_unit(paths, unit_text)
     for args in (("daemon-reload",), ("enable", "--now", paths.unit_name)) + \
             ((("restart", paths.unit_name),) if replacing else ()):
         res = host.systemctl(*args)
@@ -421,6 +441,20 @@ def enable(paths, host, caller, *, address, port, allow_hosts, confirm, out, nat
         print(f"NOTE: user lingering is off, so the service stops when you log out; "
               f"`loginctl enable-linger {user or getpass.getuser()}` keeps it running", file=out)
     return record
+
+
+def write_unit(paths, text):
+    """The unit file, through a fresh temporary file that follows no link."""
+    paths.unit_dir.mkdir(parents=True, exist_ok=True)
+    temporary = paths.unit_path.with_name(paths.unit_name + ".new")
+    try:
+        os.unlink(temporary)
+    except FileNotFoundError:
+        pass
+    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+    with os.fdopen(fd, "w") as handle:
+        handle.write(text)
+    os.replace(temporary, paths.unit_path)
 
 
 def disable_caller(caller):
@@ -444,12 +478,20 @@ def disable(paths, host, caller, *, out, clock=None):
     `revoked`. Nothing enabled is success and changes nothing."""
     label = disable_caller(caller)
     present = [p for p in (paths.unit_path, paths.consent) if os.path.lexists(p)]
-    enabled, active = unit_state(paths, host) if host.has_systemctl() else ("unknown", "unknown")
-    if not present and enabled not in ("enabled", "enabled-runtime") and active != "active":
+    enabled, active = unit_state(paths, host)
+    loaded = os.path.lexists(paths.unit_path) or enabled in ("enabled", "enabled-runtime") or active == "active"
+    if not present and not loaded:
         print("the dashboard service is not enabled; nothing to disable", file=out)
         return False
-    if host.has_systemctl():
-        host.systemctl("disable", "--now", paths.unit_name)
+    if loaded and host.has_systemctl():
+        res = host.systemctl("disable", "--now", paths.unit_name)
+        if res.returncode != 0:
+            if os.path.lexists(paths.consent):
+                os.unlink(paths.consent)       # a restart now refuses with exit 78
+            raise ServiceRefused(f"`systemctl --user disable --now {paths.unit_name}` failed: "
+                                 f"{(res.stderr or '').strip() or 'no reason given'}; the consent is removed, so a "
+                                 f"restart refuses, but the service may still run. Stop it with `systemctl --user "
+                                 f"stop {paths.unit_name}` and run `nogg dashboard service disable` again")
     for path in present:
         os.unlink(path)
     if host.has_systemctl():

@@ -558,7 +558,7 @@ def serve(bind, port, readers, *, static_dir, secret_path, allow_hosts=(), stop=
             raise
     stop = stop if stop is not None else threading.Event()
     if threading.current_thread() is threading.main_thread():
-        for number in (signal.SIGINT, signal.SIGTERM):
+        for number in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):   # a closed SSH window too
             signal.signal(number, lambda *_: stop.set())
     worker = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.2}, daemon=True)
     worker.start()

@@ -32,6 +32,8 @@ class FakeHost(svc.Host):
 
     def _run(self, argv, input=None):
         self.calls.append(list(argv))
+        if argv[:3] == ["systemctl", "--user", "disable"] and getattr(self, "fail_disable", False):
+            return subprocess.CompletedProcess(argv, 1, "", "Failed to connect to bus")
         if input is not None:
             self.inputs.append(input)
         out, code = "", 0
@@ -44,7 +46,9 @@ class FakeHost(svc.Host):
         return subprocess.CompletedProcess(argv, code, out, "")
 
     def systemctl_calls(self):
-        return [call[2:] for call in self.calls if call[:2] == ["systemctl", "--user"]]
+        """The calls that change something: the `is-*` queries left out."""
+        return [call[2:] for call in self.calls if call[:2] == ["systemctl", "--user"]
+                and not call[2].startswith("is-")]
 
 
 class Fixture(unittest.TestCase):
@@ -100,7 +104,8 @@ class Consent(Fixture):
 
     def test_a_schema_change_is_tampered(self):
         for changes in ({"schema": "nogg.dashboard.consent/v2"}, {"port": True}, {"port": 70000},
-                        {"allow_hosts": ["*.example"]}, {"tty": 7}):
+                        {"allow_hosts": ["*.example"]}, {"tty": 7}, {"tty": "pts/3\x1b[2J"},
+                        {"at": "yesterday"}):
             self.consent(**changes)
             self.refused()
         record = self.consent()
@@ -135,7 +140,7 @@ class Unit(Fixture):
 
     def test_a_specifier_is_escaped_and_a_quote_refused(self):
         self.assertIn("WorkingDirectory=/srv/100%%\n", svc.render_unit("repo", Path("/srv/100%")))
-        for bad in ('/srv/a"b', "/srv/a\\b", "/srv/a\nb", "/srv/a "):
+        for bad in ('/srv/a"b', "/srv/a\\b", "/srv/a\nb", "/srv/a ", "/srv/$HOME"):
             with self.assertRaises(svc.ServiceRefused):
                 svc.render_unit("repo", Path(bad))
         with self.assertRaises(svc.ServiceRefused):
@@ -224,7 +229,7 @@ class Enable(Fixture):
         self.assertTrue(secret)
         for text in (self.paths.unit_path.read_text(), self.paths.consent.read_text(), output,
                      json.dumps(host.calls), "".join(host.inputs)):
-            self.assertNotIn(secret, text)
+            self.assertTrue(secret not in text, "the secret reached a written or printed text")
         self.assertIn("lingering is off", output)
         self.assertIn("NOTE: this is plain HTTP", output)
 
@@ -255,6 +260,27 @@ class Enable(Fixture):
                 self.enable(caller=caller, host=host, **kwargs)
             self.assertIn(expected, str(caught.exception))
             self.assert_nothing(host)
+
+    def test_an_active_unit_without_a_consent_is_restarted(self):
+        _, host, _ = self.enable(host=FakeHost(active="active"))
+        self.assertIn(["restart", "nogg-dashboard-repo.service"], host.systemctl_calls())
+
+    def test_an_open_secret_or_an_unwritable_trail_records_no_consent(self):
+        sec.rotate_secret(self.paths.secret)
+        self.paths.secret.chmod(0o644)
+        host = FakeHost()
+        with self.assertRaises(svc.ServiceRefused) as caught:
+            self.enable(host=host)
+        self.assertIn("0644", str(caught.exception))
+        self.assertFalse(self.paths.consent.exists() or self.paths.unit_path.exists())
+        self.assertEqual(host.systemctl_calls(), [])
+        self.paths.secret.chmod(0o600)
+        self.paths.audit.mkdir()
+        with self.assertRaises(svc.ServiceRefused) as caught:
+            self.enable(host=host)
+        self.assertIn("cannot be recorded", str(caught.exception))
+        self.assertFalse(self.paths.consent.exists() or self.paths.unit_path.exists())
+        self.assertEqual(host.systemctl_calls(), [])
 
     def test_a_long_socket_path_is_warned(self):
         deep = svc.Paths(state=Path("/" + "d" * 120) / "dashboard", unit_dir=self.paths.unit_dir, slug="repo",
@@ -294,6 +320,20 @@ class Disable(Fixture):
             with self.assertRaises(svc.ServiceRefused):
                 self.disable(caller)
         self.assertEqual(self.files(), before)
+
+    def test_a_failed_stop_is_no_revocation(self):
+        self.install()
+        host = FakeHost(enabled="enabled", active="active")
+        host.fail_disable = True
+        with self.assertRaises(svc.ServiceRefused) as caught:
+            self.disable(OPERATOR, host)
+        self.assertIn("systemctl --user stop nogg-dashboard-repo.service", str(caught.exception))
+        self.assertFalse(self.paths.consent.exists())
+        self.assertTrue(self.paths.unit_path.exists())
+        self.assertNotIn("revoked", self.paths.audit.read_text())
+        changed, _ = self.disable(OPERATOR)
+        self.assertTrue(changed and not self.paths.unit_path.exists())
+        self.assertIn("revoked", self.paths.audit.read_text())
 
     def test_disabled_twice(self):
         changed, host = self.disable(OPERATOR, FakeHost())
@@ -348,6 +388,15 @@ class Run(Fixture):
         self.assertEqual((rows[0]["mode"], rows[0]["consent_at"], rows[0]["tty"]),
                          ("service", "2026-11-02T10:00:00Z", "/dev/pts/3"))
         self.assertEqual(output.splitlines(), self.paths.audit.read_text().splitlines())
+
+    def test_only_the_user_managers_unit_cgroup_counts(self):
+        self.consent()
+        for text in ("0::/user.slice/user-1000.slice/session-3.scope/nogg-dashboard-repo.service\n",
+                     "0::/nogg-dashboard-repo.service\n",
+                     "0::/user.slice/user-1000.slice/user@1000.service/app.slice/x.scope/nogg-dashboard-repo.service\n"):
+            self.refused(cgroup=text)
+        served, _ = self.run_service(cgroup="0::/user.slice/user-1000.slice/user@1000.service/nogg-dashboard-repo.service\n")
+        self.assertEqual(len(served), 1)
 
     def test_no_cgroup_on_the_host_skips_that_check(self):
         self.consent()
@@ -429,8 +478,7 @@ class Serving(Fixture):
         secret = self.paths.secret.read_text().strip()
         self.assertIn(f"http://127.0.0.1:{ports[0]}/", output)
         self.assertIn("nogg dashboard pair", output)
-        self.assertNotIn(secret, output)
-        self.assertNotIn("#token=", output)
+        self.assertTrue(secret not in output and "#token=" not in output, "the service printed a token")
         self.assertEqual(ports[-1], "stopped")
 
     def test_an_exposure_that_cannot_be_recorded_does_not_start(self):

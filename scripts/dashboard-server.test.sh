@@ -57,13 +57,14 @@ if os.isatty(0):
 module = SourceFileLoader("nogg_on_terminal", sys.argv[1]).load_module()
 module.read_login_cgroup = lambda: facts["cgroup"]
 module.session_server_processes = lambda: [tuple(server) for server in facts["servers"]]
-if facts.get("network_loopback"):
-    # A loopback socket under the network rules: the token, the terminal test and the
-    # audit trail all run, and nothing listens beyond this host.
+if facts.get("bind_map"):
+    # An address served under the network rules at another literal: 127.0.0.1, so the
+    # token, the terminal test and the audit trail all run while nothing listens beyond
+    # this host, or 192.0.2.1 (TEST-NET-1), which no host is assigned.
     security = module.dashboard_modules()[0]
     real = security.check_bind
-    security.check_bind = lambda value: (security.Bind("127.0.0.1", None, False)
-                                         if value == facts["network_loopback"] else real(value))
+    security.check_bind = lambda value: (security.Bind(facts["bind_map"][value], None, False)
+                                         if value in facts["bind_map"] else real(value))
 sys.argv = ["nogg", *facts["args"]]
 try:
     module.main()
@@ -107,13 +108,40 @@ def on_terminal(repo, *args, cgroup=LOGIN, servers=(), piped=False, env=None, ty
     return process.wait(timeout=60), output.decode(errors="replace"), piped_output
 
 
-def driven(repo, *args, cgroup=LOGIN, env=None):
-    """`nogg` with injected host facts and no terminal: stdin /dev/null, output captured."""
-    facts = json.dumps({"args": list(args), "cgroup": cgroup, "servers": []})
+def driven(repo, *args, cgroup=LOGIN, env=None, bind_map=None):
+    """`nogg` with injected host facts and no terminal: stdin /dev/null, output captured,
+    and a session of its own, so no /dev/tty of the runner is ever reachable."""
+    facts = json.dumps({"args": list(args), "cgroup": cgroup, "servers": [], "bind_map": bind_map or {}})
     environment = {key: value for key, value in os.environ.items() if key != "NOGG_SESSION_NAME"}
     environment.update(NOGGING_ROOT=str(repo), **(env or {}))
     return subprocess.run([sys.executable, "-c", DRIVER, str(nogg), facts], text=True, capture_output=True,
-                          timeout=120, stdin=subprocess.DEVNULL, env=environment)
+                          timeout=120, stdin=subprocess.DEVNULL, env=environment, start_new_session=True)
+
+
+def served_run(repo, args, cgroup, env, address):
+    """`nogg` serving `address` on loopback under the network rules, with no terminal (as
+    under systemd), stopped with SIGTERM once it has printed its address."""
+    facts = json.dumps({"args": list(args), "cgroup": cgroup, "servers": [], "bind_map": {address: "127.0.0.1"}})
+    environment = {key: value for key, value in os.environ.items() if key != "NOGG_SESSION_NAME"}
+    environment.update(NOGGING_ROOT=str(repo), **env)
+    process = subprocess.Popen([sys.executable, "-c", DRIVER, str(nogg), facts], stdin=subprocess.DEVNULL,
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=environment,
+                               start_new_session=True)
+    output = b""
+    while b"Nogging dashboard" not in output:
+        ready, _, _ = select.select([process.stdout], [], [], 60)
+        chunk = os.read(process.stdout.fileno(), 4096) if ready else b""
+        if not chunk:
+            break
+        output += chunk
+    if process.poll() is None:
+        process.send_signal(signal.SIGTERM)
+    try:
+        rest, _ = process.communicate(timeout=60)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        rest, _ = process.communicate()
+    return process.returncode, (output + rest).decode(errors="replace")
 
 
 def terminal_run(repo, address, env):
@@ -122,7 +150,7 @@ def terminal_run(repo, address, env):
     the token link, so a check never prints it."""
     master, slave = pty.openpty()
     facts = json.dumps({"args": ["dashboard", "--bind", address, "--port", "0"], "cgroup": LOGIN, "servers": [],
-                        "network_loopback": address})
+                        "bind_map": {address: "127.0.0.1"}})
     environment = {key: value for key, value in os.environ.items() if key != "NOGG_SESSION_NAME"}
     environment.update(NOGGING_ROOT=str(repo), **env)
     process = subprocess.Popen([sys.executable, "-c", DRIVER, str(nogg), facts], stdin=slave, stdout=slave,
@@ -420,7 +448,9 @@ with tempfile.TemporaryDirectory(prefix="nogg fixture ") as tmp:
           "--user daemon-reload" in systemctl_calls()
           and "--user enable --now nogg-dashboard-served.service" in systemctl_calls(), systemctl_calls())
     check("the consent is recorded", [e["event"] for e in events(served)] == ["consent"]
-          and events(served)[0]["bind"] == "100.86.79.27" and events(served)[0]["tty"].startswith("/dev/"))
+          and events(served)[0]["bind"] == "100.86.79.27")
+    check("the consent names the terminal's device", events(served)[0]["tty"].startswith("/dev/pts/")
+          and json.loads(consent.read_text())["tty"] == events(served)[0]["tty"], events(served)[0]["tty"])
     check("the consent reaches the journal", "-t nogg-dashboard" in journal.read_text()
           and '"event":"consent"' in journal.read_text())
     check("a lingering-off note is printed", "lingering is off" in output, output)
@@ -545,13 +575,27 @@ with tempfile.TemporaryDirectory(prefix="nogg fixture ") as tmp:
     if live is not None:
         live.close()
     control.unlink()
-    result = driven(lone, "dashboard", "service", "run", cgroup=lone_unit, env=service_env)
-    lone_secret = (lone / ".nogging/state/dashboard/secret").read_text().strip()
+    result = driven(lone, "dashboard", "service", "run", cgroup=lone_unit, env=service_env,
+                    bind_map={"10.255.255.1": "192.0.2.1"})
     check("an address that is not up exits for a retry", result.returncode == 1
           and "not assigned to this host" in result.stderr, result.stderr)
-    check("the service prints no token", lone_secret not in result.stdout + result.stderr
-          and "#token=" not in result.stdout + result.stderr)
     check("a failed start records no exposure", [e["event"] for e in events(lone)] == [])
+    with socket.socket() as probe:     # a consent names a real port: take one that is free now
+        probe.bind(("127.0.0.1", 0))
+        free_port = probe.getsockname()[1]
+    writer.write_consent(lone_consent, writer.consent_record("10.255.255.1", free_port, [], "2026-11-02T10:00:00Z",
+                                                             "/dev/pts/1"))
+    code, output = served_run(lone, ["dashboard", "service", "run"], lone_unit, service_env, "10.255.255.1")
+    lone_secret = (lone / ".nogging/state/dashboard/secret").read_text().strip()
+    rows = events(lone)
+    check("the service serves the consent and names pair", code == 0 and "Nogging dashboard service on" in output
+          and "nogg dashboard pair" in output, "exit %s" % code)
+    check("the service prints no token", lone_secret not in output and "#token=" not in output)
+    check("the service records its start and stop", [e["event"] for e in rows] == ["started", "stopped"]
+          and rows[0]["mode"] == "service" and rows[0]["consent_at"] == "2026-11-02T10:00:00Z"
+          and rows[0]["tty"] == "/dev/pts/1" and '"event":"started"' in output, [e.get("event") for e in rows])
+    for path in ((lone / ".nogging/state/dashboard/audit.jsonl"),):
+        path.unlink()
 
     # A terminal run is recorded: `started` with mode `terminal`, then `stopped`.
     code, output = terminal_run(lone, "10.255.255.1", service_env)
