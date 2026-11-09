@@ -175,6 +175,6 @@
   "author": "Jonas (JoMe92)",
   "license": "ISC",
   "devDependencies": {
-    "@fission-ai/openspec": "^1.14.3"
+    "@fission-ai/openspec": "^1.16.0"
   }
 }
