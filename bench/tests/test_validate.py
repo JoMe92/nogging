@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 import json
+import shutil
+from pathlib import Path
 
-from conftest import FIXTURES, fields
+import pytest
+import yaml
+from conftest import BENCH, FIXTURES, fields
 
 from nogg_bench import schema
+from nogg_bench.cli import main
+from nogg_bench.validate import validate
 
 # ------------------------------------------------------------------ task rules
 
@@ -172,3 +178,102 @@ def test_lead_by_needs_a_margin_and_not_worse_has_none(thresholds):
     del thresholds["thresholds"][1]["margin"]
     thresholds["thresholds"][0]["margin"] = 5
     assert fields(schema.check_thresholds(thresholds)) == ["thresholds[0].margin", "thresholds[1].margin"]
+
+
+# --------------------------------------------------- the command over files
+
+
+def _bench_copy(tmp_path: Path) -> Path:
+    """A copy of bench/ holding the valid fixtures where each kind belongs."""
+    bench = tmp_path / "bench"
+    shutil.copytree(BENCH, bench, ignore=shutil.ignore_patterns(".venv", "__pycache__", "*.egg-info", "tests"))
+    for rel in ("arms", "results", "PREREGISTRATION.md"):
+        src = FIXTURES / "valid" / rel
+        dst = bench / rel
+        if src.is_dir():
+            shutil.copytree(src, dst, dirs_exist_ok=True)
+        else:
+            shutil.copy2(src, dst)
+    shutil.copytree(FIXTURES / "valid/tasks/fixture-task", bench / "tasks/fixture-task")
+    return bench
+
+
+RECORD_FILES = {
+    "task": "tasks/fixture-task/task.yaml",
+    "arm": "arms/A.yaml",
+    "result": "results/fixture-batch.jsonl",
+    "review": "results/review/fixture-pack.jsonl",
+    "thresholds": "PREREGISTRATION.md",
+}
+
+
+def test_every_record_kind_is_checked(tmp_path):
+    bench = _bench_copy(tmp_path)
+    assert validate([], bench) == []
+    # Breaking any one kind is found, and by that file.
+    for kind, rel in RECORD_FILES.items():
+        victim = bench / rel
+        original = victim.read_text(encoding="utf-8")
+        victim.write_text(original.replace("schema: 1", "schema: 9").replace('"schema": 1', '"schema": 9'), encoding="utf-8")
+        problems = validate([], bench)
+        assert problems, kind
+        assert {Path(p.file.split(":")[0]).resolve() for p in problems} == {victim.resolve()}, kind
+        victim.write_text(original, encoding="utf-8")
+    assert validate([], bench) == []
+
+
+def test_the_command_exits_non_zero_and_names_file_and_field(tmp_path, capsys):
+    bench = _bench_copy(tmp_path)
+    task_file = bench / RECORD_FILES["task"]
+    data = yaml.safe_load(task_file.read_text())
+    del data["base_commit"]
+    task_file.write_text(yaml.safe_dump(data))
+    code = main(["validate", "--bench-dir", str(bench), str(task_file)])
+    out = capsys.readouterr().out
+    assert code == 1
+    assert f"{task_file}: base_commit:" in out
+
+
+def test_the_command_exits_zero_and_prints_nothing_for_valid_records(tmp_path, capsys):
+    bench = _bench_copy(tmp_path)
+    assert main(["validate", "--bench-dir", str(bench)]) == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_a_path_that_is_not_a_record_is_a_problem(tmp_path):
+    bench = _bench_copy(tmp_path)
+    stray = bench / "notes.txt"
+    stray.write_text("x")
+    problems = validate([stray, bench / "missing.yaml"], bench)
+    assert [p.field for p in problems] == ["(path)", "(path)"]
+
+
+def test_a_task_points_at_files_that_exist(tmp_path):
+    bench = _bench_copy(tmp_path)
+    (bench / "tasks/fixture-task/issue.md").unlink()
+    (bench / "tasks/fixture-task/hidden/tests.patch").unlink()
+    assert sorted(p.field for p in validate([], bench)) == ["hidden_tests.patch", "issue"]
+
+
+def test_an_arm_points_at_its_prompt_and_is_named_by_its_id(tmp_path):
+    bench = _bench_copy(tmp_path)
+    (bench / "arms/prompts/a.md").unlink()
+    shutil.copy(bench / "arms/A.yaml", bench / "arms/Z.yaml")
+    assert sorted((p.field, Path(p.file).name) for p in validate([], bench)) == [
+        ("id", "Z.yaml"), ("prompt", "A.yaml"), ("prompt", "C.yaml"), ("prompt", "Z.yaml"),
+    ]
+
+
+def test_a_broken_file_is_reported_not_raised(tmp_path):
+    bench = _bench_copy(tmp_path)
+    (bench / "results/fixture-batch.jsonl").write_text("{not json\n")
+    (bench / "arms/A.yaml").write_text("a: [unclosed\n")
+    problems = validate([], bench)
+    assert {Path(p.file.split(":")[0]).name for p in problems} == {"fixture-batch.jsonl", "A.yaml"}
+
+
+def test_the_invalid_fixtures_are_all_refused():
+    bench = BENCH
+    for kind, rel in RECORD_FILES.items():
+        path = FIXTURES / "invalid" / rel
+        assert validate([path], bench), kind

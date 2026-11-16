@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Run the benchmark command line from a checkout, without installing it.
+# Needs Python >= 3.11 with PyYAML, or `uv` (used when PyYAML is missing).
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if python3 -c 'import yaml' >/dev/null 2>&1; then
+  PYTHONPATH="$here/src${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m nogg_bench "$@"
+fi
+exec uv run --quiet --project "$here" nogg-bench "$@"
