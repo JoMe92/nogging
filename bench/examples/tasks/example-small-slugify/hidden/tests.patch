@@ -1,0 +1,16 @@
+diff --git a/tests/test_text.py b/tests/test_text.py
+index c2e4975..55f114b 100644
+--- a/tests/test_text.py
++++ b/tests/test_text.py
+@@ -11,3 +11,11 @@ def test_truncate_short_text_is_unchanged():
+ 
+ def test_truncate_adds_marker():
+     assert truncate("abcdefghij", 6) == "abc..."
++
++
++def test_slugify_collapses_separators():
++    assert slugify("Hello,   World!!") == "hello-world"
++
++
++def test_slugify_strips_edges():
++    assert slugify("  --Hello-- ") == "hello"

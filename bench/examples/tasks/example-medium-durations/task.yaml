@@ -1,0 +1,29 @@
+schema: 1
+id: example-medium-durations
+repo: examples/fixture-repo.bundle
+base_commit: 00ccd954624cdd3b0ef31622be2c944e6bad2668
+language: python
+license: MIT
+issue: issue.md
+issue_url: https://example.invalid/miniutil/issues/2
+fix_pr_url: https://example.invalid/miniutil/pull/2
+issue_closed_at: 2026-01-03
+size_class: medium
+environment:
+  image: python:3.13-slim
+  setup:
+    - pip install --no-cache-dir pytest
+  test_command: python -m pytest -q -rA {tests}
+  test_timeout_seconds: 120
+hidden_tests:
+  patch: hidden/tests.patch
+  fail_to_pass:
+    - tests/test_durations.py::test_compound_duration
+    - tests/test_durations.py::test_day_unit
+    - tests/test_durations.py::test_format_duration
+    - tests/test_durations.py::test_format_round_trips
+  pass_to_pass:
+    - tests/test_durations.py::test_single_unit
+    - tests/test_durations.py::test_rejects_garbage
+curation:
+  status: example
