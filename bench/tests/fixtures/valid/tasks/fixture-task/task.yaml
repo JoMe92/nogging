@@ -1,0 +1,27 @@
+schema: 1
+id: fixture-task
+repo: examples/fixture-repo.bundle
+base_commit: d8c4c553bf975c4449c3486f50fbf5dbe46c86fb
+language: python
+license: MIT
+issue: issue.md
+issue_url: https://example.invalid/miniutil/issues/1
+fix_pr_url: https://example.invalid/miniutil/pull/1
+issue_closed_at: 2026-01-02
+size_class: small
+environment:
+  image: python:3.13-slim
+  setup:
+    - pip install --no-cache-dir pytest
+  test_command: python -m pytest -q -rA {tests}
+  test_timeout_seconds: 120
+hidden_tests:
+  patch: hidden/tests.patch
+  fail_to_pass:
+    - tests/test_text.py::test_slugify_collapses_separators
+  pass_to_pass:
+    - tests/test_text.py::test_slugify_basic
+curation:
+  status: accepted
+  hidden_tests_verified_by: product-owner
+  verified_on: 2026-11-20

@@ -1,0 +1,17 @@
+schema: 1
+id: C
+label: Nogging v3.6.0 unchanged
+kind: nogging
+agent:
+  cli: claude
+  version: 2.0.0
+model: claude-opus-5-5
+effort: high
+timebox_minutes: 60
+prompt: prompts/a.md
+disabled_tools:
+  - WebSearch
+  - WebFetch
+credentials:
+  dir: /run/bench/claude-credentials
+nogging_ref: v3.6.0

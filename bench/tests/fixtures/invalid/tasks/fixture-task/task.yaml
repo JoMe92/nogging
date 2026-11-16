@@ -1,0 +1,23 @@
+schema: 1
+id: fixture-task
+repo: examples/fixture-repo.bundle
+language: python
+license: MIT
+issue: issue.md
+issue_url: https://example.invalid/miniutil/issues/1
+fix_pr_url: https://example.invalid/miniutil/pull/1
+issue_closed_at: 2026-01-02
+size_class: tiny
+environment:
+  image: python:3.13-slim
+  setup: []
+  test_command: python -m pytest -q
+  test_timeout_seconds: 120
+hidden_tests:
+  patch: hidden/tests.patch
+  fail_to_pass:
+    - tests/test_text.py::test_slugify_basic
+  pass_to_pass:
+    - tests/test_text.py::test_slugify_basic
+curation:
+  status: accepted
