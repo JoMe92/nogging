@@ -70,6 +70,15 @@ the rest applies to every runtime — Claude Code, Codex, or another.
    signal, because nobody reads it. A refused step means signal blocked at
    once: never route around a refusal by switching runtime or retrying.
 
+## Feature freeze (this repository)
+
+Product Owner decision of 2026-11-16 (roadmap Phase 0): until the baseline report of the
+`impact-benchmark` change is committed and the Product Owner lifts this rule, **dispatch, loops,
+session wake and the Antigravity support get no new features — bug fixes only.** A planner does not
+plan a feature for them, and a Lead that finds a task would add one records a blocking discovery
+instead. This rule covers developing Nogging itself; the shipped `templates/agents-block.md` does
+not carry it.
+
 ## The write boundary
 
 OpenSpec owns approved product intent, Beads owns executable work, Git owns the
