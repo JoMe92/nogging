@@ -1,0 +1,22 @@
+# List prices in USD per million tokens, read from the vendors' public pricing pages.
+# Used by `nogg-bench report` to turn token counts into cost. A model that is not
+# listed here has *unknown* cost in the report, never zero: add its row (with the
+# source and the date you read it) before reporting a run that used it.
+# Arms A and C use the Claude model; arm B's Codex model is named by its arm file
+# (BEN-002), so add its row here once that file exists if it is not listed.
+schema: 1
+prices:
+  claude-opus-5-5:
+    input: 4.00
+    output: 20.00
+    cache_read: 0.20
+    cache_write: 5.00 # 5-minute cache write (1.25x input); the 1-hour write is $8.00
+    source: https://platform.claude.com/docs/en/about-claude/pricing
+    date: 2026-11-17
+  gpt-5.3-codex:
+    input: 1.75
+    output: 14.00
+    cache_read: 0.175
+    cache_write: 0.00 # OpenAI does not bill cache writes separately
+    source: https://developers.openai.com/api/docs/pricing
+    date: 2026-11-17
