@@ -7,8 +7,8 @@ line (and the one usage helper process described in the change), is not in the
 published npm package and is not copied by the installer. Design:
 `openspec/changes/impact-benchmark/` (Decisions 1 to 17).
 
-This file documents what exists today (BEN-001). `run`, `review-pack` and
-`report` are added by BEN-002, BEN-004 and BEN-005, which extend this README.
+This file documents what exists today (BEN-001, BEN-004 and BEN-005). `run`
+is added by BEN-002, which extends this README.
 
 ## Run the suite
 
@@ -306,6 +306,76 @@ effort `low` for B, all with a 90-minute timebox and API-key credentials. The
 Product Owner confirms or changes model, effort, timebox and the credential
 mode (open question 2) before the pilot (BEN-007).
 
+## The report (BEN-005)
+
+```bash
+bench/nogg-bench report --batch <batch>... --out bench/reports/<name>/
+```
+
+Reads `results/<batch>.jsonl` for each named batch, `results/review/*.jsonl`,
+`prices.yaml`, `PREREGISTRATION.md` (the thresholds block) and the arm files of
+the primary comparisons, and writes `report.md`, `runs.csv` and `metadata.json`
+into `--out`. A refusal prints `report: refused: <file>: <field>: <message>` per
+problem, exits 1 and writes nothing. Output is deterministic (no timestamps).
+`--bench-dir` names another bench directory.
+
+**Refused:** an invalid result or review line; two different preregistration
+hashes among the non-smoke lines (named in the message; `--allow-mixed-preregistration`
+reports them together anyway); a missing or invalid arm file for an arm of a
+primary comparison; two paired arms whose `timebox_minutes` differ; two arms of
+one vendor (same `agent.cli`) whose `model` or `effort` differ; a missing or
+invalid `prices.yaml` or thresholds block.
+
+**What is counted.** A run is counted in the tables unless it is a smoke run,
+ended in `infra_error`, or is flagged `contamination_suspect`. The last two are
+listed apart in `report.md`; smoke runs appear only in `runs.csv`. Every run, counted or not,
+is in `runs.csv` (columns in `report.CSV_COLUMNS`, with `status`, `smoke`,
+`counted_in_tables` and `excluded_because`).
+
+**Pairing.** Tickets are paired when both arms of a comparison have a counted
+run on them. With several seeds an arm's value on a ticket is the *majority pass*
+(strictly more than half of its runs; an even split fails) and the *median cost*;
+the spread between seeds is shown. Tables are per size class and overall.
+
+**Tests.** McNemar's exact test on the discordant tickets for pass/fail; the
+exact sign test on cost with ties dropped, both two-sided and implemented in
+`nogg_bench/stats.py`. Cost is tokens times the list prices of
+`prices.yaml` (USD per million input, output, cache-read and cache-write tokens,
+with `source` URL and `date` per model). A model without a row has *unknown* cost,
+never zero: the run's `cost_usd` is blank, `models_without_price` names the model,
+a ticket with an unknown cost is left out of the sign test, and the cost per accepted
+ticket is unknown. Add the row (and its source and date) to `prices.yaml`.
+
+**Cost per accepted ticket** is the summed ticket cost (all paired tickets, accepted
+or not) divided by the number of accepted tickets, under both definitions the
+thresholds block allows: `tests_pass` (majority pass) and
+`tests_pass_and_review_merge` (a run is accepted when it passed and its review says
+`merge`; `merge-after-changes` does not count; a passing run without a review record
+is not accepted and the report says how many there are). The block's
+`accepted_ticket` decides which one the thresholds use.
+
+**Thresholds** are evaluated as `met`, `not met` or `tie`. The target is no
+difference (`not_worse`), a lead of `margin` points (`lead_by`) or equal cost per
+accepted ticket (ratio 1). The verdict is `met` when the observation is at least
+`minimum_effect` beyond the target, `not met` when it is at least that far short of it
+and `tie` in between; exactly the minimum effect counts as an effect (so a
+`not_worse` threshold with a difference of zero is a `tie`: neither shown met nor
+shown missed). The cost ratio uses `minimum_effect.cost_ratio` the same way
+(`met` at ratio <= 1/r, `not met` at >= r). `significance_level` annotates the
+p-value as significant or not and does not change the verdict. A threshold with
+nothing to evaluate (no paired ticket, unknown cost, no accepted ticket) is `unknown`
+and says why. The reproducibility criterion (pass agreement over pairs of runs of one
+arm on one ticket, and how many tickets exceed `max_cost_ratio`) is reported per arm.
+
+**`metadata.json`** holds the bench commit (and those in the runs), every arm file
+with its hash, settings (model, effort, agent version) and the prompt text and
+hash, the `AGENTS.md` of each Nogging ref (read with `git show <ref>:AGENTS.md` in
+the repository, or marked unavailable), the preregistration blob hash, model IDs,
+image digests, usage-collector versions and the price table used. `report.md` also
+lists measured runs that started before the preregistration's first commit when
+git history shows one, and always states the deviation from real use: Nogging arms
+plan without human approval.
+
 ## Blind review (`review-pack`)
 
 Hidden tests say whether a diff passes; the review says whether a maintainer
@@ -377,5 +447,5 @@ base commit (see the lazy import in the large example), or run whole test files.
 
 ## Not yet here
 
-`report`, `prices.yaml`, `PREREGISTRATION.md` and the Harbor adapter arrive
-with BEN-003, BEN-005, BEN-006 and BEN-007.
+`PREREGISTRATION.md` and the Harbor adapter arrive with BEN-003, BEN-006 and
+BEN-007.
