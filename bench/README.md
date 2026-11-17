@@ -154,6 +154,131 @@ evaluates each threshold as met, not met or tie.
 - **Everything is offline in tests.** Stub `docker` and the agent CLIs on `PATH`,
   inject the clock, and use temporary directories.
 
+## Running arms: `run`
+
+```bash
+bench/nogg-bench run --batch pilot --arm A --arm B --arm C \
+    --task <id> --task <id> --seed 1 --seed 2        # every combination, once
+bench/nogg-bench run --batch try --smoke --arm A --task example-small-slugify --seed 1
+```
+
+`run` runs each combination of `--arm`, `--task` and `--seed` in a fresh
+container and appends one result line per run to `results/<batch>.jsonl`; the
+run's diff, transcripts, test output and log go to `results/runs/<run_id>/`.
+A combination that already has a line in the batch file is skipped, so an
+interrupted batch is resumed by running the same command again; `--rerun` runs
+it anyway under a new `run_id` (`...-r2`). Exit status: 0 when every run left a
+line without `infra_error`, 1 when one did not, 2 when the command refused to
+start.
+
+**Before any container starts**, `run` refuses (and names the reason):
+
+- arms whose `timebox_minutes` differ, or same-vendor arms (every Claude-based
+  arm) whose `model` or `effort` differ;
+- without `--smoke`: a missing, uncommitted or changed `bench/PREREGISTRATION.md`,
+  one without a valid thresholds block, and any task whose `curation.status` is
+  not `accepted`. The result line records the preregistration's blob hash;
+- `--agent-stub` without `--smoke`.
+
+A `--smoke` run works on example and candidate tasks without a preregistration,
+carries `provenance.smoke: true`, and no report table counts it.
+
+**One run, in order** (design Decision 7):
+
+1. The arm's credentials are staged (below), the task image is resolved (its
+   ID is the `image_digest`), and the repository is cloned on the host and cut
+   to `base_commit`: one branch `main` at the base, no tag, no remote, no
+   reflog, no unreachable commit. `run` checks this before it goes on.
+2. A container starts with **nothing mounted** (`docker run --entrypoint sleep
+   ... infinity`). The repository, the brief (`/work/brief.md`: the arm's prompt
+   with the issue text, the agent's only input) and the agent scripts are
+   copied in; the task's `setup` commands run; git and `timeout` are installed
+   if missing; the agent CLI is installed at the arm's pinned version.
+3. The agent runs under `timeout <timebox>` from `/work/repo` with web tools
+   disabled: arm A as `claude -p` first in `--permission-mode plan`, then
+   `--continue` to implement; arm B as `codex exec` with `tools.web_search`
+   off; a `nogging` arm through the driver (below). Exit 124/137 is `timeout`,
+   another non-zero exit `agent_error`.
+4. The diff against the base (committed, uncommitted and new files) is saved,
+   and `~/.claude/projects` and `~/.codex/sessions` are copied out.
+5. **Only now** the hidden patch is copied in. Every path it writes is first
+   put back to the base version, so an agent's change to a hidden test is
+   overwritten and listed in `hidden_paths_overwritten`. The test command runs
+   with the task's timeout; a test passes only when reported `PASSED` and
+   nothing else. The run passes when every fail-to-pass and pass-to-pass test
+   passes.
+6. Tokens are counted by the usage helper (below), the transcripts are scanned
+   for web tool calls and for `issue_url` or `fix_pr_url`
+   (`contamination_suspect`), the line is validated and appended, and the
+   container is removed.
+
+An infrastructure failure at any step (image, clone, container start, setup,
+install, diff, hidden patch, usage helper) still appends a line, with
+`status: infra_error` and the `reason`.
+
+**Credentials** (Decision 8). An arm names them by reference only:
+`credentials.env` is the name of a host environment variable holding an API
+key, `credentials.dir` a host directory holding a subscription login (copied
+into `~/.claude` or `~/.codex` in the container). `run` stages the value in a
+private `0700` temporary directory outside `results/`, as a `0600` env file
+passed with `docker exec --env-file` to the agent's process only, or as a
+`0600` copy of the directory that is deleted from the container right after
+the agent ends; the staging directory is removed when the run ends. No value is
+put on a command line (a docker call that would carry one is refused), and the
+run log, the diff, the test output and the copied transcripts are redacted.
+Setup commands and hidden tests never see the credential.
+
+**Token usage** (Decision 10). `nogg_bench/usage_helper.py` is the one place
+that knows Nogging's token-usage adapters (`scripts/lib/token_usage_adapters.py`
+of the checkout given by `--nogging-checkout`, default: the repository holding
+`bench/`). `run` starts it isolated (`python3 -I`) on the copied transcripts of
+every arm; it keeps each usage event's last revision and returns per model
+`input` (uncached input, the same way for both vendors), `output`,
+`cache_read` and `cache_write`, plus the Nogging commit it read
+(`usage_collector`). When it cannot load the adapters the run is
+`infra_error` naming the helper, never a zero count. `tests/test_usage.py`
+fails when the adapters move; then only the helper changes.
+
+**Arm C, the driver** (`nogg_bench/driver.py`, standard library only, run
+inside the container). It plays the Product Owner: installs Nogging from the
+host checkout's tree at `nogging_ref` (`node bin/cli.js init`, then `bd init`
+if needed) and commits that as the diff base, so Nogging's own files are not
+counted as work; gives the repository a `develop` branch and a local bare
+`origin` seeded from the truncated history (Nogging's worktrees branch from
+`origin/develop`; it holds no commit after the base); starts a planning session
+with the brief as kickoff, waits for its done signal, merges the plan branch
+into `develop` without an approval step and runs `nogg materialize`; starts a
+`--full-access` Lead on the first ready Bead with `kickoff --change`, waits for
+its done signal or the timebox; then merges every implementation branch into
+`develop` (their number is `pr_count`), stops its sessions and writes
+`state.json`. Every launch passes the arm's `--agent`, `--model` and
+`--effort`. The container needs node, tmux, python3, openspec, and the host's
+`bd` and `dolt` binaries, which `run` copies in (same CPU architecture). A
+planning session that blocks, or a Lead that signals `blocked`, ends the run as
+`agent_error` with the signal's reason; the report states that planning ran
+without human approval.
+
+**Testing `run`.** `tests/test_run.py` and `tests/test_driver.py` run whole
+runs offline against `tests/stubs/docker`, a stub on `PATH` that records every
+argv and emulates the container in a directory, with stub agent CLIs that write
+transcript fixtures and diffs. One large test runs arm A's stub agent on
+`example-small-slugify` in a real container:
+
+```bash
+NOGG_BENCH_DOCKER=1 uv run --project bench --extra dev pytest bench/tests/test_run.py -k large
+```
+
+It needs a Docker daemon and network access for the image and `pip install
+pytest`; CI does not set the variable. `--agent-stub <executable>` (with
+`--smoke` only) copies an executable in as the agent CLI instead of installing
+it; that is how the large test and a manual smoke run avoid a model call.
+
+**Arms A, B and C** (`arms/`) start from the `complex` entries of `scripts/nogg
+models`: `claude-opus-5-5` at effort `high` for A and C, `gpt-6.1-sol` at
+effort `low` for B, all with a 90-minute timebox and API-key credentials. The
+Product Owner confirms or changes model, effort, timebox and the credential
+mode (open question 2) before the pilot (BEN-007).
+
 ## Example tasks and the fixture repository
 
 `examples/fixture-repo.bundle` is a git bundle of a tiny Python library
@@ -175,5 +300,5 @@ base commit (see the lazy import in the large example), or run whole test files.
 
 ## Not yet here
 
-`run`, `review-pack`, `report`, the arm files for A, B and C, `prices.yaml`,
-`PREREGISTRATION.md` and the Harbor adapter arrive with BEN-002 to BEN-007.
+`review-pack`, `report`, `prices.yaml`, `PREREGISTRATION.md` and the Harbor
+adapter arrive with BEN-003 to BEN-007.
