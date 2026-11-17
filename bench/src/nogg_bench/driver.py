@@ -10,8 +10,9 @@ Run from the task repository (``/work/repo``), it plays the Product Owner:
    ``develop`` branch and a local bare ``origin`` seeded from the truncated
    history (Nogging's worktrees branch from ``origin/develop``);
 2. starts a planning session whose kickoff is the brief, waits for its done
-   signal, merges the plan branch into ``develop`` (no approval step) and
-   materialises the planned change's Beads;
+   signal, or for it to go idle with a new change on a plan branch (v3.6.0's
+   planning prompt has no signal step), merges the plan branch into
+   ``develop`` (no approval step) and materialises the change's Beads;
 3. starts a ``--full-access`` Lead for the first ready Bead with the whole
    change authorised, and waits for its done signal or the timebox;
 4. merges every implementation branch into ``develop`` (the count is the
@@ -74,6 +75,7 @@ class Driver:
     clock: Callable[[], float] = time.monotonic
     sleep: Callable[[float], None] = time.sleep
     log: Callable[[str], None] = lambda line: print(line, flush=True)
+    save: Callable[[dict], None] = lambda state: None
     sessions: list[str] = field(default_factory=list)
     state: dict = field(default_factory=dict)
 
@@ -84,7 +86,7 @@ class Driver:
         done = self.run(list(argv), cwd=self.repo)
         if done.returncode != 0:
             last = (done.stderr.strip().splitlines() or done.stdout.strip().splitlines() or ["no output"])[-1]
-            raise DriverError("error", f"{what} failed: {last}"[:300])
+            raise DriverError("error", f"{what} failed: {last}")
         return done.stdout
 
     def git(self, *args: str, what: str = "git") -> str:
@@ -101,8 +103,12 @@ class Driver:
         self.sessions.append(match.group(1))
         return match.group(1)
 
-    def wait(self, name: str, deadline: float) -> tuple[str, str | None]:
-        """Poll the session's watch events until it signals or ends, or the deadline passes."""
+    def wait(self, name: str, deadline: float, settled: Callable[[], bool] | None = None) -> tuple[str, str | None]:
+        """Poll the session's watch events until it signals or ends, or the deadline passes.
+
+        ``settled`` decides for a session that goes idle or ends without a done
+        signal (a planning session has no signal step) whether its work is there.
+        """
         while True:
             out = self.run([NOGG, "session", "watch", "--once", "--format", "jsonl", name], cwd=self.repo).stdout
             for line in out.splitlines():
@@ -110,8 +116,11 @@ class Driver:
                     event = json.loads(line)
                 except ValueError:
                     continue
-                if event.get("event") in ("done", "blocked", "ended"):
-                    return event["event"], event.get("reason")
+                kind = event.get("event") if isinstance(event, dict) else None
+                if kind in ("idle", "ended") and settled is not None and settled():
+                    return "done", f"the session went {kind} with its work pushed"
+                if kind in ("done", "blocked", "ended"):
+                    return kind, event.get("reason")
             if self.clock() >= deadline:
                 return "timeout", None
             self.sleep(min(POLL_SECONDS, max(deadline - self.clock(), 0)))
@@ -125,6 +134,7 @@ class Driver:
         self.git("add", "--all")
         self.git("commit", "--quiet", "--allow-empty", "-m", "chore: install Nogging for the benchmark")
         self.state["diff_base"] = self.git("rev-parse", "HEAD").strip()
+        self.save(self.state)  # a later kill still leaves the diff base behind
         self.git("branch", "--force", "develop")
         self.git("checkout", "--quiet", "develop")
         self.git("init", "--quiet", "--bare", str(self.repo.parent / "origin.git"))
@@ -160,12 +170,25 @@ class Driver:
             return False
         return True
 
+    def planned_changes(self, before: set[str]) -> set[str]:
+        """New openspec changes on any plan branch."""
+        found: set[str] = set()
+        for branch in self.branches():
+            if not branch.startswith("plan/"):
+                continue
+            local = self.run(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"], cwd=self.repo)
+            ref = branch if local.returncode == 0 else f"origin/{branch}"
+            listed = self.run(["git", "ls-tree", "-d", "--name-only", f"{ref}:openspec/changes"], cwd=self.repo)
+            if listed.returncode == 0:
+                found |= {n for n in listed.stdout.split() if n != "archive"} - before
+        return found
+
     def plan(self, deadline: float) -> str:
         before = self.changes()
         name = self.launch("--role", "planning", "--planning-id", "bench", "--description", "benchmark-issue",
                            what="launching the planning session")
         self.sh(NOGG, "session", "kickoff", name, "--message", self.brief, what="kicking off planning")
-        outcome, reason = self.wait(name, deadline)
+        outcome, reason = self.wait(name, deadline, settled=lambda: bool(self.planned_changes(before)))
         if outcome != "done":
             raise DriverError("timeout" if outcome == "timeout" else f"planning-{outcome}",
                               reason or f"the planning session ended as {outcome}")
@@ -178,7 +201,10 @@ class Driver:
             raise DriverError("planning-no-change", "the planning session left no new openspec change")
         change = new[0]
         self.state["change"] = change
-        self.sh(NOGG, "materialize", change, what="materialising the planned Beads")
+        # The planning session may have materialised the Beads itself; a refusal here is not fatal.
+        done = self.run([NOGG, "materialize", change], cwd=self.repo)
+        if done.returncode != 0:
+            self.log(f"materialize {change}: exit {done.returncode} (the planning session may have done it)")
         return change
 
     def lead(self, change: str, deadline: float) -> tuple[str, str | None]:
@@ -224,6 +250,7 @@ class Driver:
                     self.state["pr_count"] = self.integrate()
                 except DriverError as exc:
                     self.log(f"integration failed: {exc.reason}")
+            self.save(self.state)
         return self.state
 
 
@@ -237,12 +264,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--nogging", required=True, type=Path, help="Nogging source tree at the arm's ref")
     p.add_argument("--state", required=True, type=Path)
     args = p.parse_args(argv)
+    def save(state: dict) -> None:
+        args.state.write_text(json.dumps(state, sort_keys=True) + "\n", encoding="utf-8")
+
     driver = Driver(
         repo=Path.cwd(), brief=args.brief.read_text(encoding="utf-8"), agent=args.agent, model=args.model,
-        effort=args.effort, timebox=args.timebox, nogging=args.nogging.resolve(),
+        effort=args.effort, timebox=args.timebox, nogging=args.nogging.resolve(), save=save,
     )
     state = driver.drive()
-    args.state.write_text(json.dumps(state, sort_keys=True) + "\n", encoding="utf-8")
     return 0 if state["outcome"] == "done" else 1
 
 

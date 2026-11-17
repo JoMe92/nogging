@@ -194,8 +194,17 @@ Path("PLAN.md").write_text("# Plan\\n\\nOne line.\\n")
 home = Path.home() / ".claude/projects/-work-repo"
 home.mkdir(parents=True, exist_ok=True)
 (home / "lead.jsonl").write_text(Path(@TRANSCRIPT@).read_text())
-state.write_text(json.dumps({"outcome": @OUTCOME@, "reason": "r", "diff_base": base, "pr_count": 2}))
+import os
+state.write_text(@STATE@)
 '''
+
+
+KEY = "sk-ant-test-0123456789"
+
+
+def write_fake(path: Path, state_expr: str) -> None:
+    transcript = repr(str(TRANSCRIPTS / "claude" / "-work-repo" / "sess-a.jsonl"))
+    path.write_text(FAKE_DRIVER.replace("@TRANSCRIPT@", transcript).replace("@STATE@", state_expr))
 
 
 @pytest.fixture
@@ -207,6 +216,9 @@ def nogging_checkout(tmp_path) -> Path:
         shutil.copy(BENCH.parent / "scripts" / "lib" / name, root / "scripts" / "lib" / name)
     (root / "bin").mkdir()
     (root / "bin" / "cli.js").write_text("// nogg\n")
+    # a later ref also holds bench/ with hidden tests: it must never reach the container
+    (root / "bench" / "tasks" / "t" / "hidden").mkdir(parents=True)
+    (root / "bench" / "tasks" / "t" / "hidden" / "tests.patch").write_text("secret hidden test\n")
     git(root, "init", "--quiet", "-b", "main")
     git(root, "config", "user.email", "t@example.invalid")
     git(root, "config", "user.name", "t")
@@ -219,20 +231,24 @@ def nogging_checkout(tmp_path) -> Path:
 def test_run_maps_the_driver_state(tmp_path, monkeypatch, nogging_checkout, bench, docker_env):
     for outcome, status in (("done", "completed"), ("blocked", "agent_error"), ("timeout", "timeout")):
         fake = tmp_path / f"driver-{outcome}.py"
-        transcript = repr(str(TRANSCRIPTS / "claude" / "-work-repo" / "sess-a.jsonl"))
-        fake.write_text(FAKE_DRIVER.replace("@TRANSCRIPT@", transcript).replace("@OUTCOME@", repr(outcome)))
+        state = ('json.dumps({"outcome": %r, "reason": "r " + os.environ["ANTHROPIC_API_KEY"], '
+                 '"diff_base": base, "pr_count": 2})' % outcome)
+        write_fake(fake, state)
         monkeypatch.setattr(run_mod, "DRIVER", fake)
         args = cli.build_parser().parse_args(
             ["run", "--bench-dir", str(bench), "--batch", outcome, "--task", "stub-task", "--arm", "C",
              "--seed", "1", "--smoke", "--agent-stub", str(stub_agent(tmp_path)),
              "--nogging-checkout", str(nogging_checkout)])
-        assert run_mod.command(args, environ={"ANTHROPIC_API_KEY": "sk-ant-test-0123456789"}) == 0
+        assert run_mod.command(args, environ={"ANTHROPIC_API_KEY": KEY}) == 0
         [line] = [json.loads(x) for x in (bench / "results" / f"{outcome}.jsonl").read_text().splitlines()]
         assert line["status"] == status, line
         assert line["pr_count"] == 2 and line["provenance"]["nogging_ref"] == "v3.6.0"
         assert line["markdown_lines"] == 3 and line["diff_stats"]["files_changed"] == 2
         assert line["passed"] is True
         assert (line.get("reason") is not None) == (status == "agent_error")
+        assert KEY not in json.dumps(line)  # the driver's reason is agent-written: redacted
+        if status == "agent_error":
+            assert line["reason"] == "nogging driver: blocked: r [REDACTED]"
     saw = json.loads(next(docker_env["root"].glob("*/work/driver-saw.json")).read_text())
     assert saw["argv"][saw["argv"].index("--model") + 1] == "claude-opus-5-5"
     assert saw["argv"][saw["argv"].index("--timebox") + 1] == "5400"
@@ -240,6 +256,48 @@ def test_run_maps_the_driver_state(tmp_path, monkeypatch, nogging_checkout, benc
     assert saw["nogging_tree"] == ["bin", "scripts"]  # Nogging's source at the arm's ref
     agent = next(c for c in docker_calls(docker_env) if c[0] == "exec" and "agent.sh" in c[-1])
     assert agent[-1].startswith("exec timeout --kill-after=30 5700 ")  # timebox plus the driver's grace
+
+
+@pytest.mark.parametrize("state,status,pr_count", [
+    ('json.dumps({"outcome": "done", "diff_base": base, "pr_count": "many"})', "completed", 0),
+    ('json.dumps([1, 2])', "agent_error", 0),
+    ('"not json"', "agent_error", 0),
+    ('json.dumps({"outcome": "done", "diff_base": "../../etc", "pr_count": 1})', "agent_error", 0),
+])
+def test_a_malformed_driver_state_still_leaves_a_line(tmp_path, monkeypatch, nogging_checkout, bench, docker_env,
+                                                      state, status, pr_count):
+    fake = tmp_path / "driver.py"
+    write_fake(fake, state)
+    monkeypatch.setattr(run_mod, "DRIVER", fake)
+    args = cli.build_parser().parse_args(
+        ["run", "--bench-dir", str(bench), "--batch", "m", "--task", "stub-task", "--arm", "C", "--seed", "1",
+         "--smoke", "--agent-stub", str(stub_agent(tmp_path)), "--nogging-checkout", str(nogging_checkout)])
+    assert run_mod.command(args, environ={"ANTHROPIC_API_KEY": KEY}) == 0
+    [line] = [json.loads(x) for x in (bench / "results" / "m.jsonl").read_text().splitlines()]
+    assert (line["status"], line["pr_count"]) == (status, pr_count)
+
+
+def test_a_planning_session_that_goes_idle_with_a_plan_counts_as_done(repo):
+    world = StubWorld(repo, planning=("working", "idle"))
+    state = driver(repo, world).drive()
+    assert state["outcome"] == "done" and state["change"] == CHANGE
+
+
+def test_an_idle_planning_session_without_a_plan_is_waited_for(repo):
+    world = StubWorld(repo, planning=("idle",))
+    world.commit_on = lambda *a, **k: None  # the planner never pushes a plan
+    state = driver(repo, world, timebox=100).drive()
+    assert state["outcome"] == "timeout"
+
+
+def test_the_state_is_saved_right_after_the_install(repo):
+    saved: list[dict] = []
+    world = StubWorld(repo)
+    d = driver(repo, world)
+    d.save = lambda st: saved.append(dict(st))
+    d.drive()
+    assert saved[0]["diff_base"] and saved[0]["outcome"] == "error" and "change" not in saved[0]
+    assert saved[-1]["outcome"] == "done"
 
 
 def test_the_driver_module_runs_without_the_bench_package(tmp_path):

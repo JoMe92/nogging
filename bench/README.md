@@ -167,7 +167,9 @@ container and appends one result line per run to `results/<batch>.jsonl`; the
 run's diff, transcripts, test output and log go to `results/runs/<run_id>/`.
 A combination that already has a line in the batch file is skipped, so an
 interrupted batch is resumed by running the same command again; `--rerun` runs
-it anyway under a new `run_id` (`...-r2`). Exit status: 0 when every run left a
+it anyway under a new `run_id` (`...-r2`), and `--retry-infra` reruns only the
+combinations whose lines are all `infra_error`. A batch holds either smoke runs
+or measured runs, never both. Exit status: 0 when every run left a
 line without `infra_error`, 1 when one did not, 2 when the command refused to
 start.
 
@@ -192,15 +194,22 @@ carries `provenance.smoke: true`, and no report table counts it.
 2. A container starts with **nothing mounted** (`docker run --entrypoint sleep
    ... infinity`). The repository, the brief (`/work/brief.md`: the arm's prompt
    with the issue text, the agent's only input) and the agent scripts are
-   copied in; the task's `setup` commands run; git and `timeout` are installed
-   if missing; the agent CLI is installed at the arm's pinned version.
-3. The agent runs under `timeout <timebox>` from `/work/repo` with web tools
+   copied in; the task's `setup` commands run as root; git and `timeout` are
+   installed if missing; the agent CLI is installed at the arm's pinned version;
+   an unprivileged user `bench` is created and given `/work`.
+3. The agent runs as `bench` (Claude Code refuses unattended permission modes
+   as root) under `timeout <timebox>` from `/work/repo` with web tools
    disabled: arm A as `claude -p` first in `--permission-mode plan`, then
    `--continue` to implement; arm B as `codex exec` with `tools.web_search`
-   off; a `nogging` arm through the driver (below). Exit 124/137 is `timeout`,
-   another non-zero exit `agent_error`.
+   off; a `nogging` arm through the driver (below). Exit 124 (or 137 at the
+   limit) is `timeout`, another non-zero exit `agent_error`. Then the container
+   is restarted, which kills every process the agent left behind (a tmux
+   server, a background job) and keeps its file system, and staged credential
+   files are deleted.
 4. The diff against the base (committed, uncommitted and new files) is saved,
-   and `~/.claude/projects` and `~/.codex/sessions` are copied out.
+   and `~/.claude/projects` and `~/.codex/sessions` are copied out, first into a
+   scratch directory, then redacted and without symlinks into the run
+   directory.
 5. **Only now** the hidden patch is copied in. Every path it writes is first
    put back to the base version, so an agent's change to a hidden test is
    overwritten and listed in `hidden_paths_overwritten`. The test command runs
@@ -218,15 +227,20 @@ install, diff, hidden patch, usage helper) still appends a line, with
 
 **Credentials** (Decision 8). An arm names them by reference only:
 `credentials.env` is the name of a host environment variable holding an API
-key, `credentials.dir` a host directory holding a subscription login (copied
-into `~/.claude` or `~/.codex` in the container). `run` stages the value in a
+key, `credentials.dir` a host directory holding a subscription login. From that
+directory only the agent CLI's credential file is taken (`.credentials.json`
+for `claude`, `auth.json` for `codex`), so pointing it at `~/.claude` does not
+copy your own transcripts or history into the container. `run` stages the value in a
 private `0700` temporary directory outside `results/`, as a `0600` env file
 passed with `docker exec --env-file` to the agent's process only, or as a
 `0600` copy of the directory that is deleted from the container right after
 the agent ends; the staging directory is removed when the run ends. No value is
 put on a command line (a docker call that would carry one is refused), and the
-run log, the diff, the test output and the copied transcripts are redacted.
-Setup commands and hidden tests never see the credential.
+run log, the diff, the test output, the copied transcripts and every `reason`
+are redacted (before any truncation). The secrets are the env value, a
+credential file's whole content and its JSON values under token, key, secret,
+password or credential keys. Setup commands and hidden tests never see the
+credential.
 
 **Token usage** (Decision 10). `nogg_bench/usage_helper.py` is the one place
 that knows Nogging's token-usage adapters (`scripts/lib/token_usage_adapters.py`
@@ -246,17 +260,27 @@ if needed) and commits that as the diff base, so Nogging's own files are not
 counted as work; gives the repository a `develop` branch and a local bare
 `origin` seeded from the truncated history (Nogging's worktrees branch from
 `origin/develop`; it holds no commit after the base); starts a planning session
-with the brief as kickoff, waits for its done signal, merges the plan branch
-into `develop` without an approval step and runs `nogg materialize`; starts a
+with the brief as kickoff, waits for its done signal or for it to go idle with
+a new change on a plan branch (the v3.6.0 planning prompt has no signal step),
+merges the plan branch into `develop` without an approval step and runs `nogg
+materialize` (a refusal there is tolerated); starts a
 `--full-access` Lead on the first ready Bead with `kickoff --change`, waits for
 its done signal or the timebox; then merges every implementation branch into
 `develop` (their number is `pr_count`), stops its sessions and writes
-`state.json`. Every launch passes the arm's `--agent`, `--model` and
+`state.json` (also right after the install, so a killed driver still leaves
+its diff base). `state.json` is agent-writable: `run` checks every field, and
+a missing or malformed one makes the run `agent_error` with `pr_count` 0. The
+Nogging tree copied in never holds `bench/` (excluded from the archive and
+checked), so a later ref cannot hand the agent the hidden tests. Every launch passes the arm's `--agent`, `--model` and
 `--effort`. The container needs node, tmux, python3, openspec, and the host's
 `bd` and `dolt` binaries, which `run` copies in (same CPU architecture). A
 planning session that blocks, or a Lead that signals `blocked`, ends the run as
 `agent_error` with the signal's reason; the report states that planning ran
-without human approval.
+without human approval. Known open points for the pilot (BEN-007), recorded as
+a discovery on BEN-002: the v3.6.0 Lead prompt ends with a pull request that
+the container cannot open, and Nogging's execution sandbox
+(`scripts/openspec-sandbox`) needs mount and user-namespace privileges that a
+plain `docker run` does not grant.
 
 **Testing `run`.** `tests/test_run.py` and `tests/test_driver.py` run whole
 runs offline against `tests/stubs/docker`, a stub on `PATH` that records every
