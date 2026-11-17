@@ -568,3 +568,120 @@ def test_a_batch_resumes(tmp_path, bench, docker_env):
     assert len([c for c in docker_calls(docker_env) if c[0] == "run"]) == 1
     assert bench_run(bench, "--rerun", stub=stub, seeds=(1,)) == 0
     assert [x["run_id"] for x in lines(bench)][-1] == "b-a-stub-task-1-r2"
+
+
+def test_the_container_does_not_start(tmp_path, bench, docker_env, monkeypatch):
+    monkeypatch.setenv("STUB_DOCKER_FAIL", "run")
+    assert bench_run(bench, stub=stub_agent(tmp_path)) == 1
+    [line] = lines(bench)
+    assert check_result(line) == []
+    assert line["status"] == "infra_error" and line["passed"] is False
+    assert line["reason"].startswith("starting the container failed: docker: Error response from daemon")
+    assert ["rm", "--force", "--volumes"] == docker_calls(docker_env)[-1][:3]
+
+
+def test_a_missing_credential_is_an_infra_error(tmp_path, bench, docker_env):
+    assert bench_run(bench, stub=stub_agent(tmp_path), environ={}) == 1
+    [line] = lines(bench)
+    assert line["reason"] == "credential variable ANTHROPIC_API_KEY is not set"
+    assert docker_calls(docker_env) == []
+
+
+def test_the_docker_invocation_holds_no_secret(tmp_path, bench, docker_env):
+    assert bench_run(bench, stub=stub_agent(tmp_path, "echo-key")) == 0
+    assert SECRET not in docker_env["log"].read_text()
+    agent_exec = json.loads(next(x for x in docker_env["log"].read_text().splitlines() if "agent.sh" in x))
+    assert agent_exec["env_file_mode"] == "0o600"
+    assert "--env-file" in agent_exec["argv"]
+    assert all(saw["key_present"] for saw in agent_saw(docker_env))
+    results_tree = "".join(
+        p.read_text(errors="replace") for p in (bench / "results").rglob("*") if p.is_file()
+    )
+    assert SECRET not in results_tree and "[REDACTED]" in results_tree  # transcript was redacted
+    env_file = Path(agent_exec["argv"][agent_exec["argv"].index("--env-file") + 1])
+    assert not env_file.exists() and not env_file.parent.exists()
+    # only the agent's exec carries the env file: setup and hidden tests run without it
+    assert sum("--env-file" in c for c in docker_calls(docker_env)) == 1
+
+
+def test_a_web_lookup_in_a_run_is_flagged(tmp_path, bench, docker_env):
+    assert bench_run(bench, stub=stub_agent(tmp_path, "leak")) == 0
+    assert lines(bench)[0]["contamination_suspect"] is True
+    assert "contamination suspect" in (bench / "results" / "runs" / "b-a-stub-task-1" / "run.log").read_text()
+
+
+def test_arm_b_runs_codex_with_web_search_off(tmp_path, bench, docker_env):
+    assert bench_run(bench, arms=("B",), stub=stub_agent(tmp_path, cli_name="codex")) == 0
+    [line] = lines(bench)
+    assert line["status"] == "completed" and line["usage"] == {
+        "gpt-6.1-sol": {"input": 3000, "output": 650, "cache_read": 9000, "cache_write": 0}}
+    [saw] = agent_saw(docker_env)
+    assert saw["argv"][:3] == ["exec", "--model", "gpt-6.1-sol"]
+    assert "tools.web_search=false" in saw["argv"] and "app.txt says broken" in saw["brief"]
+
+
+def test_the_adapters_moved_is_an_infra_error(tmp_path, bench, docker_env):
+    args = cli.build_parser().parse_args(
+        ["run", "--bench-dir", str(bench), "--batch", "b", "--task", TASK_ID, "--arm", "A", "--seed", "1",
+         "--smoke", "--agent-stub", str(stub_agent(tmp_path)), "--nogging-checkout", str(tmp_path)])
+    assert run_mod.command(args, environ={"ANTHROPIC_API_KEY": SECRET}, clock=ticking_clock()) == 1
+    [line] = lines(bench)
+    assert line["status"] == "infra_error" and line["reason"].startswith("usage helper failed")
+
+
+def test_no_preregistration_no_measurement_before_any_container(tmp_path, bench, docker_env, capsys):
+    git(bench, "init", "-q")
+    git(bench, "config", "user.email", "t@example.invalid")
+    git(bench, "config", "user.name", "t")
+    (bench / "PREREGISTRATION.md").write_text(PREREG)
+    git(bench, "add", ".")
+    git(bench, "commit", "-qm", "bench")
+    (bench / "PREREGISTRATION.md").write_text(PREREG + "\nedited\n")
+    assert bench_run(bench, smoke=False) == 2
+    err = capsys.readouterr().err
+    assert "bench/PREREGISTRATION.md has uncommitted changes" in err
+    assert "task stub-task has curation.status example" in err
+    assert docker_calls(docker_env) == [] and lines(bench) == []
+
+
+def test_mismatched_arms_are_refused_before_any_container(tmp_path, bench, docker_env, capsys):
+    c = yaml.safe_load((bench / "arms" / "C.yaml").read_text())
+    c["effort"] = "low"
+    (bench / "arms" / "C.yaml").write_text(yaml.safe_dump(c))
+    assert bench_run(bench, arms=("A", "C"), stub=stub_agent(tmp_path)) == 2
+    assert "arms A and C: effort differs within vendor anthropic" in capsys.readouterr().err
+    assert docker_calls(docker_env) == []
+
+
+def test_an_agent_stub_needs_smoke(tmp_path, bench, docker_env, capsys):
+    assert bench_run(bench, stub=stub_agent(tmp_path), smoke=False) == 2
+    assert "--agent-stub is only allowed with --smoke" in capsys.readouterr().err
+
+
+LARGE_STUB = r"""#!/bin/sh
+if [ "$1" = --version ]; then echo "stub 0"; exit 0; fi
+cat > /dev/null
+mkdir -p "$HOME/.claude/projects/-work-repo"
+echo '{"type":"assistant","sessionId":"s","message":{"id":"m","role":"assistant","model":"stub","usage":{"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}' \
+  > "$HOME/.claude/projects/-work-repo/s.jsonl"
+python3 - <<'PY'
+from pathlib import Path
+p = Path("src/miniutil/text.py")
+old = '    out = []\n    for ch in text.lower():\n        out.append(ch if ch.isalnum() else "-")\n    return "".join(out).strip("-")'
+new = '    import re\n    return re.sub(r"[\\W_]+", "-", text.lower()).strip("-")'
+p.write_text(p.read_text().replace(old, new))
+PY
+"""
+
+
+@pytest.mark.skipif(os.environ.get("NOGG_BENCH_DOCKER") != "1", reason="large: needs NOGG_BENCH_DOCKER=1 and a Docker daemon")
+def test_large_a_real_container_runs_arm_a_stub_on_an_example_task(tmp_path):
+    stub = tmp_path / "claude"
+    stub.write_text(LARGE_STUB)
+    stub.chmod(0o755)
+    args = cli.build_parser().parse_args(
+        ["run", "--bench-dir", str(BENCH), "--results-dir", str(tmp_path / "results"), "--batch", "large",
+         "--arm", "A", "--task", "example-small-slugify", "--seed", "1", "--smoke", "--agent-stub", str(stub)])
+    assert run_mod.command(args, environ={"ANTHROPIC_API_KEY": "sk-large-test-not-a-key"}) == 0
+    [line] = [json.loads(x) for x in (tmp_path / "results" / "large.jsonl").read_text().splitlines()]
+    assert (line["status"], line["passed"]) == ("completed", True), line

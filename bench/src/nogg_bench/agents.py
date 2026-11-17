@@ -27,17 +27,24 @@ IMPLEMENT = (
     "Run the repository's tests before you finish."
 )
 
-INSTALL = r"""set -eu
-kind="$1"; cli="$2"; version="$3"
-have() { command -v "$1" >/dev/null 2>&1; }
+_APT = r"""have() { command -v "$1" >/dev/null 2>&1; }
 apt() {
   have apt-get || { echo "install: $* missing and no apt-get in the image" >&2; exit 2; }
   DEBIAN_FRONTEND=noninteractive apt-get update -qq
   DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends "$@" >/dev/null
 }
-have git || apt git ca-certificates
-have npm || apt nodejs npm ca-certificates
+"""
+
+# What the run itself needs in every container, stub agent or not: git for the
+# diff and the hidden patch, timeout for the timebox.
+TOOLS = "set -eu\n" + _APT + r"""have git || apt git ca-certificates
 have timeout || apt coreutils
+# docker cp keeps the host's owner; git must still accept the copied repository.
+git config --global --add safe.directory '*'
+"""
+
+INSTALL = "set -eu\n" + _APT + r"""kind="$1"; cli="$2"; version="$3"
+have npm || apt nodejs npm ca-certificates
 case "$cli" in
   claude) npm install -g --silent "@anthropic-ai/claude-code@$version" ;;
   codex) npm install -g --silent "@openai/codex@$version" ;;

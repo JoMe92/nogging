@@ -167,7 +167,7 @@ class Runner:
         # Step 4: the diff and the transcripts.
         diff = docker.exec(name, workspace.diff_script(diff_base), timeout=600)
         if diff.returncode != 0:
-            raise StepError("saving the diff failed")
+            raise StepError(f"saving the diff failed: {_last_line(diff.stderr)}")
         (run_dir / "diff.patch").write_text(docker.log.redactor.redact(diff.stdout), encoding="utf-8")
         stats = workspace.parse_patch(diff.stdout)
         rec.diff_stats, rec.markdown_lines = stats.diff_stats(), stats.markdown_lines
@@ -184,7 +184,7 @@ class Runner:
         docker.copy_in(name, task.hidden_patch, "/work/hidden.patch")
         applied = docker.exec(name, workspace.restore_script(task.data["base_commit"], hidden), timeout=300)
         if applied.returncode != 0:
-            raise StepError("applying the hidden tests failed")
+            raise StepError(f"applying the hidden tests failed: {_last_line(applied.stderr)}")
         tested = docker.exec(name, workspace.test_script(task.data), timeout=env["test_timeout_seconds"])
         output = tested.stdout + tested.stderr
         (run_dir / "tests.log").write_text(docker.log.redactor.redact(output), encoding="utf-8")
@@ -208,6 +208,7 @@ class Runner:
         tools.mkdir()
         (tools / "agent.sh").write_text(agents.agent_script(arm), encoding="utf-8")
         (tools / "install.sh").write_text(agents.INSTALL, encoding="utf-8")
+        (tools / "tools.sh").write_text(agents.TOOLS, encoding="utf-8")
         if arm.kind == "nogging":
             shutil.copy(DRIVER, tools / "driver.py")
             archive = scratch / "nogging.tar"
@@ -223,6 +224,9 @@ class Runner:
         return tools
 
     def _install(self, arm: Arm, docker: Docker, name: str) -> None:
+        done = docker.exec(name, "sh ../bench/tools.sh", timeout=1800)
+        if done.returncode != 0:
+            raise StepError(f"installing git and timeout in the container failed (exit {done.returncode})")
         if self.agent_stub is not None:
             docker.copy_in(name, self.agent_stub, f"/usr/local/bin/{arm.cli}")
             return
@@ -256,6 +260,10 @@ class Runner:
             rec.reason = f"nogging driver: {outcome}: {state.get('reason') or 'no reason given'}"[:300]
         rec.pr_count = int(state.get("pr_count") or 0)
         return state.get("diff_base")
+
+
+def _last_line(text: str) -> str:
+    return (text.strip().splitlines() or ["no message"])[-1][:200]
 
 
 def _redact_file(path: Path, redactor: Redactor) -> None:
