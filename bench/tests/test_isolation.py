@@ -41,8 +41,10 @@ def test_the_package_imports_nothing_from_nogging(module):
     assert done.returncode == 0, done.stderr
 
 
-@pytest.mark.skipif(shutil.which("npm") is None or not (REPO_ROOT / "package.json").is_file(), reason="needs npm and the repository root")
 def test_the_published_package_does_not_contain_the_benchmark():
+    # npm ships with the CI runners and the delivery host; a missing npm fails loudly.
+    assert shutil.which("npm"), "npm is required to list the published package"
+    assert (REPO_ROOT / "package.json").is_file(), "the repository root has no package.json"
     done = subprocess.run(
         ["npm", "pack", "--dry-run", "--json", "--ignore-scripts"],
         cwd=REPO_ROOT, capture_output=True, text=True, timeout=120,
