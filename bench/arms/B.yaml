@@ -1,0 +1,18 @@
+schema: 1
+id: B
+label: Codex, no Nogging (second-vendor control)
+kind: codex
+agent:
+  cli: codex
+  version: 0.169.0
+# Starting point: the `complex` Codex entry of `scripts/nogg models`, the tier
+# that matches the Claude arms. Confirmed or changed by the Product Owner
+# before the pilot (BEN-007). The timebox is the same in every arm.
+model: gpt-6.1-sol
+effort: low
+timebox_minutes: 90
+prompt: prompts/b.md
+disabled_tools:
+  - web_search
+credentials:
+  env: OPENAI_API_KEY

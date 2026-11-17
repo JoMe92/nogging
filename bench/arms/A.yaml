@@ -1,0 +1,19 @@
+schema: 1
+id: A
+label: Claude Code with plan mode, no Nogging (control)
+kind: claude-code
+agent:
+  cli: claude
+  version: 2.1.326
+# Starting point: the `complex` Claude entry of `scripts/nogg models`. The
+# Product Owner confirms or changes model, effort and timebox before the pilot
+# (BEN-007). Every Claude-based arm (A, C) must name the same model and effort.
+model: claude-opus-5-5
+effort: high
+timebox_minutes: 90
+prompt: prompts/a.md
+disabled_tools:
+  - WebSearch
+  - WebFetch
+credentials:
+  env: ANTHROPIC_API_KEY
