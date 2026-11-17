@@ -445,7 +445,60 @@ exist or a named test file fails to import, so the pass-to-pass tests of that
 run are then unknown. Write hidden tests whose module imports succeed at the
 base commit (see the lazy import in the large example), or run whole test files.
 
+## The Harbor adapter (BEN-003)
+
+The same arms run on Harbor datasets such as FeatureBench through a Harbor
+agent loaded by import path. Harbor 0.26.0 is pinned in the `harbor` extra
+(its agent interface — `BaseAgent` with the `setup`/`run` hooks, environment
+`exec`/`upload`/`download`, the agent's `logs_dir`, and the verifier's
+`rewards` mapping — is what the adapter is written against); Harbor itself
+needs Python >= 3.12, so the extra is empty on 3.11.
+
+```bash
+uv run --project bench --extra harbor harbor run \
+  --agent nogg_bench.harbor:BenchAgent \
+  --dataset <harbor-dataset> --agent-name nogg-bench \
+  --output-dir bench/results/harbor
+```
+
+The wrapper class `nogg_bench.harbor:BenchAgent` takes everything else from
+the environment, because Harbor's options belong to the model, not to the
+benchmark:
+
+| Variable | Meaning |
+| --- | --- |
+| `NOGG_BENCH_ARM` | path of the arm file; loaded and validated when the agent is constructed, so an invalid arm fails before any install call |
+| `NOGG_BENCH_BATCH`, `NOGG_BENCH_TASK`, `NOGG_BENCH_SEED`, `NOGG_BENCH_SIZE_CLASS` | the result line's identity |
+| `NOGG_BENCH_RESULTS_DIR` | where `<batch>.jsonl` and `runs/<run_id>/` go |
+| `NOGG_BENCH_SOURCE` | the result line's source, `harbor:<dataset>` (default `harbor:featurebench`) |
+| `NOGG_BENCH_NOGGING_CHECKOUT` | host checkout: Nogging archive source for a `nogging` arm, and the usage helper's adapters |
+| `NOGG_BENCH_BENCH_DIR` | the bench directory, for the bench commit and the preregistration blob hash |
+| `NOGG_BENCH_PREREGISTRATION_HASH` | blob hash of the committed `bench/PREREGISTRATION.md`; a measured run without it is refused |
+| `NOGG_BENCH_SMOKE` | `1` marks the run as a smoke run, kept out of every report table |
+| `NOGG_BENCH_VERIFIER_CMD` | the dataset's verifier command; its stdout must be a JSON mapping of test name to reward, and every reward must be `1` for a pass |
+| `NOGG_BENCH_DIFF_BASE` | the diff base inside the task repository (default `HEAD`) |
+
+The order of one Harbor run: install the arm's agent into the environment
+(for a `nogging` arm, Nogging at the arm's `nogging_ref` and `bd`/`dolt`),
+upload the brief (the arm's prompt with the task instruction as `{issue}`),
+run the agent under the arm's timebox as the unprivileged user, copy the
+diff and both transcript directories out, count the transcripts through the
+usage helper, then run the verifier — Harbor's verdict decides `passed`, the
+adapter only maps it — and append one result line with
+`source: harbor:<dataset>`. Credentials stay Harbor's business: the adapter
+moves none, Harbor's own auth resolution and network policy supply and
+constrain the agent's model access.
+
+**Choosing a FeatureBench subset.** Point `--dataset` at the FeatureBench
+split you want and restrict it with Harbor's task filters to the tickets the
+Product Owner curated in `bench/tasks/`, so every measured Harbor run pairs
+with a `bench` run of the same ticket: pick tasks whose identifiers appear
+in the curated task IDs, keep the size class of the Harbor task metadata in
+the `NOGG_BENCH_SIZE_CLASS` you pass, and run the same arm/seed grid as the
+batch you are extending. A single proof run for BEN-007 is one task, arm A,
+seed 1, `NOGG_BENCH_SMOKE=1`.
+
 ## Not yet here
 
-`PREREGISTRATION.md` and the Harbor adapter arrive with BEN-003, BEN-006 and
-BEN-007.
+`PREREGISTRATION.md` arrives with BEN-006; the first measured Harbor runs
+with BEN-007.
