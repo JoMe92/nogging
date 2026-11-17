@@ -165,8 +165,14 @@ class Runner:
         # Nothing the agent started (a tmux server, a background job) survives this.
         docker.restart(name)
         if creds.staged_dir is not None:
+            # A subscription token refreshed during the run is a secret too.
+            for i, path in enumerate(agents.credential_paths(arm.cli, creds.files)):
+                landing = scratch / f"credential-{i}"
+                if docker.copy_out(name, path, landing) and landing.is_file() and not landing.is_symlink():
+                    redactor.add_file(landing)
+                    landing.unlink()
             self._step(docker, name, agents.remove_credentials_script(arm.cli, creds.files),
-                       "removing the credential files", user=agents.AGENT_USER)
+                       "removing the credential files")
         if agents.timed_out(done.returncode, elapsed, agents.outer_timeout(arm)):
             rec.status = "timeout"
         elif done.returncode != 0:

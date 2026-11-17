@@ -230,7 +230,10 @@ install, diff, hidden patch, usage helper) still appends a line, with
 key, `credentials.dir` a host directory holding a subscription login. From that
 directory only the agent CLI's credential file is taken (`.credentials.json`
 for `claude`, `auth.json` for `codex`), so pointing it at `~/.claude` does not
-copy your own transcripts or history into the container. `run` stages the value in a
+copy your own transcripts or history into the container. If the agent refreshes a
+subscription token during the run, the refreshed file is read back before it
+is deleted and its tokens are redacted too; a refresh may rotate the token and
+sign the host's own login out, so give the benchmark its own login. `run` stages the value in a
 private `0700` temporary directory outside `results/`, as a `0600` env file
 passed with `docker exec --env-file` to the agent's process only, or as a
 `0600` copy of the directory that is deleted from the container right after

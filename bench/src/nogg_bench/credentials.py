@@ -33,6 +33,17 @@ class Redactor:
     def __init__(self, secrets: Iterable[str] = ()) -> None:
         self.secrets = sorted({s for s in secrets if len(s) >= MIN_SECRET_LENGTH}, key=len, reverse=True)
 
+    def add(self, secrets: Iterable[str]) -> None:
+        """Learn more values, such as a token the agent refreshed inside the container."""
+        self.secrets = sorted({*self.secrets, *(s for s in secrets if len(s) >= MIN_SECRET_LENGTH)},
+                              key=len, reverse=True)
+
+    def add_file(self, path: Path) -> None:
+        try:
+            self.add(_secret_strings(path.read_text(encoding="utf-8")))
+        except (OSError, UnicodeDecodeError):
+            pass
+
     def redact(self, text: str) -> str:
         for secret in self.secrets:
             text = text.replace(secret, REDACTED)

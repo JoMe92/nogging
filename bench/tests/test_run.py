@@ -448,6 +448,10 @@ if MODE == "timeout":
     sys.exit(124)  # what `timeout` returns when the timebox ran out
 if MODE == "crash":
     sys.exit(3)
+if MODE == "refresh":  # the CLI refreshed its subscription token and printed it
+    (home / ".claude" / ".credentials.json").write_text('{{"claudeAiOauth": {{"accessToken": "tok-refreshed-zyxwvu98"}}}}')
+    with open(dest, "a") as f:
+        f.write(json.dumps({{"type": "user", "message": {{"content": "tok-refreshed-zyxwvu98"}}}}) + "\\n")
 if MODE == "oom":
     sys.exit(137)  # killed, but long before the timebox
 '''
@@ -596,10 +600,21 @@ def test_a_credential_directory_reaches_the_agent_and_nothing_else(tmp_path, ben
     assert line["status"] == "completed" and "claude-opus-5-5" in line["usage"]  # model names unredacted
     [home] = list(docker_env["root"].glob("*/home/bench"))
     assert not (home / ".claude" / ".credentials.json").exists()  # removed before the hidden tests
+    removal = [c for c in docker_calls(docker_env) if c[0] == "exec" and ".credentials.json" in c[-1]]
+    assert len(removal) == 1 and "--user" not in removal[0]  # as root: the agent cannot block it
     assert not (home / ".claude" / "history.jsonl").exists()  # never copied in
     assert not list((home / ".claude" / "projects").glob("-home-op-*"))
     assert (bench / "results" / "runs" / "b-a-stub-task-1" / "transcripts" / "claude" / "-work-repo").is_dir()
     assert "tok-abcdefghijkl" not in docker_env["log"].read_text()
+
+
+def test_a_token_refreshed_in_the_container_is_redacted(tmp_path, bench, docker_env):
+    arm = yaml.safe_load((bench / "arms" / "A.yaml").read_text())
+    arm["credentials"] = {"dir": str(login_dir(tmp_path))}
+    (bench / "arms" / "A.yaml").write_text(yaml.safe_dump(arm))
+    assert bench_run(bench, stub=stub_agent(tmp_path, "refresh"), environ={}) == 0
+    tree = "".join(p.read_text(errors="replace") for p in (bench / "results").rglob("*") if p.is_file())
+    assert "tok-refreshed-zyxwvu98" not in tree and "[REDACTED]" in tree
 
 
 def test_smoke_and_measured_runs_do_not_share_a_batch(tmp_path, bench, docker_env, capsys):

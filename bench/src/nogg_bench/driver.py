@@ -204,7 +204,8 @@ class Driver:
         # The planning session may have materialised the Beads itself; a refusal here is not fatal.
         done = self.run([NOGG, "materialize", change], cwd=self.repo)
         if done.returncode != 0:
-            self.log(f"materialize {change}: exit {done.returncode} (the planning session may have done it)")
+            last = (done.stderr.strip().splitlines() or ["no message"])[-1]
+            self.log(f"materialize {change}: exit {done.returncode}: {last} (the planning session may have done it)")
         return change
 
     def lead(self, change: str, deadline: float) -> tuple[str, str | None]:

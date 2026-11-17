@@ -122,6 +122,12 @@ def timed_out(returncode: int | None, elapsed_seconds: float, limit_seconds: flo
 
 
 def remove_credentials_script(cli: str, names: list[str]) -> str:
-    """Shell, run as the agent user, that deletes the copied credential files before the hidden tests run."""
-    targets = " ".join(f'"$HOME"/{shlex.quote(CONFIG_DIRS[cli] + "/" + n)}' for n in names)
-    return f"rm -f -- {targets}"
+    """Shell, run as root, that deletes the copied credential files before the hidden tests run.
+
+    Root, because the agent could make its own directory unwritable; ``rm`` does not follow links.
+    """
+    return "rm -rf -- " + " ".join(shlex.quote(p) for p in credential_paths(cli, names))
+
+
+def credential_paths(cli: str, names: list[str]) -> list[str]:
+    return [f"{HOME}/{CONFIG_DIRS[cli]}/{n}" for n in names]

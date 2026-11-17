@@ -9,7 +9,8 @@ A container path /x maps to <root>/<name>/x. `exec` runs the command on the host
 with that working directory, HOME=<root>/<name>/root (or /home/<user> with --user)
 and <root>/<name>/usr/local/bin first on PATH, plus the variables of --env-file.
 Creating the agent user and handing files to it (`id bench ...`, `chown -R bench`)
-cannot happen on the host; those two commands are recorded and succeed.
+cannot happen on the host; those two commands are recorded and succeed. An
+absolute /home/bench/ path in an exec script is mapped into the container root.
 """
 FAKED = ("id bench ", "chown -R bench")
 import json
@@ -86,6 +87,8 @@ def main() -> int:
         if command[-1].startswith(FAKED):
             log()
             return 0
+        # Absolute paths under the agent user's home point into this container's root.
+        command[-1] = command[-1].replace("/home/bench/", f"{ROOT / name}/home/bench/")
         env = dict(os.environ)
         env["HOME"] = str(ROOT / name / ("home/" + user if user else "root"))
         Path(env["HOME"]).mkdir(parents=True, exist_ok=True)
