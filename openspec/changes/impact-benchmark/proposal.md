@@ -38,10 +38,14 @@ code has changed.
 - **A paired report.** `nogg-bench report` pairs runs per ticket (McNemar for pass/fail, sign test
   for cost), tabulates per size class, checks the preregistered thresholds and exports every run as
   CSV, failed runs included.
-- **Curation and runs stay with the Product Owner.** Choosing the 30 tickets, checking their hidden
-  tests, writing `bench/PREREGISTRATION.md`, and running the pilot and the full run are the
-  Product Owner's tasks. An agent may propose candidate tickets; it does not select them. No Lead
-  claims those two tasks.
+- **Mechanical curation, agent-run measurements, a blind review by the Product Owner.** Revised
+  2026-11-17, after the Product Owner delegated every open question: candidate repositories and
+  issues are collected by fixed preregistered criteria, their hidden tests are verified
+  automatically, and a seeded draw, whose seed is committed in `bench/PREREGISTRATION.md` before
+  any candidate exists, picks the 30 tickets and the 12 pilot tickets. Agents write the
+  preregistration, run the curation, the pilot, the full run and the report. The Product Owner's
+  only hand work is the blinded review of the pilot's 36 diffs. The report names the deviation from
+  the roadmap's hand-curation rule.
 - **A feature freeze, recorded in `AGENTS.md`.** Until the baseline report exists, dispatch, loops,
   session wake and Antigravity get no new features, only bug fixes. Planners and Leads read the rule
   in `AGENTS.md`.
@@ -49,8 +53,8 @@ code has changed.
 ## Done when (the roadmap's acceptance for Phase 0)
 
 - The pilot (12 tickets, arms A, B and C, one run each) completes with no manual intervention.
-- Two runs of the same arm on the same ticket give comparable measurements, by the criterion the
-  Product Owner fixes in `bench/PREREGISTRATION.md` before the first run.
+- Two runs of the same arm on the same ticket give comparable measurements, by the criterion
+  fixed in `bench/PREREGISTRATION.md` before the first measured run.
 - The baseline report for A, B and C, with its raw run data, is committed to the repository.
 - No Nogging production code changed in this change.
 
@@ -60,7 +64,8 @@ code has changed.
 
 - `impact-benchmark`: the paired ticket benchmark: task format and validation, arms and runs,
   hidden-test isolation, usage capture, the Harbor adapter, the blinded review pack, the paired
-  report, the preregistration gate and the Product Owner's curation.
+  report, the preregistration gate, the mechanical curation and seeded draw, and the Product
+  Owner's blinded review.
 
 ### Modified Capabilities
 
@@ -77,4 +82,6 @@ None. Nogging's own behaviour does not change.
   alias inside `scripts/nogg` would be a production change and waits until after the baseline.
 - Cost: the pilot is 36 runs; the full run with arms A, B and C on 30 tickets and 3 seeds is 270
   runs. The roadmap's estimate is 2.35 to 4.23 US dollars per ticket run at Sonnet level, more on
-  Opus. Whether runs use a subscription or the API is an open Product Owner question.
+  Opus. The runs use the subscription; the token cost is still converted at list prices, and the
+  API is used only if the subscription's limits block the full run. They run on an x86_64 PC with
+  Docker; smoke runs may use the Raspberry Pi.
