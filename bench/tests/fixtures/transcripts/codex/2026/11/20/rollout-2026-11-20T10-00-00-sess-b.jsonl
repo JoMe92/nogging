@@ -1,0 +1,5 @@
+{"type": "session_meta", "timestamp": "2026-11-20T10:00:00Z", "payload": {"model_provider": "openai", "session_id": "sess-b"}}
+{"type": "turn_context", "timestamp": "2026-11-20T10:00:01Z", "payload": {"model": "gpt-6.1-sol", "effort": "low"}}
+{"type": "event_msg", "timestamp": "2026-11-20T10:00:02Z", "payload": {"type": "token_count", "info": {"total_token_usage": {"input_tokens": 999999}}}}
+{"type": "token_usage_record", "timestamp": "2026-11-20T10:00:10Z", "payload": {"response_id": "resp-1", "session_id": "sess-b", "usage": {"input_tokens": 5000, "cached_input_tokens": 3000, "cache_write_input_tokens": 0, "output_tokens": 400, "reasoning_output_tokens": 100, "total_tokens": 5400}}}
+{"type": "token_usage_record", "timestamp": "2026-11-20T10:00:40Z", "payload": {"response_id": "resp-2", "session_id": "sess-b", "usage": {"input_tokens": 7000, "cached_input_tokens": 6000, "cache_write_input_tokens": 0, "output_tokens": 250, "reasoning_output_tokens": 50, "total_tokens": 7250}}}
