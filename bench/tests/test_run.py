@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import stat
 import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -11,7 +13,8 @@ import pytest
 import yaml
 from conftest import BENCH
 
-from nogg_bench import results, scan, workspace
+from nogg_bench import prereg, results, scan, workspace
+from nogg_bench.credentials import REDACTED, CredentialError, Credentials, Redactor
 from nogg_bench.schema import check_result
 
 T0 = datetime(2026, 11, 20, 10, 0, tzinfo=timezone.utc)
@@ -209,3 +212,103 @@ def test_lines_are_appended_and_combinations_recorded(tmp_path):
     with pytest.raises(results.ResultError, match="status"):
         results.append(path, {**record(status="completed", **FINISHED).line(), "status": "fine"})
     assert len(path.read_text().splitlines()) == 2
+
+
+# -------------------------------------------------------------- credentials
+
+
+def test_an_env_credential_is_staged_privately_and_removed():
+    with Credentials({"env": "BENCH_KEY"}, {"BENCH_KEY": "sk-test-0123456789"}) as creds:
+        env_file = creds.env_file
+        assert env_file.read_text() == "BENCH_KEY=sk-test-0123456789\n"
+        assert stat.S_IMODE(env_file.stat().st_mode) == 0o600
+        assert stat.S_IMODE(creds.root.stat().st_mode) == 0o700
+        assert creds.redactor().redact("key sk-test-0123456789 here") == f"key {REDACTED} here"
+    assert not env_file.exists() and not env_file.parent.exists()
+
+
+def test_a_missing_variable_is_named_without_a_value():
+    with pytest.raises(CredentialError, match="credential variable BENCH_KEY is not set"):
+        with Credentials({"env": "BENCH_KEY"}, {}):
+            pass
+
+
+def test_a_credential_directory_is_copied_privately(tmp_path):
+    source = tmp_path / "login"
+    source.mkdir()
+    (source / ".credentials.json").write_text(json.dumps({"oauth": {"accessToken": "tok-abcdefghijkl"}}))
+    with Credentials({"dir": str(source)}, {}) as creds:
+        staged = creds.staged_dir / ".credentials.json"
+        assert stat.S_IMODE(staged.stat().st_mode) == 0o600
+        assert creds.files == [".credentials.json"]
+        assert creds.redactor().contains("Bearer tok-abcdefghijkl")
+    assert not staged.exists()
+
+
+def test_redaction_rewrites_copied_transcripts(tmp_path):
+    path = write_transcript(tmp_path / "t" / "s.jsonl", [{"text": "echo sk-test-0123456789"}])
+    Redactor(["sk-test-0123456789"]).redact_tree(tmp_path / "t")
+    assert "sk-test" not in path.read_text() and REDACTED in path.read_text()
+
+
+# ------------------------------------------------------ preregistration gate
+
+PREREG = (BENCH / "tests" / "fixtures" / "valid" / "PREREGISTRATION.md").read_text(encoding="utf-8")
+
+
+@pytest.fixture
+def bench_repo(tmp_path) -> Path:
+    bench = tmp_path / "bench"
+    bench.mkdir()
+    git(bench, "init", "-q")
+    git(bench, "config", "user.email", "t@example.invalid")
+    git(bench, "config", "user.name", "t")
+    (bench / "README.md").write_text("bench\n")
+    git(bench, "add", ".")
+    git(bench, "commit", "-qm", "init")
+    return bench
+
+
+def commit_prereg(bench: Path, text: str = PREREG) -> None:
+    (bench / "PREREGISTRATION.md").write_text(text)
+    git(bench, "add", "PREREGISTRATION.md")
+    git(bench, "commit", "-qm", "prereg")
+
+
+def test_no_preregistration_no_measurement(bench_repo):
+    assert prereg.preregistration_hash(bench_repo) == (
+        None, ["bench/PREREGISTRATION.md is missing; a measured run needs a committed preregistration"])
+    commit_prereg(bench_repo)
+    (bench_repo / "PREREGISTRATION.md").write_text(PREREG + "\nchanged\n")
+    assert prereg.preregistration_hash(bench_repo) == (None, ["bench/PREREGISTRATION.md has uncommitted changes"])
+
+
+def test_a_committed_preregistration_yields_its_blob_hash(bench_repo):
+    commit_prereg(bench_repo)
+    blob, refusals = prereg.preregistration_hash(bench_repo)
+    assert refusals == []
+    assert blob == git(bench_repo, "hash-object", "PREREGISTRATION.md").strip()
+
+
+def test_a_preregistration_without_thresholds_is_refused(bench_repo):
+    commit_prereg(bench_repo, "# Plan\n\nNo block.\n")
+    blob, refusals = prereg.preregistration_hash(bench_repo)
+    assert blob is None and "no valid thresholds block" in refusals[0]
+
+
+def test_a_candidate_task_is_not_measured():
+    task = example_task()
+    task["curation"] = {"status": "candidate"}
+    assert prereg.task_refusals(task) == [
+        "task example-small-slugify has curation.status candidate; a measured run needs accepted (or --smoke)"]
+    task["curation"] = {"status": "accepted", "hidden_tests_verified_by": "PO", "verified_on": "2026-11-20"}
+    assert prereg.task_refusals(task) == []
+
+
+def test_env_file_is_not_world_readable_even_with_a_loose_umask():
+    old = os.umask(0)
+    try:
+        with Credentials({"env": "K"}, {"K": "value-0123456789"}) as creds:
+            assert stat.S_IMODE(creds.env_file.stat().st_mode) == 0o600
+    finally:
+        os.umask(old)
