@@ -7,8 +7,8 @@ line (and the one usage helper process described in the change), is not in the
 published npm package and is not copied by the installer. Design:
 `openspec/changes/impact-benchmark/` (Decisions 1 to 17).
 
-This file documents what exists today (BEN-001 and BEN-005). `run` and
-`review-pack` are added by BEN-002 and BEN-004, which extend this README.
+This file documents what exists today (BEN-001, BEN-004 and BEN-005). `run`
+is added by BEN-002, which extends this README.
 
 ## Run the suite
 
@@ -224,6 +224,56 @@ lists measured runs that started before the preregistration's first commit when
 git history shows one, and always states the deviation from real use: Nogging arms
 plan without human approval.
 
+## Blind review (`review-pack`)
+
+Hidden tests say whether a diff passes; the review says whether a maintainer
+would merge it. The reviewer must not know which arm wrote a diff.
+
+```bash
+bench/nogg-bench review-pack --batch <batch> --out /path/to/<pack>   # build
+bench/nogg-bench review-pack --import <filled-sheet.csv> --key <key>  # import
+```
+
+**Build.** For the completed runs of `results/<batch>.jsonl` (other statuses are
+not reviewed) the command writes `<pack>/items/<label>.md`, one per run, and
+`<pack>/record-sheet.csv`. A label is four random characters, the order is
+shuffled, and both come from the random source alone, not from the arm or the
+run order. An item holds the task's issue text and the diff with the process
+artefacts removed (`blind.py` lists them: `openspec/`, `.beads/`, `.nogging/`,
+`.claude/`, `.codex/`, `.pi/`, `.agents/` at the repository root, `AGENTS.md` and
+`CLAUDE.md` anywhere, Bead tokens, `Nogging-Writer:` and `Co-authored-by:` lines,
+and the author, date and diffstat lines of commit text). Markdown lines and the
+pull request count are in the result line and are left out on purpose. The
+**key** (label to run ID) is written to `<pack>.key.json` next to the pack
+directory, or to `--key`; it must lie outside the pack and must not reach the
+reviewer. `diff_path` of a result line is read relative to `--runs-root` (default:
+this bench directory). If a diff still holds any marker after anonymisation the
+command writes nothing and names the run; the Product Owner decides what to do
+with that run (it is never shown unblinded).
+
+**Review procedure (for the reviewer).**
+
+1. Open the pack directory only. Read `items/<label>.md` one by one in any
+   order; do not look at the key, the results files or the git history.
+2. For each item start a stopwatch, read the issue, then review the diff as you
+   would a pull request for that project, with no help from the repository
+   beyond what the item shows. Stop the stopwatch when you have decided.
+3. Fill one row of `record-sheet.csv` per item: `merge_decision` is `merge`,
+   `merge-after-changes` or `reject`; `critical`, `major`, `minor` are whole
+   numbers of defects you found (0 for none); `review_minutes` is the stopwatch
+   time in minutes, above zero (for example `6.5`); `comment` is free text.
+   Leave no row empty and do not rename the columns.
+4. Hand the sheet to the Product Owner. Do not try to guess the arm; if you
+   think you recognise one, say so in the comment of that row.
+
+**Import.** `--import` checks the header, that every row's item is in the key
+and listed once, that every item of the key has a row, the decision, the
+defect counts and the minutes, and runs the review record check. Only then does
+it append one record per item to `results/review/<pack>.jsonl` (the `<pack>` is
+the pack directory's name, kept in the key) with `run_id` taken from the key. One
+bad row refuses the whole sheet and names the row and the value. A pack is not
+imported twice. `validate` accepts the file afterwards.
+
 ## Example tasks and the fixture repository
 
 `examples/fixture-repo.bundle` is a git bundle of a tiny Python library
@@ -245,5 +295,5 @@ base commit (see the lazy import in the large example), or run whole test files.
 
 ## Not yet here
 
-`run`, `review-pack`, the arm files for A, B and C,
+`run`, the arm files for A, B and C,
 `PREREGISTRATION.md` and the Harbor adapter arrive with BEN-002 to BEN-007.
