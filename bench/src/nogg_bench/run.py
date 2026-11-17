@@ -256,6 +256,7 @@ class Runner:
         outcome = state.get("outcome")
         if rec.status != "timeout":
             rec.status = NOGGING_OUTCOMES.get(outcome, "agent_error")
+        rec.reason = None
         if rec.status == "agent_error":
             rec.reason = f"nogging driver: {outcome}: {state.get('reason') or 'no reason given'}"[:300]
         rec.pr_count = int(state.get("pr_count") or 0)
