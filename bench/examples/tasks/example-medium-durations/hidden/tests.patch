@@ -1,0 +1,32 @@
+diff --git a/tests/test_durations.py b/tests/test_durations.py
+index b239220..892d5d5 100644
+--- a/tests/test_durations.py
++++ b/tests/test_durations.py
+@@ -1,5 +1,6 @@
+ import pytest
+ 
++import miniutil
+ from miniutil import parse_duration
+ 
+ 
+@@ -11,3 +12,20 @@ def test_single_unit():
+ def test_rejects_garbage():
+     with pytest.raises(ValueError):
+         parse_duration("soon")
++
++
++def test_compound_duration():
++    assert parse_duration("1h30m") == 5400
++
++
++def test_day_unit():
++    assert parse_duration("2d") == 172800
++
++
++def test_format_duration():
++    assert miniutil.format_duration(5400) == "1h30m"
++    assert miniutil.format_duration(0) == "0s"
++
++
++def test_format_round_trips():
++    assert parse_duration(miniutil.format_duration(93784)) == 93784

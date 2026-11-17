@@ -1,0 +1,63 @@
+diff --git a/tests/test_config.py b/tests/test_config.py
+new file mode 100644
+index 0000000..60edf9b
+--- /dev/null
++++ b/tests/test_config.py
+@@ -0,0 +1,57 @@
++import json
++import os
++import subprocess
++import sys
++from pathlib import Path
++
++ROOT = Path(__file__).resolve().parents[1]
++
++
++class _Lazy:
++    """Import miniutil.config when used, so a missing module fails each test, not the whole file."""
++
++    def __getattr__(self, name):
++        import importlib
++
++        return getattr(importlib.import_module("miniutil.config"), name)
++
++
++config = _Lazy()
++
++
++def test_merge_is_deep():
++    merged = config.merge({"db": {"host": "a", "port": 1}}, {"db": {"host": "b"}})
++    assert merged == {"db": {"host": "b", "port": 1}}
++
++
++def test_later_layer_replaces_non_mappings():
++    assert config.merge({"x": [1]}, {"x": [2]}) == {"x": [2]}
++
++
++def test_merge_does_not_change_its_inputs():
++    first = {"db": {"host": "a"}}
++    config.merge(first, {"db": {"host": "b"}})
++    assert first == {"db": {"host": "a"}}
++
++
++def test_environment_layer():
++    env = {"MINIUTIL_DB__HOST": "e", "OTHER": "ignored"}
++    assert config.from_environ(env) == {"db": {"host": "e"}}
++
++
++def test_assignment_layer_and_error():
++    assert config.from_assignments(["a.b=1"]) == {"a": {"b": "1"}}
++    try:
++        config.from_assignments(["nonsense"])
++    except ValueError:
++        return
++    raise AssertionError("an assignment without = must be refused")
++
++
++def test_cli_override_beats_environment():
++    env = {**os.environ, "PYTHONPATH": str(ROOT / "src"), "MINIUTIL_DB__HOST": "from-env"}
++    out = subprocess.run(
++        [sys.executable, "-m", "miniutil", "show", "--set", "db.host=from-flag"],
++        capture_output=True, text=True, env=env, cwd=ROOT, check=True,
++    )
++    assert json.loads(out.stdout)["db"]["host"] == "from-flag"

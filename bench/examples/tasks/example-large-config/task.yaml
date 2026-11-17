@@ -1,0 +1,31 @@
+schema: 1
+id: example-large-config
+repo: examples/fixture-repo.bundle
+base_commit: c4891d8642c2dd02979ee7176518bf5b30ae8839
+language: python
+license: MIT
+issue: issue.md
+issue_url: https://example.invalid/miniutil/issues/3
+fix_pr_url: https://example.invalid/miniutil/pull/3
+issue_closed_at: 2026-01-04
+size_class: large
+environment:
+  image: python:3.13-slim
+  setup:
+    - pip install --no-cache-dir pytest
+  test_command: python -m pytest -q -rA {tests}
+  test_timeout_seconds: 120
+hidden_tests:
+  patch: hidden/tests.patch
+  fail_to_pass:
+    - tests/test_config.py::test_merge_is_deep
+    - tests/test_config.py::test_later_layer_replaces_non_mappings
+    - tests/test_config.py::test_merge_does_not_change_its_inputs
+    - tests/test_config.py::test_environment_layer
+    - tests/test_config.py::test_assignment_layer_and_error
+    - tests/test_config.py::test_cli_override_beats_environment
+  pass_to_pass:
+    - tests/test_text.py::test_slugify_basic
+    - tests/test_durations.py::test_single_unit
+curation:
+  status: example

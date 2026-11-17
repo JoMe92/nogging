@@ -1,0 +1,14 @@
+schema: 1
+id: A
+label: Claude Code with plan mode, no Nogging
+kind: nogging
+agent:
+  cli: claude
+  version: 2.0.0
+model: claude-opus-5-5
+effort: high
+prompt: prompts/a.md
+disabled_tools:
+  - WebSearch
+credentials:
+  env: sk-not-a-name

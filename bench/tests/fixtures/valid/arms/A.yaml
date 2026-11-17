@@ -1,0 +1,16 @@
+schema: 1
+id: A
+label: Claude Code with plan mode, no Nogging
+kind: claude-code
+agent:
+  cli: claude
+  version: 2.0.0
+model: claude-opus-5-5
+effort: high
+timebox_minutes: 60
+prompt: prompts/a.md
+disabled_tools:
+  - WebSearch
+  - WebFetch
+credentials:
+  env: ANTHROPIC_API_KEY
