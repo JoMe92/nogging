@@ -10,9 +10,13 @@ requires-python = ">=3.11"
 dependencies = ["PyYAML>=6.0"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
-# Pinned by BEN-003 once the installed Harbor's agent interface is checked.
-harbor = []
+dev = ["pytest>=8", "harbor==0.26.0; python_version >= '3.12'"]
+# Harbor 0.26.0's agent interface (harbor.agents.base.BaseAgent with setup/run hooks,
+# environment exec/upload/download, logs_dir, verifier rewards) matches design
+# Decision 12; checked against the installed package by BEN-003. Harbor itself
+# needs Python >= 3.12, so on 3.11 the extra installs nothing and the adapter
+# reports Harbor as unavailable instead of failing to resolve.
+harbor = ["harbor==0.26.0; python_version >= '3.12'"]
 
 [project.scripts]
 nogg-bench = "nogg_bench.cli:main"
