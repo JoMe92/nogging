@@ -110,17 +110,25 @@ def append(path: Path, line: dict) -> None:
         os.close(fd)
 
 
-def recorded(path: Path) -> tuple[set[tuple[str, str, int]], set[str]]:
-    """The (arm, task, seed) combinations and the run IDs already in a batch file."""
+def recorded(path: Path, *, retry_infra: bool = False) -> tuple[set[tuple[str, str, int]], set[str], set[bool]]:
+    """The (arm, task, seed) combinations, run IDs and smoke flags already in a batch file.
+
+    With ``retry_infra`` an ``infra_error`` line does not count as recorded.
+    """
     combos: set[tuple[str, str, int]] = set()
     ids: set[str] = set()
+    smoke: set[bool] = set()
     if not path.is_file():
-        return combos, ids
+        return combos, ids, smoke
     for _number, line in read_jsonl(path):
-        if isinstance(line, dict):
+        if not isinstance(line, dict):
+            continue
+        ids.add(line.get("run_id"))
+        prov = line.get("provenance")
+        smoke.add(bool(prov.get("smoke")) if isinstance(prov, dict) else False)
+        if not (retry_infra and line.get("status") == "infra_error"):
             combos.add((line.get("arm"), line.get("task"), line.get("seed")))
-            ids.add(line.get("run_id"))
-    return combos, ids
+    return combos, ids, smoke
 
 
 def unique_run_id(base: str, taken: set[str]) -> str:

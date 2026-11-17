@@ -205,8 +205,8 @@ def test_lines_are_appended_and_combinations_recorded(tmp_path):
     path = tmp_path / "results" / "b.jsonl"
     results.append(path, record(status="completed", **FINISHED).line())
     results.append(path, record(run_id="b-a-example-small-slugify-1-r2", status="completed", **FINISHED).line())
-    combos, ids = results.recorded(path)
-    assert combos == {("A", "example-small-slugify", 1)}
+    combos, ids, smoke = results.recorded(path)
+    assert combos == {("A", "example-small-slugify", 1)} and smoke == {True}
     assert results.unique_run_id("b-a-example-small-slugify-1", ids) == "b-a-example-small-slugify-1-r3"
     assert len(path.read_text().splitlines()) == 2
     with pytest.raises(results.ResultError, match="status"):
@@ -233,22 +233,49 @@ def test_a_missing_variable_is_named_without_a_value():
             pass
 
 
-def test_a_credential_directory_is_copied_privately(tmp_path):
+def login_dir(tmp_path: Path) -> Path:
+    """A ~/.claude as an operator would point at it: the login plus private history."""
     source = tmp_path / "login"
-    source.mkdir()
-    (source / ".credentials.json").write_text(json.dumps({"oauth": {"accessToken": "tok-abcdefghijkl"}}))
-    with Credentials({"dir": str(source)}, {}) as creds:
+    (source / "projects" / "-home-op-secret-project").mkdir(parents=True)
+    (source / "projects" / "-home-op-secret-project" / "old.jsonl").write_text('{"text": "private"}\n')
+    (source / "history.jsonl").write_text('{"display": "private prompt"}\n')
+    (source / ".credentials.json").write_text(json.dumps(
+        {"claudeAiOauth": {"accessToken": "tok-abcdefghijkl", "refreshToken": "ref-mnopqrstuvwx",
+                           "subscriptionType": "max", "scopes": ["user:inference"]}}))
+    return source
+
+
+def test_only_the_credential_file_of_a_directory_is_staged(tmp_path):
+    with Credentials({"dir": str(login_dir(tmp_path))}, {}, [".credentials.json"]) as creds:
         staged = creds.staged_dir / ".credentials.json"
         assert stat.S_IMODE(staged.stat().st_mode) == 0o600
         assert creds.files == [".credentials.json"]
-        assert creds.redactor().contains("Bearer tok-abcdefghijkl")
+        assert sorted(p.name for p in creds.staged_dir.iterdir()) == [".credentials.json"]
+        redactor = creds.redactor()
+        assert redactor.contains("Bearer tok-abcdefghijkl") and redactor.contains("ref-mnopqrstuvwx")
+        assert redactor.redact("model claude-opus-5-5, scope user:inference, plan max") == (
+            "model claude-opus-5-5, scope user:inference, plan max")  # only token fields are secrets
     assert not staged.exists()
 
 
-def test_redaction_rewrites_copied_transcripts(tmp_path):
-    path = write_transcript(tmp_path / "t" / "s.jsonl", [{"text": "echo sk-test-0123456789"}])
-    Redactor(["sk-test-0123456789"]).redact_tree(tmp_path / "t")
-    assert "sk-test" not in path.read_text() and REDACTED in path.read_text()
+def test_a_directory_without_the_credential_file_is_refused(tmp_path):
+    source = tmp_path / "empty"
+    source.mkdir()
+    with pytest.raises(CredentialError, match="holds none of auth.json"):
+        with Credentials({"dir": str(source)}, {}, ["auth.json"]):
+            pass
+
+
+def test_copied_trees_are_redacted_and_lose_their_symlinks(tmp_path):
+    landing = tmp_path / "landing"
+    write_transcript(landing / "s.jsonl", [{"text": "echo sk-test-0123456789"}])
+    (landing / "bin.dat").write_bytes(b"\xff\xfe sk-test-0123456789 \x00")
+    (landing / "link.jsonl").symlink_to("/etc/passwd")
+    (landing / "linkdir").symlink_to(tmp_path)
+    dest = tmp_path / "dest"
+    Redactor(["sk-test-0123456789"]).import_tree(landing, dest)
+    assert sorted(p.name for p in dest.iterdir()) == ["bin.dat", "s.jsonl"]
+    assert REDACTED in (dest / "s.jsonl").read_text() and b"sk-test" not in (dest / "bin.dat").read_bytes()
 
 
 # ------------------------------------------------------ preregistration gate
@@ -392,7 +419,7 @@ if sys.argv[1:] == ["--version"]:
     print("{version}")
     sys.exit(0)
 home = Path(os.environ["HOME"])
-container = home.parent
+container = home.parents[1]  # HOME is <container>/home/bench
 brief = sys.stdin.read()
 saw = {{
     "argv": sys.argv[1:],
@@ -421,6 +448,8 @@ if MODE == "timeout":
     sys.exit(124)  # what `timeout` returns when the timebox ran out
 if MODE == "crash":
     sys.exit(3)
+if MODE == "oom":
+    sys.exit(137)  # killed, but long before the timebox
 '''
 
 
@@ -497,7 +526,7 @@ def test_a_smoke_run_of_arm_a_passes_and_is_kept_out_of_the_data(tmp_path, bench
     assert line["provenance"]["agent_cli_version"] == "2.1.326 (Claude Code)"
     assert line["diff_stats"] == {"files_changed": 1, "insertions": 1, "deletions": 1}
     assert line["usage"]["claude-opus-5-5"]["output"] == 420
-    assert line["wall_clock_seconds"] == 540
+    assert line["wall_clock_seconds"] == 3 * 540  # the injected clock ticks 9 minutes per reading
     run_dir = bench / "results" / "runs" / "b-a-stub-task-1"
     assert (run_dir / "diff.patch").read_text().count("+fixed") == 1
     assert (run_dir / "transcripts" / "claude" / "-work-repo" / "sess-a.jsonl").is_file()
@@ -518,8 +547,12 @@ def test_hidden_tests_arrive_only_after_the_agent(tmp_path, bench, docker_env):
     [run_call] = [c for c in calls if c[0] == "run"]
     assert not {"-v", "--volume", "--mount"} & set(run_call)
     copied = next(i for i, c in enumerate(calls) if c[0] == "cp" and c[2].endswith(":/work/hidden.patch"))
-    assert copied > agent
+    # every process the agent left behind is killed before anything is copied out or in
+    restart = next(i for i, c in enumerate(calls) if c[0] == "restart")
+    first_copy_out = next(i for i, c in enumerate(calls) if c[0] == "cp" and ":" in c[1])
+    assert agent < restart < first_copy_out < copied
     assert all(saw["hidden_visible"] == [] for saw in agent_saw(docker_env))
+    assert calls[agent][calls[agent].index("--user") + 1] == "bench"  # not root
 
 
 def test_the_agent_changed_a_hidden_test_path(tmp_path, bench, docker_env):
@@ -547,6 +580,55 @@ def test_an_agent_error_is_recorded(tmp_path, bench, docker_env):
     assert bench_run(bench, stub=stub_agent(tmp_path, "crash")) == 0
     [line] = lines(bench)
     assert (line["status"], line["reason"], line["passed"]) == ("agent_error", "agent exited with status 3", False)
+
+
+def test_an_early_kill_is_not_a_timeout(tmp_path, bench, docker_env):
+    assert bench_run(bench, stub=stub_agent(tmp_path, "oom")) == 0
+    assert lines(bench)[0]["status"] == "agent_error"
+
+
+def test_a_credential_directory_reaches_the_agent_and_nothing_else(tmp_path, bench, docker_env):
+    arm = yaml.safe_load((bench / "arms" / "A.yaml").read_text())
+    arm["credentials"] = {"dir": str(login_dir(tmp_path))}
+    (bench / "arms" / "A.yaml").write_text(yaml.safe_dump(arm))
+    assert bench_run(bench, stub=stub_agent(tmp_path), environ={}) == 0
+    [line] = lines(bench)
+    assert line["status"] == "completed" and "claude-opus-5-5" in line["usage"]  # model names unredacted
+    [home] = list(docker_env["root"].glob("*/home/bench"))
+    assert not (home / ".claude" / ".credentials.json").exists()  # removed before the hidden tests
+    assert not (home / ".claude" / "history.jsonl").exists()  # never copied in
+    assert not list((home / ".claude" / "projects").glob("-home-op-*"))
+    assert (bench / "results" / "runs" / "b-a-stub-task-1" / "transcripts" / "claude" / "-work-repo").is_dir()
+    assert "tok-abcdefghijkl" not in docker_env["log"].read_text()
+
+
+def test_smoke_and_measured_runs_do_not_share_a_batch(tmp_path, bench, docker_env, capsys):
+    stub = stub_agent(tmp_path)
+    assert bench_run(bench, stub=stub) == 0
+    git(bench, "init", "-q")
+    git(bench, "config", "user.email", "t@example.invalid")
+    git(bench, "config", "user.name", "t")
+    task = bench / "tasks" / TASK_ID / "task.yaml"
+    data = yaml.safe_load(task.read_text())
+    data["curation"] = {"status": "accepted", "hidden_tests_verified_by": "PO", "verified_on": "2026-11-20"}
+    task.write_text(yaml.safe_dump(data))
+    (bench / "PREREGISTRATION.md").write_text(PREREG)
+    git(bench, "add", ".")
+    git(bench, "commit", "-qm", "bench")
+    assert bench_run(bench, smoke=False) == 2
+    assert "already holds runs that are not measured" in capsys.readouterr().err
+
+
+def test_infrastructure_failures_can_be_retried_alone(tmp_path, bench, docker_env, monkeypatch):
+    stub = stub_agent(tmp_path)
+    monkeypatch.setenv("STUB_DOCKER_FAIL", "run")
+    assert bench_run(bench, stub=stub, seeds=(1,)) == 1
+    monkeypatch.delenv("STUB_DOCKER_FAIL")
+    assert bench_run(bench, stub=stub, seeds=(1, 2)) == 0
+    assert [(x["seed"], x["status"]) for x in lines(bench)] == [(1, "infra_error"), (2, "completed")]
+    assert bench_run(bench, "--retry-infra", stub=stub, seeds=(1, 2)) == 0
+    assert [(x["run_id"], x["status"]) for x in lines(bench)][-1] == ("b-a-stub-task-1-r2", "completed")
+    assert len(lines(bench)) == 3
 
 
 def test_the_fix_is_not_in_the_containers_history(tmp_path, bench, docker_env):

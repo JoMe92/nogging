@@ -87,9 +87,11 @@ class Docker:
 
     def exec(
         self, name: str, script: str, *, workdir: str = "/work/repo", env_file: Path | None = None,
-        timeout: float | None = None,
+        timeout: float | None = None, user: str | None = None,
     ) -> Done:
         args = ["exec", "--workdir", workdir]
+        if user is not None:
+            args += ["--user", user]
         if env_file is not None:
             args += ["--env-file", str(env_file)]
         return self.call([*args, name, "sh", "-c", script], timeout=timeout)
@@ -100,6 +102,10 @@ class Docker:
     def copy_out(self, name: str, source: str, dest: Path) -> bool:
         """Copy ``source`` out of the container; False when it does not exist there."""
         return self.call(["cp", f"{name}:{source}", str(dest)], timeout=600).returncode == 0
+
+    def restart(self, name: str) -> None:
+        """Kill every process in the container at once and keep its file system."""
+        self.checked(["restart", "--time", "0", name], "stopping the agent's processes", timeout=300)
 
     def remove(self, name: str) -> None:
         self.call(["rm", "--force", "--volumes", name], timeout=120)

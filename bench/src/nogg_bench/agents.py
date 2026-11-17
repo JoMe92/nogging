@@ -14,8 +14,19 @@ import shlex
 
 from nogg_bench.arms import Arm
 
-HOME = "/root"
+# The agent runs as an unprivileged user: Claude Code refuses unattended
+# permission modes as root, and the agent has no business owning the container.
+AGENT_USER = "bench"
+HOME = f"/home/{AGENT_USER}"
 CONFIG_DIRS = {"claude": ".claude", "codex": ".codex"}
+# The only files a credential directory may hand over, per agent CLI.
+CREDENTIAL_FILES = {"claude": (".credentials.json",), "codex": ("auth.json",)}
+# Run as root once the repository, the agent and its credentials are in place.
+USER_SETUP = (
+    f"id {AGENT_USER} >/dev/null 2>&1 || useradd --create-home --shell /bin/sh {AGENT_USER} "
+    f"|| adduser -D {AGENT_USER}"
+)
+HAND_OVER = f"chown -R {AGENT_USER}: /work {HOME}"
 TRANSCRIPT_DIRS = {"claude": ".claude/projects", "codex": ".codex/sessions"}
 KILL_AFTER_SECONDS = 30
 # A nogging arm's driver enforces the timebox itself, then stops its sessions
@@ -100,12 +111,17 @@ def launch_command(arm: Arm) -> str:
     )
 
 
-def timed_out(returncode: int | None) -> bool:
-    """``timeout`` exits 124 when the time ran out and 137 when it had to kill."""
-    return returncode is None or returncode in (124, 137)
+def timed_out(returncode: int | None, elapsed_seconds: float, limit_seconds: float) -> bool:
+    """``timeout`` exits 124 when the time ran out and 137 when it had to kill.
+
+    A 137 well before the limit is another kill (out of memory, say), not the timebox.
+    """
+    if returncode is None or returncode == 124:
+        return True
+    return returncode == 137 and elapsed_seconds >= limit_seconds
 
 
 def remove_credentials_script(cli: str, names: list[str]) -> str:
-    """Shell that deletes the copied credential files before the hidden tests run."""
-    targets = " ".join(f'"$HOME"/{shlex.quote(CONFIG_DIRS[cli])}/{shlex.quote(n)}' for n in names)
-    return f"rm -rf -- {targets}"
+    """Shell, run as the agent user, that deletes the copied credential files before the hidden tests run."""
+    targets = " ".join(f'"$HOME"/{shlex.quote(CONFIG_DIRS[cli] + "/" + n)}' for n in names)
+    return f"rm -f -- {targets}"

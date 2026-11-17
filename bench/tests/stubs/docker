@@ -6,9 +6,12 @@ STUB_DOCKER_ROOT  directory holding one fake root file system per container name
 STUB_DOCKER_FAIL  "run" makes `docker run` fail as when the container does not start
 
 A container path /x maps to <root>/<name>/x. `exec` runs the command on the host
-with that working directory, HOME=<root>/<name>/root and <root>/<name>/usr/local/bin
-first on PATH, plus the variables of --env-file.
+with that working directory, HOME=<root>/<name>/root (or /home/<user> with --user)
+and <root>/<name>/usr/local/bin first on PATH, plus the variables of --env-file.
+Creating the agent user and handing files to it (`id bench ...`, `chown -R bench`)
+cannot happen on the host; those two commands are recorded and succeed.
 """
+FAKED = ("id bench ", "chown -R bench")
 import json
 import os
 import shutil
@@ -33,10 +36,10 @@ def host(spec):
 
 
 def copy(src: str, dst: str) -> int:
+    contents = src.endswith("/.")
+    src = src[:-2] if contents else src
     s = host(src) if ":" in src else Path(src)
     d = host(dst) if ":" in dst else Path(dst)
-    contents = src.endswith("/.")
-    s = Path(str(s)[:-2]) if contents else s
     if not s.exists():
         print(f"Error: No such container:path: {src}", file=sys.stderr)
         return 1
@@ -70,16 +73,22 @@ def main() -> int:
     if cmd == "cp":
         return copy(argv[1], argv[2])
     if cmd == "exec":
-        rest, workdir, env_file = argv[1:], "/", None
+        rest, workdir, env_file, user = argv[1:], "/", None, None
         while rest[0].startswith("-"):
             flag, value, rest = rest[0], rest[1], rest[2:]
             if flag == "--workdir":
                 workdir = value
             elif flag == "--env-file":
                 env_file = value
+            elif flag == "--user":
+                user = value
         name, command = rest[0], rest[1:]
+        if command[-1].startswith(FAKED):
+            log()
+            return 0
         env = dict(os.environ)
-        env["HOME"] = str(ROOT / name / "root")
+        env["HOME"] = str(ROOT / name / ("home/" + user if user else "root"))
+        Path(env["HOME"]).mkdir(parents=True, exist_ok=True)
         env["PATH"] = f"{ROOT / name / 'usr/local/bin'}:{env['PATH']}"
         if env_file:
             entry["env_file_mode"] = oct(stat.S_IMODE(os.stat(env_file).st_mode))
@@ -88,7 +97,7 @@ def main() -> int:
                 env[key] = value
         log()
         return subprocess.run(command, cwd=host(f"{name}:{workdir}"), env=env).returncode
-    if cmd in ("rm", "kill"):
+    if cmd in ("rm", "kill", "restart"):
         return 0
     print(f"stub docker: unsupported command {cmd}", file=sys.stderr)
     return 2

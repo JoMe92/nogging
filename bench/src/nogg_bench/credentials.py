@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -37,37 +38,57 @@ class Redactor:
             text = text.replace(secret, REDACTED)
         return text
 
+    def redact_bytes(self, data: bytes) -> bytes:
+        for secret in self.secrets:
+            data = data.replace(secret.encode("utf-8"), REDACTED.encode())
+        return data
+
+    def import_tree(self, source: Path, dest: Path) -> None:
+        """Copy ``source`` (a file or directory) to ``dest`` redacted, dropping symlinks.
+
+        Files copied out of the container land in a scratch directory first, so an
+        unredacted byte never reaches the results tree.
+        """
+        if source.is_symlink() or not source.exists():
+            return
+        if source.is_file():
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(self.redact_bytes(source.read_bytes()))
+            return
+        for top, dirs, files in os.walk(source, followlinks=False):  # symlinked dirs are not entered
+            dirs.sort()
+            for name in sorted(files):
+                path = Path(top) / name
+                if path.is_symlink() or not path.is_file():
+                    continue
+                target = dest / path.relative_to(source)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(self.redact_bytes(path.read_bytes()))
+
     def contains(self, text: str) -> bool:
         return any(secret in text for secret in self.secrets)
 
-    def redact_tree(self, root: Path) -> None:
-        """Redact every text file under ``root`` in place."""
-        if not self.secrets or not root.exists():
-            return
-        for path in sorted(p for p in root.rglob("*") if p.is_file() and not p.is_symlink()):
-            try:
-                text = path.read_text(encoding="utf-8")
-            except (UnicodeDecodeError, OSError):
-                continue
-            if self.contains(text):
-                path.write_text(self.redact(text), encoding="utf-8")
+
+
+_SECRET_KEY = re.compile(r"token|key|secret|password|credential|auth", re.I)
 
 
 def _secret_strings(text: str) -> list[str]:
-    """The secret-looking strings of a credential file: its whole content and, for JSON, every string value."""
+    """The secrets of a credential file: its whole content and, for JSON, the string
+    values under keys that name a token, key, secret, password or credential."""
     found = [text.strip()]
     try:
         data = json.loads(text)
     except ValueError:
-        return found + [line.strip() for line in text.splitlines()]
-    stack = [data]
+        return found
+    stack: list = [(None, data)]
     while stack:
-        item = stack.pop()
+        key, item = stack.pop()
         if isinstance(item, dict):
-            stack.extend(item.values())
+            stack.extend(item.items())
         elif isinstance(item, list):
-            stack.extend(item)
-        elif isinstance(item, str):
+            stack.extend((key, v) for v in item)
+        elif isinstance(item, str) and isinstance(key, str) and _SECRET_KEY.search(key):
             found.append(item)
     return found
 
@@ -81,9 +102,11 @@ def _private_file(path: Path, content: bytes) -> None:
 class Credentials:
     """Stage one arm's credentials for the length of a ``with`` block."""
 
-    def __init__(self, ref: Mapping[str, str], environ: Mapping[str, str]) -> None:
+    def __init__(self, ref: Mapping[str, str], environ: Mapping[str, str],
+                 allowed_files: Iterable[str] = ()) -> None:
         self.ref = dict(ref)
         self.environ = environ
+        self.allowed_files = tuple(allowed_files)
         self.root: Path | None = None
         self.env_file: Path | None = None
         self.staged_dir: Path | None = None
@@ -114,25 +137,26 @@ class Credentials:
         self.secrets.append(value)
 
     def _stage_dir(self, source: Path) -> None:
+        """Copy only the agent CLI's credential files; the rest of the directory (its
+        transcripts and history, say) never enters the container."""
         if not source.is_dir():
             raise CredentialError(f"credential directory {source} does not exist")
         self.staged_dir = self.root / "dir"
         self.staged_dir.mkdir(mode=0o700)
-        for path in sorted(source.rglob("*")):
-            if path.is_symlink():
-                continue
-            rel = path.relative_to(source)
-            target = self.staged_dir / rel
-            if path.is_dir():
-                target.mkdir(mode=0o700, exist_ok=True)
+        for name in self.allowed_files:
+            path = source / name
+            if path.is_symlink() or not path.is_file():
                 continue
             content = path.read_bytes()
-            _private_file(target, content)
+            _private_file(self.staged_dir / name, content)
+            self.files.append(name)
             try:
                 self.secrets.extend(_secret_strings(content.decode("utf-8")))
             except UnicodeDecodeError:
                 pass
-        self.files = sorted(p.name for p in self.staged_dir.iterdir())
+        if not self.files:
+            wanted = ", ".join(self.allowed_files) or "(none for this agent)"
+            raise CredentialError(f"credential directory {source} holds none of {wanted}")
 
     def redactor(self) -> Redactor:
         return Redactor(self.secrets)

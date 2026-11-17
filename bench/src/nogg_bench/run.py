@@ -108,12 +108,13 @@ class Runner:
         container = f"nogg-bench-{run_id}-{uuid.uuid4().hex[:8]}"
         scratch = Path(tempfile.mkdtemp(prefix="nogg-bench-run-"))
         try:
-            with Credentials(arm.credentials, self.environ) as creds:
+            with Credentials(arm.credentials, self.environ, agents.CREDENTIAL_FILES.get(arm.cli, ())) as creds:
                 log.redactor = creds.redactor()
                 self._execute(arm, task, rec, run_dir, docker, container, scratch, creds)
         except (StepError, CredentialError, DockerError, workspace.WorkspaceError, usage.UsageHelperError) as exc:
-            rec.fail(log.redactor.redact(str(exc)))
-            log.write(f"infra_error: {rec.reason}")
+            rec.fail(str(exc))
+        except Exception as exc:  # every run leaves a line, whatever broke
+            rec.fail(f"unexpected {type(exc).__name__}: {exc}")
         finally:
             if "image_digest" in rec.provenance:  # docker answered, so a container may exist
                 try:
@@ -121,11 +122,16 @@ class Runner:
                 except DockerError:
                     pass
             shutil.rmtree(scratch, ignore_errors=True)
+        if rec.reason is not None:  # redact first, then shorten, so no prefix of a value survives
+            rec.reason = log.redactor.redact(rec.reason)[:300]
+            if rec.status == "infra_error":
+                log.write(f"infra_error: {rec.reason}")
         rec.ended_at = self.clock()
         return rec.line()
 
     def _execute(self, arm, task, rec, run_dir, docker, name, scratch, creds) -> None:
         env = task.data["environment"]
+        redactor = docker.log.redactor
         rec.provenance["image_digest"] = docker.image_digest(env["image"])
         repo = scratch / "repo"
         workspace.prepare_repo(task.data, self.bench, repo)
@@ -147,36 +153,43 @@ class Runner:
         rec.provenance["agent_cli_version"] = (version.stdout.strip().splitlines() or ["unknown"])[0]
         if creds.staged_dir is not None:
             docker.copy_in(name, f"{creds.staged_dir}/.", f"{agents.HOME}/{agents.CONFIG_DIRS[arm.cli]}")
+        self._step(docker, name, agents.HAND_OVER, "handing /work to the agent user")
 
-        # The agent. Hidden tests are nowhere in the container until it has ended.
+        # The agent, as the unprivileged user. Hidden tests are nowhere in the container.
+        before = self.clock()
         done = docker.exec(
-            name, agents.launch_command(arm), env_file=creds.env_file,
+            name, agents.launch_command(arm), env_file=creds.env_file, user=agents.AGENT_USER,
             timeout=agents.outer_timeout(arm) + agents.KILL_AFTER_SECONDS + 60,
         )
+        elapsed = (self.clock() - before).total_seconds()
+        # Nothing the agent started (a tmux server, a background job) survives this.
+        docker.restart(name)
         if creds.staged_dir is not None:
-            docker.exec(name, agents.remove_credentials_script(arm.cli, creds.files), timeout=120)
-        rec.status = "timeout" if agents.timed_out(done.returncode) else "completed"
-        if rec.status == "completed" and done.returncode != 0:
+            self._step(docker, name, agents.remove_credentials_script(arm.cli, creds.files),
+                       "removing the credential files", user=agents.AGENT_USER)
+        if agents.timed_out(done.returncode, elapsed, agents.outer_timeout(arm)):
+            rec.status = "timeout"
+        elif done.returncode != 0:
             rec.status, rec.reason = "agent_error", f"agent exited with status {done.returncode}"
+        else:
+            rec.status = "completed"
         diff_base, rec.pr_count = task.data["base_commit"], 1
         if arm.kind == "nogging":
-            diff_base = self._driver_state(rec, docker, name, scratch) or diff_base
-        if docker.copy_out(name, "/work/bench/agent.log", run_dir / "agent.log"):
-            _redact_file(run_dir / "agent.log", docker.log.redactor)
+            diff_base = self._driver_state(rec, docker, name, scratch, diff_base)
+        self._copy_out(docker, name, "/work/bench/agent.log", scratch, run_dir / "agent.log")
 
         # Step 4: the diff and the transcripts.
         diff = docker.exec(name, workspace.diff_script(diff_base), timeout=600)
         if diff.returncode != 0:
             raise StepError(f"saving the diff failed: {_last_line(diff.stderr)}")
-        (run_dir / "diff.patch").write_text(docker.log.redactor.redact(diff.stdout), encoding="utf-8")
+        (run_dir / "diff.patch").write_text(redactor.redact(diff.stdout), encoding="utf-8")
         stats = workspace.parse_patch(diff.stdout)
         rec.diff_stats, rec.markdown_lines = stats.diff_stats(), stats.markdown_lines
         rec.diff_path = f"runs/{rec.run_id}/diff.patch"
         transcripts = run_dir / "transcripts"
         transcripts.mkdir(exist_ok=True)
         for cli, rel in agents.TRANSCRIPT_DIRS.items():
-            docker.copy_out(name, f"{agents.HOME}/{rel}", transcripts / cli)
-        docker.log.redactor.redact_tree(transcripts)
+            self._copy_out(docker, name, f"{agents.HOME}/{rel}", scratch, transcripts / cli)
 
         # Step 5: now, and only now, the hidden tests.
         hidden = workspace.parse_patch(task.hidden_patch.read_text(encoding="utf-8"))
@@ -187,7 +200,7 @@ class Runner:
             raise StepError(f"applying the hidden tests failed: {_last_line(applied.stderr)}")
         tested = docker.exec(name, workspace.test_script(task.data), timeout=env["test_timeout_seconds"])
         output = tested.stdout + tested.stderr
-        (run_dir / "tests.log").write_text(docker.log.redactor.redact(output), encoding="utf-8")
+        (run_dir / "tests.log").write_text(redactor.redact(output), encoding="utf-8")
         rec.tests = workspace.parse_test_output(output, task.data)
 
         # Step 6: usage and the contamination scan.
@@ -201,9 +214,25 @@ class Runner:
         for reason in reasons:
             docker.log.write(f"contamination suspect: {reason}")
 
+    @staticmethod
+    def _step(docker: Docker, name: str, script: str, what: str, user: str | None = None) -> None:
+        done = docker.exec(name, script, timeout=300, user=user)
+        if done.returncode != 0:
+            raise StepError(f"{what} failed (exit {done.returncode})")
+
+    @staticmethod
+    def _copy_out(docker: Docker, name: str, source: str, scratch: Path, dest: Path) -> bool:
+        """Copy out through the scratch directory: redacted, without symlinks, into ``dest``."""
+        landing = scratch / "out" / uuid.uuid4().hex
+        landing.parent.mkdir(exist_ok=True)
+        if not docker.copy_out(name, source, landing):
+            return False
+        docker.log.redactor.import_tree(landing, dest)
+        return True
+
     def _bench_dir(self, arm: Arm, scratch: Path) -> Path:
         """``/work/bench`` of the container: the agent and install scripts, and for a nogging arm
-        the driver and Nogging's source at the arm's ref."""
+        the driver and Nogging's source at the arm's ref, without its ``bench/``."""
         tools = scratch / "bench"
         tools.mkdir()
         (tools / "agent.sh").write_text(agents.agent_script(arm), encoding="utf-8")
@@ -212,14 +241,17 @@ class Runner:
         if arm.kind == "nogging":
             shutil.copy(DRIVER, tools / "driver.py")
             archive = scratch / "nogging.tar"
+            # A later ref carries bench/ itself: hidden tests, fix URLs, earlier runs. Never ship it.
             done = subprocess.run(
                 ["git", "-C", str(self.nogging_checkout), "archive", "--format=tar", "--prefix=nogging/",
-                 "-o", str(archive), arm.data["nogging_ref"]],
+                 "-o", str(archive), arm.data["nogging_ref"], "--", ".", ":(exclude)bench"],
                 capture_output=True, text=True, check=False,
             )
             if done.returncode != 0:
                 raise StepError(f"Nogging {arm.data['nogging_ref']} is not in {self.nogging_checkout}")
             with tarfile.open(archive) as tar:
+                if any(m.name == "nogging/bench" or m.name.startswith("nogging/bench/") for m in tar.getmembers()):
+                    raise StepError("the Nogging archive still holds bench/; refusing to copy it in")
                 tar.extractall(tools, filter="data")
         return tools
 
@@ -227,6 +259,7 @@ class Runner:
         done = docker.exec(name, "sh ../bench/tools.sh", timeout=1800)
         if done.returncode != 0:
             raise StepError(f"installing git and timeout in the container failed (exit {done.returncode})")
+        self._step(docker, name, agents.USER_SETUP, f"creating the agent user {agents.AGENT_USER}")
         if self.agent_stub is not None:
             docker.copy_in(name, self.agent_stub, f"/usr/local/bin/{arm.cli}")
             return
@@ -241,38 +274,38 @@ class Runner:
         if done.returncode != 0:
             raise StepError(f"installing {arm.cli} {version} failed (exit {done.returncode})")
 
-    def _driver_state(self, rec, docker: Docker, name: str, scratch: Path) -> str | None:
-        """Read the driver's ``state.json``: outcome, diff base, integrated branches."""
+    def _driver_state(self, rec, docker: Docker, name: str, scratch: Path, task_base: str) -> str:
+        """Read the driver's ``state.json`` (agent-writable, so every field is checked):
+        outcome, diff base and integrated branches. Returns the diff base."""
         path = scratch / "state.json"
-        if not docker.copy_out(name, "/work/bench/state.json", path):
-            if rec.status == "completed":
-                rec.status, rec.reason = "agent_error", "the nogging driver left no state"
-            return None
-        try:
-            state = json.loads(path.read_text(encoding="utf-8"))
-        except ValueError:
-            rec.status, rec.reason = "agent_error", "the nogging driver left an unreadable state"
-            return None
+        state = None
+        if docker.copy_out(name, "/work/bench/state.json", path) and path.is_file() and not path.is_symlink():
+            try:
+                state = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+            except ValueError:
+                state = None
+        diff_base = state.get("diff_base") if isinstance(state, dict) else None
+        if not (isinstance(diff_base, str) and re.fullmatch(r"[0-9a-f]{40}", diff_base)):
+            # The driver writes its state right after installing Nogging, so without one
+            # nothing was installed and the task's base is the diff base.
+            rec.pr_count = 0
+            if rec.status != "timeout":
+                rec.status = "agent_error"
+            rec.reason = "the nogging driver left no usable state.json"
+            return task_base
         outcome = state.get("outcome")
         if rec.status != "timeout":
             rec.status = NOGGING_OUTCOMES.get(outcome, "agent_error")
         rec.reason = None
         if rec.status == "agent_error":
-            rec.reason = f"nogging driver: {outcome}: {state.get('reason') or 'no reason given'}"[:300]
-        rec.pr_count = int(state.get("pr_count") or 0)
-        return state.get("diff_base")
+            rec.reason = f"nogging driver: {outcome}: {state.get('reason') or 'no reason given'}"
+        count = state.get("pr_count")
+        rec.pr_count = count if isinstance(count, int) and not isinstance(count, bool) and count >= 0 else 0
+        return diff_base
 
 
 def _last_line(text: str) -> str:
-    return (text.strip().splitlines() or ["no message"])[-1][:200]
-
-
-def _redact_file(path: Path, redactor: Redactor) -> None:
-    try:
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return
-    path.write_text(redactor.redact(text), encoding="utf-8")
+    return (text.strip().splitlines() or ["no message"])[-1]
 
 
 # ------------------------------------------------------------- command line
@@ -291,6 +324,8 @@ def add_parser(sub) -> None:
     p.add_argument("--batch", required=True, help="batch name; results go to results/<batch>.jsonl")
     p.add_argument("--smoke", action="store_true", help="a trial run: no preregistration needed, kept out of reports")
     p.add_argument("--rerun", action="store_true", help="run combinations that already have a result line again")
+    p.add_argument("--retry-infra", action="store_true",
+                   help="run combinations whose only lines are infra_error again")
     p.add_argument("--bench-dir", help="the bench directory (default: found from the working directory)")
     p.add_argument("--results-dir", help="where batch files and run directories go (default: <bench>/results)")
     p.add_argument("--nogging-checkout", help="Nogging checkout for the usage helper and nogging arms (default: the bench's repository)")
@@ -337,7 +372,16 @@ def command(args: argparse.Namespace, *, environ: Mapping[str, str] | None = Non
     if clock is not None:
         runner.clock = clock
     batch_file = results_dir / f"{args.batch}.jsonl"
-    done, taken = results.recorded(batch_file)
+    try:
+        done, taken, smoke_flags = results.recorded(batch_file, retry_infra=args.retry_infra)
+    except RecordError as exc:
+        print(f"run: refused: {exc}", file=sys.stderr)
+        return 2
+    if smoke_flags - {args.smoke}:
+        kind = "smoke" if args.smoke else "measured"
+        print(f"run: refused: batch {args.batch} already holds runs that are not {kind}; "
+              "keep smoke and measured runs in separate batches", file=sys.stderr)
+        return 2
     status = 0
     for arm in arms:
         for task in tasks:
@@ -347,8 +391,13 @@ def command(args: argparse.Namespace, *, environ: Mapping[str, str] | None = Non
                     continue
                 run_id = results.unique_run_id(results.run_id_for(args.batch, arm.id, task.id, seed), taken)
                 line = runner.run(arm, task, seed, args.batch, run_id)
-                results.append(batch_file, line)
                 taken.add(run_id)
+                try:
+                    results.append(batch_file, line)
+                except results.ResultError as exc:  # a bug: say so and go on with the batch
+                    print(f"run: {run_id}: not recorded: {exc}", file=sys.stderr)
+                    status = 1
+                    continue
                 print(f"run: {run_id}: {line['status']}, passed={str(line['passed']).lower()}"
                       + (f" ({line['reason']})" if line.get("reason") else ""))
                 if line["status"] == "infra_error":

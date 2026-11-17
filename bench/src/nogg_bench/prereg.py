@@ -48,5 +48,10 @@ def task_refusals(task: dict) -> list[str]:
 
 
 def bench_commit(bench: Path) -> str:
+    """HEAD of the bench checkout, marked ``-dirty`` when ``bench/`` (outside the
+    ``results/`` the runs write) has uncommitted changes."""
     done = _git(bench, "rev-parse", "HEAD")
-    return done.stdout.strip() if done.returncode == 0 else "unknown"
+    if done.returncode != 0:
+        return "unknown"
+    status = _git(bench, "status", "--porcelain", "--", ".", ":(exclude)results")
+    return done.stdout.strip() + ("-dirty" if status.returncode != 0 or status.stdout.strip() else "")
