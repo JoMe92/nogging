@@ -5,6 +5,7 @@ const path = require('path');
 
 const manifest = require('./manifest');
 const { GUARD_MARKER } = require('./merge');
+const { skillFiles } = require('./ceremony');
 const { MANIFEST_REL_PATH } = require('./manifest-store');
 
 const ARTIFACT_SUFFIXES = ['.nogging-new', '.orig'];
@@ -99,6 +100,9 @@ function removeInstallation(ctx) {
   ctx.log.setClass('agents');
   for (const dir of manifest.verbatimDirs) {
     for (const rel of sourceFiles(ctx.pkgRoot, dir.from, dir.to)) removeManagedFile(ctx, rel);
+  }
+  for (const file of skillFiles(ctx.pkgRoot)) {
+    for (const rel of file.rels) removeManagedFile(ctx, rel);
   }
   ctx.log.setClass('docs');
   for (const doc of manifest.docs) removeManagedFile(ctx, doc.to);

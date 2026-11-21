@@ -126,6 +126,12 @@ refused by name.
 | --- | --- | --- | --- |
 | `task_sizing` | object | `{"bead_prod_lines": [400, 1000], "commit_lines": [100, 600], "bead_test_lines": [1, 1500]}` | The size one Bead and one commit should have. Planning and Lead guidance read it; `validate` only reports a NOTE. See [the block below](#task_sizing). |
 
+## Ceremony
+
+| Key | Type | Default | Effect |
+| --- | --- | --- | --- |
+| `ceremony` | object | `{"mode": "always-full", "fast_lane": {"max_files": 2, "max_lines": 200}, "lite": {"min_score": 6}}` | How much specification a piece of work gets. The default changes nothing. See [the block below](#ceremony). |
+
 ## Test control
 
 | Key | Type | Default | Effect |
@@ -425,3 +431,38 @@ Check the file with `./scripts/nogg route check`; `validate` and `doctor`
 report an invalid file as a FAIL, and `doctor` NOTEs entries that cannot run
 on this host. Launch-time behaviour is in
 [Running work in sessions](running-work-in-sessions.md).
+
+### `ceremony`
+
+```json
+"ceremony": {"mode": "always-full",
+             "fast_lane": {"max_files": 2, "max_lines": 200},
+             "lite": {"min_score": 6}}
+```
+
+| Key | Type | Default | Effect |
+| --- | --- | --- | --- |
+| `mode` | string | `"always-full"` | `always-full`: every piece of work gets the full spec, as before; `nogg triage` still reports the lane its rules pick. `adaptive`: the lane the triage rules pick takes effect. `always-fast`: every description is the fast lane. |
+| `fast_lane.max_files` | positive integer | `2` | Production files a fast-lane Bead may change. |
+| `fast_lane.max_lines` | positive integer | `200` | Production lines a fast-lane Bead may change. |
+| `lite.min_score` | positive integer | `6` | Completeness points, out of 8, a lite spec needs. |
+
+`./scripts/nogg ceremony` prints the mode and the limits in effect and whether
+each one is configured or the default; `./scripts/nogg triage` picks a lane
+(see the [command reference](commands.md#triage)). An unset block means
+`always-full`, and the installer does not write the key. An unknown mode, a
+non-positive limit or an unknown key is a WARN in `doctor` that names the key;
+the default applies and `doctor`'s exit code does not change.
+
+#### The lean install
+
+The installer reads `ceremony.mode` when `init` or `update` runs:
+
+| Mode | `AGENTS.md` and `CLAUDE.md` blocks | Nogging skills |
+| --- | --- | --- |
+| `always-full` | the full blocks, as before | none |
+| `adaptive`, `always-fast` | the lean agents block (under 150 lines) and a Claude block that only points to `AGENTS.md` | five skills under `.claude/skills/` and `.agents/skills/` |
+
+Changing the mode changes nothing on disk until the next `update`; meanwhile
+`./scripts/nogg doctor` prints a WARN that the installed block does not match
+the mode. See [Installation](installation.md#the-lean-install-ceremonymode).

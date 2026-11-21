@@ -147,6 +147,31 @@ the shipped self-tests as well.
 Never touched: `openspec/changes/**`, `.beads/**`,
 `.nogging/{state,locks,reports}`, your `README.md`, your `package.json`.
 
+### The lean install (`ceremony.mode`)
+
+By default (`ceremony.mode` unset or `always-full`) `init` and `update` write
+the blocks and files of the table above, nothing else. When
+`.nogging/config.json` sets `ceremony.mode` to `adaptive` or `always-fast`,
+the next `update` (or a re-run of `init`) writes a lean set of instructions
+instead:
+
+| Path | Lean install |
+| --- | --- |
+| `AGENTS.md` block | the lean block, under 150 lines: the hard rules, the write boundary, the roles in one line each, and the list of skills with their paths and when to read each |
+| `CLAUDE.md` block | a pointer to `AGENTS.md` only |
+| `.claude/skills/nogging-<name>/SKILL.md` and `.agents/skills/nogging-<name>/SKILL.md` | five skills, the same file under both roots: `nogging-lead-workflow`, `nogging-planning`, `nogging-sessions`, `nogging-specialists`, `nogging-recovery`. They carry the text that left the block. Tracked in the manifest like every copied file. |
+
+An agent reads a skill when its situation arises, so a session no longer loads
+the planning, orchestration and per-runtime text it does not need. A runtime
+that does not load skills by itself reads the file by the path the block names.
+
+A mode change takes effect at the next `update`, in both directions: back under
+`always-full`, `update` restores the full blocks and removes the five skills (a
+skill you edited is kept and named in the output). Until then
+`./scripts/nogg doctor` prints a WARN that the installed block does not match
+the mode. `remove` deletes the skills with the rest of the payload. See
+[Configuration](configuration.md#ceremony).
+
 ### Flags
 
 - `--dry-run` — Show what would change, write nothing
@@ -247,6 +272,10 @@ npx github:JoMe92/nogging#<new-tag> update
 `nogging_version`. It does **not** run the scaffold step, so
 `openspec/project.md`, the config `name`, and everything under
 `openspec/changes/` are left exactly as they are.
+
+`update` also applies a changed `ceremony.mode`: it switches the `AGENTS.md`
+and `CLAUDE.md` blocks and installs or removes the Nogging skills (see
+[The lean install](#the-lean-install-ceremonymode)).
 
 ### Preserving local modifications (`.nogging-new` and `--force`)
 

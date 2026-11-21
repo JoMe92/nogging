@@ -20,6 +20,7 @@ module.exports = {
     'scripts/nogg_usage_zai.py',
     'scripts/lib/session_backend.py',
     'scripts/lib/agent_routing.py',
+    'scripts/lib/ceremony.py',
     'scripts/lib/dashboard_cache.py',
     'scripts/lib/dashboard_graph.py',
     'scripts/lib/dashboard_metrics.py',
@@ -194,6 +195,18 @@ module.exports = {
   // Marker block maintained inside CLAUDE.md and AGENTS.md.
   markerBegin: '<!-- nogging:begin -->',
   markerEnd: '<!-- nogging:end -->',
+
+  // The block pair per `ceremony.mode` (full under `always-full`, lean otherwise)
+  // and the skills of the lean install: one source, copied under every skill
+  // root only while the mode is lean (see lib/ceremony.js).
+  ceremony: {
+    blocks: {
+      full: { 'CLAUDE.md': 'templates/claude-block.md', 'AGENTS.md': 'templates/agents-block.md' },
+      lean: { 'CLAUDE.md': 'templates/claude-block-lean.md', 'AGENTS.md': 'templates/agents-block-lean.md' },
+    },
+    skillsFrom: 'templates/skills',
+    skillRoots: ['.claude/skills', '.agents/skills'],
+  },
 
   // Rendered systemd units: template -> target basename pattern ({slug} filled in).
   systemd: [

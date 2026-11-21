@@ -5,6 +5,7 @@ const path = require('path');
 
 const manifest = require('./manifest');
 const fsops = require('./fsops');
+const ceremony = require('./ceremony');
 
 const GUARD_MARKER = 'pre-tool-use-openspec-guard';
 const GUARD_ENTRY = {
@@ -222,8 +223,11 @@ function applyMerges(ctx) {
   mergeCodex(ctx);
   mergeAntigravity(ctx);
   mergeGitignore(ctx);
-  mergeMarkerBlock(ctx, 'CLAUDE.md', readTemplate(ctx, 'templates/claude-block.md'));
-  mergeMarkerBlock(ctx, 'AGENTS.md', readTemplate(ctx, 'templates/agents-block.md'));
+  // The scaffold is written before the merges, so the target's mode is readable.
+  const blocks = ceremony.blockTemplates(ctx);
+  mergeMarkerBlock(ctx, 'CLAUDE.md', readTemplate(ctx, blocks['CLAUDE.md']));
+  mergeMarkerBlock(ctx, 'AGENTS.md', readTemplate(ctx, blocks['AGENTS.md']));
+  ceremony.syncSkills(ctx);
 }
 
 module.exports = {
