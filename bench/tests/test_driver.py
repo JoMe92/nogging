@@ -258,6 +258,37 @@ def test_run_maps_the_driver_state(tmp_path, monkeypatch, nogging_checkout, benc
     assert agent[-1].startswith("exec timeout --kill-after=30 5700 ")  # timebox plus the driver's grace
 
 
+def run_arms(bench: Path, batch: str, arms: list[str], stub: Path, nogging_checkout: Path) -> list[dict]:
+    argv = ["run", "--bench-dir", str(bench), "--batch", batch, "--task", "stub-task", "--seed", "1", "--smoke",
+            "--agent-stub", str(stub), "--nogging-checkout", str(nogging_checkout)]
+    for arm in arms:
+        argv += ["--arm", arm]
+    env = {"ANTHROPIC_API_KEY": KEY, "OPENAI_API_KEY": KEY}
+    assert run_mod.command(cli.build_parser().parse_args(argv), environ=env) == 0
+    return [json.loads(x) for x in (bench / "results" / f"{batch}.jsonl").read_text().splitlines()]
+
+
+def test_every_arm_gets_the_same_container(tmp_path, monkeypatch, nogging_checkout, bench, docker_env):
+    fake = tmp_path / "driver.py"
+    write_fake(fake, 'json.dumps({"outcome": "done", "diff_base": base, "pr_count": 1})')
+    monkeypatch.setattr(run_mod, "DRIVER", fake)
+    result_lines = run_arms(bench, "claude", ["A", "C"], stub_agent(tmp_path), nogging_checkout)
+    result_lines += run_arms(bench, "codex", ["B"], stub_agent(tmp_path, cli_name="codex"), nogging_checkout)
+    assert [x["arm"] for x in result_lines] == ["A", "C", "B"]
+    starts = [c for c in docker_calls(docker_env) if c[0] == "run"]
+    assert len(starts) == 3
+    for start in starts:
+        start[start.index("--name") + 1] = "<name>"  # the only word that differs between runs
+    assert starts[0] == starts[1] == starts[2]
+    security = [w for i, w in enumerate(starts[0]) if starts[0][i - 1] == "--security-opt"]
+    assert security == ["seccomp=unconfined", "apparmor=unconfined"]
+    for call in docker_calls(docker_env):  # no docker call of any arm asks for more
+        assert "--privileged" not in call and not any(w.startswith("--cap-add") for w in call)
+    options = [x["provenance"]["container_options"] for x in result_lines]
+    assert options[0] == options[1] == options[2] == ["--security-opt", "seccomp=unconfined",
+                                                      "--security-opt", "apparmor=unconfined"]
+
+
 @pytest.mark.parametrize("state,status,pr_count", [
     ('json.dumps({"outcome": "done", "diff_base": base, "pr_count": "many"})', "completed", 0),
     ('json.dumps([1, 2])', "agent_error", 0),

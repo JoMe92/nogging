@@ -13,6 +13,7 @@ import pytest
 import yaml
 from conftest import BENCH
 
+from nogg_bench import docker as docker_mod
 from nogg_bench import prereg, results, scan, workspace
 from nogg_bench.credentials import REDACTED, CredentialError, Credentials, Redactor
 from nogg_bench.schema import check_result
@@ -199,6 +200,42 @@ def test_an_infra_error_line_is_valid_with_nothing_measured():
     assert check_result(line) == []
     assert (line["status"], line["passed"], line["diff_path"], line["usage"]) == ("infra_error", False, None, {})
     assert line["reason"] == "starting the container failed: no such image"
+
+
+def test_the_container_options_are_the_least_and_never_privileged(tmp_path):
+    options = docker_mod.container_options()
+    assert options == ["--security-opt", "seccomp=unconfined", "--security-opt", "apparmor=unconfined"]
+    docker = docker_mod.Docker(docker_mod.RunLog(tmp_path / "run.log", Redactor()), binary="true")
+    for bad in (["run", "--privileged", "image"], ["run", "--cap-add=SYS_ADMIN", "image"],
+                ["run", "--cap-add", "ALL", "image"]):
+        with pytest.raises(docker_mod.DockerError, match="privileged"):
+            docker.call(bad)
+    assert not (tmp_path / "run.log").exists()  # refused before it was logged or started
+
+
+def test_the_provenance_carries_the_container_options():
+    options = docker_mod.container_options()
+    line = record(status="completed", **{**FINISHED, "provenance": {**FINISHED["provenance"],
+                                                                    "container_options": options}}).line()
+    assert check_result(line) == [] and line["provenance"]["container_options"] == options
+    for bad in ([*options, "--privileged"], "seccomp=unconfined", ["--security-opt", ""]):
+        line["provenance"]["container_options"] = bad
+        assert [p.field for p in check_result(line)] == ["provenance.container_options"]
+    del line["provenance"]["container_options"]  # a Harbor line records none
+    assert check_result(line) == []
+
+
+def test_metadata_json_names_the_container_options(tmp_path):
+    from test_report import make_bench, make_record
+
+    from nogg_bench import report
+
+    options = docker_mod.container_options()
+    runs = [make_record(arm, "t1") for arm in ("A", "B", "C")]
+    for rec in runs:
+        rec["provenance"]["container_options"] = options
+    meta = report.build_metadata(report.load_inputs(make_bench(tmp_path, runs), ["b"]), "x")
+    assert meta["container_options_in_runs"] == [options]  # one entry: every arm had the same container
 
 
 def test_lines_are_appended_and_combinations_recorded(tmp_path):
@@ -528,6 +565,7 @@ def test_a_smoke_run_of_arm_a_passes_and_is_kept_out_of_the_data(tmp_path, bench
     assert (line["status"], line["passed"], line["run_id"]) == ("completed", True, "b-a-stub-task-1")
     assert line["provenance"]["smoke"] is True and line["provenance"]["preregistration_hash"] is None
     assert line["provenance"]["agent_cli_version"] == "2.1.326 (Claude Code)"
+    assert line["provenance"]["container_options"] == docker_mod.container_options()
     assert line["diff_stats"] == {"files_changed": 1, "insertions": 1, "deletions": 1}
     assert line["usage"]["claude-opus-5-5"]["output"] == 420
     assert line["wall_clock_seconds"] == 3 * 540  # the injected clock ticks 9 minutes per reading
@@ -550,6 +588,7 @@ def test_hidden_tests_arrive_only_after_the_agent(tmp_path, bench, docker_env):
         assert needle not in before
     [run_call] = [c for c in calls if c[0] == "run"]
     assert not {"-v", "--volume", "--mount"} & set(run_call)
+    assert "--privileged" not in run_call and not any(w.startswith("--cap-add") for w in run_call)
     copied = next(i for i, c in enumerate(calls) if c[0] == "cp" and c[2].endswith(":/work/hidden.patch"))
     # every process the agent left behind is killed before anything is copied out or in
     restart = next(i for i, c in enumerate(calls) if c[0] == "restart")
@@ -674,6 +713,7 @@ def test_the_container_does_not_start(tmp_path, bench, docker_env, monkeypatch):
     assert check_result(line) == []
     assert line["status"] == "infra_error" and line["passed"] is False
     assert line["reason"].startswith("starting the container failed: docker: Error response from daemon")
+    assert line["provenance"]["container_options"] == docker_mod.container_options()  # what it was started with
     assert ["rm", "--force", "--volumes"] == docker_calls(docker_env)[-1][:3]
 
 

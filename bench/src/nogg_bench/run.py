@@ -33,7 +33,7 @@ from typing import Callable, Mapping
 from nogg_bench import agents, prereg, results, scan, usage, workspace
 from nogg_bench.arms import Arm, comparability_problems, find_arm
 from nogg_bench.credentials import CredentialError, Credentials, Redactor
-from nogg_bench.docker import Docker, DockerError, RunLog
+from nogg_bench.docker import Docker, DockerError, RunLog, container_options
 from nogg_bench.records import RecordError, load_yaml
 from nogg_bench.schema import Problem, check_task
 from nogg_bench.validate import find_bench_dir
@@ -99,6 +99,7 @@ class Runner:
                 "arm_file_hash": arm.arm_file_hash, "prompt_hash": arm.prompt_hash,
                 "nogging_ref": arm.data.get("nogging_ref"), "bench_commit": self.bench_commit or "unknown",
                 "preregistration_hash": self.preregistration_hash, "smoke": self.smoke,
+                "container_options": container_options(),  # the same for every arm (Decision 20)
             },
         )
         run_dir = self.results_dir / "runs" / run_id

@@ -15,6 +15,20 @@ from pathlib import Path
 from nogg_bench.credentials import Redactor
 
 
+# Design Decision 20: every arm's container gets exactly these, so arms differ only in
+# their agent. They are what `unshare --user --mount` (Nogging's scripts/openspec-sandbox)
+# needs: Docker's default seccomp profile refuses unshare, mount and clone-with-namespaces
+# to a process without CAP_SYS_ADMIN, and its default AppArmor profile denies mount. No
+# capability is added, no device, no host namespace, and never --privileged: a new
+# option goes in only when a smoke run proves it necessary.
+SECURITY_OPTIONS = ("seccomp=unconfined", "apparmor=unconfined")
+
+
+def container_options() -> list[str]:
+    """The ``docker run`` options of every arm; recorded in the result line's provenance."""
+    return [word for option in SECURITY_OPTIONS for word in ("--security-opt", option)]
+
+
 class DockerError(Exception):
     """A docker call failed; the message is safe to record."""
 
@@ -47,6 +61,8 @@ class Docker:
         argv = [self.binary, *args]
         if self.log.redactor.contains("\0".join(argv)):
             raise DockerError("refused a docker call that would carry a credential value on its command line")
+        if any(a == "--privileged" or a.startswith("--cap-add") for a in args):
+            raise DockerError("refused a docker call that would start a privileged container")
         self.log.write("$ " + shlex.join(argv))
         try:
             done = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
@@ -77,9 +93,10 @@ class Docker:
         return done.stdout.strip()
 
     def start(self, name: str, image: str) -> None:
-        """A fresh container that idles until the run removes it. Nothing is mounted."""
+        """A fresh container that idles until the run removes it. Nothing is mounted, and
+        the options are the same for every arm (:func:`container_options`)."""
         self.checked(
-            ["run", "--detach", "--init", "--name", name, "--workdir", "/work",
+            ["run", "--detach", "--init", *container_options(), "--name", name, "--workdir", "/work",
              "--entrypoint", "sleep", image, "infinity"],
             "starting the container",
             timeout=300,
