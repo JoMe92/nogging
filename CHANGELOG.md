@@ -49,6 +49,14 @@ and GitHub Releases for that history.
   ships with `init` and `update`, and needs no configuration key. The checks on a
   real phone, by touch and over a network bind are still open in its acceptance
   report. See `docs/dashboard.md`.
+- The lean install: when `.nogging/config.json` sets `ceremony.mode` to `adaptive` or
+  `always-fast`, `init` and `update` write a lean `AGENTS.md` block under 150 lines
+  (the hard rules, the roles, and a list of skills), a `CLAUDE.md` block that only points
+  to `AGENTS.md`, and five on-demand skills (`nogging-lead-workflow`, `nogging-planning`,
+  `nogging-sessions`, `nogging-specialists`, `nogging-recovery`) under `.claude/skills/`
+  and `.agents/skills/`. A mode change takes effect at the next `update`, both ways, and
+  `doctor` warns until then. Under the default `always-full` an install is unchanged.
+  See `docs/installation.md`. (SPEC-bok8)
 
 ### Changed
 

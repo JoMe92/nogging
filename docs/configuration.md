@@ -425,3 +425,27 @@ Check the file with `./scripts/nogg route check`; `validate` and `doctor`
 report an invalid file as a FAIL, and `doctor` NOTEs entries that cannot run
 on this host. Launch-time behaviour is in
 [Running work in sessions](running-work-in-sessions.md).
+
+### `ceremony`
+
+An optional object. Its `mode` is `always-full` (the default), `adaptive` or
+`always-fast`; an absent block or an unknown mode means `always-full`. The
+scaffold does not write the key, so an install that never sets it behaves as
+before.
+
+```json
+"ceremony": {"mode": "adaptive"}
+```
+
+#### The lean install
+
+The installer reads `ceremony.mode` when `init` or `update` runs:
+
+| Mode | `AGENTS.md` and `CLAUDE.md` blocks | Nogging skills |
+| --- | --- | --- |
+| `always-full` | the full blocks, as before | none |
+| `adaptive`, `always-fast` | the lean agents block (under 150 lines) and a Claude block that only points to `AGENTS.md` | five skills under `.claude/skills/` and `.agents/skills/` |
+
+Changing the mode changes nothing on disk until the next `update`; meanwhile
+`./scripts/nogg doctor` prints a WARN that the installed block does not match
+the mode. See [Installation](installation.md#the-lean-install-ceremonymode).
