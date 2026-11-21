@@ -1,0 +1,6 @@
+# Fixture exclusion list: the repositories of the most-used training sources, one list per source.
+lists:
+  - name: fixture-benchmark
+    source: https://example.invalid/fixture-benchmark
+    repositories:
+      - Octo/Gamma

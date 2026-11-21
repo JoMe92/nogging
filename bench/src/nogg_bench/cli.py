@@ -24,6 +24,9 @@ PLANNED_COMMANDS = {
     "run": "nogg_bench.run",  # BEN-002
     "review-pack": "nogg_bench.review_pack",  # BEN-004
     "report": "nogg_bench.report",  # BEN-005
+    "candidates": "nogg_bench.candidates",  # BEN-008
+    "verify": "nogg_bench.verify",  # BEN-008
+    "select": "nogg_bench.draw",  # BEN-008 (not select.py: that name would shadow the standard library's)
 }
 
 
