@@ -21,7 +21,10 @@ from nogg_bench.credentials import Redactor
 # to a process without CAP_SYS_ADMIN, and its default AppArmor profile denies mount. No
 # capability is added, no device, no host namespace, and never --privileged: a new
 # option goes in only when a smoke run proves it necessary.
-SECURITY_OPTIONS = ("seccomp=unconfined", "apparmor=unconfined")
+# systempaths=unconfined lifts Docker's masked /proc paths: the sandbox's full call ends
+# in `--pid --fork --mount-proc`, and a real run (python:3.13-slim, user nobody,
+# 2026-11-21) fails with "mount /proc failed: Operation not permitted" without it.
+SECURITY_OPTIONS = ("seccomp=unconfined", "apparmor=unconfined", "systempaths=unconfined")
 
 
 def container_options() -> list[str]:

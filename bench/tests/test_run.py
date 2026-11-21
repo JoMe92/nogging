@@ -204,7 +204,8 @@ def test_an_infra_error_line_is_valid_with_nothing_measured():
 
 def test_the_container_options_are_the_least_and_never_privileged(tmp_path):
     options = docker_mod.container_options()
-    assert options == ["--security-opt", "seccomp=unconfined", "--security-opt", "apparmor=unconfined"]
+    assert options == ["--security-opt", "seccomp=unconfined", "--security-opt", "apparmor=unconfined",
+                       "--security-opt", "systempaths=unconfined"]
     docker = docker_mod.Docker(docker_mod.RunLog(tmp_path / "run.log", Redactor()), binary="true")
     for bad in (["run", "--privileged", "image"], ["run", "--cap-add=SYS_ADMIN", "image"],
                 ["run", "--cap-add", "ALL", "image"]):

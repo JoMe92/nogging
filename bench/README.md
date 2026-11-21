@@ -286,15 +286,20 @@ without human approval.
 `docker.container_options()`). Every container starts with
 
 ```
---security-opt seccomp=unconfined --security-opt apparmor=unconfined
+--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined
 ```
 
 and nothing else beyond `--init`: no `--privileged`, no `--cap-add`, no device,
 no mount, no host namespace. Nogging's execution sandbox
 (`scripts/openspec-sandbox`) calls `unshare --user --mount`; Docker's default
 seccomp profile refuses `unshare` and `mount` to a process without
-`CAP_SYS_ADMIN`, and its default AppArmor profile denies `mount`. Lifting those
-two profiles lets the unprivileged user `bench` create its own user and mount
+`CAP_SYS_ADMIN`, and its default AppArmor profile denies `mount`. The sandbox's
+full call also mounts a fresh `/proc` (`--pid --fork --mount-proc`), which Docker
+refuses while it masks paths under `/proc`; `systempaths=unconfined` lifts that
+mask. Checked against a real container: with Docker's defaults `unshare` fails,
+with the first two options `mount /proc` still fails, and with all three the
+full call succeeds. Lifting those
+profiles lets the unprivileged user `bench` create its own user and mount
 namespace, where it holds capabilities over that namespace only; in the
 container it gains none. Arms A and B get the same options although they need
 none, so the arms differ in their agent and not in their container. The price:

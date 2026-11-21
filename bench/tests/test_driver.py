@@ -349,12 +349,13 @@ def test_every_arm_gets_the_same_container(tmp_path, monkeypatch, nogging_checko
         start[start.index("--name") + 1] = "<name>"  # the only word that differs between runs
     assert starts[0] == starts[1] == starts[2]
     security = [w for i, w in enumerate(starts[0]) if starts[0][i - 1] == "--security-opt"]
-    assert security == ["seccomp=unconfined", "apparmor=unconfined"]
+    assert security == ["seccomp=unconfined", "apparmor=unconfined", "systempaths=unconfined"]
     for call in docker_calls(docker_env):  # no docker call of any arm asks for more
         assert "--privileged" not in call and not any(w.startswith("--cap-add") for w in call)
     options = [x["provenance"]["container_options"] for x in result_lines]
     assert options[0] == options[1] == options[2] == ["--security-opt", "seccomp=unconfined",
-                                                      "--security-opt", "apparmor=unconfined"]
+                                                      "--security-opt", "apparmor=unconfined",
+                                                      "--security-opt", "systempaths=unconfined"]
 
 
 GH_DRIVER = '''\
