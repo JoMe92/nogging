@@ -48,7 +48,8 @@ bench/
   src/nogg_bench/                 the package
   tests/                          pytest suite; tests/fixtures/{valid,invalid}/
   examples/                       fixture repository bundle + three example tasks
-  tasks/<id>/                     task.yaml, issue.md, hidden/   (Product Owner, BEN-006)
+  tasks/<id>/                     task.yaml, issue.md, hidden/   (candidates, verify, select)
+  curation/                       pool, pool log, recipes, verification log, selection.json
   arms/<arm>.yaml, arms/prompts/  arm files and prompt templates (BEN-002)
   results/<batch>.jsonl           one result line per run (BEN-002)
   results/review/<pack>.jsonl     review records (BEN-004)
@@ -70,6 +71,7 @@ with a test and never writes an unvalidated field.
 | result line | `results/<batch>.jsonl` | a `.jsonl` file directly in `results/` |
 | review record | `results/review/<pack>.jsonl` | a `.jsonl` file in a `review/` directory |
 | thresholds block | fenced `yaml` block in `PREREGISTRATION.md` | the name `PREREGISTRATION.md` |
+| draw | `curation/selection.json` | that path |
 
 **Task** (`task.yaml`): `id` (kebab, equal to the directory name), `repo` (clone
 URL, or a bundle path under `bench/` for examples), `base_commit` (full SHA),
@@ -80,10 +82,11 @@ more, `large` a larger feature or refactoring), `environment` (`image`, `setup`
 commands, `test_command` containing `{tests}`, `test_timeout_seconds`),
 `hidden_tests` (`patch` under `hidden/`, `fail_to_pass`, `pass_to_pass`
 identifiers) and `curation` (`status` of `example`, `candidate` or `accepted`;
-`accepted` also needs `hidden_tests_verified_by` and `verified_on`). A test
-identifier cannot be in both lists. `accepted` means the Product Owner ran the
-hidden tests against `base_commit` (fail-to-pass fail, pass-to-pass pass) and
-against the original fix (all pass). Only the Product Owner sets `accepted`.
+`accepted` also needs `hidden_tests_verified_by` and `verified_on`, and may
+carry `pilot: true`). A test identifier cannot be in both lists. A `candidate`
+may have an empty `fail_to_pass` until `verify` fills it in. Nobody sets
+`accepted` by hand: `validate` refuses an `accepted` task that
+`curation/selection.json` does not list as drawn (see *Curation*).
 
 **Arm** (`arms/<arm>.yaml`, the file name is the arm's `id`): `id` (one capital
 letter), `label`, `kind` (`claude-code`, `codex`, `nogging`), `agent`
@@ -425,6 +428,76 @@ it append one record per item to `results/review/<pack>.jsonl` (the `<pack>` is
 the pack directory's name, kept in the key) with `run_id` taken from the key. One
 bad row refuses the whole sheet and names the row and the value. A pack is not
 imported twice. `validate` accepts the file afterwards.
+
+## Curation: `candidates`, `verify`, `select`
+
+The tickets are found, checked and drawn by commands (design Decisions 18 and
+19). Every number comes from the `selection` block of the committed
+`PREREGISTRATION.md`; no command has a default for a criterion, and each
+refuses when the file is missing, uncommitted or changed. `gh` is called
+read-only (`gh api --method GET`, GraphQL queries).
+
+```bash
+bench/nogg-bench candidates repos            # 1. the pool, once
+bench/nogg-bench candidates skip <owner/name> --reason "<why>"
+bench/nogg-bench candidates issues           # 2. candidate tasks
+bench/nogg-bench verify [<task id> ...]      # 3. hidden tests, in the task container
+bench/nogg-bench select                      # 4. the draw
+bench/nogg-bench validate bench/tasks bench/curation
+```
+
+1. **`candidates repos`** searches GitHub per language (star range, pushed
+   within the activity window, not archived, not a fork), ranks the result by
+   the SHA-256 of `"<seed>:<owner/name>"` and writes `curation/pool.json`: the
+   queries, the time, the seed, the preregistration hash and, per language, the
+   first `--depth` repositories (default 10) that meet every criterion
+   (licence, star range, exclusion list, last commit, merged pull requests in
+   the window). Every repository not taken goes to `curation/pool-log.jsonl`
+   with its reason. The pool is taken once: the command refuses when
+   `pool.json` exists. **Commit the pool before going on**; the draw checks
+   that the seed was committed before it.
+2. Each repository needs an **environment recipe**,
+   `curation/recipes/<owner>__<name>.yaml`: the task's `environment` mapping
+   (`image`, `setup`, `test_command` with `{tests}`, `test_timeout_seconds`).
+   The suite must print `PASSED <id>` and `FAILED <id>` lines (`pytest -rA`).
+   The repositories are taken in rank order, as many per language as the
+   preregistration says. One that cannot be set up is passed over only on
+   record: `candidates skip` appends the reason to the pool log, and the next
+   in rank order takes its place. **`candidates issues`** stops at the first
+   repository in draw order that has neither a recipe nor a skip. It writes a
+   `candidate` task for every issue closed as completed with exactly one linked
+   merged pull request whose author is not a bot, which changes test and
+   non-test files, and whose URL and diff do not appear in the issue text. The
+   size class follows the non-test changes (files and changed lines against the
+   preregistered boundaries), `hidden/tests.patch` holds the pull request's
+   test-file changes, `hidden/fix.patch` its other changes (for `verify` only,
+   never shown to an agent), and `base_commit` is the pull request's base.
+3. **`verify`** starts the task container, applies the hidden test patch at
+   `base_commit` and runs the whole suite twice, applies `hidden/fix.patch`
+   and runs it twice again, each run within `suite_time_limit_seconds`.
+   Fail-to-pass is what fails at the base and passes on the fix, pass-to-pass
+   what passes on both. It writes the identifiers,
+   `hidden_tests_verified_by: nogg-bench verify <bench commit>` and
+   `verified_on`; the task stays a `candidate`. A candidate is dropped, with
+   the reason in `curation/verification.jsonl`, when no test fails at the base
+   and passes on the fix, when two runs of one side disagree (the tests are
+   named), when the setup fails or when the suite runs over the limit. A
+   candidate is checked once; the container output is in
+   `curation/verify-logs/<task id>.log`.
+4. **`select`** orders the verified candidates of each size class: those whose
+   issue closed after the latest training cutoff first, each group by the
+   SHA-256 of `"<seed>:<task id>"`. The first `per_size_class` become
+   `accepted`, the first `pilot_per_size_class` of those `curation.pilot:
+   true`. `curation/selection.json` records the seed, the preregistration blob
+   hash, the SHA-256 of `pool.json`, the repositories in rank order and the
+   ranked lists with each ticket's rank key. The draw refuses, and changes no
+   file, when a size class has too few verified candidates (it names the class
+   and its count) and when the commit of the selection block is not an
+   ancestor of the commit that first added `pool.json` (it names both). Run
+   again, it selects the same tickets and changes nothing.
+
+`verify` on one example task in a real container is the large test of
+`tests/test_verify.py` (`NOGG_BENCH_DOCKER=1`, not in CI).
 
 ## Example tasks and the fixture repository
 
