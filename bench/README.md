@@ -268,8 +268,9 @@ a new change on a plan branch (the v3.6.0 planning prompt has no signal step),
 merges the plan branch into `develop` without an approval step and runs `nogg
 materialize` (a refusal there is tolerated); starts a
 `--full-access` Lead on the first ready Bead with `kickoff --change`, waits for
-its done signal or the timebox; then merges every implementation branch into
-`develop` (their number is `pr_count`), stops its sessions and writes
+its done signal or the timebox; then merges origin's `develop` and every
+implementation branch into `develop`, counts `pr_count` from the forge
+stand-in's records (below), stops its sessions and writes
 `state.json` (also right after the install, so a killed driver still leaves
 its diff base). `state.json` is agent-writable: `run` checks every field, and
 a missing or malformed one makes the run `agent_error` with `pr_count` 0. The
@@ -279,20 +280,75 @@ checked), so a later ref cannot hand the agent the hidden tests. Every launch pa
 `bd` and `dolt` binaries, which `run` copies in (same CPU architecture). A
 planning session that blocks, or a Lead that signals `blocked`, ends the run as
 `agent_error` with the signal's reason; the report states that planning ran
-without human approval. Known open points for the pilot (BEN-007), recorded as
-a discovery on BEN-002: the v3.6.0 Lead prompt ends with a pull request that
-the container cannot open, and Nogging's execution sandbox
-(`scripts/openspec-sandbox`) needs mount and user-namespace privileges that a
-plain `docker run` does not grant.
+without human approval.
+
+**Container options, the same for every arm** (Decision 20,
+`docker.container_options()`). Every container starts with
+
+```
+--security-opt seccomp=unconfined --security-opt apparmor=unconfined
+```
+
+and nothing else beyond `--init`: no `--privileged`, no `--cap-add`, no device,
+no mount, no host namespace. Nogging's execution sandbox
+(`scripts/openspec-sandbox`) calls `unshare --user --mount`; Docker's default
+seccomp profile refuses `unshare` and `mount` to a process without
+`CAP_SYS_ADMIN`, and its default AppArmor profile denies `mount`. Lifting those
+two profiles lets the unprivileged user `bench` create its own user and mount
+namespace, where it holds capabilities over that namespace only; in the
+container it gains none. Arms A and B get the same options although they need
+none, so the arms differ in their agent and not in their container. The price:
+the agent's processes are not syscall-filtered, so the isolation of a run is the
+container's namespaces, its default capability set and the absence of any mount,
+not seccomp. `Docker.call` refuses any call holding `--privileged` or
+`--cap-add`. The options are recorded in each result line
+(`provenance.container_options`; `validate` refuses a line that lists
+`--privileged`) and in the report's `metadata.json`
+(`container_options_in_runs`: one entry when all runs had the same). A change
+to them is one constant, `docker.SECURITY_OPTIONS`, and needs a smoke run that
+proves it necessary.
+
+**The local forge stand-in** (`nogg_bench/forge.py`, standard library only).
+The v3.6.0 Lead ends with a pull request, and the container has no forge and
+no token. For a `nogging` arm `run` copies this file in as `/usr/local/bin/gh`.
+It answers four calls, against the driver's bare `origin` (`/work/origin.git`):
+
+| Call | Answer |
+| --- | --- |
+| `gh pr create` | checks that base and head are branches of the origin, writes `/work/forge/pulls/<n>.json` (title, body, base, head, head commit, state), prints the pull request's URL (`https://forge.invalid/...`, never resolvable) |
+| `gh pr view` | the recorded pull request, as text or `--json <fields>` |
+| `gh pr checks` | one check, `bench-forge`, passed |
+| `gh pr merge` | merges head into base inside the bare origin (git plumbing, no push), marks the record `MERGED`; the head branch is kept |
+
+Every other call (`pr list`, `auth`, `api`, `repo`, an unknown flag, `--web`,
+`--repo`) exits 1 with `refused` on stderr. It refuses an `origin` that is not
+an absolute path to a local bare repository before any other step, runs only
+local git commands on it, imports no network module and reads no token. Each
+call is logged to `/work/forge/calls.jsonl` by its subcommand words only (never
+an argument value), so a smoke run shows which calls a Lead made and which were
+refused. After the agent ended, `/work/forge` is copied to
+`results/runs/<run_id>/forge/`, redacted and without symlinks like the
+transcripts. `pr_count` is the number of recorded pull requests whose head or
+merge commit is in the integrated `develop` and not in the diff base; a pushed
+branch without a pull request is still merged and measured but not counted.
+The records are agent-writable, so the driver checks each field it uses.
+
+Still to prove with real smoke runs (`--smoke`, not counted in any report): that
+arm C finishes with a done signal in a real container, and that these two
+options are enough for the whole sandbox call of v3.6.0 (`--pid --fork
+--mount-proc`).
 
 **Testing `run`.** `tests/test_run.py` and `tests/test_driver.py` run whole
 runs offline against `tests/stubs/docker`, a stub on `PATH` that records every
 argv and emulates the container in a directory, with stub agent CLIs that write
-transcript fixtures and diffs. One large test runs arm A's stub agent on
-`example-small-slugify` in a real container:
+transcript fixtures and diffs. `tests/test_forge.py` covers the stand-in's
+answers and refusals. One large test runs arm A's stub agent on
+`example-small-slugify` in a real container; two in `test_driver.py` check the
+container options against the sandbox's `unshare` calls and run arm C's smoke
+run (that one also needs the arm's credential):
 
 ```bash
-NOGG_BENCH_DOCKER=1 uv run --project bench --extra dev pytest bench/tests/test_run.py -k large
+NOGG_BENCH_DOCKER=1 uv run --project bench --extra dev pytest bench/tests/test_run.py bench/tests/test_driver.py -k large
 ```
 
 It needs a Docker daemon and network access for the image and `pip install
@@ -371,7 +427,8 @@ arm on one ticket, and how many tickets exceed `max_cost_ratio`) is reported per
 with its hash, settings (model, effort, agent version) and the prompt text and
 hash, the `AGENTS.md` of each Nogging ref (read with `git show <ref>:AGENTS.md` in
 the repository, or marked unavailable), the preregistration blob hash, model IDs,
-image digests, usage-collector versions and the price table used. `report.md` also
+image digests, the container options of the runs, usage-collector versions and the
+price table used. `report.md` also
 lists measured runs that started before the preregistration's first commit when
 git history shows one, and always states the deviation from real use: Nogging arms
 plan without human approval.
