@@ -309,7 +309,10 @@ json.dump(c, open(p, "w"), indent=2)
 # Set usage to 87% used (cap 92%, estimate 5% -> exactly one 5% slot remains).
 write_codex_rollout 87 40
 python3 - "$consumer" "$bin_dir" "$codex_dir" "$cache_dir" <<'PY'
-import multiprocessing as mp, os, pathlib, subprocess, sys
+import multiprocessing, os, pathlib, subprocess, sys
+# Python 3.14 starts processes through a fork server by default, which cannot re-import a
+# main module read from standard input; these workers need the plain fork.
+mp = multiprocessing.get_context('fork')
 
 consumer, bin_dir, codex_dir, cache_dir = [pathlib.Path(a) for a in sys.argv[1:5]]
 env = {k: v for k, v in os.environ.items() if not k.startswith("NOGG_") and k != "NOGGING_ROOT"}

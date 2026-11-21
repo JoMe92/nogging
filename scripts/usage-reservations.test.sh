@@ -5,7 +5,7 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 python3 - "$here" <<'PY'
 import datetime as dt
 import json
-import multiprocessing as mp
+import multiprocessing
 import os
 from pathlib import Path
 import stat
@@ -15,6 +15,10 @@ from unittest.mock import patch
 sys.dont_write_bytecode = True
 sys.path.insert(0, sys.argv[1])
 import nogg_usage as u
+
+# Python 3.14 starts processes through a fork server by default, which cannot re-import a
+# main module read from standard input; these workers need the plain fork.
+mp = multiprocessing.get_context('fork')
 
 cfg = u.gate_config(None)
 def report(account='account-a', group='shared'):
