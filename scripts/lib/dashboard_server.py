@@ -365,6 +365,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if self.command not in ("GET", "HEAD"):
             self.drain = True
             return api_error(server, 405, [("Allow", "GET, HEAD")])
+        if getattr(self, "headers", None) is None:
+            return api_error(server, 400)    # HTTP/0.9: newer runtimes parse no headers, so no Host
         status = sec.host_status(self.headers.get_all("Host") or [], server.hosts)
         if status:
             return api_error(server, status)
