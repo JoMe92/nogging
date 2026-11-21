@@ -289,8 +289,10 @@ def check_task(data: Any, *, dir_name: str | None = None) -> list[Problem]:
 
     cur = c.mapping(data, "", "curation")
     if cur is not None:
-        c.unknown_keys(cur, "curation", ("status", "hidden_tests_verified_by", "verified_on"))
+        c.unknown_keys(cur, "curation", ("status", "hidden_tests_verified_by", "verified_on", "pilot"))
         status = c.choice(cur, "curation", "status", CURATION_STATUSES)
+        if c.boolean(cur, "curation", "pilot", required=False) and status != "accepted":
+            c.add("curation.pilot", "only an accepted task can be a pilot ticket")
         if status == "accepted":
             c.string(cur, "curation", "hidden_tests_verified_by")
             c.timestamp(cur, "curation", "verified_on")

@@ -53,6 +53,15 @@ def test_only_a_candidate_may_wait_for_its_test_identifiers(task):
     assert schema.check_task(task) == []
 
 
+def test_only_an_accepted_task_can_be_a_pilot_ticket(task):
+    task["curation"]["pilot"] = True
+    assert schema.check_task(task) == []
+    task["curation"]["pilot"] = "yes"
+    assert fields(schema.check_task(task)) == ["curation.pilot"]
+    task["curation"] = {"status": "candidate", "pilot": True}
+    assert fields(schema.check_task(task)) == ["curation.pilot"]
+
+
 def test_a_test_cannot_be_both_kinds(task):
     task["hidden_tests"]["pass_to_pass"].append(task["hidden_tests"]["fail_to_pass"][0])
     problems = schema.check_task(task)
@@ -194,7 +203,7 @@ def _bench_copy(tmp_path: Path) -> Path:
     """A copy of bench/ holding the valid fixtures where each kind belongs."""
     bench = tmp_path / "bench"
     shutil.copytree(BENCH, bench, ignore=shutil.ignore_patterns(".venv", "__pycache__", "*.egg-info", "tests"))
-    for rel in ("arms", "results", "PREREGISTRATION.md"):
+    for rel in ("arms", "results", "curation", "PREREGISTRATION.md"):
         src = FIXTURES / "valid" / rel
         dst = bench / rel
         if src.is_dir():
@@ -211,6 +220,7 @@ RECORD_FILES = {
     "result": "results/fixture-batch.jsonl",
     "review": "results/review/fixture-pack.jsonl",
     "thresholds": "PREREGISTRATION.md",
+    "draw": "curation/selection.json",
 }
 
 

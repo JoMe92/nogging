@@ -1,0 +1,26 @@
+{
+  "latest_training_cutoff": "2026-03-31",
+  "method": "seeded-draw",
+  "pool_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+  "preregistration_hash": "0000000000000000000000000000000000000000",
+  "repositories": {
+    "python": [
+      "octo/alpha"
+    ]
+  },
+  "schema": 1,
+  "seed": 7,
+  "tickets": {
+    "large": [],
+    "medium": [],
+    "small": [
+      {
+        "drawn": true,
+        "pilot": false,
+        "post_cutoff": false,
+        "rank_key": "3e25cd35cb68ebf91fa1ed19bed9aa758a3d57c8feaa96385f49121c8b63d5f2",
+        "task": "fixture-task"
+      }
+    ]
+  }
+}

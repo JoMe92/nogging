@@ -9,6 +9,10 @@ Which kind a file is follows from where it lies:
 | ``results/<batch>.jsonl``                 | result line |
 | ``results/review/<pack>.jsonl``           | review      |
 | ``PREREGISTRATION.md``                    | thresholds  |
+| ``curation/selection.json``               | draw        |
+
+An ``accepted`` task must be listed as drawn in the ``curation/selection.json``
+next to its ``tasks/`` directory: only ``nogg-bench select`` accepts a ticket.
 
 With no path, everything under the bench directory is checked except
 ``tests/`` (its fixtures include deliberately invalid records) and
@@ -17,9 +21,11 @@ With no path, everything under the bench directory is checked except
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Iterable
 
+from nogg_bench import selection
 from nogg_bench.records import RecordError, load_yaml, read_jsonl, thresholds_block
 from nogg_bench.schema import (
     Problem,
@@ -55,6 +61,8 @@ def kind_of(path: Path, bench: Path) -> str | None:
         return "task"
     if path.name == "PREREGISTRATION.md":
         return "thresholds"
+    if rel.as_posix().endswith(selection.DRAW_FILE):
+        return "draw"
     if path.suffix in (".yaml", ".yml") and len(parts) >= 2 and parts[-2] == "arms":
         return "arm"
     if path.suffix == ".jsonl":
@@ -118,6 +126,11 @@ def validate_file(path: Path, bench: Path) -> list[Problem]:
             if errors:
                 return [Problem(name, "thresholds", e) for e in errors]
             return [p.at(name) for p in check_thresholds(data)]
+        if kind == "draw":
+            try:
+                return [p.at(name) for p in selection.check_draw(json.loads(path.read_text(encoding="utf-8")))]
+            except ValueError as exc:
+                return [Problem(name, "(file)", f"is not valid JSON: {exc}")]
     except RecordError as exc:
         return [exc.problem]
     except OSError as exc:
@@ -137,7 +150,24 @@ def _task_problems(path: Path, name: str) -> list[Problem]:
         patch = hidden.get("patch") if isinstance(hidden, dict) else None
         if isinstance(patch, str) and not problems_for(problems, "hidden_tests.patch") and not (path.parent / patch).is_file():
             problems.append(Problem(name, "hidden_tests.patch", f"file {patch} does not exist"))
+        problems += [p.at(name) for p in _draw_problems(path, data)]
     return problems
+
+
+def _draw_problems(path: Path, data: dict) -> list[Problem]:
+    """Only the draw accepts a ticket: an ``accepted`` task is one ``selection.json`` lists as drawn."""
+    curation = data.get("curation")
+    if not isinstance(curation, dict) or curation.get("status") != "accepted":
+        return []
+    drawn = selection.drawn_tasks(path.parent.parent.parent / selection.DRAW_FILE)
+    ident = data.get("id")
+    if ident not in drawn:
+        return [Problem("", "curation.status", f"task {ident} is accepted but {selection.DRAW_FILE} does not list "
+                        "it as drawn; only `nogg-bench select` accepts a ticket")]
+    if drawn[ident] != (curation.get("pilot") is True):
+        return [Problem("", "curation.pilot", f"task {ident} does not agree with {selection.DRAW_FILE}, which "
+                        f"{'draws' if drawn[ident] else 'does not draw'} it for the pilot")]
+    return []
 
 
 def _arm_problems(path: Path, name: str) -> list[Problem]:
