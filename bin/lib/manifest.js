@@ -20,6 +20,7 @@ module.exports = {
     'scripts/nogg_usage_zai.py',
     'scripts/lib/session_backend.py',
     'scripts/lib/agent_routing.py',
+    'scripts/lib/ceremony.py',
     'scripts/lib/dashboard_cache.py',
     'scripts/lib/dashboard_graph.py',
     'scripts/lib/dashboard_metrics.py',

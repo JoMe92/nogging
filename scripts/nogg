@@ -2316,6 +2316,64 @@ def task_sizing_cmd():
     for problem in problems:
         print(f"WARN  {problem}", file=sys.stderr)
 
+# The ceremony switch (`ceremony` in .nogging/config.json, change
+# adaptive-ceremony). The block, the lanes and the triage rules live in the pure
+# scripts/lib/ceremony.py; `ceremony_settings` is the one accessor that reads the
+# block. The default `always-full` leaves every other behaviour as it is.
+def ceremony_module():
+    """Import the pure ceremony module, with the shipped scripts/lib importable."""
+    lib = str(Path(__file__).resolve().parent / "lib")
+    if lib not in sys.path:
+        sys.path.insert(0, lib)
+    import ceremony
+    return ceremony
+
+def ceremony_settings(cfg=None):
+    """Return (settings, configured keys, problems); a malformed key keeps its default.
+
+    `settings` holds `mode`, `fast_lane.max_files`, `fast_lane.max_lines` and
+    `lite.min_score`."""
+    return ceremony_module().parse(CFG if cfg is None else cfg)
+
+def ceremony_mode():
+    """The ceremony mode in effect: `always-full`, `adaptive` or `always-fast`."""
+    return ceremony_settings()[0]["mode"]
+
+def ceremony_cmd():
+    settings, configured, problems = ceremony_settings()
+    for key, value in settings.items():
+        print(f"{key}: {value} ({'configured' if key in configured else 'default'})")
+    for problem in problems:
+        print(f"WARN  {problem}", file=sys.stderr)
+
+def triage_cmd(args):
+    """`nogg triage`: the rules' lane from the stated facts, mapped through the mode."""
+    module = ceremony_module()
+    settings, configured, _problems = ceremony_settings()
+    description = " ".join(args.description.split())
+    if not description:
+        raise RuntimeError("triage needs a description")
+    bead = args.bead
+    if bead is not None and (not bead or bead.startswith("-") or any(c.isspace() for c in bead)):
+        raise RuntimeError(f"--bead {bead!r} is not a Bead ID")
+    result = module.triage(settings["mode"], description, kind=args.kind, files=args.files,
+                           public_interface=args.public_interface, security=args.security,
+                           unclear=args.unclear)
+    result["mode_source"] = "configured" if "mode" in configured else "default"
+    if bead:
+        run(CFG["beads_command"], "update", bead, "--append-notes", module.triage_line(result))
+        result["bead"] = bead
+    if args.json:
+        print(json.dumps(result, indent=2))
+        return
+    print(f"mode: {result['mode']} ({result['mode_source']})")
+    print(f"rules' lane: {result['rules_lane']}")
+    print(f"effective lane: {result['effective_lane']}")
+    for reason in result["reasons"]:
+        print(f"fired: {reason}")
+    if bead:
+        print(f"recorded on {bead}")
+
 def open_task_blocks(text):
     """Every unticked task of a tasks.md as (task ID, text): wrapped continuation
     lines are joined; a nested list item or a blank line ends the task."""
@@ -11154,11 +11212,8 @@ CEREMONY_LEAN_SIGNATURE = "<!-- nogging:instructions lean -->"
 def ceremony_install_mode(cfg=None):
     """The mode the installer acts on. An absent block or an unknown mode is `always-full`.
 
-    doctor's one read of the mode for the block check, to be pointed at the shared
-    `ceremony` reader once both exist."""
-    block = (CFG if cfg is None else cfg).get("ceremony")
-    mode = block.get("mode") if isinstance(block, dict) else None
-    return mode if isinstance(mode, str) and mode in ("adaptive", "always-fast") else "always-full"
+    Read through `ceremony_settings`, the one accessor of the block."""
+    return ceremony_settings(cfg)[0]["mode"]
 
 def ceremony_install_diagnostics(root=None, cfg=None):
     """WARN lines when the installed Nogging block in AGENTS.md does not match the mode.
@@ -11429,6 +11484,7 @@ def doctor(audit=False, with_recover=False, with_sandbox=False, refuse_task_form
     artifact_warnings, artifact_notes = installer_artifact_diagnostics()
     warnings.extend(artifact_warnings)
     warnings.extend(task_sizing()[2])
+    warnings.extend(ceremony_settings()[2])
     warnings.extend(testing_config_warnings())
     ci_line = test_ci_diagnostics()
     if ci_line and ci_line[0] == "WARN":
@@ -12492,6 +12548,20 @@ def main():
     td.add_argument("bead_id")
     sub.add_parser("task-sizing",
         help="print the configured Bead and commit line ranges (task_sizing)")
+    sub.add_parser("ceremony",
+        help="print the ceremony mode in effect and its limits (ceremony)")
+    tr = sub.add_parser("triage",
+        help="pick a lane (full, lite, fast) for a description by fixed rules",
+        description="Pick the rules' lane from the description and the stated facts, map it "
+                    "through ceremony.mode to the effective lane, and print every rule that fired.")
+    tr.add_argument("description")
+    tr.add_argument("--kind", choices=("bug", "refactor", "test", "config", "feature", "pipeline"))
+    tr.add_argument("--files", type=int, metavar="N", help="estimated number of production files")
+    tr.add_argument("--public-interface", action="store_true", help="a public interface changes")
+    tr.add_argument("--security", action="store_true", help="the task touches security")
+    tr.add_argument("--unclear", action="store_true", help="the task is highly ambiguous")
+    tr.add_argument("--bead", metavar="BEAD_ID", help="append the triage line to this Bead's note")
+    tr.add_argument("--json", action="store_true")
     rq = sub.add_parser("run-quiet", usage=RUN_QUIET_USAGE,
         help="run one long command blocking; print one summary line (plus the log tail on failure)",
         description="Run <command> as one blocking call (no shell, stdin from /dev/null), its stdout "
@@ -12798,6 +12868,10 @@ def main():
     elif args.command == "materialize": materialize(args.change)
     elif args.command == "task-done": task_done(args.bead_id)
     elif args.command == "task-sizing": task_sizing_cmd()
+    elif args.command == "ceremony": ceremony_cmd()
+    elif args.command == "triage":
+        try: triage_cmd(args)
+        except ValueError as exc: tr.error(str(exc))
     elif args.command == "run-quiet":
         if args.stray or run_quiet_command is None:
             rq.error("separate the command with --, e.g. nogg run-quiet -- scripts/test")
