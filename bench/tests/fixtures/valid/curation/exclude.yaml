@@ -1,0 +1,8 @@
+schema: 1
+lists:
+  - name: fixture-benchmark
+    source: https://example.org/datasets/fixture-benchmark
+    retrieved: 2026-11-20
+    repositories:
+      - example/widgets
+      - example/gadgets

@@ -1,0 +1,6 @@
+schema: 1
+lists:
+  - name: fixture-benchmark
+    retrieved: yesterday
+    repositories:
+      - not-a-repository

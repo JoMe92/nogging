@@ -196,6 +196,85 @@ def test_lead_by_needs_a_margin_and_not_worse_has_none(thresholds):
     assert fields(schema.check_thresholds(thresholds)) == ["thresholds[0].margin", "thresholds[1].margin"]
 
 
+def test_tokens_per_run_goes_with_fewer_and_nothing_else(thresholds):
+    first, second = thresholds["thresholds"][0], thresholds["thresholds"][2]
+    first.update(metric="tokens_per_run", requirement="fewer")
+    assert schema.check_thresholds(thresholds) == []
+    first["requirement"] = "not_worse"
+    second["requirement"] = "fewer"
+    assert fields(schema.check_thresholds(thresholds)) == ["thresholds[0].requirement", "thresholds[2].requirement"]
+
+
+# --------------------------------------------------------- selection block
+
+
+@pytest.fixture
+def selection() -> dict:
+    from nogg_bench.records import selection_block
+
+    data, errors = selection_block((FIXTURES / "valid/PREREGISTRATION.md").read_text(encoding="utf-8"))
+    assert not errors
+    return data
+
+
+def test_a_valid_selection_block_passes(selection):
+    assert schema.check_selection(selection) == []
+
+
+def test_the_selection_block_is_checked(selection):
+    sel = selection["selection"]
+    del sel["seed"]
+    sel["method"] = "by-hand"
+    sel["counts"]["per_size_class"] = 0
+    sel["counts"]["pilot_per_size_class"] = "four"
+    del sel["training_cutoffs"][1]["source"]
+    sel["criteria"]["repositories"]["max_stars"] = 100
+    assert fields(schema.check_selection(selection)) == [
+        "selection.method", "selection.seed", "selection.counts.per_size_class",
+        "selection.counts.pilot_per_size_class", "selection.training_cutoffs[1].source",
+        "selection.criteria.repositories.max_stars",
+    ]
+
+
+def test_a_cutoff_is_a_date_and_the_pilot_fits_the_class(selection):
+    sel = selection["selection"]
+    sel["training_cutoffs"][0]["cutoff"] = "June 2026"
+    sel["counts"]["pilot_per_size_class"] = 11
+    assert fields(schema.check_selection(selection)) == [
+        "selection.counts.pilot_per_size_class", "selection.training_cutoffs[0].cutoff",
+    ]
+
+
+def test_an_exclusion_list_needs_its_source_and_repository_names():
+    data = yaml.safe_load((FIXTURES / "valid/curation/exclude.yaml").read_text())
+    assert schema.check_exclusions(data) == []
+    bad = yaml.safe_load((FIXTURES / "invalid/curation/exclude.yaml").read_text())
+    assert fields(schema.check_exclusions(bad)) == ["lists[0].source", "lists[0].retrieved", "lists[0].repositories[0]"]
+
+
+def test_a_preregistration_needs_its_selection_block_list_and_cutoffs(tmp_path):
+    bench = _bench_copy(tmp_path)
+    prereg = bench / "PREREGISTRATION.md"
+    text = prereg.read_text()
+    (bench / "curation/exclude.yaml").unlink()
+    prereg.write_text(text.replace("model: gpt-6.1-sol", "model: some-other-model"))
+    assert sorted(p.field for p in validate([prereg], bench)) == [
+        "selection.criteria.repositories.exclusion_list", "selection.training_cutoffs",  # arms/B.yaml runs gpt-6.1-sol
+    ]
+    prereg.write_text(text.split("The selection block")[0])
+    assert [(p.field, p.message) for p in validate([prereg], bench)] == [
+        ("selection", "no fenced yaml block with a selection key"),
+    ]
+
+
+def test_the_committed_preregistration_and_exclusion_list_validate():
+    # Medium: the real files, once BEN-006 has committed them.
+    paths = [BENCH / "PREREGISTRATION.md", BENCH / "curation" / "exclude.yaml"]
+    if not all(p.is_file() for p in paths):
+        pytest.skip("bench/PREREGISTRATION.md is not committed yet")
+    assert validate(paths, BENCH) == []
+
+
 # --------------------------------------------------- the command over files
 
 
@@ -220,6 +299,7 @@ RECORD_FILES = {
     "result": "results/fixture-batch.jsonl",
     "review": "results/review/fixture-pack.jsonl",
     "thresholds": "PREREGISTRATION.md",
+    "exclusions": "curation/exclude.yaml",
     "draw": "curation/selection.json",
 }
 

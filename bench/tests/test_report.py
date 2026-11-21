@@ -238,6 +238,58 @@ def test_a_cost_threshold_uses_the_ratio_and_the_minimum_effect(thresholds):
     assert verdict(1_100_000).verdict == "not met"  # exactly the minimum ratio counts as an effect
 
 
+def _tokens(total):
+    return {MODEL: {"input": total, "output": 0, "cache_read": 0, "cache_write": 0}}
+
+
+@pytest.mark.parametrize(
+    ("c_fewer_on", "verdict"),
+    [(10, "met"), (9, "met"), (5, "tie"), (1, "not met")],  # of 10 tickets; 9 against 1 has p = 0.0215
+)
+def test_tokens_per_run_is_decided_by_the_sign_test(c_fewer_on, verdict, thresholds):
+    recs = []
+    for i in range(10):
+        recs.append(make_record("A", f"t{i}", usage=_tokens(1000)))
+        recs.append(make_record("C", f"t{i}", usage=_tokens(600 if i < c_fewer_on else 1400)))
+    th = {"id": "c-vs-a-tokens", "comparison": {"treatment": "C", "control": "A"}, "metric": "tokens_per_run",
+          "size_class": "small", "requirement": "fewer"}
+    got = report.evaluate_threshold(th, report.compare([as_run(r) for r in recs], "C", "A", "small"), thresholds)
+    assert got.verdict == verdict
+    assert f"on {c_fewer_on} tickets for C, on {10 - c_fewer_on} for A" in got.observed
+
+
+def test_tokens_per_run_counts_every_token_kind_and_takes_the_median_over_seeds(thresholds):
+    kinds = {MODEL: {"input": 1, "output": 2, "cache_read": 3, "cache_write": 4}, "other": {"input": 10, "output": 0, "cache_read": 0, "cache_write": 0}}
+    assert as_run(make_record("A", "t1", usage=kinds)).tokens == 20
+    recs = [make_record("A", "t1", usage=_tokens(500))]
+    recs += [make_record("C", "t1", seed=s, usage=_tokens(n)) for s, n in ((1, 100), (2, 500), (3, 900))]
+    cmp = report.compare([as_run(r) for r in recs], "C", "A", "all")
+    assert (cmp.tokens_t_fewer, cmp.tokens_c_fewer, cmp.tokens_ties) == (0, 0, 1)  # median 500 against 500
+    th = {"id": "x", "comparison": {"treatment": "C", "control": "A"}, "metric": "tokens_per_run", "size_class": "all", "requirement": "fewer"}
+    assert report.evaluate_threshold(th, cmp, thresholds).verdict == "tie"
+    assert report.evaluate_threshold(th, report.compare([], "C", "A", "all"), thresholds).verdict == "unknown"
+
+
+# ------------------------------------------------------- mechanical selection
+
+
+def test_the_report_names_the_deviation(tmp_path):
+    bench = make_bench(tmp_path, [make_record("A", "t1"), make_record("C", "t1")])
+    assert "method: seeded-draw" in (bench / "PREREGISTRATION.md").read_text()
+    assert run_report(bench, tmp_path / "out", "b") == 0
+    text = (tmp_path / "out" / "report.md").read_text()
+    assert "drawn mechanically, not curated by hand" in text
+    assert "seed 20261117" in text and "roadmap's rule that the Product Owner curates the tickets by hand" in text
+
+
+def test_a_preregistration_without_a_selection_block_reports_no_draw(tmp_path):
+    bench = make_bench(tmp_path, [make_record("A", "t1"), make_record("C", "t1")])
+    prereg = bench / "PREREGISTRATION.md"
+    prereg.write_text(prereg.read_text().split("The selection block")[0])
+    assert run_report(bench, tmp_path / "out", "b") == 0
+    assert "drawn mechanically" not in (tmp_path / "out" / "report.md").read_text()
+
+
 # ------------------------------------------------------------- failed runs
 
 
@@ -311,9 +363,18 @@ def test_arms_of_different_vendors_may_differ_in_model(tmp_path):
 
 
 def test_a_comparison_needs_its_arm_files(tmp_path, capsys):
-    bench = make_bench(tmp_path, [make_record("A", "t1"), make_record("C", "t1")], arms=("A", "C"))
+    recs = [make_record("A", "t1"), make_record("B", "t1"), make_record("C", "t1")]
+    bench = make_bench(tmp_path, recs, arms=("A", "C"))
     assert run_report(bench, tmp_path / "out", "b") == 1
     assert "arm B has no arm file" in capsys.readouterr().err
+
+
+def test_an_arm_preregistered_for_later_is_named_not_refused(tmp_path):
+    # No arm file and no run for B yet (as for arm D before its phase): its thresholds are unknown.
+    bench = make_bench(tmp_path, [make_record("A", "t1"), make_record("C", "t1")], arms=("A", "C"))
+    assert run_report(bench, tmp_path / "out", "b") == 0
+    text = (tmp_path / "out" / "report.md").read_text()
+    assert "## Arms not measured yet" in text and "without a run in these batches: B." in text
 
 
 def test_an_invalid_result_line_is_refused_with_its_place(tmp_path, capsys):
