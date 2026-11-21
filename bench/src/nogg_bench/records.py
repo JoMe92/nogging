@@ -58,6 +58,16 @@ def thresholds_block(markdown: str) -> tuple[Any, list[str]]:
     Returns ``(data, errors)``. The block is the one fenced ``yaml`` block
     whose top level has a ``thresholds`` key; there must be exactly one.
     """
+    return _keyed_block(markdown, "thresholds")
+
+
+def selection_block(markdown: str) -> tuple[Any, list[str]]:
+    """The same for the selection block: the one fenced ``yaml`` block whose
+    top level has a ``selection`` key. ``data`` is ``{"selection": {...}}``."""
+    return _keyed_block(markdown, "selection")
+
+
+def _keyed_block(markdown: str, key: str) -> tuple[Any, list[str]]:
     found: list[Any] = []
     errors: list[str] = []
     for match in _FENCE.finditer(markdown):
@@ -66,13 +76,33 @@ def thresholds_block(markdown: str) -> tuple[Any, list[str]]:
         except yaml.YAMLError as exc:
             errors.append(f"a fenced yaml block is not valid YAML: {_first_line(exc)}")
             continue
-        if isinstance(data, dict) and "thresholds" in data:
+        if isinstance(data, dict) and key in data:
             found.append(data)
     if not found:
-        errors.append("no fenced yaml block with a thresholds key")
+        errors.append(f"no fenced yaml block with a {key} key")
     elif len(found) > 1:
-        errors.append(f"{len(found)} fenced yaml blocks have a thresholds key; exactly one is allowed")
+        errors.append(f"{len(found)} fenced yaml blocks have a {key} key; exactly one is allowed")
     return (found[0] if len(found) == 1 else None), errors
+
+
+def load_selection(path: Path) -> dict | None:
+    """The checked ``selection`` mapping of a preregistration file, None when the
+    file has no selection block; an invalid block raises RecordError."""
+    from nogg_bench.schema import check_selection
+
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise RecordError(Problem(str(path), "(file)", f"cannot read: {exc.strerror}")) from exc
+    data, errors = selection_block(text)
+    if data is None and errors == ["no fenced yaml block with a selection key"]:
+        return None
+    if errors:
+        raise RecordError(Problem(str(path), "selection", errors[0]))
+    problems = check_selection(data)
+    if problems:
+        raise RecordError(problems[0].at(str(path)))
+    return data["selection"]
 
 
 def load_thresholds(path: Path) -> dict:
