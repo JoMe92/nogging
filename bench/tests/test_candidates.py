@@ -6,6 +6,7 @@ import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from conftest import FIXTURES
 from curation_fixtures import PREREG_TEXT, commit, gh_calls, make_bench, read_task, stub_gh
 
 from nogg_bench import candidates, selection
@@ -14,8 +15,8 @@ from nogg_bench.selection import SelectionError
 from nogg_bench.validate import validate
 
 NOW = datetime(2026, 11, 20, 12, 0, tzinfo=timezone.utc)
-SEL = selection.read_selection(PREREG_TEXT)
-ONE_PYTHON = PREREG_TEXT.replace("{python: 2, typescript: 1}", "{python: 1}")
+SEL = selection.read_selection(FIXTURES / "curation" / "PREREGISTRATION.md")
+ONE_PYTHON = PREREG_TEXT.replace("{Python: 2, TypeScript: 1}", "{Python: 1}")
 
 
 def repo(name: str = "octo/alpha", **over) -> dict:
@@ -28,19 +29,22 @@ def repo(name: str = "octo/alpha", **over) -> dict:
 
 def test_the_selection_block_is_read_with_every_number():
     assert (SEL.seed, SEL.per_size_class, SEL.pilot_per_size_class) == (7, 10, 4)
-    assert SEL.repositories == {"python": 2, "typescript": 1}
+    assert SEL.repositories == {"python": 2, "typescript": 1}  # keyed as a task's `language`
     assert SEL.latest_cutoff.isoformat() == "2026-03-31"  # the latest of the arm models' cutoffs
-    assert SEL.suite_time_limit_seconds == 600
+    assert (SEL.suite_time_limit_seconds, SEL.runs_per_side, SEL.linked_merged_pull_requests) == (600, 2, 1)
 
 
 @pytest.mark.parametrize("line, field", [
     ("  seed: 7\n", "selection.seed"),
-    ("    max_stars: 20000\n", "selection.criteria.max_stars"),
+    ("      max_stars: 20000\n", "selection.criteria.repositories.max_stars"),
+    ("      large_min_lines: 300\n", "selection.criteria.issues.large_min_lines"),
     ("    per_size_class: 10\n", "selection.counts.per_size_class"),
 ])
-def test_a_missing_number_is_named_not_defaulted(line, field):
+def test_a_missing_number_is_named_not_defaulted(tmp_path, line, field):
+    assert line in PREREG_TEXT
+    (tmp_path / "PREREGISTRATION.md").write_text(PREREG_TEXT.replace(line, ""))
     with pytest.raises(SelectionError, match=field):
-        selection.read_selection(PREREG_TEXT.replace(line, ""))
+        selection.read_selection(tmp_path / "PREREGISTRATION.md")
 
 
 def test_the_licence_must_be_permissive():

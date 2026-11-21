@@ -2,10 +2,11 @@
 
 Design Decision 18. For each candidate the whole suite runs with the hidden
 test patch on ``base_commit`` and again with the fix's non-test changes
-(``hidden/fix.patch``, written by ``candidates issues``) applied, twice each.
+(``hidden/fix.patch``, written by ``candidates issues``) applied, each side as
+often as the preregistration says (``runs_per_side``).
 Fail-to-pass is what fails at the base and passes on the fix, pass-to-pass
 what passes on both. A candidate is dropped, with the reason recorded, when
-that set is empty, when two runs of one side disagree, when the setup fails or
+that set is empty, when the runs of one side disagree, when the setup fails or
 when the suite runs over the preregistered time limit.
 
 ``verify`` writes the identifiers and ``hidden_tests_verified_by: nogg-bench
@@ -77,6 +78,7 @@ def verified(task: dict) -> bool:
 class Verifier:
     bench: Path
     suite_time_limit: int  # seconds, from the preregistration
+    runs_per_side: int  # suite runs at the base and on the fix, from the preregistration
     bench_commit: str
     clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
     docker_binary: str = "docker"
@@ -143,9 +145,9 @@ class Verifier:
             raise Dropped("setup failed: git could not be installed in the container")
         suite = env["test_command"].replace("{tests}", "").strip()
         self._apply(docker, name, "hidden.patch", "the hidden test patch does not apply at the base commit")
-        base = self._twice(docker, name, suite, "at the base commit")
+        base = self._runs(docker, name, suite, "at the base commit")
         self._apply(docker, name, FIX_PATCH, "the fix's non-test changes do not apply at the base commit")
-        fixed = self._twice(docker, name, suite, "on the fix")
+        fixed = self._runs(docker, name, suite, "on the fix")
         f2p, p2p = derive(base, fixed)
         if not f2p:
             raise Dropped("no test fails at the base commit and passes on the fix")
@@ -156,20 +158,19 @@ class Verifier:
         if docker.exec(name, f"git apply --whitespace=nowarn ../{patch}", timeout=300).returncode != 0:
             raise Dropped(failure)
 
-    def _twice(self, docker: Docker, name: str, suite: str, where: str) -> dict[str, bool]:
+    def _runs(self, docker: Docker, name: str, suite: str, where: str) -> dict[str, bool]:
         runs = []
-        for _ in range(2):
+        for _ in range(self.runs_per_side):
             done = docker.exec(name, suite, timeout=self.suite_time_limit)
             if done.returncode is None:
                 raise Dropped(f"the suite ran over the time limit of {self.suite_time_limit} seconds {where}")
             runs.append(outcomes(done.stdout + done.stderr))
             if not runs[-1]:
                 raise Dropped(f"the suite reported no test {where} (exit {done.returncode})")
-        first, second = runs
-        differing = sorted(t for t in first.keys() | second.keys() if first.get(t) != second.get(t))
+        differing = sorted(t for t in set().union(*runs) if len({run.get(t) for run in runs}) > 1)
         if differing:
-            raise Dropped(f"flaky {where}: the two runs disagree on {', '.join(differing)}")
-        return first
+            raise Dropped(f"flaky {where}: the runs disagree on {', '.join(differing)}")
+        return runs[0]
 
 
 def recorded(bench: Path) -> set[str]:
@@ -199,7 +200,8 @@ def command(args: argparse.Namespace, *, clock: Callable[[], datetime] | None = 
         dirs = [bench / "tasks" / t for t in args.tasks] or sorted(
             p.parent for p in (bench / "tasks").glob("*/task.yaml")
             if p.parent.name not in done and (load_yaml(p).get("curation") or {}).get("status") == "candidate")
-        verifier = Verifier(bench, sel.suite_time_limit_seconds, prereg.bench_commit(bench), docker_binary=args.docker)
+        verifier = Verifier(bench, sel.suite_time_limit_seconds, sel.runs_per_side, prereg.bench_commit(bench),
+                            docker_binary=args.docker)
         if clock is not None:
             verifier.clock = clock
         for task_dir in dirs:

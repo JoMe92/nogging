@@ -44,20 +44,25 @@ selection:
   counts:
     per_size_class: 10
     pilot_per_size_class: 4
-    repositories: {python: 2, typescript: 1}
   training_cutoffs:
     - {model: model-a, cutoff: 2026-01-31, source: https://example.invalid/model-a}
     - {model: model-b, cutoff: 2026-03-31, source: https://example.invalid/model-b}
   criteria:
-    licenses: [MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC]
-    last_commit_within_days: 90
-    min_merged_pull_requests: 10
-    merged_pull_requests_within_days: 180
-    min_stars: 300
-    max_stars: 20000
-    exclusion_list: curation/exclude.yaml
-    suite_time_limit_seconds: 600
-    small_max_files: 2
-    medium_max_files: 5
-    large_min_changed_lines: 300
+    repositories:
+      languages: {Python: 2, TypeScript: 1}
+      licences: [MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC]
+      last_commit_within_days: 90
+      min_merged_pull_requests: 10
+      merged_pull_requests_within_days: 180
+      min_stars: 300
+      max_stars: 20000
+      exclusion_list: curation/exclude.yaml
+      suite_time_limit_minutes: 10
+    issues:
+      linked_merged_pull_requests: 1
+      small_max_files: 2
+      medium_max_files: 5
+      large_min_lines: 300
+    verification:
+      runs_per_side: 2
 ```

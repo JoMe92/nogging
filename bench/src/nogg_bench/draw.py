@@ -29,7 +29,7 @@ import yaml
 
 from nogg_bench import prereg, selection
 from nogg_bench.candidates import POOL, CurationError
-from nogg_bench.records import RecordError, load_yaml
+from nogg_bench.records import RecordError, load_yaml, selection_block
 from nogg_bench.schema import SIZE_CLASSES, check_task
 from nogg_bench.selection import DRAW_FILE, METHOD, SelectionError
 from nogg_bench.validate import find_bench_dir
@@ -43,11 +43,11 @@ def _git(bench: Path, *args: str) -> str:
 
 def selection_commit(bench: Path) -> str | None:
     """The commit since which the preregistration's selection block reads as it does now."""
-    current = selection.selection_block((bench / prereg.PREREGISTRATION).read_text(encoding="utf-8"))
+    current = selection_block((bench / prereg.PREREGISTRATION).read_text(encoding="utf-8"))[0]
     introduced = None
     for sha in _git(bench, "log", "--format=%H", "--", prereg.PREREGISTRATION).split():
         done = prereg._git(bench, "show", f"{sha}:./{prereg.PREREGISTRATION}")
-        if done.returncode != 0 or selection.selection_block(done.stdout) != current:
+        if done.returncode != 0 or selection_block(done.stdout)[0] != current:
             break
         introduced = sha
     return introduced

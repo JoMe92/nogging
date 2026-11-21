@@ -120,7 +120,7 @@ else cat {tmp_path}/out; fi
 
     (record,) = records(bench)
     assert record["outcome"] == "dropped"
-    assert record["reason"] == "flaky on the fix: the two runs disagree on tests/test_durations.py::test_single_unit"
+    assert record["reason"] == "flaky on the fix: the runs disagree on tests/test_durations.py::test_single_unit"
     task = read_task(bench, EXAMPLE)
     assert task["curation"] == {"status": "candidate"} and task["hidden_tests"]["fail_to_pass"] == []
     assert not verify.verified(task)
@@ -138,7 +138,7 @@ def test_a_setup_failure_drops_the_candidate_with_its_reason(tmp_path, monkeypat
 def test_a_suite_over_the_time_limit_or_without_a_failing_test_drops_the_candidate(tmp_path, monkeypatch):
     bench = example_candidate(tmp_path)
     stub_docker(tmp_path, monkeypatch)
-    verifier = verify.Verifier(bench, 0.2, "0123abc", clock=CLOCK)
+    verifier = verify.Verifier(bench, 0.2, 2, "0123abc", clock=CLOCK)
     task_dir = bench / "tasks" / EXAMPLE
     task = read_task(bench, EXAMPLE)
     task["environment"]["test_command"] = "sleep 5 {tests}"

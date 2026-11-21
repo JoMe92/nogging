@@ -213,13 +213,13 @@ def task_id(full_name: str, number: int) -> str:
     return re.sub(r"[^a-z0-9]+", "-", f"{full_name}-{number}".lower()).strip("-")
 
 
-def issue_refusal(issue: dict) -> tuple[str | None, dict | None]:
+def issue_refusal(issue: dict, sel: Selection) -> tuple[str | None, dict | None]:
     """``(reason, None)`` when the issue's links disqualify it, else ``(None, the fix pull request)``."""
     if issue.get("stateReason") != "COMPLETED":
         return "not closed as completed", None
     linked = [p for p in (issue.get("closedByPullRequestsReferences") or {}).get("nodes") or [] if p and p.get("merged")]
-    if len(linked) != 1:
-        return f"{len(linked)} linked merged pull requests, exactly one is needed", None
+    if len(linked) != sel.linked_merged_pull_requests:
+        return f"{len(linked)} linked merged pull requests, exactly {sel.linked_merged_pull_requests} is needed", None
     author = linked[0].get("author") or {}
     if selection.is_bot(author.get("login"), author.get("__typename")):
         return "the fix pull request's author is a bot account", None
@@ -251,7 +251,7 @@ def collect_issues(bench: Path, gh: Gh) -> dict[str, Counter]:
 
 def _candidate(bench: Path, gh: Gh, sel: Selection, repo: dict, recipe: Any, issue: dict) -> str:
     """Write the task for one issue, or return why it is not a candidate."""
-    reason, fix = issue_refusal(issue)
+    reason, fix = issue_refusal(issue, sel)
     if reason:
         return reason
     full_name = repo["full_name"]

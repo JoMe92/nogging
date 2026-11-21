@@ -475,9 +475,10 @@ imported twice. `validate` accepts the file afterwards.
 
 The tickets are found, checked and drawn by commands (design Decisions 18 and
 19). Every number comes from the `selection` block of the committed
-`PREREGISTRATION.md`; no command has a default for a criterion, and each
-refuses when the file is missing, uncommitted or changed. `gh` is called
-read-only (`gh api --method GET`, GraphQL queries).
+`PREREGISTRATION.md`, read through `records.load_selection`; no command has a
+default for a criterion, and each refuses when the file is missing,
+uncommitted or changed. `gh` is called read-only (`gh api --method GET`,
+GraphQL queries).
 
 ```bash
 bench/nogg-bench candidates repos            # 1. the pool, once
@@ -515,8 +516,9 @@ bench/nogg-bench validate bench/tasks bench/curation
    test-file changes, `hidden/fix.patch` its other changes (for `verify` only,
    never shown to an agent), and `base_commit` is the pull request's base.
 3. **`verify`** starts the task container, applies the hidden test patch at
-   `base_commit` and runs the whole suite twice, applies `hidden/fix.patch`
-   and runs it twice again, each run within `suite_time_limit_seconds`.
+   `base_commit` and runs the whole suite `runs_per_side` times, applies
+   `hidden/fix.patch` and runs it as often again, each run within
+   `suite_time_limit_minutes`.
    Fail-to-pass is what fails at the base and passes on the fix, pass-to-pass
    what passes on both. It writes the identifiers,
    `hidden_tests_verified_by: nogg-bench verify <bench commit>` and
@@ -615,5 +617,4 @@ seed 1, `NOGG_BENCH_SMOKE=1`.
 
 ## Not yet here
 
-The first measured Harbor runs arrive with BEN-007; the curation commands that
-read the selection block (`candidates`, `verify`, `select`) with BEN-008.
+The first measured Harbor runs arrive with BEN-007.
