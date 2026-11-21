@@ -63,3 +63,14 @@ def gh_calls(log: Path) -> list[list[str]]:
 
 def read_task(bench: Path, task_id: str) -> dict:
     return yaml.safe_load((bench / "tasks" / task_id / "task.yaml").read_text(encoding="utf-8"))
+
+
+def stub_docker(tmp_path: Path, monkeypatch) -> Path:
+    """Put the BEN-002 stub ``docker`` on PATH; returns the directory holding the fake containers."""
+    root = tmp_path / "containers"
+    root.mkdir()
+    monkeypatch.setenv("PATH", f"{STUBS}:{os.environ['PATH']}")
+    monkeypatch.setenv("STUB_DOCKER_ROOT", str(root))
+    monkeypatch.setenv("STUB_DOCKER_LOG", str(tmp_path / "docker-calls.jsonl"))
+    monkeypatch.delenv("STUB_DOCKER_FAIL", raising=False)
+    return root
