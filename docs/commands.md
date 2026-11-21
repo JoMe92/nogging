@@ -305,6 +305,56 @@ splits a Bead into commits.
 **Read more.** [Configuration](configuration.md#task_sizing) and
 [Operating model](operating-model.md#task-sizing).
 
+## ceremony
+
+**Purpose.** Print the ceremony mode in effect and its limits: the `ceremony`
+block of `.nogging/config.json`, or its defaults (`always-full`, a fast lane of
+2 production files and 200 lines, a lite minimum score of 6). Each line says
+whether the value is configured or the default; a bad value is a WARN on
+stderr and keeps the default.
+
+**Common forms.**
+
+```bash
+./scripts/nogg ceremony
+```
+
+**Used by.** An operator who checks the switch, and the planning prompts and
+hooks that ask for the mode instead of parsing the file.
+
+**Read more.** [Configuration](configuration.md#ceremony).
+
+## triage
+
+**Purpose.** Pick a lane for a piece of work by fixed rules, from its
+description and the facts you state. The rules, in order: the full spec for
+`--kind feature` or `pipeline`, `--public-interface`, `--security`, `--unclear`
+or a trigger word in the description (security, credential, token, permission,
+authentication, migration, schema, public API, pipeline, new command); a lite
+spec for `--files` 3 or more; the fast lane for `--kind bug`, `refactor`,
+`test` or `config` with `--files` 1 or 2; a lite spec otherwise, so a missing
+kind or file estimate never gives the fast lane. The output names the mode,
+the rules' lane, the effective lane and every rule that fired. Under
+`always-full` the effective lane is always full, under `adaptive` it is the
+rules' lane, under `always-fast` it is always fast. The same input always
+gives the same output.
+
+**Common forms.**
+
+```bash
+./scripts/nogg triage "Off-by-one in the page counter" --kind bug --files 2
+./scripts/nogg triage "Rotate the API token on expiry" --kind bug --files 1 --json
+./scripts/nogg triage "Tidy the help text" --bead SPEC-ab12
+```
+
+`--bead <id>` appends one line, `triage: <effective lane> (mode <mode>; rules:
+<lane>): <reasons>`, to that Bead's note.
+
+**Used by.** An operator or the Planning Agent, before deciding how much
+specification a piece of work gets.
+
+**Read more.** [Configuration](configuration.md#ceremony).
+
 ## run-quiet
 
 **Purpose.** Run one long command, such as a test suite or a build, as a single

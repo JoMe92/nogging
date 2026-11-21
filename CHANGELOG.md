@@ -18,6 +18,14 @@ and GitHub Releases for that history.
 
 ### Added
 
+- The `ceremony` block of `.nogging/config.json`: `ceremony.mode` (`always-full`, the
+  default, `adaptive` or `always-fast`), the fast-lane file and line limits and the lite
+  minimum score. `nogg ceremony` prints the mode and limits in effect, and
+  `nogg triage <description>` picks a lane (full, lite or fast) by fixed rules from the
+  description and the stated facts, prints every rule that fired, and with `--bead <id>`
+  appends the result to that Bead's note. A bad value is a WARN in `doctor` and keeps
+  the default. With the block unset nothing changes. See `docs/configuration.md`.
+  (SPEC-olgu)
 - `nogg dashboard pair`: the operator at a terminal, or the Orchestration Agent from
   the chat, gets a one-time pairing link from the running consented service, which
   signs a phone in with the same 30-day cookie as the token. A link is good for one
