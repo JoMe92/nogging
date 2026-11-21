@@ -344,7 +344,7 @@ gives the same output.
 ```bash
 ./scripts/nogg triage "Off-by-one in the page counter" --kind bug --files 2
 ./scripts/nogg triage "Rotate the API token on expiry" --kind bug --files 1 --json
-./scripts/nogg triage "Tidy the help text" --bead SPEC-ab12
+./scripts/nogg triage "Tidy the help text" --bead <bead-id>
 ```
 
 `--bead <id>` appends one line, `triage: <effective lane> (mode <mode>; rules:
