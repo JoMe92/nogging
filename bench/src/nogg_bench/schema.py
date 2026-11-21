@@ -276,7 +276,9 @@ def check_task(data: Any, *, dir_name: str | None = None) -> list[Problem]:
             c.add("hidden_tests.patch", "must be a path under hidden/")
         elif patch and ".." in patch.split("/"):
             c.add("hidden_tests.patch", "must be a path under hidden/")
-        f2p = c.string_list(hidden, "hidden_tests", "fail_to_pass", non_empty=True)
+        # A candidate has no test identifiers until `nogg-bench verify` fills them in (BEN-008).
+        unverified = isinstance(data.get("curation"), dict) and data["curation"].get("status") == "candidate"
+        f2p = c.string_list(hidden, "hidden_tests", "fail_to_pass", non_empty=not unverified)
         p2p = c.string_list(hidden, "hidden_tests", "pass_to_pass")
         if f2p is not None and p2p is not None:
             for ident in sorted(set(f2p) & set(p2p)):

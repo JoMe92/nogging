@@ -46,6 +46,13 @@ def test_a_candidate_task_needs_no_recorded_check(task):
     assert schema.check_task(task) == []
 
 
+def test_only_a_candidate_may_wait_for_its_test_identifiers(task):
+    task["hidden_tests"]["fail_to_pass"] = []
+    assert fields(schema.check_task(task)) == ["hidden_tests.fail_to_pass"]
+    task["curation"] = {"status": "candidate"}  # `nogg-bench verify` fills the identifiers in
+    assert schema.check_task(task) == []
+
+
 def test_a_test_cannot_be_both_kinds(task):
     task["hidden_tests"]["pass_to_pass"].append(task["hidden_tests"]["fail_to_pass"][0])
     problems = schema.check_task(task)
