@@ -11146,6 +11146,38 @@ def installer_artifact_diagnostics():
     return warnings, notes
 
 
+# The lean install (adaptive-ceremony, design Decision 7): the installer writes the
+# lean block pair, marked by this line, when `ceremony.mode` is not `always-full`.
+# A mode change takes effect at the next `update`; until then doctor says so.
+CEREMONY_LEAN_SIGNATURE = "<!-- nogging:instructions lean -->"
+
+def ceremony_install_mode(cfg=None):
+    """The mode the installer acts on. An absent block or an unknown mode is `always-full`.
+
+    doctor's one read of the mode for the block check, to be pointed at the shared
+    `ceremony` reader once both exist."""
+    block = (CFG if cfg is None else cfg).get("ceremony")
+    mode = block.get("mode") if isinstance(block, dict) else None
+    return mode if isinstance(mode, str) and mode in ("adaptive", "always-fast") else "always-full"
+
+def ceremony_install_diagnostics(root=None, cfg=None):
+    """WARN lines when the installed Nogging block in AGENTS.md does not match the mode.
+    A file without the managed markers (never installed, or removed) is not checked."""
+    try:
+        text = ((ROOT if root is None else root) / "AGENTS.md").read_text()
+    except (OSError, ValueError):
+        return []
+    begin, end = text.find("<!-- nogging:begin -->"), text.find("<!-- nogging:end -->")
+    if begin < 0 or end < begin:
+        return []
+    mode = ceremony_install_mode(cfg)
+    installed = "lean" if CEREMONY_LEAN_SIGNATURE in text[begin:end] else "full"
+    wanted = "full" if mode == "always-full" else "lean"
+    if installed == wanted:
+        return []
+    return [f"AGENTS.md carries the {installed} Nogging block, but ceremony.mode is {mode}, which installs "
+            f"the {wanted} one; run `npx github:JoMe92/nogging update` to switch the blocks and the skills"]
+
 def loops_file_path():
     """The repository-relative path of the loop definitions file."""
     return ROOT / scfg("loops_file", ".nogging/loops.json")
@@ -11389,6 +11421,7 @@ def doctor(audit=False, with_recover=False, with_sandbox=False, refuse_task_form
     herdr_checks, herdr_warnings, herdr_notes = herdr_doctor_diagnostics()
     checks.extend(herdr_checks)
     warnings.extend(herdr_warnings)
+    warnings.extend(ceremony_install_diagnostics())
     # Agent routing: an invalid file is a FAIL (every routed launch would
     # refuse); per-entry caveats are NOTEs (design decision 8).
     routing_checks, routing_notes = agent_routing_diagnostics()

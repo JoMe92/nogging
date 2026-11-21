@@ -7,6 +7,7 @@ set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source "$root/scripts/lib/test-env.sh"
+cli="$root/bin/cli.js"
 
 fail=0
 check() { # <description> <test-expr...>
@@ -118,6 +119,165 @@ then
 else
   fail=1
 fi
+
+# --- medium: temporary target repositories -----------------------------------
+if ! command -v node >/dev/null 2>&1; then
+  echo "ok   - install checks skipped (node not installed)"
+  [ "$fail" -eq 0 ] || exit 1
+  echo "all ceremony install checks passed"
+  exit 0
+fi
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+stubs="$work/stubs"; mkdir -p "$stubs" "$work/tmux"
+printf '#!/usr/bin/env bash\nif [[ "$*" == *--json* ]]; then echo "[]"; fi\nexit 0\n' >"$stubs/bd"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$stubs/dolt"
+chmod +x "$stubs/bd" "$stubs/dolt"
+
+flags=(--no-beads --no-hooks --no-systemd)
+new_repo() { # <dir>
+  mkdir -p "$1"
+  git -C "$1" init -q
+  git -C "$1" -c user.name=Test -c user.email=test@test.local commit --allow-empty -qm init
+}
+run() { # <repo> <args...>; stdout+stderr to $out, status to $status
+  local repo="$1"; shift
+  status=0
+  out=$(cd "$repo" && NOGG_PREFLIGHT_TIMEOUT_MS=500 node "$cli" "$@" 2>&1) || status=$?
+}
+doctor() { # <repo>; output to $out
+  out=$(cd "$1" && env -u TMUX PATH="$stubs:$PATH" NOGGING_ROOT="$1" TMUX_TMPDIR="$work/tmux" \
+    scripts/nogg doctor 2>&1) || true
+}
+set_mode() { # <repo> <mode>
+  python3 - "$1/.nogging/config.json" "$2" <<'PY'
+import json, sys
+path, mode = sys.argv[1:]
+data = json.load(open(path))
+data["ceremony"] = {"mode": mode}
+open(path, "w").write(json.dumps(data, indent=2) + "\n")
+PY
+}
+tree() { # <repo>: per-file hashes of the install, without what doctor and Python write
+  (cd "$1" && find . -type f -not -path './.git/*' -not -path './.nogging/locks/*' \
+    -not -path './.nogging/state/*' -not -path '*/__pycache__/*' | LC_ALL=C sort | xargs sha256sum)
+}
+block_is() { # <repo> <file> <template>: the managed block equals the template, byte for byte
+  python3 - "$1/$2" "$root/$3" <<'PY'
+import sys
+installed, template = (open(path).read() for path in sys.argv[1:])
+begin, end = "<!-- nogging:begin -->\n", "<!-- nogging:end -->\n"
+block = installed[installed.index(begin) + len(begin):installed.index(end)]
+sys.exit(0 if block == template.rstrip() + "\n" else 1)
+PY
+}
+skills_absent() { # <repo>: no Nogging skill of the lean install, under either root
+  [ ! -e "$1/.claude/skills" ] && ! compgen -G "$1/.agents/skills/nogging-lead-workflow" >/dev/null \
+    && [ -z "$(cd "$1" && grep -l 'skills/nogging-\(lead-workflow\|planning\|sessions\|specialists\|recovery\)/' \
+      .nogging/installed-manifest.json)" ]
+}
+skills_installed() { # <repo>: every source skill, byte-equal, under both roots
+  local name
+  for name in "$root"/templates/skills/*/; do
+    name=$(basename "$name")
+    cmp -s "$root/templates/skills/$name/SKILL.md" "$1/.claude/skills/$name/SKILL.md" || return 1
+    cmp -s "$root/templates/skills/$name/SKILL.md" "$1/.agents/skills/$name/SKILL.md" || return 1
+  done
+}
+named_skills_exist() { # <repo>: every skill path the installed block names is a file
+  local rel
+  for rel in $(grep -o '\.\(claude\|agents\)/skills/nogging-[a-z-]*/SKILL\.md' "$1/AGENTS.md" | sort -u); do
+    [ -f "$1/$rel" ] || return 1
+  done
+  grep -q 'skills/nogging-' "$1/AGENTS.md"
+}
+lean_installed() { block_is "$1" AGENTS.md templates/agents-block-lean.md && skills_installed "$1"; }
+block_lines() { sed -n '/<!-- nogging:begin -->/,/<!-- nogging:end -->/p' "$1/AGENTS.md" | wc -l; }
+mismatch='^WARN  AGENTS.md carries the .* Nogging block, but ceremony.mode is'
+
+# "The default install is unchanged": no ceremony block, today's blocks, no new skill.
+plain="$work/plain/repo"; new_repo "$plain"
+run "$plain" init "${flags[@]}"
+check "default init: exits 0" test "$status" -eq 0
+check "default init: the agents block equals today's template" block_is "$plain" AGENTS.md templates/agents-block.md
+check "default init: the Claude block equals today's template" block_is "$plain" CLAUDE.md templates/claude-block.md
+check "default init: no new skill" skills_absent "$plain"
+default_tree=$(tree "$plain")
+
+repo="$work/switch/repo"; new_repo "$repo"
+printf '# My project\n\nOwn instructions.\n' >"$repo/AGENTS.md"
+run "$repo" init "${flags[@]}"
+cp "$repo/.nogging/config.json" "$work/config.default.json"
+doctor "$repo"
+check "default install: doctor reports no block mismatch" bash -c '! grep -Eq "$1" <<<"$2"' _ "$mismatch" "$out"
+
+# An unknown mode falls back to the default.
+set_mode "$repo" sometimes
+run "$repo" update "${flags[@]}"
+check "unknown mode: the full block stays" block_is "$repo" AGENTS.md templates/agents-block.md
+check "unknown mode: no new skill" skills_absent "$repo"
+
+# "A mode change is noticed": the mode is switched and update has not run yet.
+set_mode "$repo" adaptive
+doctor "$repo"
+check "mode switched to adaptive, no update yet: doctor warns" \
+  grep -Eq '^WARN  AGENTS.md carries the full Nogging block, but ceremony.mode is adaptive' <<<"$out"
+
+# "The lean install is short": init in a repository whose mode is adaptive.
+run "$repo" init "${flags[@]}"
+check "lean init: exits 0" test "$status" -eq 0
+check "lean init: the agents block is the lean template" block_is "$repo" AGENTS.md templates/agents-block-lean.md
+check "lean init: the agents block has fewer than 150 lines" test "$(block_lines "$repo")" -lt 150
+check "lean init: the Claude block is the pointer" block_is "$repo" CLAUDE.md templates/claude-block-lean.md
+check "lean init: the skills are installed under both roots" skills_installed "$repo"
+check "lean init: every skill the block names exists" named_skills_exist "$repo"
+check "lean init: the repository's own instructions are kept" grep -Fxq 'Own instructions.' "$repo/AGENTS.md"
+doctor "$repo"
+check "lean install: doctor reports no block mismatch" bash -c '! grep -Eq "$1" <<<"$2"' _ "$mismatch" "$out"
+before=$(tree "$repo")
+run "$repo" update "${flags[@]}"
+check "lean update, no change: writes nothing" test "$before" = "$(tree "$repo")"
+
+# `always-fast` is lean as well.
+set_mode "$repo" always-fast
+run "$repo" update "${flags[@]}"
+check "always-fast: the lean block and the skills stay" lean_installed "$repo"
+
+# Back to the default: doctor notices, update switches the blocks and removes the skills.
+cp "$work/config.default.json" "$repo/.nogging/config.json"
+doctor "$repo"
+check "mode switched back, no update yet: doctor warns" \
+  grep -Eq '^WARN  AGENTS.md carries the lean Nogging block, but ceremony.mode is always-full' <<<"$out"
+run "$repo" update "${flags[@]}"
+check "update after switching back: exits 0" test "$status" -eq 0
+check "update after switching back: today's agents block" block_is "$repo" AGENTS.md templates/agents-block.md
+check "update after switching back: today's Claude block" block_is "$repo" CLAUDE.md templates/claude-block.md
+check "update after switching back: the skills are gone" skills_absent "$repo"
+doctor "$repo"
+check "after switching back: doctor reports no block mismatch" bash -c '! grep -Eq "$1" <<<"$2"' _ "$mismatch" "$out"
+# Apart from the repository's own AGENTS.md text, the round trip leaves a default install.
+check "the round trip leaves the default install, byte for byte" \
+  test "$(grep -v ' ./AGENTS.md$' <<<"$default_tree")" = "$(tree "$repo" | grep -v ' ./AGENTS.md$')"
+
+# A skill the operator edited is kept when the mode goes back, and named.
+set_mode "$repo" adaptive
+run "$repo" update "${flags[@]}"
+printf '\nOwn note.\n' >>"$repo/.claude/skills/nogging-recovery/SKILL.md"
+cp "$work/config.default.json" "$repo/.nogging/config.json"
+run "$repo" update "${flags[@]}"
+check "an edited skill is kept on the way back" grep -Fxq 'Own note.' "$repo/.claude/skills/nogging-recovery/SKILL.md"
+check "an edited skill is named in the output" \
+  grep -Fq '.claude/skills/nogging-recovery/SKILL.md was edited locally and is kept' <<<"$out"
+check "the unedited skills are removed" test ! -e "$repo/.agents/skills/nogging-recovery"
+
+# `remove` takes the skills of a lean install with it.
+set_mode "$repo" adaptive
+run "$repo" update --force "${flags[@]}"
+run "$repo" remove
+check "remove: exits 0" test "$status" -eq 0
+check "remove: the skills are gone" test ! -e "$repo/.agents/skills/nogging-lead-workflow/SKILL.md" -a \
+  ! -e "$repo/.claude/skills/nogging-lead-workflow/SKILL.md"
 
 if [ "$fail" -ne 0 ]; then
   echo "ceremony install checks failed" >&2
