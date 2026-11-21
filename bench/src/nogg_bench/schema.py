@@ -365,7 +365,7 @@ _RESULT_KEYS = (
 )
 _PROVENANCE_KEYS = (
     "arm_file_hash", "prompt_hash", "agent_cli_version", "nogging_ref", "image_digest",
-    "bench_commit", "preregistration_hash", "smoke",
+    "bench_commit", "preregistration_hash", "smoke", "container_options",
 )
 
 
@@ -489,6 +489,12 @@ def check_result(data: Any) -> list[Problem]:
                 c.add("provenance.preregistration_hash", "must be set on a measured (non-smoke) run")
         elif not (isinstance(prereg, str) and _SHA.match(prereg)):
             c.add("provenance.preregistration_hash", "must be a 40-character git blob hash or null")
+        # Optional: `run` records its docker run options (Decision 20); a Harbor line has none.
+        options = prov.get("container_options", [])
+        if not (isinstance(options, list) and all(isinstance(o, str) and o for o in options)):
+            c.add("provenance.container_options", "must be a list of non-empty strings")
+        elif "--privileged" in options:
+            c.add("provenance.container_options", "must not hold --privileged")
     return _finish(c)
 
 

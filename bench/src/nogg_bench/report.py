@@ -678,6 +678,8 @@ def build_metadata(inputs: Inputs, name: str) -> dict[str, Any]:
         "agent_versions": {a: d["agent"]["version"] for a, d in sorted(inputs.arms.items())},
         "agent_versions_in_runs": sorted({p["agent_cli_version"] for p in prov}),
         "image_digests": sorted({p["image_digest"] for p in prov}),
+        # Decision 20: one entry when every run's container had the same options.
+        "container_options_in_runs": [list(o) for o in sorted({tuple(p["container_options"]) for p in prov if "container_options" in p})],
         "usage_collectors": sorted({(r.record["usage_collector"]["helper_version"], r.record["usage_collector"]["nogging_commit"]) for r in inputs.runs}),
         "prices": {m: vars(p) for m, p in sorted(inputs.prices.items())},
         "runs": {"total": len(inputs.runs), "counted": sum(r.counted for r in inputs.runs)},

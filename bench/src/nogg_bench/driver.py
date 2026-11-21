@@ -15,8 +15,13 @@ Run from the task repository (``/work/repo``), it plays the Product Owner:
    ``develop`` (no approval step) and materialises the change's Beads;
 3. starts a ``--full-access`` Lead for the first ready Bead with the whole
    change authorised, and waits for its done signal or the timebox;
-4. merges every implementation branch into ``develop`` (the count is the
-   result line's ``pr_count``), stops its sessions and writes ``state.json``.
+4. merges every implementation branch into ``develop``, counts the pull
+   requests the Lead opened whose work is in that result (the result line's
+   ``pr_count``), stops its sessions and writes ``state.json``.
+
+The Lead's ``gh`` is the bench's local forge stand-in (``forge.py``, design
+Decision 20): it records each pull request under ``../forge/pulls/`` beside
+the bare origin, and those records are what ``pr_count`` counts.
 
 Every session is launched with the arm's agent, model and effort as explicit
 flags, so Nogging's tier routing cannot pick another model. The driver uses
@@ -39,6 +44,8 @@ from typing import Callable
 NOGG = "./scripts/nogg"
 POLL_SECONDS = 30
 PROTECTED = {"main", "develop", "HEAD"}
+FORGE_DIR = "forge"  # beside origin.git: where the gh stand-in records pull requests
+_SHA = re.compile(r"[0-9a-f]{40}")
 
 
 @dataclass
@@ -156,10 +163,11 @@ class Driver:
                 names.append(short)
         return names
 
-    def merge(self, branch: str) -> bool:
+    def merge(self, branch: str, ref: str | None = None) -> bool:
         """Merge ``branch`` (local, else origin's) into develop; False when it adds nothing or conflicts."""
-        local = self.run(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"], cwd=self.repo)
-        ref = branch if local.returncode == 0 else f"origin/{branch}"
+        if ref is None:
+            local = self.run(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"], cwd=self.repo)
+            ref = branch if local.returncode == 0 else f"origin/{branch}"
         ahead = self.git("rev-list", "--count", f"develop..{ref}").strip()
         if ahead == "0":
             return False
@@ -221,11 +229,37 @@ class Driver:
         self.sh(NOGG, "session", "kickoff", name, "--change", change, what="kicking off the Lead")
         return self.wait(name, deadline)
 
+    def pull_requests(self) -> list[dict]:
+        """What the forge stand-in recorded. The files are agent-writable: every use checks its field."""
+        found = []
+        for path in sorted((self.repo.parent / FORGE_DIR / "pulls").glob("*.json")):
+            try:
+                record = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if isinstance(record, dict):
+                found.append(record)
+        return found
+
+    def contains(self, ref: str, sha: object) -> bool:
+        if not (isinstance(sha, str) and _SHA.fullmatch(sha)):
+            return False
+        return self.run(["git", "merge-base", "--is-ancestor", sha, ref], cwd=self.repo).returncode == 0
+
     def integrate(self) -> int:
-        """Merge every implementation branch into develop; the count is ``pr_count``."""
+        """Merge origin's develop (where a ``gh pr merge`` lands) and every implementation branch
+        into develop. Returns ``pr_count``: the recorded pull requests whose work is in the result."""
+        branches = self.branches()  # fetches origin
+        if self.run(["git", "rev-parse", "--verify", "--quiet", "refs/remotes/origin/develop"],
+                    cwd=self.repo).returncode == 0:
+            self.merge("develop", ref="origin/develop")
+        for branch in branches:
+            if not branch.startswith("plan/"):
+                self.merge(branch)
         count = 0
-        for branch in self.branches():
-            if not branch.startswith("plan/") and self.merge(branch):
+        for record in self.pull_requests():
+            shas = [record.get("head_sha"), record.get("merge_commit")]
+            if any(self.contains("develop", s) and not self.contains(self.state["diff_base"], s) for s in shas):
                 count += 1
         return count
 

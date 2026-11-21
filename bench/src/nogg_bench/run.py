@@ -6,7 +6,8 @@ The order of one run follows design Decision 7:
 2. start a container with nothing mounted, copy in the repository, the brief
    and the agent scripts, run the task's setup and install the agent;
 3. run the agent under its timebox (a ``nogging`` arm through the driver);
-4. save the diff and copy the transcripts out;
+4. save the diff and copy the transcripts out (and a ``nogging`` arm's recorded
+   pull requests, from the local forge stand-in);
 5. only then copy the hidden tests in, restore hidden paths, run the tests;
 6. count tokens through the usage helper, scan for contamination, append.
 
@@ -33,12 +34,14 @@ from typing import Callable, Mapping
 from nogg_bench import agents, prereg, results, scan, usage, workspace
 from nogg_bench.arms import Arm, comparability_problems, find_arm
 from nogg_bench.credentials import CredentialError, Credentials, Redactor
-from nogg_bench.docker import Docker, DockerError, RunLog
+from nogg_bench.docker import Docker, DockerError, RunLog, container_options
 from nogg_bench.records import RecordError, load_yaml
 from nogg_bench.schema import Problem, check_task
 from nogg_bench.validate import find_bench_dir
 
 DRIVER = Path(__file__).with_name("driver.py")
+FORGE = Path(__file__).with_name("forge.py")  # the local `gh` of a nogging arm (Decision 20)
+FORGE_RECORDS = "/work/forge"  # beside the driver's /work/origin.git
 _BATCH = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 NOGGING_OUTCOMES = {"done": "completed", "timeout": "timeout"}  # anything else is agent_error
 
@@ -99,6 +102,7 @@ class Runner:
                 "arm_file_hash": arm.arm_file_hash, "prompt_hash": arm.prompt_hash,
                 "nogging_ref": arm.data.get("nogging_ref"), "bench_commit": self.bench_commit or "unknown",
                 "preregistration_hash": self.preregistration_hash, "smoke": self.smoke,
+                "container_options": container_options(),  # the same for every arm (Decision 20)
             },
         )
         run_dir = self.results_dir / "runs" / run_id
@@ -146,7 +150,7 @@ class Runner:
             done = docker.exec(name, command, timeout=1800)
             if done.returncode != 0:
                 raise StepError(f"setup command failed (exit {done.returncode}): {command}")
-        self._install(arm, docker, name)
+        self._install(arm, docker, name, scratch)
         version = docker.exec(name, f"{arm.cli} --version", timeout=120)
         if version.returncode != 0:
             raise StepError(f"agent CLI {arm.cli} does not run in the container")
@@ -182,6 +186,8 @@ class Runner:
         diff_base, rec.pr_count = task.data["base_commit"], 1
         if arm.kind == "nogging":
             diff_base = self._driver_state(rec, docker, name, scratch, diff_base)
+            # The recorded pull requests are pr_count's evidence; redacted like every copy out.
+            self._copy_out(docker, name, FORGE_RECORDS, scratch, run_dir / "forge")
         self._copy_out(docker, name, "/work/bench/agent.log", scratch, run_dir / "agent.log")
 
         # Step 4: the diff and the transcripts.
@@ -261,11 +267,19 @@ class Runner:
                 tar.extractall(tools, filter="data")
         return tools
 
-    def _install(self, arm: Arm, docker: Docker, name: str) -> None:
+    def _install(self, arm: Arm, docker: Docker, name: str, scratch: Path) -> None:
         done = docker.exec(name, "sh ../bench/tools.sh", timeout=1800)
         if done.returncode != 0:
             raise StepError(f"installing git and timeout in the container failed (exit {done.returncode})")
         self._step(docker, name, agents.USER_SETUP, f"creating the agent user {agents.AGENT_USER}")
+        if arm.kind == "nogging":
+            # The forge stand-in as `gh`, first on PATH: the Lead's pull request stays in the
+            # container. It is a file of this package; nothing of the host's gh (no binary,
+            # no configuration, no token) is copied.
+            stand_in = scratch / "gh"
+            shutil.copyfile(FORGE, stand_in)
+            stand_in.chmod(0o755)
+            docker.copy_in(name, stand_in, "/usr/local/bin/gh")
         if self.agent_stub is not None:
             docker.copy_in(name, self.agent_stub, f"/usr/local/bin/{arm.cli}")
             return
@@ -282,7 +296,7 @@ class Runner:
 
     def _driver_state(self, rec, docker: Docker, name: str, scratch: Path, task_base: str) -> str:
         """Read the driver's ``state.json`` (agent-writable, so every field is checked):
-        outcome, diff base and integrated branches. Returns the diff base."""
+        outcome, diff base and the count of recorded pull requests. Returns the diff base."""
         path = scratch / "state.json"
         state = None
         if docker.copy_out(name, "/work/bench/state.json", path) and path.is_file() and not path.is_symlink():
