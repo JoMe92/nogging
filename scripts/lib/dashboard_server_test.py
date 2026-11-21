@@ -306,6 +306,23 @@ class Requests(Harness):
         doubled = f"GET / HTTP/1.1\r\nHost: {self.host}\r\nHost: {self.host}\r\n\r\n"
         self.assertEqual(parse(self.send(doubled.encode()))[0], 400)
 
+    def test_a_request_without_parsed_headers_is_refused(self):
+        """Newer Python runtimes parse no headers for an HTTP/0.9 request line."""
+        self.start()
+        original = ds.DashboardHandler.parse_request
+
+        def without_headers(handler):
+            parsed = original(handler)
+            if parsed and hasattr(handler, "headers"):
+                del handler.headers
+            return parsed
+
+        ds.DashboardHandler.parse_request = without_headers
+        try:
+            self.assertEqual(parse(self.send(b"GET /\r\n\r\n"))[0], 400)
+        finally:
+            ds.DashboardHandler.parse_request = original
+
     def test_a_cross_site_page_calls_the_api(self):
         self.start()
         self.assertEqual(self.call("/api/v1/beads", headers=["Origin: http://attacker.example"])[0], 403)
