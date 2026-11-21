@@ -54,7 +54,8 @@ bench/
   results/review/<pack>.jsonl     review records (BEN-004)
   reports/<name>/                 report.md, runs.csv, metadata.json (BEN-005)
   prices.yaml                     list prices (BEN-005)
-  PREREGISTRATION.md              prose plus the thresholds block (BEN-006)
+  PREREGISTRATION.md              prose plus the thresholds and selection blocks (BEN-006)
+  curation/exclude.yaml           repositories no candidate may come from (BEN-006)
 ```
 
 ## Record formats
@@ -70,6 +71,8 @@ with a test and never writes an unvalidated field.
 | result line | `results/<batch>.jsonl` | a `.jsonl` file directly in `results/` |
 | review record | `results/review/<pack>.jsonl` | a `.jsonl` file in a `review/` directory |
 | thresholds block | fenced `yaml` block in `PREREGISTRATION.md` | the name `PREREGISTRATION.md` |
+| selection block | a second fenced `yaml` block in `PREREGISTRATION.md` | the name `PREREGISTRATION.md` |
+| exclusion list | `curation/exclude.yaml` | the name `exclude.yaml` in a `curation` directory |
 
 **Task** (`task.yaml`): `id` (kebab, equal to the directory name), `repo` (clone
 URL, or a bundle path under `bench/` for examples), `base_commit` (full SHA),
@@ -126,7 +129,31 @@ is `not_worse`, or `lead_by` with `margin` in percentage points for
 tie), `significance_level`, and `reproducibility` (`min_pass_agreement`, the
 share of tickets on which two runs of one arm agree on pass or fail, and
 `max_cost_ratio`, how far apart their costs may be). `report` (BEN-005)
-evaluates each threshold as met, not met or tie.
+evaluates each threshold as met, not met or tie. A third `metric`,
+`tokens_per_run`, goes with the `requirement` `fewer` and with no other.
+
+**Selection block** (design Decisions 18 and 19): one fenced `yaml` block in
+`PREREGISTRATION.md` whose top level is the single key `selection` (exactly one
+such block; `validate` refuses a preregistration without it). Under it: `method`
+(`seeded-draw`), `seed` (an integer; the prose says how it was chosen), `counts`
+(`per_size_class`, `pilot_per_size_class`, positive integers, the pilot count at
+most the class count), `training_cutoffs` (list of `{model, cutoff, source}`: a
+date and the URL it was read from; `validate` wants one for the `model` of every
+arm file in `arms/`) and `criteria`: `repositories` (`languages`, a map from
+primary language to the number of repositories taken; `licences`, SPDX
+identifiers; `last_commit_within_days`; `min_merged_pull_requests` within
+`merged_pull_requests_within_days`; `min_stars`, `max_stars`; `exclusion_list`,
+a file path relative to the bench directory that must exist;
+`suite_time_limit_minutes`), `issues` (`linked_merged_pull_requests`;
+`small_max_files`, `medium_max_files`, `large_min_lines`, the size class
+boundaries) and `verification` (`runs_per_side`). Read it with
+`nogg_bench.records.load_selection(path)`, which returns the checked mapping
+under `selection` (None when the file has no such block).
+
+**Exclusion list** (`curation/exclude.yaml`): `schema`, and `lists`, each
+`{name, source, retrieved, repositories}`: a kebab-case name, the URL the list
+was read from, the date, and `owner/name` entries. Compare names without regard
+to case; a renamed repository is listed under both names.
 
 ## For BEN-002, BEN-004 and BEN-005
 
@@ -324,7 +351,10 @@ hashes among the non-smoke lines (named in the message; `--allow-mixed-preregist
 reports them together anyway); a missing or invalid arm file for an arm of a
 primary comparison; two paired arms whose `timebox_minutes` differ; two arms of
 one vendor (same `agent.cli`) whose `model` or `effort` differ; a missing or
-invalid `prices.yaml` or thresholds block.
+invalid `prices.yaml`, thresholds block or selection block. An arm of a primary
+comparison that has neither an arm file nor a run in the batches (preregistered
+for a later phase, as arm D is before its gate run) is not refused: `report.md`
+names it under "Arms not measured yet" and its thresholds are `unknown`.
 
 **What is counted.** A run is counted in the tables unless it is a smoke run,
 ended in `infra_error`, or is flagged `contamination_suspect`. The last two are
@@ -366,6 +396,18 @@ p-value as significant or not and does not change the verdict. A threshold with
 nothing to evaluate (no paired ticket, unknown cost, no accepted ticket) is `unknown`
 and says why. The reproducibility criterion (pass agreement over pairs of runs of one
 arm on one ticket, and how many tickets exceed `max_cost_ratio`) is reported per arm.
+
+A `tokens_per_run` threshold (`fewer`) is decided by the exact sign test alone. A
+run's tokens are its input, output, cache-read and cache-write tokens over all
+models; a ticket's value per arm is the median over its counted runs. The verdict
+is `met` when the treatment used fewer tokens on more tickets than the control and
+the test is significant at `significance_level`, `not met` when the control did,
+and `tie` when the test is not significant; `minimum_effect` plays no part.
+
+When the preregistration's selection block says `method: seeded-draw`, `report.md`
+states under "Deviation from the roadmap: mechanical selection" that the tickets
+were drawn mechanically instead of curated by hand, with the seed, the counts and
+the reason.
 
 **`metadata.json`** holds the bench commit (and those in the runs), every arm file
 with its hash, settings (model, effort, agent version) and the prompt text and
@@ -500,5 +542,5 @@ seed 1, `NOGG_BENCH_SMOKE=1`.
 
 ## Not yet here
 
-`PREREGISTRATION.md` arrives with BEN-006; the first measured Harbor runs
-with BEN-007.
+The first measured Harbor runs arrive with BEN-007; the curation commands that
+read the selection block (`candidates`, `verify`, `select`) with BEN-008.
