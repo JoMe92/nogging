@@ -28,8 +28,9 @@ RUN_STATUSES = ("completed", "timeout", "agent_error", "infra_error")
 MERGE_DECISIONS = ("merge", "merge-after-changes", "reject")
 DEFECT_SEVERITIES = ("critical", "major", "minor")
 ACCEPTED_TICKET_DEFINITIONS = ("tests_pass", "tests_pass_and_review_merge")
-THRESHOLD_METRICS = ("hidden_tests_passed", "cost_per_accepted_ticket")
-THRESHOLD_REQUIREMENTS = ("not_worse", "lead_by")
+THRESHOLD_METRICS = ("hidden_tests_passed", "cost_per_accepted_ticket", "tokens_per_run")
+THRESHOLD_REQUIREMENTS = ("not_worse", "lead_by", "fewer")
+SELECTION_METHODS = ("seeded-draw",)
 
 _KEBAB = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 _SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -37,6 +38,7 @@ _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _ARM_ID = re.compile(r"^[A-Z]$")
 _SOURCE = re.compile(r"^(bench|harbor:[A-Za-z0-9._-]+)$")
 _URL = re.compile(r"^https?://\S+$")
+_REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _TOKEN_KEYS = ("input", "output", "cache_read", "cache_write")
 
 
@@ -276,7 +278,9 @@ def check_task(data: Any, *, dir_name: str | None = None) -> list[Problem]:
             c.add("hidden_tests.patch", "must be a path under hidden/")
         elif patch and ".." in patch.split("/"):
             c.add("hidden_tests.patch", "must be a path under hidden/")
-        f2p = c.string_list(hidden, "hidden_tests", "fail_to_pass", non_empty=True)
+        # A candidate has no test identifiers until `nogg-bench verify` fills them in (BEN-008).
+        unverified = isinstance(data.get("curation"), dict) and data["curation"].get("status") == "candidate"
+        f2p = c.string_list(hidden, "hidden_tests", "fail_to_pass", non_empty=not unverified)
         p2p = c.string_list(hidden, "hidden_tests", "pass_to_pass")
         if f2p is not None and p2p is not None:
             for ident in sorted(set(f2p) & set(p2p)):
@@ -287,8 +291,10 @@ def check_task(data: Any, *, dir_name: str | None = None) -> list[Problem]:
 
     cur = c.mapping(data, "", "curation")
     if cur is not None:
-        c.unknown_keys(cur, "curation", ("status", "hidden_tests_verified_by", "verified_on"))
+        c.unknown_keys(cur, "curation", ("status", "hidden_tests_verified_by", "verified_on", "pilot"))
         status = c.choice(cur, "curation", "status", CURATION_STATUSES)
+        if c.boolean(cur, "curation", "pilot", required=False) and status != "accepted":
+            c.add("curation.pilot", "only an accepted task can be a pilot ticket")
         if status == "accepted":
             c.string(cur, "curation", "hidden_tests_verified_by")
             c.timestamp(cur, "curation", "verified_on")
@@ -594,8 +600,10 @@ def check_thresholds(data: Any) -> list[Problem]:
                     c.number(item, path, "margin", minimum=0.0, exclusive=True)
                     if metric == "cost_per_accepted_ticket":
                         c.add(f"{path}.requirement", "lead_by is only defined for hidden_tests_passed (percentage points)")
-                elif req == "not_worse" and "margin" in item:
+                elif req is not None and "margin" in item:
                     c.add(f"{path}.margin", "is only allowed with requirement lead_by")
+                if metric and req and (metric == "tokens_per_run") != (req == "fewer"):
+                    c.add(f"{path}.requirement", "fewer goes with tokens_per_run, and tokens_per_run only with fewer")
 
     effect = c.mapping(data, "", "minimum_effect")
     if effect is not None:
@@ -617,10 +625,131 @@ def check_thresholds(data: Any) -> list[Problem]:
     return _finish(c)
 
 
+# ---------------------------------------------------------- selection block
+
+_REPO_CRITERIA = (
+    "last_commit_within_days", "min_merged_pull_requests", "merged_pull_requests_within_days",
+    "min_stars", "max_stars", "suite_time_limit_minutes",
+)
+_ISSUE_CRITERIA = ("linked_merged_pull_requests", "small_max_files", "medium_max_files", "large_min_lines")
+
+
+def check_selection(data: Any) -> list[Problem]:
+    """Validate the selection block of ``PREREGISTRATION.md`` (Decisions 18 and 19).
+
+    ``data`` is the fenced block's top level, ``{"selection": {...}}``: the
+    method, the integer seed, the counts, each arm model's training cutoff
+    with its source, and the curation criteria with their numbers.
+    """
+    c = _Checker(data)
+    sel = c.mapping(data, "", "selection") if isinstance(data, dict) else None
+    if sel is None:
+        if not isinstance(data, dict):
+            c.add("selection", "must be a mapping")
+        return _finish(c)
+    p = "selection"
+    c.unknown_keys(sel, p, ("method", "seed", "counts", "training_cutoffs", "criteria"))
+    c.choice(sel, p, "method", SELECTION_METHODS)
+    c.integer(sel, p, "seed")
+
+    counts = c.mapping(sel, p, "counts")
+    if counts is not None:
+        c.unknown_keys(counts, f"{p}.counts", ("per_size_class", "pilot_per_size_class"))
+        per = c.integer(counts, f"{p}.counts", "per_size_class", minimum=1)
+        pilot = c.integer(counts, f"{p}.counts", "pilot_per_size_class", minimum=1)
+        if per and pilot and pilot > per:
+            c.add(f"{p}.counts.pilot_per_size_class", f"must be at most per_size_class ({per})")
+
+    cutoffs = c.get(sel, p, "training_cutoffs")
+    if cutoffs is not None:
+        if not isinstance(cutoffs, list) or not cutoffs:
+            c.add(f"{p}.training_cutoffs", "must be a non-empty list")
+        else:
+            for i, item in enumerate(cutoffs):
+                path = f"{p}.training_cutoffs[{i}]"
+                if not isinstance(item, dict):
+                    c.add(path, "must be a mapping with model, cutoff and source")
+                    continue
+                c.unknown_keys(item, path, ("model", "cutoff", "source"))
+                c.string(item, path, "model")
+                if "cutoff" in item and not isinstance(item["cutoff"], date):
+                    c.add(f"{path}.cutoff", "must be a date (YYYY-MM-DD)")
+                else:
+                    c.get(item, path, "cutoff")
+                c.string(item, path, "source", pattern=_URL, what="a source URL")
+
+    criteria = c.mapping(sel, p, "criteria")
+    if criteria is not None:
+        cp = f"{p}.criteria"
+        c.unknown_keys(criteria, cp, ("repositories", "issues", "verification"))
+        repos = c.mapping(criteria, cp, "repositories")
+        if repos is not None:
+            rp = f"{cp}.repositories"
+            c.unknown_keys(repos, rp, ("languages", "licences", "exclusion_list") + _REPO_CRITERIA)
+            languages = c.mapping(repos, rp, "languages")
+            for language in languages or {}:  # primary language -> repositories taken
+                c.integer(languages, f"{rp}.languages", language, minimum=1)
+            if languages is not None and not languages:
+                c.add(f"{rp}.languages", "must not be empty")
+            c.string_list(repos, rp, "licences", non_empty=True)
+            c.string(repos, rp, "exclusion_list")
+            for key in _REPO_CRITERIA:
+                c.integer(repos, rp, key, minimum=1)
+            if isinstance(repos.get("min_stars"), int) and isinstance(repos.get("max_stars"), int) \
+                    and repos["max_stars"] < repos["min_stars"]:
+                c.add(f"{rp}.max_stars", "must be at least min_stars")
+        issues = c.mapping(criteria, cp, "issues")
+        if issues is not None:
+            c.unknown_keys(issues, f"{cp}.issues", _ISSUE_CRITERIA)
+            for key in _ISSUE_CRITERIA:
+                c.integer(issues, f"{cp}.issues", key, minimum=1)
+        verification = c.mapping(criteria, cp, "verification")
+        if verification is not None:
+            c.unknown_keys(verification, f"{cp}.verification", ("runs_per_side",))
+            c.integer(verification, f"{cp}.verification", "runs_per_side", minimum=1)
+    return _finish(c)
+
+
+def check_exclusions(data: Any) -> list[Problem]:
+    """Validate ``curation/exclude.yaml``: the repositories no candidate may come from,
+    as named lists, each with the source URL it was read from and the date."""
+    c = _root(data)
+    if not isinstance(data, dict):
+        return _finish(c)
+    c.unknown_keys(data, "", ("schema", "lists"))
+    lists = c.get(data, "", "lists")
+    if lists is None:
+        return _finish(c)
+    if not isinstance(lists, list) or not lists:
+        c.add("lists", "must be a non-empty list")
+        return _finish(c)
+    seen: set[str] = set()
+    for i, item in enumerate(lists):
+        path = f"lists[{i}]"
+        if not isinstance(item, dict):
+            c.add(path, "must be a mapping")
+            continue
+        c.unknown_keys(item, path, ("name", "source", "retrieved", "repositories"))
+        name = c.string(item, path, "name", pattern=_KEBAB, what="a kebab-case name")
+        if name:
+            if name in seen:
+                c.add(f"{path}.name", f"duplicate list name {name!r}")
+            seen.add(name)
+        c.string(item, path, "source", pattern=_URL, what="a source URL")
+        if not isinstance(item.get("retrieved"), date):
+            c.add(f"{path}.retrieved", "must be the date (YYYY-MM-DD) the source was read")
+        for j, repo in enumerate(c.string_list(item, path, "repositories", non_empty=True) or []):
+            if not _REPO.match(repo):
+                c.add(f"{path}.repositories[{j}]", f"must be owner/name (got {repo!r})")
+    return _finish(c)
+
+
 CHECKS: dict[str, Callable[..., list[Problem]]] = {
     "task": check_task,
     "arm": check_arm,
     "result": check_result,
     "review": check_review,
     "thresholds": check_thresholds,
+    "selection": check_selection,
+    "exclusions": check_exclusions,
 }

@@ -1,0 +1,160 @@
+# The exclusion list of the benchmark's curation (design Decision 18, TASK-BEN-006).
+#
+# A repository named here is among the most-used training and evaluation sources
+# and never becomes a candidate. `nogg-bench candidates repos` skips it and
+# records the skip. The preregistration's selection block names this file.
+#
+# Each list holds the distinct values of the `repo` column of one public dataset,
+# read on the `retrieved` date from the dataset at `source` through the Hugging
+# Face dataset viewer (https://datasets-server.huggingface.co/statistics). The
+# names are spelled as the dataset spells them. Where GitHub has renamed a
+# repository since, its current full name follows on the next line with a
+# comment; those were read on the same date from the GitHub API
+# (https://api.github.com/repos/<name as the dataset spells it>), which answers
+# with the current name. Compare names without regard to case.
+#
+# Like the preregistration, this file is not edited after the first measured run.
+schema: 1
+lists:
+  - name: swe-bench
+    source: https://huggingface.co/datasets/princeton-nlp/SWE-bench
+    retrieved: 2026-11-21
+    # 53 repositories; splits dev, test and train.
+    repositories:
+      - apache/airflow
+      - apache/mxnet
+      - astropy/astropy
+      - celery/celery
+      - conan-io/conan
+      - conda/conda
+      - dagster-io/dagster
+      - DataDog/integrations-core
+      - django/django
+      - docker/compose
+      - explosion/spaCy
+      - gitpython-developers/GitPython
+      - google/jax
+      - jax-ml/jax  # the current name of google/jax
+      - googleapis/google-cloud-python
+      - huggingface/transformers
+      - ipython/ipython
+      - JohnSnowLabs/spark-nlp
+      - jupyterlab/jupyterlab
+      - kubeflow/pipelines
+      - Lightning-AI/lightning
+      - Lightning-AI/pytorch-lightning  # the current name of Lightning-AI/lightning
+      - marshmallow-code/marshmallow
+      - matplotlib/matplotlib
+      - mesonbuild/meson
+      - mwaskom/seaborn
+      - numpy/numpy
+      - open-mmlab/mmdetection
+      - pallets/flask
+      - pandas-dev/pandas
+      - pantsbuild/pants
+      - PrefectHQ/prefect
+      - psf/requests
+      - pvlib/pvlib-python
+      - pyca/cryptography
+      - pydata/xarray
+      - pydicom/pydicom
+      - pylint-dev/astroid
+      - pylint-dev/pylint
+      - pypa/pip
+      - pytest-dev/pytest
+      - python/typeshed
+      - pyvista/pyvista
+      - Qiskit/qiskit
+      - ray-project/ray
+      - scikit-learn/scikit-learn
+      - scipy/scipy
+      - sphinx-doc/sphinx
+      - sqlfluff/sqlfluff
+      - sympy/sympy
+      - tensorflow/models
+      - tiangolo/fastapi
+      - fastapi/fastapi  # the current name of tiangolo/fastapi
+      - twisted/twisted
+      - wagtail/wagtail
+      - ytdl-org/youtube-dl
+  - name: swe-bench-verified
+    source: https://huggingface.co/datasets/princeton-nlp/SWE-bench_Verified
+    retrieved: 2026-11-21
+    # 12 repositories; split test.
+    repositories:
+      - astropy/astropy
+      - django/django
+      - matplotlib/matplotlib
+      - mwaskom/seaborn
+      - pallets/flask
+      - psf/requests
+      - pydata/xarray
+      - pylint-dev/pylint
+      - pytest-dev/pytest
+      - scikit-learn/scikit-learn
+      - sphinx-doc/sphinx
+      - sympy/sympy
+  - name: swe-bench-pro
+    source: https://huggingface.co/datasets/ScaleAI/SWE-bench_Pro
+    retrieved: 2026-11-21
+    # 11 repositories; the public set, split test of the configurations default and v1.
+    repositories:
+      - ansible/ansible
+      - element-hq/element-web
+      - flipt-io/flipt
+      - future-architect/vuls
+      - gravitational/teleport
+      - internetarchive/openlibrary
+      - navidrome/navidrome
+      - NodeBB/NodeBB
+      - protonmail/webclients
+      - ProtonMail/WebClients  # the current name of protonmail/webclients
+      - qutebrowser/qutebrowser
+      - tutao/tutanota
+  - name: swe-gym
+    source: https://huggingface.co/datasets/SWE-Gym/SWE-Gym
+    retrieved: 2026-11-21
+    # 11 repositories; split train.
+    repositories:
+      - bokeh/bokeh
+      - conan-io/conan
+      - dask/dask
+      - facebookresearch/hydra
+      - hydra-ecosystem/hydra  # the current name of facebookresearch/hydra
+      - getmoto/moto
+      - iterative/dvc
+      - treeverse/dvc  # the current name of iterative/dvc
+      - modin-project/modin
+      - pandas-dev/pandas
+      - Project-MONAI/MONAI
+      - pydantic/pydantic
+      - python/mypy
+  - name: featurebench
+    source: https://huggingface.co/datasets/LiberCoders/FeatureBench
+    retrieved: 2026-11-21
+    # 24 repositories; split full; the splits lite and fast hold a subset of its repositories.
+    repositories:
+      - astropy/astropy
+      - fastapi/fastapi
+      - huggingface/accelerate
+      - huggingface/transformers
+      - huggingface/trl
+      - Lightning-AI/pytorch-lightning
+      - linkedin/Liger-Kernel
+      - matplotlib/matplotlib
+      - mesonbuild/meson
+      - mlflow/mlflow
+      - mwaskom/seaborn
+      - Netflix/metaflow
+      - optuna/optuna
+      - pandas-dev/pandas
+      - pydantic/pydantic
+      - pydata/xarray
+      - pypa/hatch
+      - pypa/packaging
+      - pypa/setuptools
+      - pytest-dev/pytest
+      - python/mypy
+      - scikit-learn/scikit-learn
+      - sphinx-doc/sphinx
+      - sympy/sympy

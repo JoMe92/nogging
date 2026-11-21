@@ -34,7 +34,7 @@ from typing import Any
 
 from nogg_bench import stats
 from nogg_bench.prices import Price, load_prices, run_cost
-from nogg_bench.records import RecordError, load_thresholds, load_yaml, read_jsonl
+from nogg_bench.records import RecordError, load_selection, load_thresholds, load_yaml, read_jsonl
 from nogg_bench.schema import ACCEPTED_TICKET_DEFINITIONS, SIZE_CLASSES, Problem, check_arm, check_result, check_review
 from nogg_bench.validate import find_bench_dir
 
@@ -43,6 +43,14 @@ DEVIATION_NOTE = (
     "Nogging arms plan and execute without human approval: the issue text is the planning brief and "
     "no human approves the plan or the change. Real use has a human at those points, so these "
     "results show what Nogging does unattended, not what a supervised team gets."
+)
+SELECTION_NOTE = (
+    "The benchmark tickets were drawn mechanically, not curated by hand: fixed criteria, an automatic check of "
+    "the hidden tests and a seeded draw (seed {seed}, {per} per size class, {pilot} of them per class for the "
+    "pilot), all fixed in `PREREGISTRATION.md` before any candidate was collected. This deviates from the "
+    "roadmap's rule that the Product Owner curates the tickets by hand. Why: the Product Owner delegated the "
+    "curation, and a rule fixed in advance steers the benchmark as little as a human who is kept away from the "
+    "arms, while anyone can repeat the draw from the committed pool and seed."
 )
 _REF = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._/-]*$")
 
@@ -82,6 +90,11 @@ class Run:
     def passed(self) -> bool:
         return bool(self.record["passed"])
 
+    @property
+    def tokens(self) -> int:
+        """Every token of the run: input, output, cache read and cache write, over all models."""
+        return sum(sum(per_model.values()) for per_model in self.record["usage"].values())
+
     def accepted(self, definition: str) -> bool:
         if not self.passed:
             return False
@@ -101,6 +114,8 @@ class Inputs:
     prices: dict[str, Price]
     prereg_path: Path
     recorded_hashes: list[str] = field(default_factory=list)
+    selection: dict | None = None  # the preregistration's selection block, when it has one
+    unmeasured_arms: list[str] = field(default_factory=list)  # preregistered, no arm file and no run yet
 
 
 def sha256_of(path: Path) -> str:
@@ -167,6 +182,11 @@ def load_inputs(bench: Path, batches: list[str], *, allow_mixed_preregistration:
         thresholds = load_thresholds(prereg)
     except RecordError as exc:
         problems.append(str(exc.problem))
+    selection: dict | None = None
+    try:
+        selection = load_selection(prereg) if prereg.is_file() else None
+    except RecordError as exc:
+        problems.append(str(exc.problem))
     prices: dict[str, Price] = {}
     try:
         prices = load_prices(bench / "prices.yaml")
@@ -214,7 +234,10 @@ def load_inputs(bench: Path, batches: list[str], *, allow_mixed_preregistration:
     arms: dict[str, dict] = {}
     arm_files: dict[str, Path] = {}
     wanted = {a for c in thresholds.get("primary_comparisons", []) for a in (c["treatment"], c["control"])}
-    for arm_id in sorted(wanted):
+    # An arm preregistered for a later phase has neither an arm file nor a run yet: it is
+    # named in the report and its thresholds are unknown. An arm with runs needs its file.
+    unmeasured = sorted(a for a in wanted - {r["arm"] for r in records} if not (bench / "arms" / f"{a}.yaml").is_file())
+    for arm_id in sorted(wanted - set(unmeasured)):
         data, path = _load_arm(bench, arm_id, problems)
         arm_files[arm_id] = path
         if data:
@@ -243,7 +266,7 @@ def load_inputs(bench: Path, batches: list[str], *, allow_mixed_preregistration:
         else:
             why = ""
         runs.append(Run(rec, cost, missing, reviews.get(rec["run_id"]), why))
-    return Inputs(bench, batches, runs, thresholds, arms, arm_files, prices, prereg, hashes)
+    return Inputs(bench, batches, runs, thresholds, arms, arm_files, prices, prereg, hashes, selection, unmeasured)
 
 
 # ---------------------------------------------------------------- analysis
@@ -260,6 +283,10 @@ class Ticket:
 def _ticket_cost(runs: list[Run]) -> float | None:
     costs = [r.cost for r in runs]
     return None if any(c is None for c in costs) else stats.median_of([c for c in costs if c is not None])
+
+
+def _ticket_tokens(runs: list[Run]) -> float:
+    return stats.median_of([r.tokens for r in runs]) or 0.0
 
 
 def _ticket_accepted(runs: list[Run], definition: str) -> bool:
@@ -285,6 +312,10 @@ class Comparison:
     cost_p: float = 1.0
     cost_tickets_unknown: int = 0
     unknown_models: list[str] = field(default_factory=list)
+    tokens_t_fewer: int = 0  # tickets on which the treatment's tokens per run (median over seeds) are lower
+    tokens_c_fewer: int = 0
+    tokens_ties: int = 0
+    tokens_p: float = 1.0
     # definition -> (accepted tickets treatment, control, total cost treatment, control or None)
     accepted: dict[str, tuple[int, int, float | None, float | None]] = field(default_factory=dict)
 
@@ -351,6 +382,8 @@ def compare(runs: list[Run], treatment: str, control: str, scope: str) -> Compar
     cmp.unknown_models = sorted(models)
     cmp.mcnemar_p = stats.mcnemar_exact(cmp.only_t, cmp.only_c)
     cmp.cost_t_cheaper, cmp.cost_c_cheaper, cmp.cost_ties, cmp.cost_p = stats.sign_test(t_costs, c_costs)
+    cmp.tokens_t_fewer, cmp.tokens_c_fewer, cmp.tokens_ties, cmp.tokens_p = stats.sign_test(
+        [_ticket_tokens(tk.t_runs) for tk in tickets], [_ticket_tokens(tk.c_runs) for tk in tickets])
     for definition in ACCEPTED_TICKET_DEFINITIONS:
         acc_t = sum(_ticket_accepted(tk.t_runs, definition) for tk in tickets)
         acc_c = sum(_ticket_accepted(tk.c_runs, definition) for tk in tickets)
@@ -390,9 +423,25 @@ def evaluate_threshold(th: dict, cmp: Comparison, block: dict) -> Verdict:
     minimum effect counts as an effect. The significance level annotates the
     p-value and does not change the verdict. A threshold with nothing to
     evaluate (no paired ticket, unknown cost) is *unknown* and says why.
+
+    Tokens per run (``fewer``) is decided by the exact sign test alone: *met*
+    when the treatment used fewer tokens on more tickets than the control and
+    the test is significant at the level, *not met* when the control did, and
+    *tie* when the test is not significant.
     """
     minimum = block["minimum_effect"]
     alpha = block["significance_level"]
+    if th["metric"] == "tokens_per_run":
+        if not cmp.n:
+            return Verdict(th, "unknown", "no paired tickets")
+        significant = cmp.tokens_p < alpha
+        verdict = "tie" if not significant else "met" if cmp.tokens_t_fewer > cmp.tokens_c_fewer else "not met"
+        return Verdict(
+            th, verdict,
+            f"fewer tokens per run on {cmp.tokens_t_fewer} tickets for {cmp.treatment}, on {cmp.tokens_c_fewer} for "
+            f"{cmp.control}, {cmp.tokens_ties} equal ({cmp.n} tickets), sign test p={cmp.tokens_p:.4f}, "
+            f"{'significant' if significant else 'not significant'} at {alpha}",
+        )
     if th["metric"] == "hidden_tests_passed":
         if not cmp.n:
             return Verdict(th, "unknown", "no paired tickets")
@@ -508,6 +557,15 @@ def render_markdown(inputs: Inputs, name: str) -> str:
         DEVIATION_NOTE,
         "",
     ]
+    selection = inputs.selection
+    if selection and selection["method"] == "seeded-draw":
+        out += ["## Deviation from the roadmap: mechanical selection", "",
+                SELECTION_NOTE.format(seed=selection["seed"], per=selection["counts"]["per_size_class"],
+                                      pilot=selection["counts"]["pilot_per_size_class"]), ""]
+    if inputs.unmeasured_arms:
+        out += ["## Arms not measured yet", "",
+                "Preregistered, but without an arm file and without a run in these batches: "
+                + ", ".join(inputs.unmeasured_arms) + ". Their comparisons have no paired tickets and their thresholds are unknown.", ""]
 
     comparisons = {
         (c["treatment"], c["control"], scope): compare(runs, c["treatment"], c["control"], scope)
@@ -517,7 +575,10 @@ def render_markdown(inputs: Inputs, name: str) -> str:
 
     out += ["## Thresholds", "", "A threshold is *met* when the result is at least the minimum effect beyond its target, "
             "*not met* when it is at least the minimum effect short of it, and a *tie* in between; *unknown* means there was "
-            "nothing to evaluate. The target is no difference (`not_worse`), a lead of `margin` points (`lead_by`), or equal cost.", ""]
+            "nothing to evaluate. The target is no difference (`not_worse`), a lead of `margin` points (`lead_by`), or equal cost. "
+            "A `fewer` threshold (tokens per run: input, output, cache-read and cache-write tokens of a run, the median over a "
+            "ticket's seeds) is decided by the exact sign test alone: *met* or *not met* when it is significant, by which arm "
+            "used fewer tokens on more tickets, and a *tie* when it is not.", ""]
     rows = []
     for th in block["thresholds"]:
         cmp = comparisons[(th["comparison"]["treatment"], th["comparison"]["control"], th["size_class"])]

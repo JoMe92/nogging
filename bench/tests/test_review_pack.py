@@ -211,6 +211,7 @@ def make_bench(tmp_path: Path, diffs: dict[str, str] | None = None) -> Path:
     """A bench directory with the fixture task and the completed arm A and arm C result lines."""
     bench = tmp_path / "bench"
     shutil.copytree(FIXTURES / "valid" / "tasks", bench / "tasks")
+    shutil.copytree(FIXTURES / "valid" / "curation", bench / "curation")  # the draw that accepted the task
     (bench / "results").mkdir()
     source = (FIXTURES / "valid" / "results" / "fixture-batch.jsonl").read_text().splitlines()
     kept = [json.loads(line) for line in source]

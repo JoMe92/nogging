@@ -9,6 +9,13 @@ Which kind a file is follows from where it lies:
 | ``results/<batch>.jsonl``                 | result line |
 | ``results/review/<pack>.jsonl``           | review      |
 | ``PREREGISTRATION.md``                    | thresholds  |
+| ``curation/exclude.yaml``                 | exclusions  |
+| ``curation/selection.json``               | draw        |
+
+``PREREGISTRATION.md`` carries two checked blocks, thresholds and selection.
+
+An ``accepted`` task must be listed as drawn in the ``curation/selection.json``
+next to its ``tasks/`` directory: only ``nogg-bench select`` accepts a ticket.
 
 With no path, everything under the bench directory is checked except
 ``tests/`` (its fixtures include deliberately invalid records) and
@@ -17,15 +24,19 @@ With no path, everything under the bench directory is checked except
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Iterable
 
-from nogg_bench.records import RecordError, load_yaml, read_jsonl, thresholds_block
+from nogg_bench import selection
+from nogg_bench.records import RecordError, load_yaml, read_jsonl, selection_block, thresholds_block
 from nogg_bench.schema import (
     Problem,
     check_arm,
+    check_exclusions,
     check_result,
     check_review,
+    check_selection,
     check_task,
     check_thresholds,
 )
@@ -55,8 +66,12 @@ def kind_of(path: Path, bench: Path) -> str | None:
         return "task"
     if path.name == "PREREGISTRATION.md":
         return "thresholds"
+    if rel.as_posix().endswith(selection.DRAW_FILE):
+        return "draw"
     if path.suffix in (".yaml", ".yml") and len(parts) >= 2 and parts[-2] == "arms":
         return "arm"
+    if path.name == "exclude.yaml" and len(parts) >= 2 and parts[-2] == "curation":
+        return "exclusions"
     if path.suffix == ".jsonl":
         if len(parts) >= 2 and parts[-2] == "review":
             return "review"
@@ -113,16 +128,47 @@ def validate_file(path: Path, bench: Path) -> list[Problem]:
             for number, record in read_jsonl(path):
                 out += [p.at(f"{name}:{number}") for p in check(record)]
             return out
+        if kind == "exclusions":
+            return [p.at(name) for p in check_exclusions(load_yaml(path))]
         if kind == "thresholds":
-            data, errors = thresholds_block(path.read_text(encoding="utf-8"))
-            if errors:
-                return [Problem(name, "thresholds", e) for e in errors]
-            return [p.at(name) for p in check_thresholds(data)]
+            text = path.read_text(encoding="utf-8")
+            data, errors = thresholds_block(text)
+            out = [Problem(name, "thresholds", e) for e in errors] or [p.at(name) for p in check_thresholds(data)]
+            return out + _selection_problems(path, name, text)
+        if kind == "draw":
+            try:
+                return [p.at(name) for p in selection.check_draw(json.loads(path.read_text(encoding="utf-8")))]
+            except ValueError as exc:
+                return [Problem(name, "(file)", f"is not valid JSON: {exc}")]
     except RecordError as exc:
         return [exc.problem]
     except OSError as exc:
         return [Problem(name, "(file)", f"cannot read: {exc.strerror}")]
     return [Problem(name, "(path)", "is not a benchmark record by its location")]
+
+
+def _selection_problems(path: Path, name: str, text: str) -> list[Problem]:
+    """The selection block, the exclusion list it names, and a cutoff for every arm model."""
+    data, errors = selection_block(text)
+    if errors:
+        return [Problem(name, "selection", e) for e in errors]
+    problems = [p.at(name) for p in check_selection(data)]
+    if problems:
+        return problems
+    block = data["selection"]
+    listed = block["criteria"]["repositories"]["exclusion_list"]
+    if not (path.parent / listed).is_file():
+        problems.append(Problem(name, "selection.criteria.repositories.exclusion_list", f"file {listed} does not exist"))
+    dated = {entry["model"] for entry in block["training_cutoffs"]}
+    for arm_file in sorted((path.parent / "arms").glob("*.yaml")):
+        try:
+            arm = load_yaml(arm_file)
+        except RecordError:
+            continue  # reported with the arm file itself
+        model = arm.get("model") if isinstance(arm, dict) else None
+        if isinstance(model, str) and model not in dated:
+            problems.append(Problem(name, "selection.training_cutoffs", f"no training cutoff for model {model} of arm file {arm_file.name}"))
+    return problems
 
 
 def _task_problems(path: Path, name: str) -> list[Problem]:
@@ -137,7 +183,24 @@ def _task_problems(path: Path, name: str) -> list[Problem]:
         patch = hidden.get("patch") if isinstance(hidden, dict) else None
         if isinstance(patch, str) and not problems_for(problems, "hidden_tests.patch") and not (path.parent / patch).is_file():
             problems.append(Problem(name, "hidden_tests.patch", f"file {patch} does not exist"))
+        problems += [p.at(name) for p in _draw_problems(path, data)]
     return problems
+
+
+def _draw_problems(path: Path, data: dict) -> list[Problem]:
+    """Only the draw accepts a ticket: an ``accepted`` task is one ``selection.json`` lists as drawn."""
+    curation = data.get("curation")
+    if not isinstance(curation, dict) or curation.get("status") != "accepted":
+        return []
+    drawn = selection.drawn_tasks(path.parent.parent.parent / selection.DRAW_FILE)
+    ident = data.get("id")
+    if ident not in drawn:
+        return [Problem("", "curation.status", f"task {ident} is accepted but {selection.DRAW_FILE} does not list "
+                        "it as drawn; only `nogg-bench select` accepts a ticket")]
+    if drawn[ident] != (curation.get("pilot") is True):
+        return [Problem("", "curation.pilot", f"task {ident} does not agree with {selection.DRAW_FILE}, which "
+                        f"{'draws' if drawn[ident] else 'does not draw'} it for the pilot")]
+    return []
 
 
 def _arm_problems(path: Path, name: str) -> list[Problem]:

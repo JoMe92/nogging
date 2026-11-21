@@ -1,0 +1,30 @@
+#!/usr/bin/env python3
+"""A stub `gh` for the medium tests: replays recorded API responses and records argv.
+
+STUB_GH_DIR  directory with `index.json`, a list of {"match": [<text>, ...], "file": <name>};
+             the first entry whose texts all occur in the call's arguments answers with that file
+STUB_GH_LOG  JSON Lines file, one {"argv": [...]} per call
+
+Only reading is replayed: `gh api --method GET ...` and a `gh api graphql` query. Anything
+else (another subcommand, another method, a mutation) is refused, as is a call with no recording.
+"""
+import json
+import os
+import sys
+from pathlib import Path
+
+argv = sys.argv[1:]
+with open(os.environ["STUB_GH_LOG"], "a", encoding="utf-8") as handle:
+    handle.write(json.dumps({"argv": argv}) + "\n")
+joined = "\n".join(argv)
+reading = argv[:3] == ["api", "--method", "GET"] or (argv[:2] == ["api", "graphql"] and "mutation" not in joined)
+if not reading:
+    print("stub gh: only read-only api calls are replayed", file=sys.stderr)
+    sys.exit(2)
+root = Path(os.environ["STUB_GH_DIR"])
+for entry in json.loads((root / "index.json").read_text(encoding="utf-8")):
+    if all(text in joined for text in entry["match"]):
+        sys.stdout.write((root / entry["file"]).read_text(encoding="utf-8"))
+        sys.exit(0)
+print(f"gh: no recorded response for {argv[1:4]} (HTTP 404)", file=sys.stderr)
+sys.exit(1)

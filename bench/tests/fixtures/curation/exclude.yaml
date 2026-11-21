@@ -1,0 +1,9 @@
+# Fixture exclusion list in the layout of bench/curation/exclude.yaml. The name is
+# spelled as a dataset would spell it; names compare without regard to case.
+schema: 1
+lists:
+  - name: fixture-benchmark
+    source: https://example.invalid/fixture-benchmark
+    retrieved: 2026-11-20
+    repositories:
+      - Octo/Gamma
